@@ -315,6 +315,14 @@ function fmtTokens(tokens: number | null): string {
   return String(tokens);
 }
 
+function fmtThroughput(avgTPOTms: number | null): string {
+  if (avgTPOTms == null || avgTPOTms <= 0) return '—';
+  const tokPerSec = 1000 / avgTPOTms;
+  return tokPerSec >= 100
+    ? `${Math.round(tokPerSec)} tok/s`
+    : `${tokPerSec.toFixed(1)} tok/s`;
+}
+
 function shortUrl(url: string): string {
   try {
     const u = new URL(url);
@@ -471,18 +479,24 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       return [new MetricTreeItem('Error', m.error || 'Connection failed', 'error')];
     }
 
+    // Basic info
     if (m.models.length > 0) {
       items.push(new ModelsTreeItem(m.models));
     }
     items.push(new MetricTreeItem('Context Window', fmtTokens(m.maxModelLen), 'layers'));
+
+    // Server stats
     items.push(new MetricTreeItem('KV Cache', fmtPct(m.kvCacheUsagePercent), 'graph'));
+    items.push(new MetricTreeItem('KV Cache Hit', fmtPct(m.cacheHitRate), 'check-all'));
+    items.push(new MetricTreeItem('Avg TTFT', fmtMs(m.avgTTFTMs), 'clock'));
+    items.push(new MetricTreeItem('Throughput', fmtThroughput(m.avgTPOTMs), 'diff-added'));
+
+    // Queue position
     items.push(new MetricTreeItem('Running', fmtN(m.runningRequests), 'play'));
     items.push(new MetricTreeItem('Waiting', fmtN(m.waitingRequests), 'debug-pause'));
-    items.push(new MetricTreeItem('Avg TTFT', fmtMs(m.avgTTFTMs), 'clock'));
-    items.push(new MetricTreeItem('Avg TPOT', fmtMs(m.avgTPOTMs), 'diff-added'));
-    items.push(new MetricTreeItem('Cache Hit', fmtPct(m.cacheHitRate), 'check-all'));
+
+    // Speculative decoding
     {
-      // MTP (speculative decoding): always show when any spec decode metrics exist
       const hasSpecMetrics =
         m.specAcceptanceRate != null ||
         m.specDraftsTotal != null ||
