@@ -337,12 +337,9 @@ function shortUrl(url: string): string {
 /** Build a compact one-line summary for the collapsed server node description */
 function summaryLine(m: ServerMetrics): string {
   const parts: string[] = [];
-  if (m.version) parts.push(`v${m.version}`);
-  if (m.maxModelLen != null) parts.push(`${fmtTokens(m.maxModelLen)} ctx`);
-  if (m.kvCacheUsagePercent != null) parts.push(`${Math.round(m.kvCacheUsagePercent)}% KV`);
   if (m.runningRequests != null) parts.push(`${m.runningRequests} running`);
   if (m.waitingRequests != null && m.waitingRequests > 0) parts.push(`${m.waitingRequests} waiting`);
-  return parts.join('  ·  ');
+  return parts.join('  ·  ') || 'idle';
 }
 
 /** A server node in the tree (collapsible, shows metrics as children) */
@@ -524,6 +521,10 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     if (m.models.length > 0) {
       items.push(new ModelsTreeItem(m.models));
     }
+    if (m.version) {
+      items.push(new MetricTreeItem('vLLM Version', 'v' + m.version, 'layers'));
+    }
+
     items.push(new MetricTreeItem('Context Window', fmtTokens(m.maxModelLen), 'layers'));
 
     // Server stats
