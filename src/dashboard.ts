@@ -397,10 +397,21 @@ class MetricTreeItem extends vscode.TreeItem {
   }
 }
 
+/** Clickable poll-interval row at the top of the tree */
+class PollIntervalTreeItem extends vscode.TreeItem {
+  constructor(intervalLabel: string) {
+    super('Refresh Interval', vscode.TreeItemCollapsibleState.None);
+    this.description = intervalLabel;
+    this.iconPath = new vscode.ThemeIcon('refresh');
+    this.command = { command: 'vllm-copilot.configure', title: 'Open Settings' };
+    this.tooltip = new vscode.MarkdownString('Click to change polling interval in Settings');
+  }
+}
+
 // ─── Tree Data Provider ──────────────────────────────────────────────
 
-export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem> {
-  private _onDidChangeTreeData = new vscode.EventEmitter<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | undefined | void>();
+export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -412,14 +423,34 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   ) {
     this.outputChannel = outputChannel;
     this.startPolling();
+    // Restart polling timer when interval setting changes
+    this.context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('vllm-copilot.dashboard.pollIntervalMs')) {
+          this.startPolling();
+          this._onDidChangeTreeData.fire();
+        }
+      }),
+    );
   }
 
-  getTreeItem(element: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem): vscode.TreeItem {
+  private getPollInterval(): number {
+    return vscode.workspace.getConfiguration('vllm-copilot.dashboard').get<number>('pollIntervalMs', 15000);
+  }
+
+  private getPollIntervalTreeItem(): PollIntervalTreeItem {
+    const intervalMs = this.getPollInterval();
+    const label = intervalMs < 60000 ? `${intervalMs / 1000}s` : `${Math.round(intervalMs / 1000)}s`;
+    return new PollIntervalTreeItem(label);
+  }
+
+  getTreeItem(element: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem): vscode.TreeItem {
     return element;
   }
 
-  async getChildren(element?: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem): Promise<(ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem)[]> {
+  async getChildren(element?: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem): Promise<(ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem)[]> {
     if (!element) {
+      const items: (ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem)[] = [this.getPollIntervalTreeItem()];
       try {
         const config = await getConfig(this.context);
         // [url] -> { requestHeaders, configModelIds }
@@ -453,12 +484,12 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
           }),
         );
 
-        return Array.from(serverMap.entries()).map(([url, entry], i) =>
+        return items.concat(Array.from(serverMap.entries()).map(([url, entry], i) =>
           new ServerTreeItem(url, results[i], entry.requestHeaders),
-        );
+        ));
       } catch (err) {
         this.outputChannel.appendLine(`[DASHBOARD] getChildren failed: ${err instanceof Error ? err.message : String(err)}`);
-        return [];
+        return items;
       }
     }
 
@@ -523,12 +554,10 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   }
 
   private startPolling(): void {
-    const cfg = vscode.workspace.getConfiguration('vllm-copilot.dashboard');
-    const pollInterval = cfg.get<number>('pollIntervalMs', 15000);
-
+    if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = setInterval(() => {
       this._onDidChangeTreeData.fire();
-    }, pollInterval);
+    }, this.getPollInterval());
   }
 
   async refresh(): Promise<void> {
