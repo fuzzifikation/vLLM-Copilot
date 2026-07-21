@@ -1,5 +1,9 @@
 <div align="center">
 
+<a href="https://github.com/fuzzifikation/vLLM-Copilot">
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/logo.png" width="120" alt="vLLM-Copilot">
+</a>
+
 # vLLM-Copilot
 
 **Run any vLLM model inside GitHub Copilot — with features BYOK can't match.**
@@ -138,6 +142,7 @@ Replacements are exact substring matches, applied sequentially to every system m
 A native Tree View sidebar shows live metrics for each configured vLLM server — no webviews, no extra ports.
 
 <img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/dashboard-sidebar.png" width="500" alt="Dashboard sidebar with server metrics">
+
 - **Per-server metrics:** Models served, context window, KV cache usage & hit rate, TTFT, throughput (tokens/sec), active queue
 - **MTP / speculative decoding:** Acceptance rate, draft depth, proposal count (when active)
 - **Configurable polling:** Click **Refresh Interval** at the top of the tree to change — enter `15s`, `30s`, `1m`, etc.
