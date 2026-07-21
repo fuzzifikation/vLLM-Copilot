@@ -403,8 +403,8 @@ class PollIntervalTreeItem extends vscode.TreeItem {
     super('Refresh Interval', vscode.TreeItemCollapsibleState.None);
     this.description = intervalLabel;
     this.iconPath = new vscode.ThemeIcon('refresh');
-    this.command = { command: 'vllm-copilot.configure', title: 'Open Settings' };
-    this.tooltip = new vscode.MarkdownString('Click to change polling interval in Settings');
+    this.command = { command: 'vllm-copilot.setPollInterval', title: 'Set Poll Interval' };
+    this.tooltip = new vscode.MarkdownString('Click to change polling interval');
   }
 }
 

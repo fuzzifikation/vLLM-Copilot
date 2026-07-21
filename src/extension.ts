@@ -144,6 +144,35 @@ export async function activate(context: vscode.ExtensionContext) {
       vscode.window.registerTreeDataProvider('vllm-copilot.dashboard', dashboardTree)
     );
 
+    context.subscriptions.push(
+      vscode.commands.registerCommand('vllm-copilot.setPollInterval', async () => {
+        const current = vscode.workspace.getConfiguration('vllm-copilot.dashboard').get<number>('pollIntervalMs', 15000);
+        const input = await vscode.window.showInputBox({
+          prompt: 'Set polling interval (e.g. 15s, 30s, 1m)',
+          value: `${current / 1000}s`,
+          validateInput: (val: string) => {
+            const s = val.replace(/s$/, '');
+            const m = val.replace(/m$/, '');
+            if (!isNaN(Number(s)) && Number(s) > 0) return null;
+            if (!isNaN(Number(m)) && Number(m) > 0) return null;
+            return 'Enter a valid interval (e.g. 15s, 30s, 1m)';
+          },
+        });
+        if (!input) return;
+        let ms: number;
+        if (input.endsWith('m')) {
+          ms = Number(input.slice(0, -1)) * 60 * 1000;
+        } else {
+          ms = Number(input.replace(/s$/, '')) * 1000;
+        }
+        if (ms < 1000) {
+          vscode.window.showErrorMessage('Polling interval must be at least 1s');
+          return;
+        }
+        await vscode.workspace.getConfiguration('vllm-copilot.dashboard').update('pollIntervalMs', ms, vscode.ConfigurationTarget.Global);
+      }),
+    );
+
     // Status bar item: at-a-glance health
     const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     context.subscriptions.push(statusBar);

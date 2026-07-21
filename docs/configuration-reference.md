@@ -95,7 +95,7 @@ The **vLLM Dashboard** sidebar shows live metrics for each configured vLLM serve
 | Setting | Default | Description |
 |---|---|---|
 | `vllm-copilot.dashboard.enabled` | `true` | Enable the Dashboard sidebar and polling |
-| `vllm-copilot.dashboard.pollIntervalMs` | `15000` | How often to refresh metrics (ms). Change via the clickable **Refresh Interval** row in the sidebar, or Settings |
+| `vllm-copilot.dashboard.pollIntervalMs` | `15000` | How often to refresh metrics (ms). Click **Refresh Interval** in the sidebar to change — enter `15s`, `30s`, `1m`, etc. Also editable in Settings |
 
 ### Status Bar
 
