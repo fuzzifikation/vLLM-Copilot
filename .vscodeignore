@@ -1,0 +1,80 @@
+.vscode
+.idea
+src/
+*.ts
+node_modules/
+# eventsource-parser is a runtime dependency (SSE stream parsing).
+# This extension is ESM, so Node resolves via the `import` condition → dist/index.js.
+!node_modules/eventsource-parser/package.json
+!node_modules/eventsource-parser/LICENSE
+!node_modules/eventsource-parser/dist/index.js
+
+# jsonrepair is a runtime dependency. Re-include just its ESM build
+# (this extension is ESM, so Node resolves via the `import` condition) plus
+# package.json/LICENSE. The CJS/UMD builds, type declarations, CLI, and docs
+# are never loaded at runtime and are left out.
+!node_modules/jsonrepair/package.json
+!node_modules/jsonrepair/LICENSE.md
+!node_modules/jsonrepair/lib/esm/**/*.js
+# best-effort-json-parser is a runtime dependency (truncated tool-call recovery).
+# It is CommonJS with no sub-dependencies, so re-include its dist build + package.json.
+!node_modules/best-effort-json-parser/package.json
+!node_modules/best-effort-json-parser/dist/**/*.js
+out/**/*.map
+
+# Dev docs (not needed at runtime)
+docs/
+# Personality presets are bundled — shipped for the Set Model Personality command
+!docs/prompt-replacements-*.json
+# Extension logo — needed for Marketplace icon
+!docs/images/logo.png
+# prompt-replacements/ is included for the Set Model Personality command
+!prompt-replacements/
+known-bugs.md
+publication-plan.md
+
+# User-kept reference files — never ship, never delete (see keep_this/info.md)
+keep_this/
+
+# Test files
+test/
+vitest.config.ts
+
+# Coverage reports (dev only)
+coverage/
+
+# Colleague's unpacked source (reference only, not shipped)
+Colleague_Diagnosis_Fix/
+
+# Temp files
+temp/
+
+# Dev scripts and tools
+ssh-tunnel.bat
+scripts/
+
+# Repo/build config (not needed at runtime)
+.gitignore
+
+# Test files (local testing only — never ship)
+AGENTS.md
+CLAUDE.md
+
+# User workspace files (created by extraction/debug features)
+.vllm/
+
+# Reference source (not shipped)
+source/
+.gitattributes
+.github/
+tsconfig.json
+*.tsbuildinfo
+
+# Local databases / session stores
+*.db
+
+# Old vsix builds
+*.vsix
+
+# Model config presets are SHIPPED so Auto-Configure can apply them at runtime.
+# (loadModelPresets reads *.json only — no other files in this folder.)

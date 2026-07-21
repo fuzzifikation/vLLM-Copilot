@@ -1,0 +1,87 @@
+// Agents-A1 — Model configuration
+// Source: InternScience model card, evaluation README inference parameters
+// https://huggingface.co/InternScience/Agents-A1
+// https://github.com/InternScience/Agents-A1/tree/main/evaluation
+// Verified 2026-07-18.
+//
+// Chat template parameters (all Jinja template variables, passed via chat_template_kwargs):
+//   - `enable_thinking: true/false` — enables/disables reasoning token generation
+//   - `preserve_thinking: true` — keeps <think>...</think> blocks visible in multi-turn
+//     conversation history. Same Jinja template as Qwen3.5/3.6 family.
+//
+// Copy the object below into your settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//
+// Requirements:
+//   - vLLM launched with --reasoning-parser qwen3
+//   - For tool calling: also add --enable-auto-tool-choice --tool-call-parser qwen3_coder
+//   - For text-only (saves KV cache): add --language-model-only (skips vision encoder)
+//
+// Token budgets:
+//   - Context window: 262,144 tokens (recommended by authors)
+//   - maxOutputTokens: 32,768 (conservative; model supports more)
+//   - maxInputTokens: auto-computed as ~229,376 (context window minus output)
+//
+// Modes (inference params sourced from authors' evaluation README files per domain):
+//   - Think (General):  Official model card defaults
+//   - Think (Coding):   evaluation/MLE/README.md (SciCode, MLE-Lite)
+//   - Think (Science):  evaluation/Science/README.md (HiPhO, FS-O, FS-R)
+//   - No Think:         Direct responses, no thinking tokens
+
+{
+  "id": "InternScience/Agents-A1",
+  "vllmModelId": "InternScience/Agents-A1",
+  "displayName": "Agents-A1",
+  "family": "qwen3_5_moe",
+  "maxOutputTokens": 32768,
+  "capabilities": {
+    "toolCalling": true,
+    "imageInput": true
+  },
+  "modelModes": {
+    "Think (General)": {
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "preserve_thinking": true
+      },
+      "temperature": 0.85,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0,
+      "presence_penalty": 1.1,
+      "repetition_penalty": 1.0
+    },
+    "Think (Coding)": {
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "preserve_thinking": true
+      },
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0,
+      "presence_penalty": 1.5,
+      "repetition_penalty": 1.0
+    },
+    "Think (Science)": {
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "preserve_thinking": true
+      },
+      "temperature": 0.6,
+      "top_p": 0.95
+    },
+    "No Think": {
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      },
+      "temperature": 0.85,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0,
+      "presence_penalty": 1.1,
+      "repetition_penalty": 1.0
+    }
+  },
+  "defaultMode": "Think (General)"
+}

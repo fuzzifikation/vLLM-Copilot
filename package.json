@@ -1,0 +1,282 @@
+{
+  "name": "vllm-copilot",
+  "displayName": "vLLM-Copilot",
+  "description": "Use your own vLLM-hosted AI models directly in GitHub Copilot — full tool calling, thinking modes, and vision support and all vLLM special features.",
+  "version": "1.18.0",
+  "type": "module",
+  "license": "MIT",
+  "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
+  "publisher": "System-Sciences",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fuzzifikation/vLLM-Copilot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fuzzifikation/vLLM-Copilot/issues"
+  },
+  "homepage": "https://github.com/fuzzifikation/vLLM-Copilot",
+  "icon": "docs/images/logo.png",
+  "engines": {
+    "vscode": "^1.125.0"
+  },
+  "enabledApiProposals": [
+    "chatProvider",
+    "languageModelThinkingPart"
+  ],
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "activationEvents": [
+    "languageModel_chatVendor:vllm-copilot"
+  ],
+  "main": "./out/extension.js",
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vllm-dashboard",
+          "title": "vLLM",
+          "icon": "resources/vllm-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "vllm-dashboard": [
+        {
+          "type": "webview",
+          "id": "vllm-copilot.dashboard",
+          "name": "Dashboard"
+        }
+      ]
+    },
+    "languageModelChatProviders": [
+      {
+        "vendor": "vllm-copilot",
+        "displayName": "vLLM-Copilot"
+      }
+    ],
+    "commands": [
+      {
+        "command": "vllm-copilot.addServerModel",
+        "title": "Add vLLM Server & Model",
+        "category": "vLLM-Copilot"
+      },
+      {
+        "command": "vllm-copilot.autoConfigureModel",
+        "title": "Auto-Configure Model",
+        "category": "vLLM-Copilot"
+      },
+      {
+        "command": "vllm-copilot.testAndRefreshModels",
+        "title": "Test & Refresh Models",
+        "category": "vLLM-Copilot"
+      },
+      {
+        "command": "vllm-copilot.diagnoseConnection",
+        "title": "Diagnose Connection (TLS / Proxy / Network)",
+        "category": "vLLM-Copilot: Utilities"
+      },
+      {
+        "command": "vllm-copilot.setModelPersonality",
+        "title": "Set Model Personality",
+        "category": "vLLM-Copilot"
+      },
+      {
+        "command": "vllm-copilot.openLogFile",
+        "title": "Open Log File",
+        "category": "vLLM-Copilot"
+      },
+      {
+        "command": "vllm-copilot.configureUtilityModel",
+        "title": "Configure Utility Model",
+        "category": "vLLM-Copilot: Utilities"
+      },
+      {
+        "command": "vllm-copilot.clearLogFiles",
+        "title": "Clear Log Files",
+        "category": "vLLM-Copilot"
+      },
+      {
+        "command": "vllm-copilot.cleanCopilotSessions",
+        "title": "Clean Copilot Sessions",
+        "category": "vLLM-Copilot: Utilities"
+      },
+      {
+        "command": "vllm-copilot.configureServer",
+        "title": "Configure Server",
+        "category": "vLLM-Copilot"
+      }
+    ],
+    "configuration": [
+      {
+        "title": "Models",
+        "properties": {
+          "vllm-copilot.models": {
+            "type": "array",
+            "default": [],
+            "markdownDescription": "Per-model configuration — server, auth, params, modes. See README Configuration Reference for details.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "serverUrl": {
+                  "type": "string",
+                  "markdownDescription": "**Required.** The vLLM server URL hosting this model (OpenAI-compatible API). Each model targets its own server; there is no global server."
+                },
+                "requestHeaders": {
+                  "type": "object",
+                  "default": {},
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "markdownDescription": "HTTP headers sent with every request to this model's server (auth, routing, etc.). **Isolated:** used only for this model's server and never shared with other servers. Put a bearer token as `{ \"Authorization\": \"Bearer <key>\" }` or a gateway key as `{ \"X-API-Key\": \"...\" }`."
+                },
+                "id": {
+                  "type": "string",
+                  "markdownDescription": "**Unique preset ID** used by VS Code to identify this model preset. Must be unique across all entries. If `vllmModelId` is not set, this value is also used as the vLLM server model identifier."
+                },
+                "vllmModelId": {
+                  "type": "string",
+                  "markdownDescription": "The **actual model ID on the vLLM server** (e.g. `Qwen/Qwen3-8B`). Allows multiple presets with different `id` values to point to the same server model. If omitted, `id` is used as the vLLM model identifier."
+                },
+                "displayName": {
+                  "type": "string",
+                  "markdownDescription": "Human-readable name shown in the VS Code model picker. If omitted, the model id is used (e.g. `\"Qwen/Qwen3.6-27B on localhost:8000\"\")."
+                },
+                "family": {
+                  "type": "string",
+                  "markdownDescription": "Model family identifier (e.g. `qwen3_5`, `deepseek_v4`, `llama`). Auto-detected from HuggingFace `config.model_type` or extracted from the model ID. Shown by VS Code in the model picker for display purposes."
+                },
+                "maxOutputTokens": {
+                  "type": "number",
+                  "default": 4096,
+                  "markdownDescription": "Maximum tokens the model may generate in a single response. **Default: 4096.** The server will enforce its own hard limit; this value only affects the extension's token budget calculation."
+                },
+                "maxInputTokens": {
+                  "type": "number",
+                  "markdownDescription": "**Computed automatically** from the vLLM server's `max_model_len` minus `maxOutputTokens`. You can set a lower value here to reserve extra headroom, but it is clamped so input + output never exceeds the total context window. Most users should leave this unset."
+                },
+                "estimateCharsPerToken": {
+                  "type": "number",
+                  "default": 3.5,
+                  "markdownDescription": "Average characters per token for local token estimation. **Default: 3.5.** Depends on the model's tokenizer — English models are ~3.5, tokenizers with many subword tokens may be higher."
+                },
+                "defaultParams": {
+                  "type": "object",
+                  "markdownDescription": "**Model-scope request params** (raw vLLM request-body keys, snake_case). Merged on top of built-in defaults (`temperature: 0.7`, `top_p: 1.0`) and overridden by the selected `modelModes` entry.\n\nExample: `{ \"temperature\": 1, \"top_p\": 0.95, \"presence_penalty\": 0, \"repetition_detection\": { \"max_pattern_size\": 4, \"min_count\": 3 } }`"
+                },
+                "modelModes": {
+                  "type": "object",
+                  "markdownDescription": "Custom model modes for the model picker dropdown. Each key is a label shown to the user, and the value is an object of parameters merged into the vLLM request body. **Sampling parameters** (temperature, top_p, etc.) can be included per mode and will override global settings when that mode is active.\n\n**Example (Qwen3.6 with per-mode sampling):**\n```json\n{\n  \"Think\": {\n    \"chat_template_kwargs\": { \"enable_thinking\": true, \"preserve_thinking\": true },\n    \"temperature\": 1.0,\n    \"top_p\": 0.95,\n    \"presence_penalty\": 0.0\n  },\n  \"No Think\": {\n    \"chat_template_kwargs\": { \"enable_thinking\": false },\n    \"temperature\": 0.7,\n    \"top_p\": 0.8,\n    \"presence_penalty\": 1.5\n  }\n}\n```\n\n💡 **Add vLLM Server & Model** auto-detects these from HuggingFace for new entries; for existing entries, copy from `model-configs/` and hand-edit.",
+                  "additionalProperties": {
+                    "type": "object",
+                    "description": "Parameters to merge into the vLLM request body when this mode is selected."
+                  }
+                },
+                "defaultMode": {
+                  "type": "string",
+                  "markdownDescription": "Explicit default mode for the model picker dropdown. The value must match one of the keys in `modelModes`. If omitted or invalid, the first mode in `modelModes` is used as the default."
+                },
+                "capabilities": {
+                  "type": "object",
+                  "markdownDescription": "⚡ **Experimental** — Model capabilities not discoverable from vLLM. Set these manually.",
+                  "properties": {
+                    "toolCalling": {
+                      "type": "boolean",
+                      "default": true,
+                      "description": "Whether the model supports tool/function calling (default: true)."
+                    },
+                    "imageInput": {
+                      "type": "boolean",
+                      "default": false,
+                      "markdownDescription": "⚡ **Experimental** — vLLM does not expose this. Set to `true` if your model supports vision/image input."
+                    }
+                  }
+                },
+                "streamInactivityTimeout": {
+                  "type": "number",
+                  "default": 0,
+                  "markdownDescription": "Inactivity timeout in ms for this model's SSE stream. If the server sends no tokens for this duration, the stream is considered stalled and the request ends. **Default: 0** (disabled — wait indefinitely)."
+                },
+                "autoContinueRetries": {
+                  "type": "number",
+                  "default": 1,
+                  "markdownDescription": "How many times to automatically retry when the model returns an empty or truncated response. Uses an **assistant prefill** to nudge the model: for empty responses it restarts the turn; for truncated responses (ending with `:`) it continues the partial output. **Default: 1.** Set to 0 to disable."
+                },
+                "systemMessageReplacementsFile": {
+                  "type": "string",
+                  "markdownDescription": "⚡ **Advanced** — Path to a JSON file with find/replace rules for system messages. Each rule: `{ \"ruleName\": \"...\", \"find\": \"exact substring\", \"replace\": \"replacement text\" }`. Applied to every system message before sending to vLLM. Recommended: `.vllm/prompt-replacements.json`",
+                  "default": ""
+                }
+              }
+            },
+            "order": 10
+          }
+        }
+      },
+      {
+        "title": "Diagnostics",
+        "properties": {
+          "vllm-copilot.systemMessageCapture": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "**Advanced.** Capture all Copilot system messages to `.vllm/system-messages.json`. Enables discovering which prompt types your model receives. Write once per unique message (deduped).",
+            "order": 0
+          },
+          "vllm-copilot.enableFileLogging": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Enable file-based logging of all requests and responses. Logs are written to a daily file in the extension's storage directory. Use **Open Log File** to view.",
+            "order": 1
+          },
+          "vllm-copilot.logBodyLimit": {
+            "type": "number",
+            "default": 4000,
+            "markdownDescription": "Maximum characters of request/response bodies to log per entry. Set to `0` for no truncation (full bodies). Only applies when file logging is enabled.",
+            "order": 2
+          }
+        }
+      },
+      {
+        "title": "Dashboard",
+        "properties": {
+          "vllm-copilot.dashboard.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Enable the vLLM Dashboard sidebar. When disabled, polling stops."
+          },
+          "vllm-copilot.dashboard.pollIntervalMs": {
+            "type": "number",
+            "default": 15000,
+            "markdownDescription": "Polling interval in milliseconds for server metrics. **Default: 15000** (15 seconds)."
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "node -e \"const fs=require('fs');fs.rmSync('out',{recursive:true,force:true})\" && tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "VLLM_INTEGRATION=1 vitest run test/integration",
+    "build": "npm run compile && npm test && npx @vscode/vsce package --allow-missing-repository --baseContentUrl \"https://example.com\""
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "@types/vscode": "^1.120.0",
+    "@vitest/coverage-v8": "^4.1.8",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  },
+  "dependencies": {
+    "best-effort-json-parser": "^1.5.1",
+    "eventsource-parser": "^3.1.0",
+    "jsonrepair": "^3.14.0"
+  }
+}

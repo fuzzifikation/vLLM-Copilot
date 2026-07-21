@@ -1,0 +1,10 @@
+out/
+node_modules/
+coverage/
+Colleague_Diagnosis_Fix/
+temp/
+*.tsbuildinfo
+*.vsix
+*.db
+keep_this/
+.vllm/

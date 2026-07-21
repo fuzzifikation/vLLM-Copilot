@@ -1,0 +1,37 @@
+[
+  {
+    "ruleName": "Remove SafetyRules block (common variant)",
+    "find": "Follow Microsoft content policies.\nAvoid content that violates copyrights.\nIf you are asked to generate content that is harmful, hateful, racist, sexist, lewd, or violent, only respond with \"Sorry, I can't assist with that.\"\nKeep your answers short and impersonal.",
+    "replace": ""
+  },
+  {
+    "ruleName": "Remove LegacySafetyRules block",
+    "find": "Follow Microsoft content policies.\nAvoid content that violates copyrights.\nIf you are asked to generate content that is harmful, hateful, racist, sexist, lewd, violent, or completely irrelevant to software engineering, only respond with \"Sorry, I can't assist with that.\"\nKeep your answers short and impersonal.",
+    "replace": ""
+  },
+  {
+    "ruleName": "Remove Gpt5SafetyRule block (no 'short and impersonal')",
+    "find": "Follow Microsoft content policies.\nAvoid content that violates copyrights.\nIf you are asked to generate content that is harmful, hateful, racist, sexist, lewd, or violent, only respond with \"Sorry, I can't assist with that.\"",
+    "replace": ""
+  },
+  {
+    "ruleName": "Remove Copilot identity rule (main variant)",
+    "find": "When asked for your name, you must respond with \"GitHub Copilot\". When asked about the model you are using, you must state that you are using ",
+    "replace": ""
+  },
+  {
+    "ruleName": "Remove GPT-5 variant identity rule",
+    "find": "Your name is GitHub Copilot. When asked about the model you are using, state that you are using ",
+    "replace": ""
+  },
+  {
+    "ruleName": "Remove GPT-5.5 variant identity rule",
+    "find": "Your name is GitHub Copilot. When asked about the model you are using, state \"I am GitHub Copilot\".",
+    "replace": ""
+  },
+  {
+    "ruleName": "Remove generic agent instruction",
+    "find": "Follow the user's requirements carefully & to the letter.",
+    "replace": ""
+  }
+]
