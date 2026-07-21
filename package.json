@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "Use your own vLLM-hosted AI models directly in GitHub Copilot — full tool calling, thinking modes, and vision support and all vLLM special features.",
-  "version": "1.19.0",
+  "version": "1.19.1",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -28,7 +28,8 @@
     "Chat"
   ],
   "activationEvents": [
-    "languageModel_chatVendor:vllm-copilot"
+    "languageModel_chatVendor:vllm-copilot",
+    "onView:vllm-copilot.serverSettings"
   ],
   "main": "./out/extension.js",
   "extensionKind": [
@@ -50,6 +51,11 @@
         {
           "id": "vllm-copilot.dashboard",
           "name": "Dashboard"
+        },
+        {
+          "id": "vllm-copilot.serverSettings",
+          "type": "webview",
+          "name": "Server Settings"
         }
       ]
     },
@@ -264,6 +270,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:integration": "VLLM_INTEGRATION=1 vitest run test/integration",
+    "validate-webview-js": "node -e \"const fs=require('fs');const path=require('path');const files=fs.readdirSync('resources').filter(f=>f.endsWith('.js'));files.forEach(f=>{try{const code=fs.readFileSync(path.join('resources',f),'utf8');require('vm').createScript(code);console.log('OK: '+f)}catch(e){console.error('FAIL: '+f+': '+e.message);process.exitCode=1}})\"",
     "build": "npm run compile && npm test && npx @vscode/vsce package --allow-missing-repository --baseContentUrl \"https://example.com\""
   },
   "devDependencies": {

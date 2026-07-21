@@ -16,6 +16,7 @@ import {
 } from './commands.js';
 import { setExtensionVersion } from './diagnostics.js';
 import { DashboardTreeProvider, fetchServerMetrics } from './dashboard.js';
+import { ServerSettingsViewProvider } from './serverSettingsView.js';
 
 const VENDOR_ID = 'vllm-copilot';
 let provider: VllmChatModelProvider | undefined;
@@ -140,8 +141,20 @@ export async function activate(context: vscode.ExtensionContext) {
     // Register dashboard tree view (native sidebar UI)
     const dashboardTree = new DashboardTreeProvider(context, outputChannel);
     context.subscriptions.push(dashboardTree);
+    const dashboardView = vscode.window.createTreeView('vllm-copilot.dashboard', { treeDataProvider: dashboardTree });
+    context.subscriptions.push(dashboardView);
+
+    // Only poll when the sidebar is actually visible
     context.subscriptions.push(
-      vscode.window.registerTreeDataProvider('vllm-copilot.dashboard', dashboardTree)
+      dashboardView.onDidChangeVisibility(e => {
+        dashboardTree.setVisible(e.visible);
+      }),
+    );
+
+    // Register server settings webview (collapsible section below dashboard)
+    const serverSettingsView = new ServerSettingsViewProvider(context, outputChannel);
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider('vllm-copilot.serverSettings', serverSettingsView)
     );
 
     context.subscriptions.push(

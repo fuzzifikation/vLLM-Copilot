@@ -113,6 +113,16 @@ Non-negotiable for this codebase:
 - **Settings changes fire `onDidChangeConfiguration`.** React to them — never require reload. Cache invalidation is the pattern.
 - **Output channels are for user-visible logs.** Use structured format: `[INFO]`, `[WARN]`, `[ERROR]`.
 
+### Webview View Conventions
+
+- **External JS/CSS files in `resources/` are NOT compiled by TypeScript.** Always validate with `node --check resources/*.js` after changes. Run `npm run validate-webview-js` to check all shipped Webview JavaScript.
+- **Never put inline `<script>` inside template literals.** The `</script>` closing tag will terminate the script block prematurely regardless of escaping. Always use separate `.js` files loaded via `<script src="${webview.asWebviewUri(uri)}">`.
+- **Use a ready handshake.** Webview installs message listener → posts `{ type: 'ready' }` → extension sends initial state. Do NOT post data immediately after setting `webview.html` (race condition).
+- **Restrictive CSP from the start.** Use `default-src 'none'; style-src ${cspSource}; script-src ${cspSource};` — never omit CSP.
+- **Convert local asset URIs with `webview.asWebviewUri()`.** Set `localResourceRoots` to the actual asset directory.
+- **Webview JS has no TypeScript checking.** Common gotchas: `element?.onclick = fn` is a parse error (optional chaining can't be on LHS of assignment), `ontoggle` not `onToggle`, etc.
+- **Debug blank or noninteractive Webviews with `Developer: Open Webview Developer Tools`** — check the webview console before changing the architecture.
+
 ## Anti-Patterns
 
 Things this codebase has been burned by — don't repeat:
