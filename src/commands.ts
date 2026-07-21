@@ -653,8 +653,6 @@ export function registerConfigureServerCommand(
 
       if (!selectedServer) return;
 
-      if (!selectedServer) return;
-
       // Open settings filtered to show vllm-copilot.models
       await vscode.commands.executeCommand('workbench.action.openSettings', 'vllm-copilot.models');
 
