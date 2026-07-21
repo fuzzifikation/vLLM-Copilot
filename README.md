@@ -163,6 +163,8 @@ Access via **View → vLLM-Copilot → Dashboard** or the sidebar section header
 
 ### Server Settings
 
+<table><tr><td>
+
 A sibling webview to the dashboard lets you edit per-model configuration without touching `settings.json`.
 
 - **Server & model selectors** — pick a server and model from dropdowns; unconfigured models can be selected and saved instantly
@@ -173,6 +175,12 @@ A sibling webview to the dashboard lets you edit per-model configuration without
 - **Re-opens automatically** on config changes — no manual refresh needed
 
 Access via **View → vLLM-Copilot → Server Settings** or the sidebar section header.
+
+</td><td>
+
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/server-settings.png" width="400" alt="Server Settings webview showing per-model configuration UI">
+
+</td></tr></table>
 
 ### Auto-Continue on Empty Responses
 
