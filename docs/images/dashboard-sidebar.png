@@ -1,0 +1,18 @@
+# Dashboard Sidebar Screenshot
+
+## What to Capture
+1. Open the Dashboard sidebar (View → vLLM-Copilot → Dashboard)
+2. Expand one server node to show all metrics
+3. Make sure the following are visible:
+   - Server name with green/red status dot
+   - Models subtree with model count
+   - Context Window, KV Cache, KV Cache Hit
+   - Avg TTFT, Throughput
+   - Running, Waiting
+   - MTP metrics (if active)
+
+## Screenshot Tips
+- Use VS Code's built-in screenshot or snipping tool
+- Dark theme looks better in the README
+- Crop to just the sidebar width (not full editor)
+- Save as `dashboard-sidebar.png` in this folder
