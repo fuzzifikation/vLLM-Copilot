@@ -137,9 +137,7 @@ Replacements are exact substring matches, applied sequentially to every system m
 
 A native Tree View sidebar shows live metrics for each configured vLLM server — no webviews, no extra ports.
 
-![Dashboard sidebar with server metrics](https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/dashboard-sidebar.png#gh-light-mode-only "Dashboard sidebar with server metrics" width="500")
-![Dashboard sidebar with server metrics](https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/dashboard-sidebar.png#gh-dark-mode-only "Dashboard sidebar with server metrics" width="500")
-
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/dashboard-sidebar.png" width="500" alt="Dashboard sidebar with server metrics">
 - **Per-server metrics:** Models served, context window, KV cache usage & hit rate, TTFT, throughput (tokens/sec), active queue
 - **MTP / speculative decoding:** Acceptance rate, draft depth, proposal count (when active)
 - **Configurable polling:** Click **Refresh Interval** at the top of the tree to change — enter `15s`, `30s`, `1m`, etc.
