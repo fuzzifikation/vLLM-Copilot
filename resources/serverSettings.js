@@ -163,7 +163,7 @@
         (known && known.options
           ? '<select data-mk="' + E(key) + '">' +
             '<option value="">(auto)</option>' +
-            known.options.map(o => '<option value="' + E(o) + '"' + (val === o ? ' selected' : '') + '>' + E(o) + '</option>').join('') +
+            known.options.map(o => '<option value="' + E(o) + '"' + (String(val) === o ? ' selected' : '') + '>' + E(o) + '</option>').join('') +
             '</select>'
           : typeof val === 'object'
             ? '<textarea data-mk="' + E(key) + '">' + E(JSON.stringify(val, null, 2)) + '</textarea>'
@@ -187,7 +187,7 @@
         (known && known.options
           ? '<select data-dk="' + E(key) + '">' +
             '<option value="">(auto)</option>' +
-            known.options.map(o => '<option value="' + E(o) + '"' + (val === o ? ' selected' : '') + '>' + E(o) + '</option>').join('') +
+            known.options.map(o => '<option value="' + E(o) + '"' + (String(val) === o ? ' selected' : '') + '>' + E(o) + '</option>').join('') +
             '</select>'
           : typeof val === 'object'
             ? '<textarea data-dk="' + E(key) + '">' + E(JSON.stringify(val, null, 2)) + '</textarea>'
@@ -225,7 +225,7 @@
         const k = inp.dataset.mk;
         let v;
         if (inp.tagName === 'TEXTAREA') v = tryJSON(inp.value) || inp.value;
-        else if (inp.tagName === 'SELECT') v = inp.value || undefined;
+        else if (inp.tagName === 'SELECT') v = inp.value === '' ? undefined : tryJSON(inp.value) || inp.value;
         else if (inp.type === 'text') v = inp.value || undefined;
         else v = inp.value === '' ? undefined : Number(inp.value);
         if (v !== undefined) ps[k] = v;
@@ -238,7 +238,7 @@
       const k = inp.dataset.dk;
       let v;
       if (inp.tagName === 'TEXTAREA') v = tryJSON(inp.value) || inp.value;
-      else if (inp.tagName === 'SELECT') v = inp.value || undefined;
+      else if (inp.tagName === 'SELECT') v = inp.value === '' ? undefined : tryJSON(inp.value) || inp.value;
       else if (inp.type === 'text') v = inp.value || undefined;
       else v = inp.value === '' ? undefined : Number(inp.value);
       if (v !== undefined) dp[k] = v;
