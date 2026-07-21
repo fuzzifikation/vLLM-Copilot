@@ -1,5 +1,7 @@
 # UI Feature Plan: Server Status & Dashboard
 
+> **⚠️ SUPERSEDED by v1.19.0** — Dashboard is now implemented as a native VS Code Tree View. This document is kept for historical reference. See [configuration-reference.md#dashboard](./configuration-reference.md#dashboard) for current docs.
+
 > **Goal:** Give users real-time visibility into their vLLM server(s) with actionable insights — not just raw metrics.
 > **Target UX:** User goes "Huh, this is useful for me."
 
