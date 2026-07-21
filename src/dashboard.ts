@@ -363,17 +363,17 @@ class ServerTreeItem extends vscode.TreeItem {
   }
 }
 
-/** Collapsible "Models" node with each model as a child */
+/** Collapsible "Model IDs" node with each model as a child */
 class ModelsTreeItem extends vscode.TreeItem {
   constructor(public readonly modelNames: string[]) {
-    super('Models', vscode.TreeItemCollapsibleState.Collapsed);
+    super('Model IDs', vscode.TreeItemCollapsibleState.Collapsed);
     this.description = `${modelNames.length}`;
     this.iconPath = new vscode.ThemeIcon('library');
     this.tooltip = modelNames.join('\n');
   }
 }
 
-/** A single model name under the Models node */
+/** A single model name under the Model IDs node */
 class ModelTreeItem extends vscode.TreeItem {
   constructor(modelName: string) {
     super(modelName, vscode.TreeItemCollapsibleState.None);
