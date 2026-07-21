@@ -518,13 +518,12 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     }
 
     // Basic info
-    if (m.models.length > 0) {
-      items.push(new ModelsTreeItem(m.models));
-    }
     if (m.version) {
       items.push(new MetricTreeItem('vLLM Version', 'v' + m.version, 'layers'));
     }
-
+    if (m.models.length > 0) {
+      items.push(new ModelsTreeItem(m.models));
+    }
     items.push(new MetricTreeItem('Context Window', fmtTokens(m.maxModelLen), 'layers'));
 
     // Server stats
