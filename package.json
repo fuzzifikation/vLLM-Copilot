@@ -274,15 +274,15 @@
     "build": "npm run compile && npm test && npx @vscode/vsce package --allow-missing-repository --baseContentUrl \"https://example.com\""
   },
   "devDependencies": {
-    "@types/node": "^26.0.1",
-    "@types/vscode": "^1.120.0",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@types/node": "^26.1.1",
+    "@types/vscode": "^1.125.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "best-effort-json-parser": "^1.5.1",
     "eventsource-parser": "^3.1.0",
-    "jsonrepair": "^3.14.0"
+    "jsonrepair": "^3.15.0"
   }
 }
