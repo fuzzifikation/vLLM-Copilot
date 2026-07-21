@@ -519,7 +519,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
     // Basic info
     if (m.version) {
-      items.push(new MetricTreeItem('vLLM Version', 'v' + m.version, 'layers'));
+      items.push(new MetricTreeItem('vLLM Version', 'v' + m.version, 'server'));
     }
     if (m.models.length > 0) {
       items.push(new ModelsTreeItem(m.models));
@@ -530,7 +530,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     items.push(new MetricTreeItem('KV Cache', fmtPct(m.kvCacheUsagePercent), 'graph'));
     items.push(new MetricTreeItem('KV Cache Hit', fmtPct(m.cacheHitRate), 'check-all'));
     items.push(new MetricTreeItem('Avg TTFT', fmtMs(m.avgTTFTMs), 'clock'));
-    items.push(new MetricTreeItem('Throughput', fmtThroughput(m.avgTPOTMs), 'diff-added'));
+    items.push(new MetricTreeItem('Throughput', fmtThroughput(m.avgTPOTMs), 'rocket'));
 
     // Queue position
     items.push(new MetricTreeItem('Running', fmtN(m.runningRequests), 'play'));
