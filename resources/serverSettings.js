@@ -158,12 +158,18 @@
     h += '<button class="danger remove-mode-btn">Remove</button>';
     h += '</div></div><div class="mode-params">';
     for (const [key, val] of Object.entries(params)) {
+      const known = S.knownParams[key];
       h += '<div class="mode-param"><label>' + E(key) + '</label>' +
-        (typeof val === 'object'
-          ? '<textarea data-mk="' + E(key) + '">' + E(JSON.stringify(val, null, 2)) + '</textarea>'
-          : typeof val === 'string'
-            ? '<input type="text" data-mk="' + E(key) + '" value="' + E(val) + '">' 
-            : '<input type="number" data-mk="' + E(key) + '" value="' + E(String(val)) + '" step="any">') +
+        (known && known.options
+          ? '<select data-mk="' + E(key) + '">' +
+            '<option value="">(auto)</option>' +
+            known.options.map(o => '<option value="' + E(o) + '"' + (val === o ? ' selected' : '') + '>' + E(o) + '</option>').join('') +
+            '</select>'
+          : typeof val === 'object'
+            ? '<textarea data-mk="' + E(key) + '">' + E(JSON.stringify(val, null, 2)) + '</textarea>'
+            : typeof val === 'string'
+              ? '<input type="text" data-mk="' + E(key) + '" value="' + E(val) + '">' 
+              : '<input type="number" data-mk="' + E(key) + '" value="' + E(String(val)) + '" step="any">') +
         '<button class="danger remove-param-btn" data-mk="' + E(key) + '">⊗</button>' +
         '</div>';
     }
@@ -176,12 +182,18 @@
     const dp = mc.defaultParams || {};
     let h = '<div id="dpList">';
     for (const [key, val] of Object.entries(dp)) {
+      const known = S.knownParams[key];
       h += '<div class="field-param" data-dk="' + E(key) + '"><label>' + E(key) + '</label>' +
-        (typeof val === 'object'
-          ? '<textarea data-dk="' + E(key) + '">' + E(JSON.stringify(val, null, 2)) + '</textarea>'
-          : typeof val === 'string'
-            ? '<input type="text" data-dk="' + E(key) + '" value="' + E(val) + '">' 
-            : '<input type="number" data-dk="' + E(key) + '" value="' + E(String(val)) + '" step="any">') +
+        (known && known.options
+          ? '<select data-dk="' + E(key) + '">' +
+            '<option value="">(auto)</option>' +
+            known.options.map(o => '<option value="' + E(o) + '"' + (val === o ? ' selected' : '') + '>' + E(o) + '</option>').join('') +
+            '</select>'
+          : typeof val === 'object'
+            ? '<textarea data-dk="' + E(key) + '">' + E(JSON.stringify(val, null, 2)) + '</textarea>'
+            : typeof val === 'string'
+              ? '<input type="text" data-dk="' + E(key) + '" value="' + E(val) + '">' 
+              : '<input type="number" data-dk="' + E(key) + '" value="' + E(String(val)) + '" step="any">') +
         '<button class="danger remove-param-btn" data-dk="' + E(key) + '">⊗</button>' +
         '</div>';
     }
@@ -213,6 +225,7 @@
         const k = inp.dataset.mk;
         let v;
         if (inp.tagName === 'TEXTAREA') v = tryJSON(inp.value) || inp.value;
+        else if (inp.tagName === 'SELECT') v = inp.value || undefined;
         else if (inp.type === 'text') v = inp.value || undefined;
         else v = inp.value === '' ? undefined : Number(inp.value);
         if (v !== undefined) ps[k] = v;
@@ -225,6 +238,7 @@
       const k = inp.dataset.dk;
       let v;
       if (inp.tagName === 'TEXTAREA') v = tryJSON(inp.value) || inp.value;
+      else if (inp.tagName === 'SELECT') v = inp.value || undefined;
       else if (inp.type === 'text') v = inp.value || undefined;
       else v = inp.value === '' ? undefined : Number(inp.value);
       if (v !== undefined) dp[k] = v;
@@ -272,15 +286,24 @@
     if (!avail.length) { const k = await webviewPrompt('Parameter name:'); if (k) insertMP(card, k, 'number'); return; }
     const pick = await webviewParamPick(avail);
     if (!pick) return;
-    insertMP(card, pick.key, pick.info.type === 'json' ? 'textarea' : pick.info.type === 'string' ? 'text' : 'number', pick.info.label);
+    if (pick.info.options) {
+      insertMP(card, pick.key, 'select', pick.info.label, pick.info.options);
+    } else {
+      insertMP(card, pick.key, pick.info.type === 'json' ? 'textarea' : pick.info.type === 'string' ? 'text' : 'number', pick.info.label);
+    }
   }
-  function insertMP(card, key, type, label) {
+  function insertMP(card, key, type, label, options) {
     const cont = card.querySelector('.mode-params');
     const div = document.createElement('div'); div.className = 'mode-param';
     div.innerHTML = '<label>' + E(label || key) + '</label>' +
       (type === 'textarea' ? '<textarea data-mk="' + E(key) + '">{}</textarea>' :
-       type === 'text' ? '<input type="text" data-mk="' + E(key) + '">' :
-       '<input type="number" data-mk="' + E(key) + '" step="any">') +
+       type === 'select' && options
+         ? '<select data-mk="' + E(key) + '">' +
+           '<option value="">(auto)</option>' +
+           options.map(o => '<option value="' + E(o) + '">' + E(o) + '</option>').join('') +
+           '</select>'
+         : type === 'text' ? '<input type="text" data-mk="' + E(key) + '">' :
+         '<input type="number" data-mk="' + E(key) + '" step="any">') +
       '<button class="danger remove-param-btn">⊗</button>';
     cont.appendChild(div);
   }
@@ -296,6 +319,12 @@
     const div = document.createElement('div'); div.className = 'field-param'; div.dataset.dk = pick.key;
     if (pick.info.type === 'json')
       div.innerHTML = '<label>' + E(pick.info.label) + '</label><textarea data-dk="' + E(pick.key) + '">{}</textarea>' +
+        '<button class="danger remove-param-btn" data-dk="' + E(pick.key) + '">⊗</button>';
+    else if (pick.info.options)
+      div.innerHTML = '<label>' + E(pick.info.label) + '</label><select data-dk="' + E(pick.key) + '">' +
+        '<option value="">(auto)</option>' +
+        pick.info.options.map(o => '<option value="' + E(o) + '">' + E(o) + '</option>').join('') +
+        '</select>' +
         '<button class="danger remove-param-btn" data-dk="' + E(pick.key) + '">⊗</button>';
     else if (pick.info.type === 'string')
       div.innerHTML = '<label>' + E(pick.info.label) + '</label><input type="text" data-dk="' + E(pick.key) + '">' +
