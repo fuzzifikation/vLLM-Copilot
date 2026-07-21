@@ -2,13 +2,7 @@
 
 Only outstanding issues are listed here. Fixed items belong in [CHANGELOG.md](./CHANGELOG.md); proposed features belong in [docs/feature-ideas.md](./docs/feature-ideas.md).
 
-The list was audited against the current source and tests on 2026-07-19. Items are retained only when the behavior is reproducible from the code or the maintainability concern is concrete. Similar findings are consolidated.
-
-### Fixed 2026-07-19
-
-- **P0: TLS diagnostic lied about auto-fix result** — forwarded actual `TlsFixResult` instead of hardcoded `{ exported: true }`. Report now shows real export status, PEM path, and `NODE_EXTRA_CA_CERTS` instructions.
-- **P1: Auto-config invented Qwen sampling params for every model** — deleted `parseModelModes()`. Auto-discovery no longer scans Jinja templates to guess thinking modes. User presets (`model-configs/`) are the source of truth.
-- **P1: `testAndRefreshModels` did not await the network-gating settings command** — `openSettings` was fired inside a `.then()` callback and the inner `executeCommand` was not awaited. Converted to `await` so failures surface instead of becoming unhandled rejections, consistent with the surrounding awaited calls.
+The list was audited against the current source and tests on 2026-07-21. Items are retained only when the behavior is reproducible from the code or the maintainability concern is concrete. Similar findings are consolidated.
 
 ---
 
@@ -21,10 +15,6 @@ These are not necessarily user-visible failures, but they impose a concrete main
 - **`autoConfig.ts` is a ~1,040-line multi-purpose module** - it combines preset loading, HuggingFace and vLLM fetching, config generation, BYOK utility-model setup, and progress UI. The responsibilities can be separated when this area is next changed, reducing the cost and risk of local edits.
 - **`provider.ts` is a 944-line orchestration module** - stream consumption, auto-continue retry state, post-stream diagnostics, and error classification are all coordinated here. The existing `StreamOutcome` boundary provides a natural extraction point for stream/retry handling.
 - **`testAndRefreshModels` is one roughly 200-line command closure with five responsibilities** - parallel checks, mismatch correction, per-model reporting, network-gating checks, and the deep-diagnostic offer. Its modal branches are difficult to test independently. Extracting behavior-scoped helpers would leave the command as a small orchestrator without changing the intentional one-dialog-per-model UX.
-
-### P1 - Packaging Depends On Manual Dependency Re-Inclusion
-
-- **The extension has no bundler and `.vscodeignore` manually re-includes runtime dependency files** - the current file excludes `node_modules/` and selectively restores `eventsource-parser`, `jsonrepair`, and `best-effort-json-parser`. Adding a runtime dependency without updating `.vscodeignore` can produce a VSIX that installs but fails at extension load time. This is a recurring packaging failure mode, not just a theoretical cleanup preference.
 
 ### P2 - Redundant Stream Queue Control Flow
 
@@ -56,6 +46,34 @@ These are not necessarily user-visible failures, but they impose a concrete main
 
 - **`sessionManager.ts` uses module-level mutable output-channel state** - logging depends on `setSessionManagerOutput()` having run before any operation. Passing the channel through the operations that log would make the dependency explicit and eliminate the silent-no-op fallback.
 - **Several session-manager operations are declared `async` while doing synchronous SQLite work** - `deleteChatKeys()` and the database scan use `DatabaseSync`, so the event loop is still blocked despite the Promise return type. Either expose synchronous APIs or move the database work off the extension-host thread.
+
+---
+
+## Bugs And Logical Errors
+
+Audited 2026-07-21. Each item below was validated against the current code (and where relevant, against the tests). Bugs are listed separately from the maintainability concerns above.
+
+### P2 - Webview listener can accumulate across `resolveWebviewView` re-invocations
+
+- **`serverSettingsView.ts::resolveWebviewView` pushes the `onDidReceiveMessage` disposable into `context.subscriptions` rather than a view-scoped disposable** — `context.subscriptions` lives for the entire extension lifetime. VS Code normally resolves a webview view only once, but if `resolveWebviewView` is re-invoked (after disposing and re-showing the view), each call leaks an additional listener. Use a view-scoped disposable (e.g. push to `webviewView`'s `onDidDispose` chain) so listeners are torn down with their owning view.
+
+### P3 - `extractFamily` falls back to org name for many common model families
+
+- **`modelUtils.ts::extractFamily` only recognizes `codellama`, `llama`, `qwen`, `mistral`, `phi`, `gemma`, `deepseek`, `falcon`** — other common families such as GLM/ChatGLM (used by the included `glm-5.2-config.json` preset), Command R+/Cohere, Aya, Yi, granite, and several others fall through to the org name (text before `/`). The builder surfaces this in the picker as a sort key, so it is non-fatal, but the family autodetection is incomplete.
+
+---
+
+## False Positives
+
+Reviewed 2026-07-21. Items below were first filed as bugs and then rejected as intentional or based on a wrong premise. Kept here so future reviewers (human or AI) do not re-file the same finding.
+
+### P1 - Writes go to `ConfigurationTarget.Global` regardless of source scope
+
+- **`saveModelConfig`, `serverSettingsView.ts::saveModelConfig`, `migrateToPerModelServer`, and `migrateToCompositeIds` all write to Global only.** Filed because if `vllm-copilot.models` is set at workspace scope, the write is shadowed by the workspace value (VS Code precedence is Default < Global < Workspace). **Rejected as intentional:** the extension's design is "always write to global user settings"; the workspace-scope case is out of scope for now and would need an explicit design discussion. *Note for later:* `migrateToPerModelServer` clears legacy keys at *both* Global and Workspace scope but writes the migrated `models` value to Global only, so a workspace-scoped user could end up with a partially-migrated config (legacy shape still winning via workspace read).
+
+### P1 - Dashboard & webview use the first model's `requestHeaders` per `serverUrl`
+
+- **Per-server grouped UI collapses multiple presets to one set of headers.** Filed under the premise that two presets on the same `serverUrl` could legitimately need different credentials. **Rejected:** on a real vLLM server `--api-key` is global to the process, and `--served-model-name` aliases all point at the same underlying model — so two presets on one `serverUrl` cannot have different auth. Using the first preset's headers per server is correct. *Adjacent observation (not the originally filed bug):* `requestHeaders` is stored per `ModelConfig`, so editing headers on one preset of a shared server does not propagate to the others in settings — separate concern about the data model, not the read-side "wrong credentials" claim originally filed.
 
 ---
 
