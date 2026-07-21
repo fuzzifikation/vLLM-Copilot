@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.19.0 (upcoming) — Native Tree View Dashboard
+
+- **New: vLLM Server Dashboard as native VS Code Tree View** — replaced the webview sidebar with a TreeDataProvider-based sidebar. Server list with collapsible per-server metrics: model names, context window, KV cache usage, running/watching requests, TTFT, TPOT, cache hit rate, MTP speculative decoding metrics, preemptions, evictions.
+- **New: status bar health indicator** — color-coded status bar item shows KV cache usage for the first configured server. Clickable to refresh the dashboard. Supports multiple servers (shows first server's status).
+- **New: automatic polling** — dashboard metrics refresh at a configurable interval (`vllm-copilot.dashboard.pollIntervalMs`, default 15s).
+- **New: MTP speculative decoding visibility** — Prometheus `spec_decode_num_draft_tokens_total`, `spec_decode_num_accepted_tokens_total`, and `spec_decode_num_drafts_total` are parsed and displayed as MTP acceptance rate, draft depth, and total proposal count.
+- **New: all model names per server** — model aliases are discovered from `/v1/models`, Prometheus metrics, and config, then merged into a collapsible Models subtree.
+- **New: Context Window display** — `max_model_len` from `/v1/models` endpoint, formatted as "32K".
+- **Removed: webview sidebar** — `DashboardWebview` class and all webview HTML/JS generation code deleted. No more `type: webview` in package.json for the dashboard.
+
 ## v0.18.0 (upcoming) — Historical reasoning preservation
 
 - **New: host-owned reasoning history** — forwards historical VS Code `LanguageModelThinkingPart` content as structured assistant `reasoning` for vLLM requests, without maintaining a private conversation transcript.

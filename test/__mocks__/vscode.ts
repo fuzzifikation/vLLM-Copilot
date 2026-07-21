@@ -36,6 +36,11 @@ export const LanguageModelChatToolMode = {
   Required: 2,
 } as const;
 
+export const ExtensionKind = {
+  UI: 1,
+  Workspace: 2,
+} as const;
+
 export class RelativePattern {
   constructor(
     public base: any,
@@ -80,6 +85,17 @@ export const workspace = {
     dispose: () => {},
   }),
   onDidChangeConfiguration: () => ({ dispose: () => {} }),
+} as any;
+
+// env stub (for remote detection) — tests can override if needed
+export const env = {
+  remoteName: undefined,
+  uiKind: 1, // Desktop
+  appName: 'Code',
+  language: 'en',
+  uriScheme: 'vscode',
+  clipboard: { readText: () => '', writeText: () => Promise.resolve() },
+  openExternal: () => Promise.resolve(true),
 } as any;
 
 // Anything else accessed on `vscode.*` is undefined; tests should only touch the above.

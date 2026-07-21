@@ -1,509 +1,557 @@
 /**
- * Dashboard view for the vLLM sidebar.
- * Shows server status and basic metrics.
+ * Dashboard as a VS Code Tree View + Status Bar.
+ * Replaces the previous webview approach with native sidebar UI.
  */
 
 import * as vscode from 'vscode';
 import { getConfig, resolveServerConfig } from './config.js';
-import type { ModelConfig } from './config.js';
 
-/** Parsed metrics from vLLM's /metrics endpoint */
-interface ServerMetrics {
-  online: boolean;
-  version?: string;
-  uptimeSeconds?: number;
-  gpuMemoryTotal?: number; // bytes
-  gpuMemoryUsed?: number; // bytes
-  kvCacheUsagePercent?: number;
-  runningRequests?: number;
-  waitingRequests?: number;
-  error?: string;
-}
+// ─── Types ───────────────────────────────────────────────────────────
 
-/** Server connection info with auth headers */
 interface ServerConnection {
   url: string;
   requestHeaders: Record<string, string>;
+  configModelIds: string[];
 }
 
-/**
- * Parses the Prometheus text format from vLLM's /metrics endpoint.
- * Lightweight parser — handles the specific metrics we care about.
- */
-function parseMetrics(text: string): Partial<ServerMetrics> {
-  const result: Partial<ServerMetrics> = {};
+interface ModelAccumulator {
+  kvCacheUsagePerc: number[];
+  running: number[];
+  waiting: number[];
+  preemptions: number[];
+  evictions: number[];
+  promptTokensTotal: number[];
+  promptTokensCached: number[];
+  specDraftTokens: number[];
+  specAcceptedTokens: number[];
+  specDrafts: number[];
+  ttftSum: number;
+  ttftCount: number;
+  tpotSum: number;
+  tpotCount: number;
+}
 
-  for (const line of text.split('\n')) {
-    // Skip comments
-    if (line.startsWith('#')) continue;
+interface ServerMetrics {
+  online: boolean;
+  version?: string;
+  models: string[];
+  maxModelLen: number | null;
+  kvCacheUsagePercent: number | null;
+  runningRequests: number | null;
+  waitingRequests: number | null;
+  cacheHitRate: number | null;
+  specAcceptanceRate: number | null;
+  specDraftsTotal: number | null;
+  specDraftDepth: number | null;
+  avgTTFTMs: number | null;
+  avgTPOTMs: number | null;
+  preemptions: number | null;
+  evictions: number | null;
+  error?: string;
+}
 
-    // Parse metric lines: metric_name{labels} value
-    const match = line.match(/^(\w+)\{(.*)\}\s+(.+)$/);
-    if (!match) continue;
+// ─── Prometheus Parser ───────────────────────────────────────────────
 
-    const [, name, labelsStr, value] = match;
-    const labels: Record<string, string> = {};
+class MetricsParser {
+  models = new Map<string, ModelAccumulator>();
 
-    for (const labelMatch of labelsStr.matchAll(/(\w+)="([^"]*)"/g)) {
-      labels[labelMatch[1]] = labelMatch[2];
+  private getAccum(model: string): ModelAccumulator {
+    let acc = this.models.get(model);
+    if (!acc) {
+      acc = {
+        kvCacheUsagePerc: [],
+        running: [],
+        waiting: [],
+        preemptions: [],
+        evictions: [],
+        promptTokensTotal: [],
+        promptTokensCached: [],
+        specDraftTokens: [],
+        specAcceptedTokens: [],
+        specDrafts: [],
+        ttftSum: 0,
+        ttftCount: 0,
+        tpotSum: 0,
+        tpotCount: 0,
+      };
+      this.models.set(model, acc);
     }
+    return acc;
+  }
 
-    const numValue = parseFloat(value);
+  parseLine(line: string): void {
+    const m = line.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{([^}]*)\})?\s+([-+0-9.eE]+)$/);
+    if (!m) return;
+    const [, name, labelsRaw, valueRaw] = m;
+    const labels = parseLabels(labelsRaw);
+    const value = parseFloat(valueRaw);
+    if (isNaN(value)) return;
+
+    const model = labels.model_name ?? 'unknown';
+    const acc = this.getAccum(model);
 
     switch (name) {
-      case 'vllm:gpu_cache_usage_perc':
-        result.kvCacheUsagePercent = numValue * 100;
-        break;
-      case 'vllm:gpu_memory_config':
-        if (labels.name === 'gpu_memory_percent') {
-          result.gpuMemoryUsed = numValue * 100; // stored as percent
-        }
+      case 'vllm:kv_cache_usage_perc':
+        acc.kvCacheUsagePerc.push(value);
         break;
       case 'vllm:num_requests_running':
-        result.runningRequests = numValue;
+        acc.running.push(value);
         break;
       case 'vllm:num_requests_waiting':
-        result.waitingRequests = numValue;
+        acc.waiting.push(value);
         break;
+      case 'vllm:num_preemptions_total':
+        acc.preemptions.push(value);
+        break;
+      case 'vllm:request_eviction_total':
+        acc.evictions.push(value);
+        break;
+      case 'vllm:prompt_tokens_total':
+        acc.promptTokensTotal.push(value);
+        break;
+      case 'vllm:prompt_tokens_cached_total':
+        acc.promptTokensCached.push(value);
+        break;
+      case 'vllm:spec_decode_num_draft_tokens_total':
+        acc.specDraftTokens.push(value);
+        break;
+      case 'vllm:spec_decode_num_accepted_tokens_total':
+        acc.specAcceptedTokens.push(value);
+        break;
+      case 'vllm:spec_decode_num_drafts_total':
+        acc.specDrafts.push(value);
+        break;
+    }
+
+    if (name === 'vllm:time_to_first_token_seconds_sum') {
+      acc.ttftSum += value;
+    } else if (name === 'vllm:time_to_first_token_seconds_count') {
+      acc.ttftCount += value;
+    } else if (name === 'vllm:inter_token_latency_seconds_sum') {
+      acc.tpotSum += value;
+    } else if (name === 'vllm:inter_token_latency_seconds_count') {
+      acc.tpotCount += value;
     }
   }
 
-  return result;
+  parse(text: string): void {
+    for (const line of text.split('\n')) {
+      const trimmed = line.trimStart();
+      if (trimmed === '' || trimmed.startsWith('#')) continue;
+      this.parseLine(trimmed);
+    }
+  }
+
+  aggregate(): Omit<ServerMetrics, 'online' | 'version' | 'error'> {
+    const modelNames = [...this.models.keys()].filter(m => m !== 'unknown');
+
+    const sumAll = <T extends number>(fn: (a: ModelAccumulator) => T[]) => {
+      let total = 0;
+      for (const m of modelNames) {
+        for (const v of fn(this.models.get(m)!)) total += v;
+      }
+      return total;
+    };
+
+    const avgAll = <T extends number>(fn: (a: ModelAccumulator) => T[]) => {
+      const values: number[] = [];
+      for (const m of modelNames) {
+        const arr = fn(this.models.get(m)!);
+        if (arr.length > 0) {
+          values.push(arr.reduce((s, v) => s + v, 0) / arr.length);
+        }
+      }
+      return values.length === 0 ? null : values.reduce((s, v) => s + v, 0) / values.length;
+    };
+
+    const running = sumAll(a => a.running);
+    const waiting = sumAll(a => a.waiting);
+    const preemptions = sumAll(a => a.preemptions);
+    const evictions = sumAll(a => a.evictions);
+    const kvCache = avgAll(a => a.kvCacheUsagePerc);
+
+    const totalPrompt = sumAll(a => a.promptTokensTotal);
+    const totalCached = sumAll(a => a.promptTokensCached);
+    const cacheHitRate = totalPrompt > 0 ? (totalCached / totalPrompt) * 100 : null;
+
+    const totalDraft = sumAll(a => a.specDraftTokens);
+    const totalAccepted = sumAll(a => a.specAcceptedTokens);
+    const totalDrafts = sumAll(a => a.specDrafts);
+    const specAcceptanceRate = totalDraft > 0 ? (totalAccepted / totalDraft) * 100 : null;
+    const specDraftDepth = totalDrafts > 0 ? totalDraft / totalDrafts : null;
+
+    let ttftSum = 0, ttftCount = 0;
+    let tpotSum = 0, tpotCount = 0;
+    for (const m of modelNames) {
+      const a = this.models.get(m)!;
+      ttftSum += a.ttftSum;
+      ttftCount += a.ttftCount;
+      tpotSum += a.tpotSum;
+      tpotCount += a.tpotCount;
+    }
+    const avgTTFTMs = ttftCount > 0 ? (ttftSum / ttftCount) * 1000 : null;
+    const avgTPOTMs = tpotCount > 0 ? (tpotSum / tpotCount) * 1000 : null;
+
+    return {
+      models: modelNames,
+      maxModelLen: null,
+      kvCacheUsagePercent: kvCache,
+      runningRequests: modelNames.length > 0 ? running : null,
+      waitingRequests: modelNames.length > 0 ? waiting : null,
+      cacheHitRate,
+      specAcceptanceRate,
+      specDraftsTotal: totalDrafts > 0 ? totalDrafts : null,
+      specDraftDepth,
+      avgTTFTMs,
+      avgTPOTMs,
+      preemptions: preemptions > 0 ? preemptions : null,
+      evictions: evictions > 0 ? evictions : null,
+    };
+  }
 }
 
-/**
- * Fetches server info and metrics from a vLLM server.
- * Uses per-model requestHeaders for authentication.
- */
-async function fetchServerMetrics(
+function parseLabels(raw: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!raw) return out;
+  for (const m of raw.matchAll(/(\w+)="([^"]*)"/g)) {
+    out[m[1]] = m[2];
+  }
+  return out;
+}
+
+// ─── Fetch ───────────────────────────────────────────────────────────
+
+export async function fetchServerMetrics(
   serverUrl: string,
   requestHeaders: Record<string, string>,
-  timeout = 5000
+  configModelIds: string[] = [],
+  timeout = 5000,
 ): Promise<ServerMetrics> {
-  const baseUrl = serverUrl.replace(/\/$/, '');
+  const baseUrl = serverUrl.replace(/\/+$/, '');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
-
-  // Build headers object from per-model config
   const headers = { ...requestHeaders };
 
   try {
-    // Health check - vLLM returns 200 with no body, not JSON
-    const healthRes = await fetch(`${baseUrl}/health`, {
-      signal: controller.signal,
-      headers,
-    });
-
+    const healthRes = await fetch(`${baseUrl}/health`, { signal: controller.signal, headers });
     if (!healthRes.ok) {
-      return { online: false, error: `Health check failed: ${healthRes.status}` };
+      return {
+        online: false, error: `Health check failed: ${healthRes.status}`,
+        models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
+        cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
+        avgTTFTMs: null, avgTPOTMs: null, preemptions: null, evictions: null,
+      };
     }
 
-    // Server is online
-    const result: ServerMetrics = {
-      online: true,
-    };
-
-    // Try to get version from /version
+    // /v1/models returns all served models (base + aliases): { object: "list", data: [{ id, max_model_len, ... }] }
+    const modelNames: string[] = [];
+    let maxModelLen: number | null = null;
     try {
-      const versionRes = await fetch(`${baseUrl}/version`, {
-        signal: controller.signal,
-        headers,
-      });
-      if (versionRes.ok) {
-        const versionData = await versionRes.json() as { version?: string };
-        result.version = versionData.version;
+      const modelsRes = await fetch(`${baseUrl}/v1/models`, { signal: controller.signal, headers });
+      if (modelsRes.ok) {
+        const modelsData = await modelsRes.json() as { data?: Array<{ id?: string; max_model_len?: number | null }> };
+        for (const m of modelsData.data ?? []) {
+          if (m.id) modelNames.push(m.id);
+          if (m.max_model_len != null && m.max_model_len > 0) maxModelLen = m.max_model_len;
+        }
       }
-    } catch {
-      // Version endpoint might not exist
-    }
+    } catch { /* non-critical */ }
 
-    // Try to get metrics
+    let version: string | undefined;
     try {
-      const metricsRes = await fetch(`${baseUrl}/metrics`, {
-        signal: controller.signal,
-        headers,
-      });
-      if (metricsRes.ok) {
-        const metricsText = await metricsRes.text();
-        Object.assign(result, parseMetrics(metricsText));
+      const verRes = await fetch(`${baseUrl}/version`, { signal: controller.signal, headers });
+      if (verRes.ok) {
+        const data = await verRes.json() as { version?: string };
+        version = data.version;
       }
-    } catch {
-      // Metrics endpoint might be disabled
-    }
+    } catch { /* optional */ }
 
-    return result;
+    let rawMetrics = '';
+    try {
+      const metRes = await fetch(`${baseUrl}/metrics`, { signal: controller.signal, headers });
+      if (metRes.ok) {
+        rawMetrics = await metRes.text();
+      }
+    } catch { /* metrics may be disabled */ }
+
+    const parser = new MetricsParser();
+    parser.parse(rawMetrics);
+    const aggregated = parser.aggregate();
+
+    // Merge: config model IDs + /v1/models + metrics
+    const allModels = [...new Set([...configModelIds, ...modelNames, ...aggregated.models])];
+    return { online: true, version, ...aggregated, models: allModels, maxModelLen };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { online: false, error: `Cannot connect: ${message}` };
+    return {
+      online: false, error: `Cannot connect: ${message}`,
+      models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
+      cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
+      avgTTFTMs: null, avgTPOTMs: null, preemptions: null, evictions: null,
+    };
   } finally {
     clearTimeout(timer);
   }
 }
 
-/**
- * Generates HTML for the dashboard webview.
- */
-function generateDashboardHtml(
-  webview: vscode.Webview,
-  servers: string[],
-  selectedServer: string | null,
-  metrics: ServerMetrics | null,
-  pollingInterval: number,
-  isPolling: boolean
-): string {
-  const serverOptions = servers.map(url => {
-    const selected = url === selectedServer ? 'selected' : '';
-    return `<option value="${url}" ${selected}>${url}</option>`;
-  }).join('\n');
+// ─── Formatting ──────────────────────────────────────────────────────
 
-  const noServersMessage = servers.length === 0
-    ? `<div class="no-servers">
-        <p>No servers configured.</p>
-        <button id="addServerBtn">Add Server &amp; Model</button>
-      </div>`
-    : '';
+function fmtPct(v: number | null): string {
+  return v == null ? '—' : `${Math.round(v)}%`;
+}
 
-  let metricsHtml = '';
-  if (selectedServer && metrics) {
-    const statusColor = metrics.online ? '#4ec9b0' : '#f48771';
-    const statusText = metrics.online ? 'Online' : 'Offline';
+function fmtMs(ms: number | null): string {
+  if (ms == null) return '—';
+  return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
+}
 
-    if (metrics.online) {
-      const kvCache = metrics.kvCacheUsagePercent != null
-        ? formatPercentage(metrics.kvCacheUsagePercent)
-        : 'N/A';
+function fmtN(v: number | null): string {
+  return v == null ? '—' : String(v);
+}
 
-      const gpuMemory = metrics.gpuMemoryUsed != null
-        ? formatPercentage(metrics.gpuMemoryUsed)
-        : 'N/A';
+function fmtTokens(tokens: number | null): string {
+  if (tokens == null) return '—';
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(tokens % 1000 === 0 ? 0 : 1)}K`;
+  return String(tokens);
+}
 
-      const version = metrics.version ? `<span class="metric-value">${metrics.version}</span>` : '<span class="metric-value">unknown</span>';
-      const uptime = metrics.uptimeSeconds != null
-        ? `<span class="metric-value">${formatUptime(metrics.uptimeSeconds)}</span>`
-        : '<span class="metric-value">N/A</span>';
-
-      const running = metrics.runningRequests != null
-        ? `<span class="metric-value">${metrics.runningRequests}</span>`
-        : '<span class="metric-value">N/A</span>';
-
-      const waiting = metrics.waitingRequests != null
-        ? `<span class="metric-value">${metrics.waitingRequests}</span>`
-        : '<span class="metric-value">N/A</span>';
-
-      metricsHtml = `
-        <div class="metrics-panel">
-          <div class="metric-row">
-            <span class="metric-label">Version</span>
-            ${version}
-          </div>
-          <div class="metric-row">
-            <span class="metric-label">Uptime</span>
-            ${uptime}
-          </div>
-          <div class="metric-row">
-            <span class="metric-label">GPU Memory</span>
-            <span class="metric-value">${gpuMemory}</span>
-          </div>
-          <div class="metric-row">
-            <span class="metric-label">KV Cache</span>
-            <div class="progress-bar">
-              <div class="progress-fill" style="width: ${metrics.kvCacheUsagePercent || 0}%"></div>
-            </div>
-            <span class="metric-value">${kvCache}</span>
-          </div>
-          <div class="metric-row">
-            <span class="metric-label">Running</span>
-            ${running}
-          </div>
-          <div class="metric-row">
-            <span class="metric-label">Waiting</span>
-            ${waiting}
-          </div>
-        </div>
-      `;
-    } else {
-      metricsHtml = `
-        <div class="error-panel">
-          <p>${metrics.error || 'Server is offline'}</p>
-        </div>
-      `;
-    }
-
-    metricsHtml = `
-      <div class="server-status" style="color: ${statusColor}">
-        <span class="status-dot"></span> ${statusText}
-      </div>
-      ${metricsHtml}
-    `;
+function shortUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.hostname}:${u.port}`;
+  } catch {
+    return url.replace(/\/+$/, '');
   }
-
-  const pollingBadge = isPolling ? '<span class="polling-indicator">●</span>' : '';
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'inline'; script-src ${webview.cspSource};">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--vscode-font-family); padding: 12px; color: var(--vscode-foreground); }
-    .server-selector { margin-bottom: 12px; }
-    .server-selector select {
-      width: 100%;
-      padding: 6px 8px;
-      background: var(--vscode-input-background);
-      color: var(--vscode-input-foreground);
-      border: 1px solid var(--vscode-input-border);
-      border-radius: 2px;
-    }
-    .server-status {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 0;
-      font-weight: 600;
-    }
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: currentColor;
-      display: inline-block;
-    }
-    .metrics-panel { margin-top: 8px; }
-    .metric-row {
-      display: flex;
-      justify-content: space-between;
-      padding: 4px 0;
-      border-bottom: 1px solid var(--vscode-panel-border);
-    }
-    .metric-label { color: var(--vscode-descriptionForeground); }
-    .metric-value { font-weight: 500; }
-    .progress-bar {
-      height: 4px;
-      background: var(--vscode-input-background);
-      border-radius: 2px;
-      margin: 4px 0;
-      overflow: hidden;
-    }
-    .progress-fill {
-      height: 100%;
-      background: var(--vscode-progressBar-background);
-      transition: width 0.3s;
-    }
-    .error-panel {
-      margin-top: 8px;
-      padding: 8px;
-      background: rgba(244, 135, 113, 0.1);
-      border-radius: 4px;
-      font-size: 0.9em;
-    }
-    .no-servers {
-      text-align: center;
-      padding: 24px 0;
-      color: var(--vscode-descriptionForeground);
-    }
-    .no-servers button {
-      margin-top: 12px;
-      padding: 6px 12px;
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      border: none;
-      border-radius: 2px;
-      cursor: pointer;
-    }
-    .no-servers button:hover {
-      background: var(--vscode-button-hoverBackground);
-    }
-    .configure-btn {
-      margin-top: 12px;
-      width: 100%;
-      padding: 6px;
-      background: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-      border: none;
-      border-radius: 2px;
-      cursor: pointer;
-    }
-    .configure-btn:hover {
-      background: var(--vscode-button-secondaryHoverBackground);
-    }
-    .polling-indicator {
-      color: var(--vscode-descriptionForeground);
-      font-size: 0.8em;
-      margin-left: 4px;
-      animation: pulse 2s infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.3; }
-    }
-    .actions { margin-top: 12px; }
-  </style>
-</head>
-<body>
-  <div class="server-selector">
-    <select id="serverSelect">
-      ${servers.length > 0 ? serverOptions : '<option>No servers</option>'}
-    </select>
-    ${pollingBadge}
-  </div>
-  ${noServersMessage}
-  ${metricsHtml}
-  <div class="actions">
-    <button class="configure-btn" id="configureBtn">Configure Server</button>
-  </div>
-  <script>
-    const vscode = acquireVsCodeApi();
-    const serverSelect = document.getElementById('serverSelect');
-    const configureBtn = document.getElementById('configureBtn');
-    const addServerBtn = document.getElementById('addServerBtn');
-
-    serverSelect?.addEventListener('change', (e) => {
-      vscode.postMessage({ type: 'selectServer', serverUrl: e.target.value });
-    });
-
-    configureBtn?.addEventListener('click', () => {
-      vscode.postMessage({ type: 'configureServer' });
-    });
-
-    addServerBtn?.addEventListener('click', () => {
-      vscode.postMessage({ type: 'addServer' });
-    });
-  </script>
-</body>
-</html>`;
 }
 
-function formatPercentage(value: number): string {
-  return `${Math.round(value)}%`;
+// ─── Tree Items ──────────────────────────────────────────────────────
+
+/** Build a compact one-line summary for the collapsed server node description */
+function summaryLine(m: ServerMetrics): string {
+  const parts: string[] = [];
+  if (m.version) parts.push(`v${m.version}`);
+  if (m.maxModelLen != null) parts.push(`${fmtTokens(m.maxModelLen)} ctx`);
+  if (m.kvCacheUsagePercent != null) parts.push(`${Math.round(m.kvCacheUsagePercent)}% KV`);
+  if (m.runningRequests != null) parts.push(`${m.runningRequests} running`);
+  if (m.waitingRequests != null && m.waitingRequests > 0) parts.push(`${m.waitingRequests} waiting`);
+  return parts.join('  ·  ');
 }
 
-function formatUptime(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m`;
-  return `${Math.floor(seconds)}s`;
+/** A server node in the tree (collapsible, shows metrics as children) */
+class ServerTreeItem extends vscode.TreeItem {
+  constructor(
+    public readonly serverUrl: string,
+    public readonly metrics: ServerMetrics,
+    public readonly requestHeaders: Record<string, string>,
+    public readonly updatedAt: Date | null,
+  ) {
+    const displayName = shortUrl(serverUrl);
+    const statusIcon = metrics.online
+      ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'))
+      : new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.red'));
+
+    super(displayName, vscode.TreeItemCollapsibleState.Collapsed);
+    this.iconPath = statusIcon;
+    this.description = metrics.online ? summaryLine(metrics) : 'Offline';
+    this.tooltip = new vscode.MarkdownString(`${serverUrl}\n*${metrics.models.join(', ') || 'no models'}*\n\nUpdated: ${updatedAt ? updatedAt.toLocaleTimeString() : 'never'}`);
+    this.contextValue = metrics.online ? 'serverOnline' : 'serverOffline';
+  }
 }
 
-/**
- * Provider for the vLLM Dashboard webview.
- */
-export class DashboardViewProvider implements vscode.WebviewViewProvider {
-  private view: vscode.WebviewView | undefined;
-  private pollTimer: ReturnType<typeof setInterval> | undefined;
-  private selectedServer: string | null = null;
+/** Collapsible "Models" node with each model as a child */
+class ModelsTreeItem extends vscode.TreeItem {
+  constructor(public readonly modelNames: string[]) {
+    super('Models', vscode.TreeItemCollapsibleState.Collapsed);
+    this.description = `${modelNames.length}`;
+    this.iconPath = new vscode.ThemeIcon('library');
+    this.tooltip = modelNames.join('\n');
+  }
+}
+
+/** A single model name under the Models node */
+class ModelTreeItem extends vscode.TreeItem {
+  constructor(modelName: string) {
+    super(modelName, vscode.TreeItemCollapsibleState.None);
+    this.iconPath = new vscode.ThemeIcon('symbol-class');
+    this.tooltip = modelName;
+  }
+}
+
+/** A metric row (label: value) */
+class MetricTreeItem extends vscode.TreeItem {
+  constructor(label: string, value: string, icon?: string) {
+    super(label, vscode.TreeItemCollapsibleState.None);
+    this.description = value;
+    if (icon) {
+      this.iconPath = new vscode.ThemeIcon(icon);
+    }
+    this.tooltip = `${label}: ${value}`;
+  }
+}
+
+// ─── Tree Data Provider ──────────────────────────────────────────────
+
+export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | undefined | void>();
+  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
   private servers: ServerConnection[] = [];
+  private metricsCache: Map<string, { metrics: ServerMetrics; updatedAt: Date }> = new Map();
+  private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private outputChannel: vscode.OutputChannel;
 
   constructor(
-    private extensionContext: vscode.ExtensionContext,
-    private outputChannel: vscode.OutputChannel
-  ) {}
-
-  public resolveWebviewView(
-    webviewView: vscode.WebviewView,
-    _context: vscode.WebviewViewResolveContext,
-    _token: vscode.CancellationToken
-  ): void | Thenable<void> {
-    this.view = webviewView;
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [],
-    };
-
-    webviewView.webview.onDidReceiveMessage(async (message) => {
-      switch (message.type) {
-        case 'selectServer':
-          this.selectedServer = message.serverUrl;
-          await this.refresh();
-          break;
-        case 'configureServer':
-          vscode.commands.executeCommand('vllm-copilot.configureServer', this.selectedServer);
-          break;
-        case 'addServer':
-          vscode.commands.executeCommand('vllm-copilot.addServerModel');
-          break;
-      }
-    });
-
+    private context: vscode.ExtensionContext,
+    outputChannel: vscode.OutputChannel,
+  ) {
+    this.outputChannel = outputChannel;
     this.startPolling();
-    this.refresh();
   }
 
-  private startPolling(): void {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
+  getTreeItem(element: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem): vscode.TreeItem {
+    return element;
+  }
+
+  async getChildren(element?: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem): Promise<(ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem)[]> {
+    if (!element) {
+      // Root: rebuild servers list, fetch metrics, return server items + action items
+      await this.refreshServers();
+
+      const serverItems: ServerTreeItem[] = [];
+      for (const s of this.servers) {
+        const entry = this.metricsCache.get(s.url);
+        if (entry) {
+          serverItems.push(new ServerTreeItem(s.url, entry.metrics, s.requestHeaders, entry.updatedAt));
+        } else {
+          serverItems.push(new ServerTreeItem(s.url, {
+            online: false, error: 'Loading...',
+            models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
+            cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
+            avgTTFTMs: null, avgTPOTMs: null, preemptions: null, evictions: null,
+          }, s.requestHeaders, null));
+        }
+      }
+
+      return serverItems;
     }
 
-    const config = vscode.workspace.getConfiguration('vllm-copilot.dashboard');
-    const pollInterval = config.get<number>('pollIntervalMs', 15000);
+    if (element instanceof ServerTreeItem) {
+      return this.getServerMetricsChildren(element);
+    }
 
-    this.pollTimer = setInterval(async () => {
-      if (this.view?.visible) {
-        await this.refresh();
-      }
-    }, pollInterval);
+    if (element instanceof ModelsTreeItem) {
+      return element.modelNames.map(name => new ModelTreeItem(name));
+    }
+
+    return [];
   }
 
-  private async refresh(): Promise<void> {
-    try {
-      const config = await getConfig(this.extensionContext);
+  private getServerMetricsChildren(server: ServerTreeItem): MetricTreeItem[] {
+    const items: MetricTreeItem[] = [];
 
-      // Build server connections: group by serverUrl, take requestHeaders from first model per server
-      const serverMap = new Map<string, Record<string, string>>();
+    // Last updated timestamp
+    if (server.updatedAt) {
+      const ago = Math.round((Date.now() - server.updatedAt.getTime()) / 1000);
+      const timeStr = ago === 0 ? 'just now' : `${ago}s ago`;
+      items.push(new MetricTreeItem('Updated', timeStr, 'clock'));
+    }
+
+    const m = server.metrics;
+    if (!m.online) {
+      return [new MetricTreeItem('Error', m.error || 'Connection failed', 'error')];
+    }
+
+    if (m.models.length > 0) {
+      items.push(new ModelsTreeItem(m.models));
+    }
+    items.push(new MetricTreeItem('Context Window', fmtTokens(m.maxModelLen), 'layers'));
+    items.push(new MetricTreeItem('KV Cache', fmtPct(m.kvCacheUsagePercent), 'graph'));
+    items.push(new MetricTreeItem('Running', fmtN(m.runningRequests), 'play'));
+    items.push(new MetricTreeItem('Waiting', fmtN(m.waitingRequests), 'debug-pause'));
+    items.push(new MetricTreeItem('Avg TTFT', fmtMs(m.avgTTFTMs), 'clock'));
+    items.push(new MetricTreeItem('Avg TPOT', fmtMs(m.avgTPOTMs), 'diff-added'));
+    items.push(new MetricTreeItem('Cache Hit', fmtPct(m.cacheHitRate), 'check-all'));
+    {
+      // MTP (speculative decoding): always show when any spec decode metrics exist
+      const hasSpecMetrics =
+        m.specAcceptanceRate != null ||
+        m.specDraftsTotal != null ||
+        m.specDraftDepth != null;
+      if (hasSpecMetrics) {
+        const parts: string[] = [];
+        if (m.specAcceptanceRate != null) parts.push(`${Math.round(m.specAcceptanceRate)}%`);
+        else parts.push('—');
+        if (m.specDraftDepth != null) parts.push(`depth ${m.specDraftDepth.toFixed(1)}`);
+        if (m.specDraftsTotal != null) parts.push(`${m.specDraftsTotal} drafts`);
+        items.push(new MetricTreeItem('MTP', parts.join('  ·  '), 'lightbulb'));
+      }
+    }
+
+    // Pressure indicators (only if > 0)
+    if (m.preemptions != null) {
+      items.push(new MetricTreeItem('Preemptions', String(m.preemptions), 'warning'));
+    }
+    if (m.evictions != null) {
+      items.push(new MetricTreeItem('Evictions', String(m.evictions), 'error'));
+    }
+
+    return items;
+  }
+
+  private async refreshServers(): Promise<void> {
+    try {
+      const config = await getConfig(this.context);
+      // [url] -> { requestHeaders, configModelIds }
+      const serverMap = new Map<string, { requestHeaders: Record<string, string>; configModelIds: string[] }>();
       for (const model of config.models) {
         if (!model.serverUrl) continue;
         if (!serverMap.has(model.serverUrl)) {
           const serverConfig = resolveServerConfig(model);
-          serverMap.set(model.serverUrl, serverConfig.requestHeaders);
+          serverMap.set(model.serverUrl, { requestHeaders: serverConfig.requestHeaders, configModelIds: [] });
+        }
+        const entry = serverMap.get(model.serverUrl)!;
+        const modelIdentifier = model.vllmModelId || model.id;
+        if (modelIdentifier && !entry.configModelIds.includes(modelIdentifier)) {
+          entry.configModelIds.push(modelIdentifier);
         }
       }
-
-      this.servers = Array.from(serverMap.entries()).map(([url, requestHeaders]) => ({
+      this.servers = Array.from(serverMap.entries()).map(([url, entry]) => ({
         url,
-        requestHeaders,
+        requestHeaders: entry.requestHeaders,
+        configModelIds: entry.configModelIds,
       }));
 
-      // Auto-select first server if none selected
-      if (!this.selectedServer && this.servers.length > 0) {
-        this.selectedServer = this.servers[0].url;
-      }
-
-      // If selected server is no longer in config, reset
-      if (this.selectedServer && !this.servers.some(s => s.url === this.selectedServer)) {
-        this.selectedServer = this.servers[0]?.url || null;
-      }
-
-      let metrics: ServerMetrics | null = null;
-      if (this.selectedServer) {
-        const connection = this.servers.find(s => s.url === this.selectedServer);
-        if (connection) {
-          metrics = await fetchServerMetrics(connection.url, connection.requestHeaders);
+      // Fetch metrics for each server
+      for (const s of this.servers) {
+        if (!this.metricsCache.has(s.url)) {
+          this.metricsCache.set(s.url, {
+            metrics: await fetchServerMetrics(s.url, s.requestHeaders, s.configModelIds),
+            updatedAt: new Date(),
+          });
         }
       }
-
-      if (this.view) {
-        const dashboardConfig = vscode.workspace.getConfiguration('vllm-copilot.dashboard');
-        const pollInterval = dashboardConfig.get<number>('pollIntervalMs', 15000);
-        const isEnabled = dashboardConfig.get<boolean>('enabled', true);
-
-        this.view.webview.html = generateDashboardHtml(
-          this.view.webview,
-          this.servers.map(s => s.url),
-          this.selectedServer,
-          metrics,
-          pollInterval,
-          isEnabled
-        );
-      }
     } catch (err) {
-      this.outputChannel.appendLine(`[ERROR] Dashboard refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.outputChannel.appendLine(`[DASHBOARD] refreshServers failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
-  public dispose(): void {
+  private startPolling(): void {
+    const cfg = vscode.workspace.getConfiguration('vllm-copilot.dashboard');
+    const pollInterval = cfg.get<number>('pollIntervalMs', 15000);
+
+    this.pollTimer = setInterval(async () => {
+      await this.refreshServers();
+      this._onDidChangeTreeData.fire();
+    }, pollInterval);
+  }
+
+  async refresh(): Promise<void> {
+    this.metricsCache.clear();
+    await this.refreshServers();
+    this._onDidChangeTreeData.fire();
+  }
+
+  dispose(): void {
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
