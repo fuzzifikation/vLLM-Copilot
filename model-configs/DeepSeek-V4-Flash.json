@@ -1,0 +1,52 @@
+// DeepSeek V4 Flash — Model configuration
+// Source: DeepSeek official docs, HuggingFace model card
+// https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash
+//
+// Copy the object below into your settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//
+// Requirements:
+//   - vLLM 0.24.0+ with --reasoning-parser deepseek_r1
+//   - For tool calling: vLLM handles DSML→OpenAI conversion automatically
+//   - --max-model-len should match your GPU capacity (model supports 1M context)
+//   - Consider --tensor-parallel-size 8 (284B total, 13B active per token)
+//
+// Token budgets:
+//   - Context window: 1,048,576 tokens (model supports up to 1M)
+//   - maxOutputTokens: 32768 (conservative; model supports up to 384K)
+//   - maxInputTokens: auto-computed from server max_model_len
+//
+// Modes (all values from official DeepSeek documentation):
+//   - Think (Max):    Maximum reasoning effort (DSV4-specific)
+//   - Think (High):   Standard deep reasoning
+//   - No Think:       Direct responses, no thinking tokens
+
+{
+  "id": "deepseek-ai/DeepSeek-V4-Flash",
+  "vllmModelId": "deepseek-ai/DeepSeek-V4-Flash",
+  "displayName": "DeepSeek V4 Flash",
+  "family": "deepseek_v4",
+  "maxOutputTokens": 32768,
+  "capabilities": {
+    "toolCalling": true,
+    "imageInput": false
+  },
+  "modelModes": {
+    "Think (Max)": {
+      "reasoning_effort": "max",
+      "temperature": 1.0,
+      "top_p": 1.0
+    },
+    "Think (High)": {
+      "reasoning_effort": "high",
+      "temperature": 1.0,
+      "top_p": 1.0
+    },
+    "No Think": {
+      "reasoning_effort": "none",
+      "temperature": 0.7,
+      "top_p": 0.9
+    }
+  },
+  "defaultMode": "Think (High)"
+}

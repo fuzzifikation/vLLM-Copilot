@@ -1,0 +1,49 @@
+{
+  // GLM-5.2 (Z-AI). Sourced from vLLM recipe (recipes.vllm.ai/zai-org/GLM-5.2),
+  // Z.ai docs (docs.z.ai/guides/capabilities/thinking-mode), and GitHub (github.com/zai-org/GLM-5).
+  // Verified 2026-07-10 against official sources.
+  //
+  // NOTE: These params work for ANY quantization variant (FP8, GGUF, AWQ, etc.).
+  // The extension's model matcher strips quantization suffixes automatically.
+  //
+  // Reasoning modes (from vLLM recipe):
+  //   - Think Max: omit reasoning_effort or set "max" — deepest reasoning
+  //   - Think High: "reasoning_effort": "high" — balanced depth/latency
+  //   - No Think: chat_template_kwargs.enable_thinking: false — no chain-of-thought
+  //   Template resolves to "max" unless reasoning_effort is explicitly "high".
+  //
+  // Serve with: --reasoning-parser glm45 --tool-call-parser glm47 --enable-auto-tool-choice
+  // Generation defaults: temperature=1.0, top_p=0.95 (from model card benchmarks).
+  "id": "zai-org/GLM-5.2",
+  "vllmModelId": "zai-org/GLM-5.2",
+  "displayName": "GLM-5.2",
+  "family": "glm_moe_dsa",
+  "maxOutputTokens": 32768,
+  "capabilities": {
+    "toolCalling": true,
+    "imageInput": false
+  },
+  "modelModes": {
+    "Think (Max)": {
+      "reasoning_effort": "max",
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "presence_penalty": 0
+    },
+    "Think (High)": {
+      "reasoning_effort": "high",
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "presence_penalty": 0
+    },
+    "No Think": {
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      },
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "presence_penalty": 0
+    }
+  },
+  "defaultMode": "Think (High)"
+}

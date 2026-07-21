@@ -1,0 +1,69 @@
+// Hy3 — Model configuration
+// Source: Tencent Hy3 model card
+// https://huggingface.co/tencent/Hy3
+// Verified 2026-07-18.
+//
+// NOTE: These params work for ANY quantization variant (FP8, GGUF, AWQ, etc.).
+// The extension's model matcher strips quantization suffixes automatically.
+//
+// Chat template parameters (all Jinja template variables, passed via chat_template_kwargs):
+//   - `reasoning_effort: "no_think" / "low" / "high"` — controls chain-of-thought depth
+//     "no_think" (default) = direct response; "high" = deep reasoning
+//
+// Copy the "id" object below into your settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//
+// Requirements:
+//   - vLLM built from source (v0.8+ with Hy3 support)
+//   - vLLM launched with --reasoning-parser hy_v3
+//   - For tool calling: also add --tool-call-parser hy_v3 --enable-auto-tool-choice
+//   - MTP (Multi-Token Prediction) optional: add --speculative-config.method mtp
+//   - Environment: VLLM_FLASHINFER_ALLREDUCE_BACKEND=trtllm (recommended for multi-GPU)
+//
+// Token budgets:
+//   - Context window: 262,144 tokens (256K official, vLLM rounds up)
+//   - maxOutputTokens: 32,768 (safe default for most queries)
+//   - maxInputTokens: auto-computed as ~229,376 (context window minus output)
+//   - For complex tasks needing larger output, increase maxOutputTokens in settings
+//
+// Modes (values from official Hy3 model card / quickstart):
+//   - Think (Deep):   Deep chain-of-thought (reasoning_effort="high", temp=0.9)
+//   - Think (Light):  Light reasoning (reasoning_effort="low", temp=0.9)
+//   - No Think:       Direct responses, no thinking tokens (temp=0.9)
+//
+
+
+{
+  "id": "tencent/Hy3",
+  "vllmModelId": "tencent/Hy3",
+  "displayName": "Hy3",
+  "family": "hy_v3",
+  "maxOutputTokens": 32768,
+  "capabilities": {
+    "toolCalling": true,
+    "imageInput": false
+  },
+  "modelModes": {
+    "Think (Deep)": {
+      "chat_template_kwargs": {
+        "reasoning_effort": "high"
+      },
+      "temperature": 0.9,
+      "topP": 1.0
+    },
+    "Think (Light)": {
+      "chat_template_kwargs": {
+        "reasoning_effort": "low"
+      },
+      "temperature": 0.9,
+      "topP": 1.0
+    },
+    "No Think": {
+      "chat_template_kwargs": {
+        "reasoning_effort": "no_think"
+      },
+      "temperature": 0.9,
+      "topP": 1.0
+    }
+  }
+}
