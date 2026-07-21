@@ -10,38 +10,39 @@
 ## 1. Data Sources
 
 ### vLLM Prometheus `/metrics`
+
 Scrape interval: configurable, default 5s.
 
-| Metric | What it tells the user |
-|---|---|
-| `vllm:gpu_memory_usage_bytes` | GPU memory consumed (weights + KV cache) |
-| `vllm:gpu_cache_usage_perc` | KV cache utilization % — how full is the context budget |
-| `vllm:num_requests_running` | Requests actively being processed |
-| `vllm:num_requests_swapped` | Requests in swap (slowed down) |
-| `vllm:num_requests_waiting` | Requests queued but not yet started |
-| `vllm:time_to_first_token_seconds` | Latency — how fast does the first token arrive |
-| `vllm:inter_token_latency_seconds` | Streaming speed after first token |
-| `vllm:mean_generated_tokens_per_second` | Output throughput |
-| `vllm:mean_prompt_tokens_per_second` | Input throughput |
-| `vllm:request_success_total` | Completed requests |
-| `vllm:request_eviction_total` | Failed due to OOM/pressure |
-| `vllm:prefix_cache_hit_rate` | Prefix cache efficiency |
+| Metric                                  | What it tells the user                                  |
+| --------------------------------------- | ------------------------------------------------------- |
+| `vllm:gpu_memory_usage_bytes`           | GPU memory consumed (weights + KV cache)                |
+| `vllm:gpu_cache_usage_perc`             | KV cache utilization % — how full is the context budget |
+| `vllm:num_requests_running`             | Requests actively being processed                       |
+| `vllm:num_requests_swapped`             | Requests in swap (slowed down)                          |
+| `vllm:num_requests_waiting`             | Requests queued but not yet started                     |
+| `vllm:time_to_first_token_seconds`      | Latency — how fast does the first token arrive          |
+| `vllm:inter_token_latency_seconds`      | Streaming speed after first token                       |
+| `vllm:mean_generated_tokens_per_second` | Output throughput                                       |
+| `vllm:mean_prompt_tokens_per_second`    | Input throughput                                        |
+| `vllm:request_success_total`            | Completed requests                                      |
+| `vllm:request_eviction_total`           | Failed due to OOM/pressure                              |
+| `vllm:prefix_cache_hit_rate`            | Prefix cache efficiency                                 |
 
 ### vLLM REST API
 
-| Endpoint | Data |
-|---|---|
+| Endpoint     | Data                                         |
+| ------------ | -------------------------------------------- |
 | `/v1/models` | Loaded models, context lengths, capabilities |
-| `/health` | Server health status |
+| `/health`    | Server health status                         |
 
 ### Extension Internal
 
-| Source | Data |
-|---|---|
-| `tokenBudget.ts` | Current context window usage (system + history + request) |
-| `sessionManager.ts` | Chat history token counts per session |
-| `vllmClient.ts` config cache | Active server URL, model, capabilities |
-| `usageReporting.ts` | Token usage tracking |
+| Source                       | Data                                                      |
+| ---------------------------- | --------------------------------------------------------- |
+| `tokenBudget.ts`             | Current context window usage (system + history + request) |
+| `sessionManager.ts`          | Chat history token counts per session                     |
+| `vllmClient.ts` config cache | Active server URL, model, capabilities                    |
+| `usageReporting.ts`          | Token usage tracking                                      |
 
 ## 2. UI Architecture And Layout
 
@@ -87,30 +88,9 @@ The first configuration scope is server URL and request headers, followed by per
 
 ## 3. Feature List
 
-### F1: Status Bar — At-a-Glance Health (Priority: High)
+### F1: Status Bar — At-a-Glance Health
 
-**Current state:** Shows server connection status.
-
-**Proposal:**
-```
-🟢 vLLM: 78% KV | 12ms TTFT | Qwen3-27B
-```
-
-- Color-coded dot: 🟢 healthy / 🟡 warning / 🔴 offline
-- KV cache utilization % — primary health indicator
-- TTFT (time-to-first-token) — latency indicator
-- Active model name
-- Click → opens full dashboard webview
-
-**Multi-server:** Dropdown on click:
-```
-⚡ vLLM ▾
-  ● localhost:8000  → Qwen3-27B (active)
-    localhost:8001  → DeepSeek-V4
-    10.0.0.42       → GPU-Box-2
-```
-
-**UX win:** User sees health without leaving their workflow. Color change catches problems peripherally.
+**Skipped.** We built this but removed it. The status bar offered low value — users check the dashboard tree when they need server info. The metrics are already surfaced in the dashboard view, and a status bar item doesn't justify the clutter.
 
 ---
 
@@ -119,142 +99,100 @@ The first configuration scope is server URL and request headers, followed by per
 A full VS Code editor-area webview panel with modular widgets. It is resizable, splittable, and distinct from the compact sidebar overview.
 
 #### F2.1: Connection Status
+
 - Server URL, response latency, connection state
 - Last successful scrape time
 
 #### F2.2: GPU Memory
+
 - Bar chart: weights vs KV cache vs free memory
 - Source: `vllm:gpu_memory_usage_bytes`
 
 #### F2.3: KV Cache Utilization
+
 - Gauge/progress bar: % used
 - Trend arrow: ↑↓ vs 5 minutes ago
 - Threshold colors: green <80%, yellow 80-90%, red >90%
 
 #### F2.4: Request Queue
+
 - Pending / Running / Swapped counts
 - "Your request is #3 in queue" when pending
 
 #### F2.5: Latency (TTFT)
+
 - Current value
 - 5-minute trend sparkline
 - "Getting worse" indicator if trending up
 
 #### F2.6: Throughput
+
 - Tokens/sec: input and output
 - Per-model breakdown if multiple models
 
 #### F2.7: Models Loaded
+
 - List of loaded models with context limits
 - Active model highlighted
 
 #### F2.8: Errors & Evictions
+
 - Recent evictions count with timestamps
 - OOM events — actionable insight: "Clear context"
 
 ---
 
-### F3: Customizable Dashboard (Priority: Medium)
+### F3: Customizable Dashboard
 
-User controls which widgets are visible.
-
-**Approach:**
-- VS Code setting: `"vllm2copilot.dashboard.widgets"` — array of widget IDs
-- Toggle in dashboard UI: eye icon per widget section
-- Widget order is user-configurable
-
-```jsonc
-"vllm2copilot.dashboard.widgets": [
-    "gpuMemory",
-    "kvCacheUtilization",
-    "requestQueue",
-    "latency",
-    "throughput",
-    "models",
-    "errors"
-]
-```
+**Skipped.** Too much complexity for too little value. Users who want a fully custom dashboard can build one against the `/metrics` endpoint themselves. The Tree View dashboard provides the essentials out of the box.
 
 ---
 
-### F4: Multi-Server Support (Priority: High)
+### F4: Multi-Server Support
 
-**Config model:** Each server is an entry in the config with its own URL and models.
-
-**UI implications:**
-- Status bar: dropdown to switch active server
-- Dashboard: tab per server, or sidebar list
-- Config resolution: `resolveServerConfig()` handles per-server model configs
-- Each server has independent metrics and health state
-
-**Server list format:**
-```
-Servers:
-  ● localhost:8000  → Qwen3-27B (active) 🟢
-    localhost:8001  → DeepSeek-V4 🟡
-    10.0.0.42       → GPU-Box-2 🔴
-```
+**✅ Done.** Every model entry in `vllm-copilot.models` has its own `serverUrl`. The dashboard Tree View groups models by server, fetches independent metrics per server, and shows health state per server. Config resolution (`resolveServerConfig()`) routes requests to the correct server.
 
 ---
 
-### F5: Smart Alerts (Priority: Medium)
+### F5: Smart Alerts
 
-Sparse, actionable notifications. Not polling noise.
-
-| Alert | Trigger | Notification |
-|---|---|---|
-| Server down | Health check fails | 🔴 Once, retry indicator in status bar |
-| KV cache high | >90% utilization | 🟡 Subtle status bar color change |
-| Model loaded | New model available | 🟢 Transient notification |
-| Evictions spike | >N evictions in 60s | ⚠️ "Server under pressure — consider clearing context" |
-
-**Configurable:**
-```jsonc
-"vllm2copilot.alerts.kvCacheThreshold": 90,
-"vllm2copilot.alerts.evictionThreshold": 5
-```
+**Skipped.** The dashboard already surfaces server health, KV cache usage, evictions, preemptions, latency, and queue depth at a glance. Proactive notifications would add noise without meaningful value — the sidebar is right there.
 
 ---
 
-### F6: Context Budget Widget (Priority: Medium)
+### F6: Context Budget Widget
 
-**Unique insight:** Connects the extension's token budget with server KV cache state.
-
-```
-Context Window: ████░░░░░░  42% (17k/40k tokens)
-│── System prompt: 2.1k
-│── Chat history: 14.8k
-│── Current request: 1.2k
-```
-
-**Why it's valuable:** User understands *why* responses are slow — their chat history is eating all the KV cache. This correlation doesn't exist in any standalone vLLM dashboard.
-
-**Actionable:** "Clear chat history" button when KV cache is high.
+**Removed.** The context window token breakdown already exists in Copilot's own UI. No need to duplicate what Microsoft provides.
 
 ---
 
-### F7: Model Switch Cost Estimation (Priority: Low)
+### F7: Model Switch Cost Estimation
 
-When user switches to a model not currently loaded on a server:
-
-> "Switching to DeepSeek-V4 will take ~30s while it loads into GPU memory. Continue?"
-
-- Estimated from model size and available VRAM
-- Managed expectations — no surprise 30-second hang
+**Skipped.** We won't maintain a cost comparison with up-to-date prices. Users switching models locally don't need cost estimation — the dashboard shows server state and load time is obvious from the metrics.
 
 ---
 
-### F8: One-Click Actions (Priority: Medium)
+### F8: Sidebar Action Items
 
-Context-aware actions in the dashboard:
+A third sidebar section called **Utilities** (between Dashboard and Server Settings) that exposes non-server commands as clickable tree items. Plus server-specific actions nested under each server in the Dashboard tree.
 
-| Action | When available | What it does |
-|---|---|---|
-| Clear chat history | KV cache >80% | Clears session, frees KV cache |
-| Test connection | Server unresponsive | Ping server, show diagnostic |
-| Switch model | Multiple models loaded | Change active model in status bar |
-| Open server metrics | Always | Open `/metrics` in browser |
-| Restart server | Server crashed | Run restart command (configurable) |
+**Utilities** (global, non-server):
+| Action | Command |
+|---|---|
+| Clean Copilot Sessions | `vllm-copilot.cleanCopilotSessions` |
+| Set Model Personality | `vllm-copilot.setModelPersonality` |
+| Open Log File | `vllm-copilot.openLogFile` |
+| Clear Log Files | `vllm-copilot.clearLogFiles` |
+
+**Per-server actions** (nested under each server node in Dashboard):
+| Action | Command |
+|---|---|
+| Add Server & Model | `vllm-copilot.addServerModel` |
+| Auto-Configure Model | `vllm-copilot.autoConfigureModel` |
+| Test & Refresh Models | `vllm-copilot.testAndRefreshModels` |
+| Diagnose Connection | `vllm-copilot.diagnoseConnection` |
+
+These commands already exist — they're currently only reachable via `Ctrl+Shift+P`. The sidebar makes them discoverable without keyboard shortcuts.
 
 ---
 
@@ -264,21 +202,42 @@ Context-aware actions in the dashboard:
 
 A webview form per model entry, opened from the model picker or the status bar.
 
-**Sections:**
+**Currently implemented** (via `KNOWN_PARAMS` in `serverSettingsView.ts`):
 
-| Section | UI element | Maps to |
-|---|---|---|
-| Identity | Text fields | `id`, `vllmModelId`, `displayName`, `family` |
-| Server & auth | Text field + key/value editor | `serverUrl`, `requestHeaders` |
-| Token budgets | Number fields | `maxOutputTokens`, `maxInputTokens`, `estimateCharsPerToken` |
-| Sampling | Sliders + number fields | `defaultParams.temperature`, `top_p`, `top_k`, `min_p`, `repetition_penalty`, `presence_penalty`, `frequency_penalty` |
-| Thinking toggle | Checkbox + extras | `chat_template_kwargs.enable_thinking`, `preserve_thinking`, `thinking_token_budget` |
-| Bad words | List editor (add/remove chips) | `defaultParams.bad_words` |
-| Structured output | Dropdown (none/json/regex/choice/grammar) + schema editor | `defaultParams.structured_outputs` |
-| Repetition detection | Toggle + slider for `max_pattern_size`, `min_count` | `defaultParams.repetition_detection` |
-| Modes | "Add mode" button → list of mode editors, each reusing the sections above | `modelModes` |
-| Capabilities | Checkboxes | `capabilities.toolCalling`, `capabilities.imageInput` |
-| Stream & retry | Number fields | `streamInactivityTimeout`, `autoContinueRetries` |
+- `temperature`, `top_p`, `top_k`, `min_p`, `repetition_penalty`, `presence_penalty`, `frequency_penalty`
+- `max_tokens`, `stop`, `seed`, `skip_special_tokens`
+- `chat_template_kwargs`, `reasoning_effort`, `parallel_tool_calls`
+
+**Still planned** (not yet in KNOWN_PARAMS):
+
+| Section              | UI element                                                                      | Maps to                                                                                                               | Status                                                                  |
+| -------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Identity             | Text fields                                                                     | `id`, `vllmModelId`, `displayName`, `family`                                                                          | ✅ done                                                                 |
+| Server & auth        | Text field + key/value editor                                                   | `serverUrl`, `requestHeaders`                                                                                         | ✅ done                                                                 |
+| Token budgets        | Number fields                                                                   | `maxOutputTokens`, `maxInputTokens`, `estimateCharsPerToken`                                                          | ✅ done                                                                 |
+| Sampling             | Sliders + number fields                                                         | `defaultParams.temperature`, `top_p`, `top_k`, `min_p`, `repetition_penalty`, `presence_penalty`, `frequency_penalty` | ✅ done                                                                 |
+| Output control       | Number field                                                                    | `defaultParams.min_tokens`                                                                                            | ❌ missing                                                              |
+| Output format        | Dropdown (text / json_object / json_schema / regex / choice / grammar) + editor | `defaultParams.response_format`                                                                                       | ❌ missing                                                              |
+| Bad words            | List editor (add/remove chips)                                                  | `defaultParams.bad_words`                                                                                             | ❌ missing                                                              |
+| Structured output    | Dropdown (none/json/regex/choice/grammar) + schema editor                       | `defaultParams.structured_outputs`                                                                                    | ❌ missing                                                              |
+| Repetition detection | Toggle + fields for `min_pattern_size`, `min_count`                             | `defaultParams.repetition_detection`                                                                                  | ❌ missing                                                              |
+| EOS handling         | Toggle                                                                          | `defaultParams.ignore_eos`                                                                                            | ❌ missing                                                              |
+| Thinking toggle      | Checkbox + extras                                                               | `chat_template_kwargs.enable_thinking`, `reasoning_effort`                                                            | ⚠️ `reasoning_effort` done, `chat_template_kwargs` via JSON editor only |
+| Parallel tool calls  | Toggle                                                                          | `defaultParams.parallel_tool_calls`                                                                                   | ✅ done                                                                 |
+| Modes                | "Add mode" button → list of mode editors, each reusing the sections above       | `modelModes`                                                                                                          | ✅ done                                                                 |
+| Capabilities         | Checkboxes                                                                      | `capabilities.toolCalling`, `capabilities.imageInput`                                                                 | ✅ done                                                                 |
+| Stream & retry       | Number fields                                                                   | `streamInactivityTimeout`, `autoContinueRetries`                                                                      | ✅ done                                                                 |
+
+**Missing params to add to KNOWN_PARAMS:**
+
+| Param                  | Type                | Why it matters                                                                                                                                       |
+| ---------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `response_format`      | json                | OpenAI-native structured output. Lets users enforce JSON, regex, or choice-constrained responses without needing vLLM-specific `structured_outputs`. |
+| `bad_words`            | json (array)        | Block specific tokens/phrases. Simple array editor.                                                                                                  |
+| `structured_outputs`   | json                | vLLM's richer structured output config (JSON schema, EBNF grammar, choice).                                                                          |
+| `repetition_detection` | json                | Toggle + `min_pattern_size`/`min_count` fields. Disabled by default due to false positives on structured output.                                     |
+| `ignore_eos`           | string (true/false) | Keep generating past EOS — useful for debugging or forcing longer outputs.                                                                           |
+| `min_tokens`           | number              | Minimum output length — prevents the model from stopping too early.                                                                                  |
 
 **Mode editor:** each named mode (Think, No Think, Strict JSON, Precise, …) reuses the Sampling/Thinking/Bad-words/Structured-output editors — so users build param bundles visually without knowing the JSON schema. The "active mode" is `defaultMode`.
 
@@ -293,6 +252,7 @@ A webview form per model entry, opened from the model picker or the status bar.
 ## 4. Architecture Considerations
 
 ### Metrics Scraper Service
+
 - New file: `src/metricsScraper.ts`
 - Polls `/metrics` at configurable interval (default 5s)
 - Parses Prometheus text format
@@ -301,6 +261,7 @@ A webview form per model entry, opened from the model picker or the status bar.
 - Disposable: clean up intervals on dispose
 
 ### Webview Panels
+
 - `src/dashboardView.ts` — `vscode.WebviewPanel` provider for the full dashboard
 - `src/serverConfigView.ts` — `vscode.WebviewPanel` provider for the configuration editor
 - State management: server list, selected server, widget config
@@ -308,20 +269,31 @@ A webview form per model entry, opened from the model picker or the status bar.
 - Security: content security policy for webview resources
 
 ### Status Bar Integration
+
 - Extend existing `StatusBarItem` in `src/extension.ts` or new provider
 - Click handler: opens dashboard or shows server pick list
 - Text updates from metrics scraper
 
 ### Settings
+
 New settings to add to `package.json`:
+
 ```jsonc
 {
-    "vllm2copilot.dashboard.pollInterval": { "default": 5000 },
-    "vllm2copilot.dashboard.widgets": { "default": ["gpuMemory", "kvCacheUtilization", "requestQueue", "latency", "throughput"] },
-    "vllm2copilot.dashboard.widgetOrder": { "default": [] },
-    "vllm2copilot.alerts.kvCacheThreshold": { "default": 90 },
-    "vllm2copilot.alerts.evictionThreshold": { "default": 5 },
-    "vllm2copilot.servers": { "default": [] }  // multi-server config
+  "vllm2copilot.dashboard.pollInterval": { "default": 5000 },
+  "vllm2copilot.dashboard.widgets": {
+    "default": [
+      "gpuMemory",
+      "kvCacheUtilization",
+      "requestQueue",
+      "latency",
+      "throughput",
+    ],
+  },
+  "vllm2copilot.dashboard.widgetOrder": { "default": [] },
+  "vllm2copilot.alerts.kvCacheThreshold": { "default": 90 },
+  "vllm2copilot.alerts.evictionThreshold": { "default": 5 },
+  "vllm2copilot.servers": { "default": [] }, // multi-server config
 }
 ```
 
@@ -330,12 +302,14 @@ New settings to add to `package.json`:
 ## 5. Implementation Phases
 
 ### Phase 1: Foundation
+
 - [ ] `metricsScraper.ts` — Prometheus scraper with rolling buffer
 - [ ] Extend config to support multiple servers
 - [ ] Status bar: enhanced text with KV% + TTFT + model name
 - [ ] Basic webview dashboard: connection status + KV cache gauge + models list
 
 ### Phase 2: Dashboard Widgets
+
 - [ ] GPU memory bar chart
 - [ ] Request queue display
 - [ ] Latency with sparkline trend
@@ -344,6 +318,7 @@ New settings to add to `package.json`:
 - [ ] Context budget widget (F6)
 
 ### Phase 3: Polish
+
 - [ ] Widget customization (F3)
 - [ ] Smart alerts (F5)
 - [ ] One-click actions (F8)
