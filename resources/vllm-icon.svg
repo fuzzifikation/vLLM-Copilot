@@ -1,1 +1,265 @@
-<svg version="1.1" viewBox="0.0 0.0 96.0 96.0" fill="none" stroke="none" stroke-linecap="square" stroke-miterlimit="10" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns="http://www.w3.org/2000/svg"><clipPath id="g31e21232314_0_33.0"><path d="m0 0l96.0 0l0 96.0l-96.0 0l0 -96.0z" clip-rule="nonzero"/></clipPath><g clip-path="url(#g31e21232314_0_33.0)"><path fill="#d9d9d9" d="m41.04961 80.271324l1.8897629 0l0 2.3307114l-1.8897629 0z" fill-rule="evenodd"/><path fill="#d9d9d9" d="m42.221855 81.45145l1.8897629 0l0 2.3307037l-1.8897629 0z" fill-rule="evenodd"/><g filter="url(#shadowFilter-g31e21232314_0_33.1)"><use xlink:href="#g31e21232314_0_33.1" transform="matrix(1.0 0.0 0.0 1.0 0.0 2.0)"/></g><defs><filter id="shadowFilter-g31e21232314_0_33.1" filterUnits="userSpaceOnUse"><feGaussianBlur in="SourceAlpha" stdDeviation="2.0" result="blur"/><feComponentTransfer in="blur" color-interpolation-filters="sRGB"><feFuncR type="linear" slope="0" intercept="0.0"/><feFuncG type="linear" slope="0" intercept="0.0"/><feFuncB type="linear" slope="0" intercept="0.0"/><feFuncA type="linear" slope="0.0" intercept="0"/></feComponentTransfer></filter></defs><g id="g31e21232314_0_33.1"><path fill="#d9d9d9" d="m42.22417 28.470434l0 55.307083l-27.653543 -55.307083z" fill-rule="evenodd"/></g><g filter="url(#shadowFilter-g31e21232314_0_33.2)"><use xlink:href="#g31e21232314_0_33.2" transform="matrix(1.0 0.0 0.0 1.0 0.0 2.0)"/></g><defs><filter id="shadowFilter-g31e21232314_0_33.2" filterUnits="userSpaceOnUse"><feGaussianBlur in="SourceAlpha" stdDeviation="2.0" result="blur"/><feComponentTransfer in="blur" color-interpolation-filters="sRGB"><feFuncR type="linear" slope="0" intercept="0.0"/><feFuncG type="linear" slope="0" intercept="0.0"/><feFuncB type="linear" slope="0" intercept="0.0"/><feFuncA type="linear" slope="0.0" intercept="0"/></feComponentTransfer></filter></defs><g id="g31e21232314_0_33.2"><path fill="#d9d9d9" d="m42.223038 83.77752l21.729656 0l18.653545 -70.385826l-25.574802 13.461943z" fill-rule="evenodd"/></g><g filter="url(#shadowFilter-g31e21232314_0_33.3)"><use xlink:href="#g31e21232314_0_33.3" transform="matrix(1.0 0.0 0.0 1.0 0.0 2.0)"/></g><defs><filter id="shadowFilter-g31e21232314_0_33.3" filterUnits="userSpaceOnUse"><feGaussianBlur in="SourceAlpha" stdDeviation="2.0" result="blur"/><feComponentTransfer in="blur" color-interpolation-filters="sRGB"><feFuncR type="linear" slope="0" intercept="0.0"/><feFuncG type="linear" slope="0" intercept="0.0"/><feFuncB type="linear" slope="0" intercept="0.0"/><feFuncA type="linear" slope="0.0" intercept="0"/></feComponentTransfer></filter></defs><g id="g31e21232314_0_33.3"><path fill="#fdb515" d="m41.0477 27.293962l0 55.30709l-27.653542 -55.30709z" fill-rule="evenodd"/></g><g filter="url(#shadowFilter-g31e21232314_0_33.4)"><use xlink:href="#g31e21232314_0_33.4" transform="matrix(1.0 0.0 0.0 1.0 0.0 2.0)"/></g><defs><filter id="shadowFilter-g31e21232314_0_33.4" filterUnits="userSpaceOnUse"><feGaussianBlur in="SourceAlpha" stdDeviation="2.0" result="blur"/><feComponentTransfer in="blur" color-interpolation-filters="sRGB"><feFuncR type="linear" slope="0" intercept="0.0"/><feFuncG type="linear" slope="0" intercept="0.0"/><feFuncB type="linear" slope="0" intercept="0.0"/><feFuncA type="linear" slope="0.0" intercept="0"/></feComponentTransfer></filter></defs><g id="g31e21232314_0_33.4"><path fill="#30a2ff" d="m41.046566 82.60105l21.72966 0l18.653545 -70.385826l-25.574806 13.461943z" fill-rule="evenodd"/></g></g></svg>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="96"
+   height="96"
+   viewBox="0 0 96 96"
+   version="1.1"
+   id="svg8"
+   sodipodi:docname="vllm-icon.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs8">
+    <defs
+       id="defs3">
+      <filter
+         id="shadowFilter-g31e21232314_0_33.1"
+         filterUnits="userSpaceOnUse">
+        <feGaussianBlur
+           in="SourceAlpha"
+           stdDeviation="2.0"
+           result="blur"
+           id="feGaussianBlur3" />
+        <feComponentTransfer
+           in="blur"
+           color-interpolation-filters="sRGB"
+           id="feComponentTransfer3">
+          <feFuncR
+             type="linear"
+             slope="0"
+             intercept="0.0"
+             id="feFuncR3" />
+          <feFuncG
+             type="linear"
+             slope="0"
+             intercept="0.0"
+             id="feFuncG3" />
+          <feFuncB
+             type="linear"
+             slope="0"
+             intercept="0.0"
+             id="feFuncB3" />
+          <feFuncA
+             type="linear"
+             slope="0.0"
+             intercept="0"
+             id="feFuncA3" />
+        </feComponentTransfer>
+      </filter>
+    </defs>
+    <defs
+       id="defs4">
+      <filter
+         id="shadowFilter-g31e21232314_0_33.2"
+         filterUnits="userSpaceOnUse">
+        <feGaussianBlur
+           in="SourceAlpha"
+           stdDeviation="2.0"
+           result="blur"
+           id="feGaussianBlur4" />
+        <feComponentTransfer
+           in="blur"
+           color-interpolation-filters="sRGB"
+           id="feComponentTransfer4">
+          <feFuncR
+             type="linear"
+             slope="0"
+             intercept="0.0"
+             id="feFuncR4" />
+          <feFuncG
+             type="linear"
+             slope="0"
+             intercept="0.0"
+             id="feFuncG4" />
+          <feFuncB
+             type="linear"
+             slope="0"
+             intercept="0.0"
+             id="feFuncB4" />
+          <feFuncA
+             type="linear"
+             slope="0.0"
+             intercept="0"
+             id="feFuncA4" />
+        </feComponentTransfer>
+      </filter>
+    </defs>
+    <defs
+       id="defs5">
+      <filter
+         id="shadowFilter-g31e21232314_0_33.3"
+         filterUnits="userSpaceOnUse">
+        <feGaussianBlur
+           in="SourceAlpha"
+           stdDeviation="2.0"
+           result="blur"
+           id="feGaussianBlur5" />
+        <feComponentTransfer
+           in="blur"
+           color-interpolation-filters="sRGB"
+           id="feComponentTransfer5">
+          <feFuncR
+             type="linear"
+             slope="0"
+             intercept="0.0"
+             id="feFuncR5" />
+          <feFuncG
+             type="linear"
+             slope="0"
+             intercept="0.0"
+             id="feFuncG5" />
+          <feFuncB
+             type="linear"
+             slope="0"
+             intercept="0.0"
+             id="feFuncB5" />
+          <feFuncA
+             type="linear"
+             slope="0.0"
+             intercept="0"
+             id="feFuncA5" />
+        </feComponentTransfer>
+      </filter>
+    </defs>
+    <defs
+       id="defs6">
+      <filter
+         id="shadowFilter-g31e21232314_0_33.4"
+         filterUnits="userSpaceOnUse">
+        <feGaussianBlur
+           in="SourceAlpha"
+           stdDeviation="2.0"
+           result="blur"
+           id="feGaussianBlur6" />
+        <feComponentTransfer
+           in="blur"
+           color-interpolation-filters="sRGB"
+           id="feComponentTransfer6">
+          <feFuncR
+             type="linear"
+             slope="0"
+             intercept="0.0"
+             id="feFuncR6" />
+          <feFuncG
+             type="linear"
+             slope="0"
+             intercept="0.0"
+             id="feFuncG6" />
+          <feFuncB
+             type="linear"
+             slope="0"
+             intercept="0.0"
+             id="feFuncB6" />
+          <feFuncA
+             type="linear"
+             slope="0.0"
+             intercept="0"
+             id="feFuncA6" />
+        </feComponentTransfer>
+      </filter>
+    </defs>
+    <clipPath
+       clipPathUnits="userSpaceOnUse"
+       id="clipPath8">
+      <path
+         d="M 0,0 H 96 V 96 H 0 Z"
+         clip-rule="nonzero"
+         id="path8" />
+    </clipPath>
+    <clipPath
+       clipPathUnits="userSpaceOnUse"
+       id="clipPath9">
+      <path
+         d="M 0,0 H 96 V 96 H 0 Z"
+         clip-rule="nonzero"
+         id="path9" />
+    </clipPath>
+  </defs>
+  <sodipodi:namedview
+     id="namedview8"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="13.368738"
+     inkscape:cx="20.308574"
+     inkscape:cy="35.942062"
+     inkscape:window-width="3840"
+     inkscape:window-height="2054"
+     inkscape:window-x="1717"
+     inkscape:window-y="-11"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg8" />
+  <g
+     filter="url(#shadowFilter-g31e21232314_0_33.1)"
+     id="g3"
+     transform="translate(0.74049587,-0.10578512)">
+    <use
+       xlink:href="#g31e21232314_0_33.1"
+       transform="translate(-0.74049587,2.1057851)"
+       id="use3"
+       x="0"
+       y="0" />
+  </g>
+  <g
+     id="g31e21232314_0_33.1"
+     transform="translate(0.74049587,-0.10578512)" />
+  <g
+     filter="url(#shadowFilter-g31e21232314_0_33.2)"
+     id="g4"
+     transform="translate(0.74049587,-0.10578512)">
+    <use
+       xlink:href="#g31e21232314_0_33.2"
+       transform="translate(-0.74049587,2.1057851)"
+       class=""
+       id="use4"
+       x="0"
+       y="0" />
+  </g>
+  <g
+     id="g31e21232314_0_33.2"
+     transform="translate(0.74049587,-0.10578512)" />
+  <g
+     id="g31e21232314_0_33.3"
+     transform="matrix(1.1848812,0,0,1.1438091,-7.7219663,-6.2747532)"
+     style="fill:none;fill-opacity:1;stroke:#000000;stroke-width:1.62273;stroke-dasharray:none;stroke-opacity:1">
+    <path
+       fill="#fdb515"
+       d="m 41.0477,27.293962 v 55.30709 L 13.394158,27.293962 Z"
+       fill-rule="evenodd"
+       class=""
+       id="path5"
+       style="fill:none;fill-opacity:1;stroke:#000000;stroke-width:1.62273;stroke-dasharray:none;stroke-opacity:1" />
+  </g>
+  <g
+     filter="url(#shadowFilter-g31e21232314_0_33.4)"
+     id="g6"
+     transform="translate(0.74049587,-0.10578512)"
+     clip-path="url(#clipPath8)">
+    <g
+       id="use6"
+       transform="translate(0,2)">
+      <path
+         fill="#30a2ff"
+         d="m 41.046566,82.60105 h 21.72966 L 81.429771,12.215224 55.854965,25.677167 Z"
+         fill-rule="evenodd"
+         class=""
+         id="path10"
+         transform="translate(0.74049587,-0.10578512)" />
+    </g>
+  </g>
+  <path
+     fill="#30a2ff"
+     d="M 40.068398,88.642934 H 65.815464 L 87.917699,8.1349798 57.614592,23.532874 Z"
+     fill-rule="evenodd"
+     class=""
+     id="path6"
+     style="stroke-width:1.16417" />
+</svg>
