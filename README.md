@@ -133,6 +133,17 @@ Copilot injects hidden instructions into every request (~21KB of safety rules, i
 
 Replacements are exact substring matches, applied sequentially to every system message before it reaches vLLM. Matched rules are logged in the capture file.
 
+### Server Dashboard
+
+A native Tree View sidebar shows live metrics for each configured vLLM server — no webviews, no extra ports.
+
+- **Per-server metrics:** Models served, context window, KV cache usage & hit rate, TTFT, throughput (tokens/sec), active queue
+- **MTP / speculative decoding:** Acceptance rate, draft depth, proposal count (when active)
+- **Configurable polling:** Click **Refresh Interval** at the top of the tree to change — enter `15s`, `30s`, `1m`, etc.
+- **Status bar indicator:** Color-coded health + KV cache usage in the bottom status bar
+
+Access via **View → vLLM-Copilot → Dashboard** or the sidebar section header.
+
 ### Auto-Continue on Empty Responses
 
 Some models (notably Qwen) occasionally return zero tokens or truncated output. The extension automatically retries with an assistant prefill — you never see a blank or cut-off response. Configurable per-model (`autoContinueRetries`, default: 1).
