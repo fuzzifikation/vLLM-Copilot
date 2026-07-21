@@ -110,6 +110,10 @@ Each mode is a set of parameters merged into the vLLM request. Common use cases:
 
 > The **Add vLLM Server & Model** command auto-generates modes from bundled presets or HuggingFace data. For existing entries, see the [Configuration Reference](docs/configuration-reference.md).
 
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/model-mode.png" width="500" alt="Model mode picker showing different configurations">
+
+*Switch between model modes directly from the Copilot model picker — Think, No Think, Precise, etc.*
+
 ### Personality Presets
 
 Four bundled personalities that replace Copilot's 21KB system prompt boilerplate with
