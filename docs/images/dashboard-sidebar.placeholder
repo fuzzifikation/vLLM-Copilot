@@ -1,0 +1,6 @@
+<!-- Placeholder: Replace with actual screenshot of dashboard sidebar with expanded server metrics -->
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400" viewBox="0 0 800 400">
+  <rect width="800" height="400" fill="#1e1e1e"/>
+  <text x="400" y="180" text-anchor="middle" fill="#888" font-family="system-ui" font-size="24">[Dashboard Screenshot Placeholder]</text>
+  <text x="400" y="210" text-anchor="middle" fill="#666" font-family="system-ui" font-size="16">Open Dashboard → Expand server → Show metrics</text>
+</svg>

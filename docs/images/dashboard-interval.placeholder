@@ -1,0 +1,6 @@
+<!-- Placeholder: Replace with actual screenshot showing the Refresh Interval input box -->
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200">
+  <rect width="400" height="200" fill="#1e1e1e"/>
+  <text x="200" y="90" text-anchor="middle" fill="#888" font-family="system-ui" font-size="18">[Refresh Interval Screenshot]</text>
+  <text x="200" y="115" text-anchor="middle" fill="#666" font-family="system-ui" font-size="14">Click Refresh Interval → Show input box</text>
+</svg>

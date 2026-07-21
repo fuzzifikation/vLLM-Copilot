@@ -137,6 +137,14 @@ Replacements are exact substring matches, applied sequentially to every system m
 
 A native Tree View sidebar shows live metrics for each configured vLLM server — no webviews, no extra ports.
 
+![Dashboard sidebar with server metrics](docs/images/dashboard-sidebar.png)
+
+*Dashboard sidebar showing per-server metrics: models, context window, KV cache, throughput, active queue.*
+
+![Dashboard refresh interval](docs/images/dashboard-interval.png)
+
+*Click "Refresh Interval" to change the polling frequency inline — no Settings UI needed.*
+
 - **Per-server metrics:** Models served, context window, KV cache usage & hit rate, TTFT, throughput (tokens/sec), active queue
 - **MTP / speculative decoding:** Acceptance rate, draft depth, proposal count (when active)
 - **Configurable polling:** Click **Refresh Interval** at the top of the tree to change — enter `15s`, `30s`, `1m`, etc.
