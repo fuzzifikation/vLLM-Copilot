@@ -105,7 +105,7 @@
         '<input type="text" data-f="systemMessageReplacementsFile" value="' + E(String(m.systemMessageReplacementsFile || '')) + '">' +
         '<div class="field-hint">Path to JSON find/replace rules file</div></div>' +
         '<button class="secondary" id="personalityBtn" style="margin-top:6px">Set Personality...</button>');
-      h += '<div class="btn-row"><button id="saveBtn">Save All Changes</button></div>';
+      h += '<div class="btn-row"><button id="saveBtn">Save All Changes</button><button class="secondary" id="revertBtn" style="margin-left:8px">Revert</button></div>';
     }
     r.innerHTML = h;
 
@@ -118,6 +118,8 @@
     document.getElementById('mSel').onchange = () => { S.selModel = document.getElementById('mSel').value; render(); };
     const saveButton = document.getElementById('saveBtn');
     if (saveButton) saveButton.onclick = save;
+    const revertButton = document.getElementById('revertBtn');
+    if (revertButton) revertButton.onclick = render;
     const personalityButton = document.getElementById('personalityBtn');
     if (personalityButton) personalityButton.onclick = () => vscode.postMessage({ type: 'setPersonality', serverUrl: S.selServer, vllmModelId: S.selModel });
   }
