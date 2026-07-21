@@ -8,7 +8,10 @@
 - **New: MTP speculative decoding visibility** — Prometheus `spec_decode_num_draft_tokens_total`, `spec_decode_num_accepted_tokens_total`, and `spec_decode_num_drafts_total` are parsed and displayed as MTP acceptance rate, draft depth, and total proposal count.
 - **New: all model names per server** — model aliases are discovered from `/v1/models`, Prometheus metrics, and config, then merged into a collapsible Models subtree.
 - **New: Context Window display** — `max_model_len` from `/v1/models` endpoint, formatted as "32K".
+- **New: Throughput (tokens/sec)** — derived from TPOT as `1000 / avgTPOTms`, replacing raw TPOT display.
+- **New: clickable Refresh Interval** — top-of-tree row opens inline input box (accepts `15s`, `30s`, `1m`, etc.), saves directly to settings. Polling timer restarts automatically when interval changes.
 - **Removed: webview sidebar** — `DashboardWebview` class and all webview HTML/JS generation code deleted. No more `type: webview` in package.json for the dashboard.
+- **Docs: configuration-reference.md** — new Dashboard section with full metrics table, data sources, and settings reference.
 
 ## v0.18.0 (upcoming) — Historical reasoning preservation
 
