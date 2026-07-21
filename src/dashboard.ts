@@ -143,7 +143,7 @@ class MetricsParser {
   }
 
   aggregate(): Omit<ServerMetrics, 'online' | 'version' | 'error'> {
-    const modelNames = [...this.models.keys()].filter(m => m !== 'unknown');
+    const modelNames = [...this.models.keys()];
 
     const sumAll = <T extends number>(fn: (a: ModelAccumulator) => T[]) => {
       let total = 0;
@@ -193,9 +193,9 @@ class MetricsParser {
     const avgTPOTMs = tpotCount > 0 ? (tpotSum / tpotCount) * 1000 : null;
 
     return {
-      models: modelNames,
+      models: modelNames.filter(m => m !== 'unknown'),
       maxModelLen: null,
-      kvCacheUsagePercent: kvCache,
+      kvCacheUsagePercent: kvCache != null ? kvCache * 100 : null,
       runningRequests: modelNames.length > 0 ? running : null,
       waitingRequests: modelNames.length > 0 ? waiting : null,
       cacheHitRate,
@@ -395,8 +395,6 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   private _onDidChangeTreeData = new vscode.EventEmitter<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-  private servers: ServerConnection[] = [];
-  private metricsCache: Map<string, ServerMetrics> = new Map();
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   private outputChannel: vscode.OutputChannel;
 
@@ -414,29 +412,50 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
   async getChildren(element?: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem): Promise<(ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem)[]> {
     if (!element) {
-      // Root: rebuild servers list, fetch metrics, return server items + action items
-      await this.refreshServers();
-
-      const serverItems: ServerTreeItem[] = [];
-      for (const s of this.servers) {
-        const entry = this.metricsCache.get(s.url);
-        if (entry) {
-          serverItems.push(new ServerTreeItem(s.url, entry, s.requestHeaders));
-        } else {
-          serverItems.push(new ServerTreeItem(s.url, {
-            online: false, error: 'Loading...',
-            models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
-            cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
-            avgTTFTMs: null, avgTPOTMs: null, preemptions: null, evictions: null,
-          }, s.requestHeaders));
+      try {
+        const config = await getConfig(this.context);
+        // [url] -> { requestHeaders, configModelIds }
+        const serverMap = new Map<string, { requestHeaders: Record<string, string>; configModelIds: string[] }>();
+        for (const model of config.models) {
+          if (!model.serverUrl) continue;
+          if (!serverMap.has(model.serverUrl)) {
+            const serverConfig = resolveServerConfig(model);
+            serverMap.set(model.serverUrl, { requestHeaders: serverConfig.requestHeaders, configModelIds: [] });
+          }
+          const entry = serverMap.get(model.serverUrl)!;
+          const modelIdentifier = model.vllmModelId || model.id;
+          if (modelIdentifier && !entry.configModelIds.includes(modelIdentifier)) {
+            entry.configModelIds.push(modelIdentifier);
+          }
         }
-      }
 
-      return serverItems;
+        // Fetch metrics for each server in parallel
+        const results = await Promise.all(
+          Array.from(serverMap.entries()).map(async ([url, entry]) => {
+            try {
+              return await fetchServerMetrics(url, entry.requestHeaders, entry.configModelIds);
+            } catch {
+              return {
+                online: false, error: 'Fetch failed',
+                models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
+                cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
+                avgTTFTMs: null, avgTPOTMs: null, preemptions: null, evictions: null,
+              };
+            }
+          }),
+        );
+
+        return Array.from(serverMap.entries()).map(([url, entry], i) =>
+          new ServerTreeItem(url, results[i], entry.requestHeaders),
+        );
+      } catch (err) {
+        this.outputChannel.appendLine(`[DASHBOARD] getChildren failed: ${err instanceof Error ? err.message : String(err)}`);
+        return [];
+      }
     }
 
     if (element instanceof ServerTreeItem) {
-      return this.getServerMetricsChildren(element);
+      return this.getServerMetricsChildren(element.metrics);
     }
 
     if (element instanceof ModelsTreeItem) {
@@ -446,9 +465,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     return [];
   }
 
-  private getServerMetricsChildren(server: ServerTreeItem): MetricTreeItem[] {
+  private getServerMetricsChildren(m: ServerMetrics): MetricTreeItem[] {
     const items: MetricTreeItem[] = [];
-    const m = server.metrics;
     if (!m.online) {
       return [new MetricTreeItem('Error', m.error || 'Connection failed', 'error')];
     }
@@ -490,55 +508,16 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     return items;
   }
 
-  private async refreshServers(): Promise<void> {
-    try {
-      const config = await getConfig(this.context);
-      // [url] -> { requestHeaders, configModelIds }
-      const serverMap = new Map<string, { requestHeaders: Record<string, string>; configModelIds: string[] }>();
-      for (const model of config.models) {
-        if (!model.serverUrl) continue;
-        if (!serverMap.has(model.serverUrl)) {
-          const serverConfig = resolveServerConfig(model);
-          serverMap.set(model.serverUrl, { requestHeaders: serverConfig.requestHeaders, configModelIds: [] });
-        }
-        const entry = serverMap.get(model.serverUrl)!;
-        const modelIdentifier = model.vllmModelId || model.id;
-        if (modelIdentifier && !entry.configModelIds.includes(modelIdentifier)) {
-          entry.configModelIds.push(modelIdentifier);
-        }
-      }
-      this.servers = Array.from(serverMap.entries()).map(([url, entry]) => ({
-        url,
-        requestHeaders: entry.requestHeaders,
-        configModelIds: entry.configModelIds,
-      }));
-
-      // Fetch metrics for each server
-      for (const s of this.servers) {
-        if (!this.metricsCache.has(s.url)) {
-          this.metricsCache.set(s.url,
-            await fetchServerMetrics(s.url, s.requestHeaders, s.configModelIds),
-          );
-        }
-      }
-    } catch (err) {
-      this.outputChannel.appendLine(`[DASHBOARD] refreshServers failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
   private startPolling(): void {
     const cfg = vscode.workspace.getConfiguration('vllm-copilot.dashboard');
     const pollInterval = cfg.get<number>('pollIntervalMs', 15000);
 
-    this.pollTimer = setInterval(async () => {
-      await this.refreshServers();
+    this.pollTimer = setInterval(() => {
       this._onDidChangeTreeData.fire();
     }, pollInterval);
   }
 
   async refresh(): Promise<void> {
-    this.metricsCache.clear();
-    await this.refreshServers();
     this._onDidChangeTreeData.fire();
   }
 
