@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.19.2 — Bug fixes
+- **Fixed: Server Settings webview silently discarded vllmModelId edits** — the Models dropdown is the vllmModelId selector; a redundant text input was rendered as editable but silently overwritten on save. Removed the text input and relabeled the dropdown.
+- **Fixed: Status bar showed first-server health independent of selected model** — the status bar polled the first configured server on a hardcoded 15 s interval and could not track picker changes. Removed entirely — server health is available in the dashboard tree view.
+- **Fixed: Dead duplicate null-check in registerConfigureServerCommand** — commands.ts had two consecutive identical null-checks; the second was unreachable. Removed the dead line.
+
 ## v1.19.1 — Per-model settings webview
 
 - **New: Server Settings webview in vLLM sidebar** — sibling webview to the dashboard tree for editing per-model configuration. No more manual `settings.json` edits.
@@ -12,11 +17,7 @@
 
 ## v1.19.0 (upcoming) — Native Tree View Dashboard
 
-- **Fixed: Server Settings webview silently discarded `vllmModelId` edits** — the Models dropdown is the `vllmModelId` selector; a redundant text input was rendered as editable but silently overwritten on save. Removed the text input and relabeled the dropdown to "Model (vllmModelId)".
-- **Fixed: Status bar showed first-server health independent of selected model** — the status bar polled the first configured server on a hardcoded 15 s interval, showed `vLLM: 42% KV` / `Online` / `Offline` regardless of whether a vLLM model was active in the Copilot picker, and ignored the `pollIntervalMs` setting. VS Code's `chatProvider` API has no `onDidChangeModelSelection` event, so the indicator couldn't know when the user switched to a non-vLLM model. Removed entirely — server health is available in the dashboard tree view.
-- **Fixed: Dead duplicate `if (!selectedServer) return;` in `registerConfigureServerCommand`** — `commands.ts` had two consecutive identical null-checks; the second was unreachable. Removed the dead line.
 - **New: vLLM Server Dashboard as native VS Code Tree View** — replaced the webview sidebar with a TreeDataProvider-based sidebar. Server list with collapsible per-server metrics: model names, context window, KV cache usage, running/watching requests, TTFT, TPOT, cache hit rate, MTP speculative decoding metrics, preemptions, evictions.
-- **Removed: status bar health indicator** — the status bar showed first-server health independent of the selected model and couldn't track picker changes. Removed; server health is available in the dashboard tree view.
 - **New: automatic polling** — dashboard metrics refresh at a configurable interval (`vllm-copilot.dashboard.pollIntervalMs`, default 15s).
 - **New: MTP speculative decoding visibility** — Prometheus `spec_decode_num_draft_tokens_total`, `spec_decode_num_accepted_tokens_total`, and `spec_decode_num_drafts_total` are parsed and displayed as MTP acceptance rate, draft depth, and total proposal count.
 - **New: all model names per server** — model aliases are discovered from `/v1/models`, Prometheus metrics, and config, then merged into a collapsible Models subtree.
