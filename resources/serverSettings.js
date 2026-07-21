@@ -78,7 +78,7 @@
     h += '<label>Server</label><select id="sSel">';
     S.servers.forEach(s => { h += '<option' + (s.url === S.selServer ? ' selected' : '') + '>' + E(s.url) + '</option>'; });
     h += '</select>';
-    h += '<label>Model</label><select id="mSel">';
+    h += '<label>Model (vllmModelId)</label><select id="mSel">';
     allModelIds.forEach(id => {
       const configured = sv.models.find(m => (m.vllmModelId || m.id) === id);
       const lbl = configured ? (configured.displayName || id) : id;
@@ -89,8 +89,7 @@
 
     if (S.mc) {
       const m = S.mc;
-      h += sec('General', fields([{ k: 'displayName', t: 'text', v: m.displayName || '', h: 'Name shown in model picker' },
-        { k: 'vllmModelId', t: 'text', v: m.vllmModelId || m.id || '', h: 'Model ID on vLLM server' }]));
+      h += sec('General', fields([{ k: 'displayName', t: 'text', v: m.displayName || '', h: 'Name shown in model picker' }]));
       h += sec('Token Budget', fields([{ k: 'maxOutputTokens', t: 'number', v: m.maxOutputTokens ?? 4096, h: 'Max output tokens (default: 4096)' },
         { k: 'maxInputTokens', t: 'number', v: m.maxInputTokens ?? '', h: 'Auto-computed; set to reserve headroom' },
         { k: 'estimateCharsPerToken', t: 'number', v: m.estimateCharsPerToken ?? 3.5, h: 'Avg chars/token (default: 3.5)' }]));

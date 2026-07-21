@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider.js';
-import { getConfig, validateConfig, resolveServerConfig } from './config.js';
+import { getConfig, validateConfig } from './config.js';
 import { FileLogger } from './logger.js';
 import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault } from './autoConfig.js';
 import { migrateToPerModelServer, migrateToCompositeIds } from './migration.js';
@@ -15,7 +15,7 @@ import {
   registerConfigureServerCommand,
 } from './commands.js';
 import { setExtensionVersion } from './diagnostics.js';
-import { DashboardTreeProvider, fetchServerMetrics } from './dashboard.js';
+import { DashboardTreeProvider } from './dashboard.js';
 import { ServerSettingsViewProvider } from './serverSettingsView.js';
 
 const VENDOR_ID = 'vllm-copilot';
@@ -186,61 +186,12 @@ export async function activate(context: vscode.ExtensionContext) {
       }),
     );
 
-    // Status bar item: at-a-glance health
-    const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    context.subscriptions.push(statusBar);
-    statusBar.command = 'vllm-copilot.refreshDashboard';
-    statusBar.tooltip = new vscode.MarkdownString('Click to refresh dashboard');
+    // Refresh dashboard command
     context.subscriptions.push(
       vscode.commands.registerCommand('vllm-copilot.refreshDashboard', async () => {
         await dashboardTree.refresh();
-        updateStatusBar();
       })
     );
-
-    // Update status bar on config changes and periodically
-    async function updateStatusBar() {
-      try {
-        const config = await getConfig(context);
-        const servers: string[] = [];
-        for (const model of config.models) {
-          if (model.serverUrl && !servers.includes(model.serverUrl)) {
-            servers.push(model.serverUrl);
-          }
-        }
-
-        if (servers.length === 0) {
-          statusBar.hide();
-          return;
-        }
-
-        // Fetch first server metrics for status bar
-        const firstServer = servers[0];
-        const serverConfig = resolveServerConfig(config.models.find(m => m.serverUrl === firstServer));
-        const metrics = await fetchServerMetrics(firstServer, serverConfig.requestHeaders);
-
-        if (metrics.online && metrics.kvCacheUsagePercent != null) {
-          statusBar.text = `$(circle-filled) vLLM: ${Math.round(metrics.kvCacheUsagePercent)}% KV`;
-          statusBar.color = new vscode.ThemeColor('charts.green');
-        } else if (metrics.online) {
-          statusBar.text = `$(circle-filled) vLLM: Online`;
-          statusBar.color = new vscode.ThemeColor('charts.green');
-        } else {
-          statusBar.text = `$(circle-filled) vLLM: Offline`;
-          statusBar.color = new vscode.ThemeColor('charts.red');
-        }
-        statusBar.show();
-      } catch {
-        statusBar.hide();
-      }
-    }
-
-    // Initial status bar update
-    updateStatusBar();
-
-    // Update status bar periodically
-    const statusBarTimer = setInterval(updateStatusBar, 15000);
-    context.subscriptions.push({ dispose: () => clearInterval(statusBarTimer) });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     const reason = err instanceof Error && err.stack ? err.stack : detail;
