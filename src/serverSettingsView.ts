@@ -18,6 +18,9 @@ const KNOWN_PARAMS: Record<string, { label: string; type: 'number' | 'string' | 
   chat_template_kwargs: { label: 'Chat Template Kwargs', type: 'json' },
   stop: { label: 'Stop Sequences', type: 'json' },
   reasoning_effort: { label: 'Reasoning Effort', type: 'string', options: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  seed: { label: 'Seed', type: 'number' },
+  parallel_tool_calls: { label: 'Parallel Tool Calls', type: 'string', options: ['true', 'false'] },
+  skip_special_tokens: { label: 'Skip Special Tokens', type: 'string', options: ['true', 'false'] },
 };
 
 interface ServerGroup {
