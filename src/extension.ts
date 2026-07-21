@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider.js';
-import { getConfig, validateConfig } from './config.js';
+import { getConfig, validateConfig, resolveServerConfig } from './config.js';
 import { FileLogger } from './logger.js';
 import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault } from './autoConfig.js';
 import { migrateToPerModelServer, migrateToCompositeIds } from './migration.js';
@@ -15,7 +15,7 @@ import {
   registerConfigureServerCommand,
 } from './commands.js';
 import { setExtensionVersion } from './diagnostics.js';
-import { DashboardViewProvider } from './dashboard.js';
+import { DashboardTreeProvider, fetchServerMetrics } from './dashboard.js';
 
 const VENDOR_ID = 'vllm-copilot';
 let provider: VllmChatModelProvider | undefined;
@@ -30,6 +30,22 @@ export async function activate(context: vscode.ExtensionContext) {
   try {
     outputChannel = vscode.window.createOutputChannel('vLLM-Copilot');
     context.subscriptions.push(outputChannel);
+
+    // Always log remote detection state for debugging
+    const extKindLabel = context.extension.extensionKind === vscode.ExtensionKind.UI ? 'UI' : 'Workspace';
+    outputChannel.appendLine(`[INFO] Remote detection: remoteName="${vscode.env.remoteName ?? 'none'}", extensionKind=${extKindLabel}`);
+
+    // Running locally while connected to a remote — auto-install on the remote host.
+    if (vscode.env.remoteName && context.extension.extensionKind === vscode.ExtensionKind.UI) {
+      outputChannel.appendLine(`[WARN] Extension is not installed on the ${vscode.env.remoteName} remote — triggering auto-install from Marketplace.`);
+      void vscode.commands.executeCommand(
+        'workbench.extensions.installExtension',
+        'System-Sciences.vllm-copilot'
+      ).then(
+        () => outputChannel.appendLine(`[INFO] Auto-install on ${vscode.env.remoteName} remote triggered.`),
+        (err) => outputChannel.appendLine(`[WARN] Auto-install on ${vscode.env.remoteName} remote failed: ${err instanceof Error ? err.message : String(err)}`)
+      );
+    }
 
     // publisher/name changes.
     setExtensionVersion(context.extension.packageJSON.version);
@@ -121,12 +137,68 @@ export async function activate(context: vscode.ExtensionContext) {
       registerConfigureServerCommand(context, outputChannel),
     );
 
-    // Register dashboard webview
-    const dashboardProvider = new DashboardViewProvider(context, outputChannel);
-    context.subscriptions.push(dashboardProvider);
+    // Register dashboard tree view (native sidebar UI)
+    const dashboardTree = new DashboardTreeProvider(context, outputChannel);
+    context.subscriptions.push(dashboardTree);
     context.subscriptions.push(
-      vscode.window.registerWebviewViewProvider('vllm-copilot.dashboard', dashboardProvider)
+      vscode.window.registerTreeDataProvider('vllm-copilot.dashboard', dashboardTree)
     );
+
+    // Status bar item: at-a-glance health
+    const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    context.subscriptions.push(statusBar);
+    statusBar.command = 'vllm-copilot.refreshDashboard';
+    statusBar.tooltip = new vscode.MarkdownString('Click to refresh dashboard');
+    context.subscriptions.push(
+      vscode.commands.registerCommand('vllm-copilot.refreshDashboard', async () => {
+        await dashboardTree.refresh();
+        updateStatusBar();
+      })
+    );
+
+    // Update status bar on config changes and periodically
+    async function updateStatusBar() {
+      try {
+        const config = await getConfig(context);
+        const servers: string[] = [];
+        for (const model of config.models) {
+          if (model.serverUrl && !servers.includes(model.serverUrl)) {
+            servers.push(model.serverUrl);
+          }
+        }
+
+        if (servers.length === 0) {
+          statusBar.hide();
+          return;
+        }
+
+        // Fetch first server metrics for status bar
+        const firstServer = servers[0];
+        const serverConfig = resolveServerConfig(config.models.find(m => m.serverUrl === firstServer));
+        const metrics = await fetchServerMetrics(firstServer, serverConfig.requestHeaders);
+
+        if (metrics.online && metrics.kvCacheUsagePercent != null) {
+          statusBar.text = `$(circle-filled) vLLM: ${Math.round(metrics.kvCacheUsagePercent)}% KV`;
+          statusBar.color = new vscode.ThemeColor('charts.green');
+        } else if (metrics.online) {
+          statusBar.text = `$(circle-filled) vLLM: Online`;
+          statusBar.color = new vscode.ThemeColor('charts.green');
+        } else {
+          statusBar.text = `$(circle-filled) vLLM: Offline`;
+          statusBar.color = new vscode.ThemeColor('charts.red');
+        }
+        statusBar.show();
+      } catch {
+        statusBar.hide();
+      }
+    }
+
+    // Initial status bar update
+    updateStatusBar();
+
+    // Update status bar periodically
+    const statusBarTimer = setInterval(updateStatusBar, 15000);
+    context.subscriptions.push({ dispose: () => clearInterval(statusBarTimer) });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     const reason = err instanceof Error && err.stack ? err.stack : detail;
@@ -136,7 +208,7 @@ export async function activate(context: vscode.ExtensionContext) {
       console.error(`[ERROR] Extension activation failed:\n${reason}`);
     }
     vscode.window.showErrorMessage(
-      `vLLM-Copilot failed to activate: ${detail}.\n\nCheck Output → vLLM-Copilot for details.`,
+      `vLLM-Copilot failed to activate: ${detail}. If you are connected through Remote-SSH or WSL, install vLLM-Copilot in the remote extension host as well.\n\nCheck Output → vLLM-Copilot for details.`,
       'Open Output'
     ).then(selection => {
       if (selection === 'Open Output') outputChannel.show();

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import * as vscode from 'vscode';
 import { VllmChatModelProvider } from '../src/provider.js';
 import type { StreamEvent } from '../src/types.js';
 
@@ -12,7 +13,12 @@ import type { StreamEvent } from '../src/types.js';
  * captured so we can assert the exact request shape per retry trigger.
  */
 
-function makeContext(): any { return { secrets: { get: async () => undefined } }; }
+function makeContext(): any {
+  return {
+    secrets: { get: async () => undefined },
+    extension: { extensionKind: 1 }, // ExtensionKind.UI — default for tests (no remote)
+  };
+}
 function makeOutput(): any { return { appendLine: vi.fn() }; }
 function makeToken(): any {
   return { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) };
@@ -180,5 +186,108 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
     expect(captured[2].options.continue_final_message).toBe(true);
     expect(captured[2].options.add_generation_prompt).toBe(false);
     expect(reportedText(progress)).toBe('Step: more: done');
+  });
+});
+
+describe('remote-install guard', () => {
+  it('shows an error when extension runs locally on a remote session', async () => {
+    const originalRemoteName = vscode.env.remoteName;
+
+    // Simulate: connected to WSL, extension running locally (UI kind)
+    (vscode.env as any).remoteName = 'wsl';
+    const context = {
+      secrets: { get: async () => undefined },
+      extension: { extensionKind: vscode.ExtensionKind.UI },
+    };
+    const provider = new VllmChatModelProvider(context as any, makeOutput());
+
+    const progress = { report: vi.fn() };
+    await provider.provideLanguageModelChatResponse(
+      { id: 'm', maxOutputTokens: 100 } as any,
+      [] as any,
+      {} as any,
+      progress as any,
+      makeToken(),
+    );
+
+    // Should have reported a text part with install instructions
+    const calls = progress.report.mock.calls.map(c => (c[0] as any)?.value ?? '');
+    expect(calls.some((t: string) => t.includes('not installed on the remote'))).toBe(true);
+    expect(calls.some((t: string) => t.includes('wsl'))).toBe(true);
+
+    // Restore
+    (vscode.env as any).remoteName = originalRemoteName;
+  });
+
+  it('does not show guard when extension runs on remote workspace', async () => {
+    const originalRemoteName = vscode.env.remoteName;
+
+    // Simulate: connected to WSL, extension installed on remote (Workspace kind)
+    (vscode.env as any).remoteName = 'wsl';
+    const context = {
+      secrets: { get: async () => undefined },
+      extension: { extensionKind: vscode.ExtensionKind.Workspace },
+    };
+    const provider = new VllmChatModelProvider(context as any, makeOutput());
+
+    // Stub the downstream so we can verify the guard doesn't short-circuit
+    (provider as any).client.getConfigCached = async () => ({ models: [] });
+    (provider as any).buildRequest = async () => ({
+      vllmModelId: 'm',
+      openaiMessages: [],
+      mergedOptions: {},
+      serverConfig: { serverUrl: '', requestHeaders: {}, streamInactivityTimeout: 0 },
+    });
+
+    const progress = { report: vi.fn() };
+    await provider.provideLanguageModelChatResponse(
+      { id: 'm', maxOutputTokens: 100 } as any,
+      [] as any,
+      {} as any,
+      progress as any,
+      makeToken(),
+    );
+
+    // Should NOT have reported the remote-install error
+    const calls = progress.report.mock.calls.map(c => (c[0] as any)?.value ?? '');
+    expect(calls.some((t: string) => t.includes('not installed on the remote'))).toBe(false);
+
+    // Restore
+    (vscode.env as any).remoteName = originalRemoteName;
+  });
+
+  it('does not show guard when not connected to a remote', async () => {
+    const originalRemoteName = vscode.env.remoteName;
+
+    // Simulate: no remote
+    (vscode.env as any).remoteName = undefined;
+    const context = {
+      secrets: { get: async () => undefined },
+      extension: { extensionKind: vscode.ExtensionKind.UI },
+    };
+    const provider = new VllmChatModelProvider(context as any, makeOutput());
+
+    (provider as any).client.getConfigCached = async () => ({ models: [] });
+    (provider as any).buildRequest = async () => ({
+      vllmModelId: 'm',
+      openaiMessages: [],
+      mergedOptions: {},
+      serverConfig: { serverUrl: '', requestHeaders: {}, streamInactivityTimeout: 0 },
+    });
+
+    const progress = { report: vi.fn() };
+    await provider.provideLanguageModelChatResponse(
+      { id: 'm', maxOutputTokens: 100 } as any,
+      [] as any,
+      {} as any,
+      progress as any,
+      makeToken(),
+    );
+
+    const calls = progress.report.mock.calls.map(c => (c[0] as any)?.value ?? '');
+    expect(calls.some((t: string) => t.includes('not installed on the remote'))).toBe(false);
+
+    // Restore
+    (vscode.env as any).remoteName = originalRemoteName;
   });
 });

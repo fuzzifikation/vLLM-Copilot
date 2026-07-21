@@ -69,7 +69,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
   readonly onDidChangeLanguageModelChatInformation = this._onDidChangeLanguageModelChatInformation.event;
 
   constructor(
-    context: vscode.ExtensionContext,
+    private context: vscode.ExtensionContext,
     private output: vscode.OutputChannel,
     private fileLogger?: FileLogger
   ) {
@@ -210,6 +210,28 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     token: vscode.CancellationToken
   ): Promise<void> {
     const startTime = Date.now();
+
+    // Guard: if we're connected to a remote but the extension is running locally,
+    // the user almost certainly forgot to install the extension on the remote.
+    // Catch this before making a request — the error would be opaque otherwise.
+    if (vscode.env.remoteName && this.context.extension.extensionKind === vscode.ExtensionKind.UI) {
+      const remoteHost = vscode.env.remoteName;
+      this.output.appendLine(
+        `[ERROR] vLLM-Copilot is running locally while connected to ${remoteHost}. ` +
+        `Install the extension on the remote to enable chat.`
+      );
+      progress.report(new vscode.LanguageModelTextPart(
+        `⚠️ **vLLM-Copilot is not installed on the remote.**\n\n` +
+        `You are connected to **${remoteHost}**, but this extension is running on your local machine. ` +
+        `LLM requests will fail or behave unexpectedly.\n\n` +
+        `**To fix this:**\n` +
+        `1. Open the Extensions view: \\\`Ctrl+Shift+X\\\`\n` +
+        `2. Click the "..." menu in the extensions toolbar → **Install in ${remoteHost}...** (or look for the 📥 icon)\n` +
+        `3. Search for **vLLM-Copilot** and install it on the remote\n` +
+        `4. Try your request again`
+      ));
+      return;
+    }
 
     // Load config first — needed for capture + replace pipeline and request building
     const config = await this.client.getConfigCached();
