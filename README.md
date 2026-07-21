@@ -78,8 +78,9 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 
 1. **Install** from the VS Code Marketplace
 2. **Add a model:** `Ctrl+Shift+P` → **Add vLLM Server & Model** → enter your server URL → pick a model → done. The extension auto-configures everything (model family, thinking modes, context window) from bundled presets or HuggingFace.
-3. **Change the personality (optional):** `Ctrl+Shift+P` → **Set Model Personality** → pick your model → pick a personality → done. Four bundled presets replace Copilot's boilerplate with something actually useful.
-4. **Chat:** Open Copilot Chat, pick your model from the dropdown. Switch modes from the same picker.
+3. **Edit settings:** Open the **Server Settings** sidebar to adjust displayName, params, model modes, and more — no `settings.json` editing required.
+4. **Change the personality (optional):** `Ctrl+Shift+P` → **Set Model Personality** → pick your model → pick a personality → done. Four bundled presets replace Copilot's boilerplate with something actually useful.
+5. **Chat:** Open Copilot Chat, pick your model from the dropdown. Switch modes from the same picker.
 
 > **Remote (SSH/WSL/Containers):** This extension runs on the remote host automatically when installed from the Marketplace. VS Code will install it on the remote extension host.
 
@@ -153,12 +154,25 @@ A native Tree View sidebar shows live metrics for each configured vLLM server �
 
 <img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/dashboard-sidebar.png" width="500" alt="Dashboard sidebar with server metrics">
 
-- **Per-server metrics:** Models served, context window, KV cache usage & hit rate, TTFT, throughput (tokens/sec), active queue
+- **At-a-glance queue status:** Each server shows running and waiting request counts (or *idle*)
+- **Expandable metrics:** Model IDs, vLLM version, context window, KV cache usage & hit rate, TTFT, throughput (tokens/sec)
 - **MTP / speculative decoding:** Acceptance rate, draft depth, proposal count (when active)
 - **Configurable polling:** Click **Refresh Interval** at the top of the tree to change — enter `15s`, `30s`, `1m`, etc.
-- **Status bar indicator:** Color-coded health + KV cache usage in the bottom status bar
 
 Access via **View → vLLM-Copilot → Dashboard** or the sidebar section header.
+
+### Server Settings
+
+A sibling webview to the dashboard lets you edit per-model configuration without touching `settings.json`.
+
+- **Server & model selectors** — pick a server and model from dropdowns; unconfigured models can be selected and saved instantly
+- **Sectioned layout (general → specific):** General, Token Budget, Capabilities, Request Params (baseline), Transport, Model Modes (overrides), System Prompt
+- **Parameter picker** — "Add Parameter" offers a dropdown of known params (temperature, top_p, top_k, min_p, seed, reasoning_effort, parallel_tool_calls, skip_special_tokens, etc.) with friendly labels and type hints
+- **Enum dropdowns** — `reasoning_effort` renders as a dropdown (none, minimal, low, medium, high, xhigh, max); boolean params show as true/false dropdowns
+- **Revert button** — discard unsaved changes and reset to the last saved state
+- **Re-opens automatically** on config changes — no manual refresh needed
+
+Access via **View → vLLM-Copilot → Server Settings** or the sidebar section header.
 
 ### Auto-Continue on Empty Responses
 
