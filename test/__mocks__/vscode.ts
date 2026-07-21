@@ -98,4 +98,33 @@ export const env = {
   openExternal: () => Promise.resolve(true),
 } as any;
 
+// window stub (for showInformationMessage, etc.)
+export const window = {
+  showInformationMessage: (_message: string) => Promise.resolve(undefined),
+  createOutputChannel: (name: string) => ({
+    appendLine: () => {},
+    dispose: () => {},
+    show: () => {},
+    hide: () => {},
+  }),
+} as any;
+
+// Uri stub
+export const Uri = {
+  joinPath: (...uris: any[]) => uris[uris.length - 1],
+  file: (path: string) => path,
+} as any;
+
+// ConfigurationTarget enum
+export const ConfigurationTarget = {
+  Global: 1,
+  Workspace: 2,
+  WorkspaceFolder: 3,
+} as const;
+
+// commands stub
+export const commands = {
+  executeCommand: () => Promise.resolve(undefined),
+} as any;
+
 // Anything else accessed on `vscode.*` is undefined; tests should only touch the above.
