@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { getConfig, buildEndpoint, type ModelConfig } from './config.js';
 
-const KNOWN_PARAMS: Record<string, { label: string; type: 'number' | 'json' }> = {
+const KNOWN_PARAMS: Record<string, { label: string; type: 'number' | 'string' | 'json' }> = {
   temperature: { label: 'Temperature', type: 'number' },
   top_p: { label: 'Top P', type: 'number' },
   top_k: { label: 'Top K', type: 'number' },
@@ -17,6 +17,7 @@ const KNOWN_PARAMS: Record<string, { label: string; type: 'number' | 'json' }> =
   max_tokens: { label: 'Max Tokens', type: 'number' },
   chat_template_kwargs: { label: 'Chat Template Kwargs', type: 'json' },
   stop: { label: 'Stop Sequences', type: 'json' },
+  reasoning_effort: { label: 'Reasoning Effort', type: 'string' },
 };
 
 interface ServerGroup {
