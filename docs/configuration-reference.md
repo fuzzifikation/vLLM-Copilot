@@ -70,6 +70,39 @@ Any vLLM chat body field except `model`, `messages`, `stream`, `stream_options`.
 
 ---
 
+## Dashboard
+
+The **vLLM Dashboard** sidebar shows live metrics for each configured vLLM server. Access via **View → vLLM-Copilot → Dashboard** (or the sidebar section header).
+
+### Server Metrics (per server, collapsible)
+
+| Metric | Source | Description |
+|---|---|---|
+| **Models** | `/v1/models` + Prometheus + config | All served model names/aliases (collapsible subtree) |
+| **Context Window** | `/v1/models` | `max_model_len` from server, formatted as "32K" |
+| **KV Cache** | Prometheus `kv_cache_usage_perc` | GPU KV cache utilization (0–100%) |
+| **KV Cache Hit** | Prometheus `prompt_tokens_total` vs `prompt_tokens_cached_total` | Percentage of tokens served from KV cache |
+| **Avg TTFT** | Prometheus `time_to_first_token_seconds` | Time to first token (ms) |
+| **Throughput** | Derived from TPOT | Tokens/second (`1000 / avgTPOTms`) |
+| **Running** | Prometheus `num_requests_running` | Active requests being processed |
+| **Waiting** | Prometheus `num_requests_waiting` | Requests queued, waiting for GPU |
+| **MTP** | Prometheus `spec_decode_*` | Speculative decoding: acceptance %, draft depth, total proposals (only when active) |
+| **Preemptions** | Prometheus `num_preemptions_total` | Only shown when > 0 |
+| **Evictions** | Prometheus `request_eviction_total` | Only shown when > 0 |
+
+### Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `vllm-copilot.dashboard.enabled` | `true` | Enable the Dashboard sidebar and polling |
+| `vllm-copilot.dashboard.pollIntervalMs` | `15000` | How often to refresh metrics (ms). Change via the clickable **Refresh Interval** row in the sidebar, or Settings |
+
+### Status Bar
+
+A color-coded indicator in the status bar shows the first server's KV cache usage (`$(circle-filled) vLLM: 78% KV`). Clicking refreshes the dashboard. Green = online, Red = offline.
+
+---
+
 ## Typical Example
 
 A working chat model — minimum viable config. No modes, no custom params, just authorizes a model on a server. Everything else uses built-in defaults (`temperature: 0.7`, `top_p: 1.0`, `maxOutputTokens: 4096`):
