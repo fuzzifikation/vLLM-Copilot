@@ -97,9 +97,9 @@
         '<div class="checkbox-row"><input type="checkbox" data-k="caps.toolCalling" ' + ((m.capabilities?.toolCalling ?? true) ? 'checked' : '') + '><label>Tool Calling (default: enabled)</label></div>' +
         '<div class="checkbox-row"><input type="checkbox" data-k="caps.imageInput" ' + (!!m.capabilities?.imageInput ? 'checked' : '') + '><label>Image Input (Vision)</label></div>');
       h += sec('Request Params', '<div class="field-hint">Baseline parameters — overridden by Model Modes</div>' + dpSection(m));
-      h += sec('Model Modes', modesSection(m));
       h += sec('Transport', fields([{ k: 'streamInactivityTimeout', t: 'number', v: m.streamInactivityTimeout ?? 0, h: 'SSE timeout in ms (0 = infinite)' },
         { k: 'autoContinueRetries', t: 'number', v: m.autoContinueRetries ?? 1, h: 'Auto-retry count (default: 1)' }]));
+      h += sec('Model Modes', modesSection(m));
       h += sec('System Prompt',
         '<div class="field"><label>systemMessageReplacementsFile</label>' +
         '<input type="text" data-f="systemMessageReplacementsFile" value="' + E(String(m.systemMessageReplacementsFile || '')) + '">' +
