@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.19.1 — Per-model settings webview
+
+- **New: Server Settings webview in vLLM sidebar** — sibling webview to the dashboard tree for editing per-model configuration. No more manual `settings.json` edits.
+- **New: server model discovery** — fetches `/v1/models` per server and populates a combined dropdown of configured + unconfigured models. Selecting an unconfigured model creates a new entry automatically.
+- **New: parameter picker** — "Add Parameter" in Model Modes and Request Params offers a dropdown of known parameters (temperature, top_p, chat_template_kwargs, etc.) with friendly labels and type hints.
+- **New: defaultMode picker** — dropdown in the Model Modes section to select which mode is active for the model.
+- **New: system prompt personality button** — "Set Personality..." button in the System Prompt section launches the `vllm-copilot.setModelPersonality` command.
+- **New: remove buttons on params** — ⊗ button on each mode parameter and request parameter row for inline deletion.
+- **New: validate-webview-js script** — `npm run validate-webview-js` parses all `resources/*.js` with `vm.createScript` to catch syntax errors before packaging.
+
 ## v1.19.0 (upcoming) — Native Tree View Dashboard
 
 - **New: vLLM Server Dashboard as native VS Code Tree View** — replaced the webview sidebar with a TreeDataProvider-based sidebar. Server list with collapsible per-server metrics: model names, context window, KV cache usage, running/watching requests, TTFT, TPOT, cache hit rate, MTP speculative decoding metrics, preemptions, evictions.

@@ -415,6 +415,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private isVisible = false;
   private outputChannel: vscode.OutputChannel;
 
   constructor(
@@ -422,8 +423,6 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     outputChannel: vscode.OutputChannel,
   ) {
     this.outputChannel = outputChannel;
-    this.startPolling();
-    // Restart polling timer when interval setting changes
     this.context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('vllm-copilot.dashboard.pollIntervalMs')) {
@@ -432,6 +431,17 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
         }
       }),
     );
+  }
+
+  /** Call when the tree view becomes visible or hidden */
+  setVisible(visible: boolean): void {
+    this.isVisible = visible;
+    if (visible) {
+      this.startPolling();
+      this._onDidChangeTreeData.fire(); // refresh on show
+    } else {
+      this.stopPolling();
+    }
   }
 
   private getPollInterval(): number {
@@ -555,9 +565,17 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
   private startPolling(): void {
     if (this.pollTimer) clearInterval(this.pollTimer);
+    if (!this.isVisible) return;
     this.pollTimer = setInterval(() => {
       this._onDidChangeTreeData.fire();
     }, this.getPollInterval());
+  }
+
+  private stopPolling(): void {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = undefined;
+    }
   }
 
   async refresh(): Promise<void> {
@@ -565,9 +583,6 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   }
 
   dispose(): void {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = undefined;
-    }
+    this.stopPolling();
   }
 }
