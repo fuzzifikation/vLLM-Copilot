@@ -368,7 +368,7 @@ class ModelsTreeItem extends vscode.TreeItem {
   constructor(public readonly modelNames: string[]) {
     super('Model IDs', vscode.TreeItemCollapsibleState.Collapsed);
     this.description = `${modelNames.length}`;
-    this.iconPath = new vscode.ThemeIcon('library');
+    this.iconPath = new vscode.ThemeIcon('copilot');
     this.tooltip = modelNames.join('\n');
   }
 }
