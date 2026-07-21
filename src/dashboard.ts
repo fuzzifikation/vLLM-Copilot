@@ -343,7 +343,6 @@ class ServerTreeItem extends vscode.TreeItem {
     public readonly serverUrl: string,
     public readonly metrics: ServerMetrics,
     public readonly requestHeaders: Record<string, string>,
-    public readonly updatedAt: Date | null,
   ) {
     const displayName = shortUrl(serverUrl);
     const statusIcon = metrics.online
@@ -352,8 +351,9 @@ class ServerTreeItem extends vscode.TreeItem {
 
     super(displayName, vscode.TreeItemCollapsibleState.Collapsed);
     this.iconPath = statusIcon;
+    this.id = `server:${serverUrl}`;
     this.description = metrics.online ? summaryLine(metrics) : 'Offline';
-    this.tooltip = new vscode.MarkdownString(`${serverUrl}\n*${metrics.models.join(', ') || 'no models'}*\n\nUpdated: ${updatedAt ? updatedAt.toLocaleTimeString() : 'never'}`);
+    this.tooltip = new vscode.MarkdownString(`${serverUrl}\n*${metrics.models.join(', ') || 'no models'}*`);
     this.contextValue = metrics.online ? 'serverOnline' : 'serverOffline';
   }
 }
@@ -396,7 +396,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private servers: ServerConnection[] = [];
-  private metricsCache: Map<string, { metrics: ServerMetrics; updatedAt: Date }> = new Map();
+  private metricsCache: Map<string, ServerMetrics> = new Map();
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   private outputChannel: vscode.OutputChannel;
 
@@ -421,14 +421,14 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       for (const s of this.servers) {
         const entry = this.metricsCache.get(s.url);
         if (entry) {
-          serverItems.push(new ServerTreeItem(s.url, entry.metrics, s.requestHeaders, entry.updatedAt));
+          serverItems.push(new ServerTreeItem(s.url, entry, s.requestHeaders));
         } else {
           serverItems.push(new ServerTreeItem(s.url, {
             online: false, error: 'Loading...',
             models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
             cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
             avgTTFTMs: null, avgTPOTMs: null, preemptions: null, evictions: null,
-          }, s.requestHeaders, null));
+          }, s.requestHeaders));
         }
       }
 
@@ -448,14 +448,6 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
   private getServerMetricsChildren(server: ServerTreeItem): MetricTreeItem[] {
     const items: MetricTreeItem[] = [];
-
-    // Last updated timestamp
-    if (server.updatedAt) {
-      const ago = Math.round((Date.now() - server.updatedAt.getTime()) / 1000);
-      const timeStr = ago === 0 ? 'just now' : `${ago}s ago`;
-      items.push(new MetricTreeItem('Updated', timeStr, 'clock'));
-    }
-
     const m = server.metrics;
     if (!m.online) {
       return [new MetricTreeItem('Error', m.error || 'Connection failed', 'error')];
@@ -524,10 +516,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       // Fetch metrics for each server
       for (const s of this.servers) {
         if (!this.metricsCache.has(s.url)) {
-          this.metricsCache.set(s.url, {
-            metrics: await fetchServerMetrics(s.url, s.requestHeaders, s.configModelIds),
-            updatedAt: new Date(),
-          });
+          this.metricsCache.set(s.url,
+            await fetchServerMetrics(s.url, s.requestHeaders, s.configModelIds),
+          );
         }
       }
     } catch (err) {
