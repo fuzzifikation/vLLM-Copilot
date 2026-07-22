@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider.js';
-import { getConfig, validateConfig } from './config.js';
+import { getConfig, validateConfig, resolveServerConfig } from './config.js';
 import { FileLogger } from './logger.js';
 import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault } from './autoConfig.js';
 import { migrateToPerModelServer, migrateToCompositeIds } from './migration.js';
@@ -18,6 +18,7 @@ import {
 import { setExtensionVersion } from './diagnostics.js';
 import { DashboardTreeProvider } from './dashboard.js';
 import { ServerSettingsViewProvider } from './serverSettingsView.js';
+import { openDeepDive } from './deepDiveView.js';
 
 const VENDOR_ID = 'vllm-copilot';
 let provider: VllmChatModelProvider | undefined;
@@ -138,6 +139,23 @@ export async function activate(context: vscode.ExtensionContext) {
       registerSetModelPersonalityCommand(context, activeProvider, outputChannel),
       registerUpdateServerAuthCommand(context, activeProvider, outputChannel),
       registerRemoveServerCommand(context, activeProvider, outputChannel),
+    );
+
+    // Deep-Dive: open editor-area webview for a single server
+    context.subscriptions.push(
+      vscode.commands.registerCommand('vllm-copilot.openDeepDive', async (arg?: any) => {
+        const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
+        if (!serverUrl) {
+          vscode.window.showErrorMessage('Server URL not provided.');
+          return;
+        }
+        // Resolve requestHeaders from first model config pointing at this server
+        const config = vscode.workspace.getConfiguration('vllm-copilot');
+        const models = config.get<any[]>('models') || [];
+        const firstModel = models.find(m => m.serverUrl === serverUrl);
+        const headers = firstModel ? (resolveServerConfig(firstModel).requestHeaders ?? {}) : {};
+        openDeepDive(serverUrl, headers, context, outputChannel);
+      }),
     );
 
     // Register dashboard tree view (native sidebar UI)
