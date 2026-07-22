@@ -68,7 +68,7 @@
     "commands": [
       {
         "command": "vllm-copilot.addServerModel",
-        "title": "Add vLLM Server & Model",
+        "title": "Add or Reconfigure Server/Model",
         "category": "vLLM-Copilot"
       },
       {
@@ -112,11 +112,30 @@
         "category": "vLLM-Copilot: Utilities"
       },
       {
-        "command": "vllm-copilot.configureServer",
-        "title": "Configure Server",
+        "command": "vllm-copilot.updateServerAuth",
+        "title": "Update Auth",
+        "category": "vLLM-Copilot"
+      },
+      {
+        "command": "vllm-copilot.removeServer",
+        "title": "Remove Server",
         "category": "vLLM-Copilot"
       }
     ],
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "vllm-copilot.updateServerAuth",
+          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline)",
+          "group": "1_server@1"
+        },
+        {
+          "command": "vllm-copilot.removeServer",
+          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline)",
+          "group": "1_server@2"
+        }
+      ]
+    },
     "configuration": [
       {
         "title": "Models",

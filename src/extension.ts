@@ -12,7 +12,8 @@ import {
   registerClearLogFilesCommand,
   registerCleanSessionsCommand,
   registerSetModelPersonalityCommand,
-  registerConfigureServerCommand,
+  registerUpdateServerAuthCommand,
+  registerRemoveServerCommand,
 } from './commands.js';
 import { setExtensionVersion } from './diagnostics.js';
 import { DashboardTreeProvider } from './dashboard.js';
@@ -128,14 +129,15 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       registerTestAndRefreshModelsCommand(context, activeProvider, outputChannel),
       registerDiagnoseConnectionCommand(context, outputChannel),
-      registerAddServerModelCommand(context, outputChannel),
-      registerAutoConfigureModelCommand(context, outputChannel),
+      registerAddServerModelCommand(context, activeProvider, outputChannel),
+      registerAutoConfigureModelCommand(context, activeProvider, outputChannel),
       registerConfigureUtilityModelCommand(outputChannel),
       registerOpenLogFileCommand(fileLogger),
       registerClearLogFilesCommand(fileLogger),
       registerCleanSessionsCommand(outputChannel, context.extension.extensionKind),
       registerSetModelPersonalityCommand(context, activeProvider, outputChannel),
-      registerConfigureServerCommand(context, outputChannel),
+      registerUpdateServerAuthCommand(context, activeProvider, outputChannel),
+      registerRemoveServerCommand(context, activeProvider, outputChannel),
     );
 
     // Register dashboard tree view (native sidebar UI)
@@ -152,7 +154,7 @@ export async function activate(context: vscode.ExtensionContext) {
     );
 
     // Register server settings webview (collapsible section below dashboard)
-    const serverSettingsView = new ServerSettingsViewProvider(context, outputChannel);
+    const serverSettingsView = new ServerSettingsViewProvider(context, outputChannel, () => activeProvider.clearCache());
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider('vllm-copilot.serverSettings', serverSettingsView)
     );
