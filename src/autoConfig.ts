@@ -231,7 +231,6 @@ export interface HfGenerationConfig {
 interface VllmModelInfo {
   id: string;
   max_model_len?: number;
-  owned_by?: string;
   /** Underlying checkpoint id. vLLM sets this to the HF repo when the model is a
    *  `--served-model-name` alias, so it links aliases back to their real model. */
   root?: string;
@@ -258,30 +257,21 @@ export interface AutoConfigResult {
  * When a model is served under a quantized or aliased name (e.g. `qwen3.6-27b-fp8`),
  * `vllmInfo.root` points to the base HuggingFace repo (`Qwen/Qwen3.6-27B`). HF lookups
  * use this `root` so they resolve metadata for the actual model, not the served alias.
- *
- * @param preFetchedInfo - When provided (object or null), the vLLM `/v1/models`
- *   lookup is skipped and this value is used instead. Lets the caller reuse an
- *   info it already fetched (e.g. for preset root-matching) without a second call.
  */
 export async function autoConfigureModel(
   modelId: string,
   serverUrl: string,
-  requestHeaders?: Record<string, string>,
-  preFetchedInfo?: VllmModelInfo | null
+  requestHeaders?: Record<string, string>
 ): Promise<AutoConfigResult> {
   const summary: string[] = [];
   const modelConfig: ModelConfig = { id: modelId, vllmModelId: modelId };
 
-  // 1. Fetch from vLLM server (unless the caller already did).
+  // 1. Fetch from vLLM server.
   let vllmInfo: VllmModelInfo | null = null;
-  if (preFetchedInfo !== undefined) {
-    vllmInfo = preFetchedInfo;
-  } else {
-    try {
-      vllmInfo = await fetchVllmModelInfo(modelId, serverUrl, requestHeaders);
-    } catch (err) {
-      summary.push(`⚠ Could not fetch model info from vLLM server: ${describeError(err)}`);
-    }
+  try {
+    vllmInfo = await fetchVllmModelInfo(modelId, serverUrl, requestHeaders);
+  } catch (err) {
+    summary.push(`⚠ Could not fetch model info from vLLM server: ${describeError(err)}`);
   }
   let suggestedMaxOutputTokens: number | undefined;
   if (vllmInfo) {

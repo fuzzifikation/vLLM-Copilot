@@ -5,7 +5,7 @@
  */
 
 import * as vscode from 'vscode';
-import { extractFamily } from './modelUtils.js';
+import { extractFamilyWithSource } from './modelUtils.js';
 import { deriveTokenBudget } from './tokenBudget.js';
 
 /**
@@ -60,15 +60,37 @@ export function buildModelInfo(
     modelModes?: Record<string, Record<string, unknown>>;
     defaultMode?: string;
   } | undefined,
-  config: { maxOutputTokens: number }
+  config: { maxOutputTokens: number },
+  /**
+   * Invoked once with `(family, modelId)` when no preset/HuggingFace family was
+   * available and the family had to be estimated from the model id via the
+   * org-name fallback. Callers with an OutputChannel can route this to a
+   * `[WARN]` line. Optional — omit to suppress.
+   */
+  onFamilyFallback?: (family: string, modelId: string) => void,
 ): vscode.LanguageModelChatInformation {
   const budget = deriveTokenBudget(serverModel.max_model_len, config.maxOutputTokens, override, serverModel.id);
+
+  // Resolve family: preset-declared family is authoritative; otherwise fall back
+  // to the heuristic. When the heuristic itself falls through to the org-name
+  // guess (i.e. no preset AND HuggingFace `config.model_type` was unavailable),
+  // surface that to the caller so it can warn the user.
+  let family: string;
+  if (override?.family) {
+    family = override.family;
+  } else {
+    const extracted = extractFamilyWithSource(serverModel.id);
+    family = extracted.family;
+    if (extracted.fromFallback) {
+      onFamilyFallback?.(family, serverModel.id);
+    }
+  }
 
   const presetId = override?.id || serverModel.id;
   const info: any = {
     id: presetId,
     name: override?.displayName || presetId,
-    family: override?.family || extractFamily(serverModel.id),
+    family,
     version: '1.0.0',
     maxInputTokens: budget.maxInputTokens,
     maxOutputTokens: budget.maxOutputTokens,

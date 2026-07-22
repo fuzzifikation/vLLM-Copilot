@@ -4,17 +4,8 @@ import { fetchWithRetry, type RetryLogger } from './fetchRetry.js';
 import { readSseStream } from './streamReader.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
-import type { StreamEvent, VllmChatOptions, OpenAIChatMessage } from './types.js';
-export type { StreamEvent, VllmChatOptions, OpenAIChatMessage } from './types.js';
-
-export interface VllmModel {
-  id: string;
-  object: string;
-  owned_by: string;
-  max_model_len?: number;
-  root?: string;
-  permission?: unknown[];
-}
+import type { StreamEvent, VllmChatOptions, OpenAIChatMessage, VllmModel } from './types.js';
+export type { StreamEvent, VllmChatOptions, OpenAIChatMessage, VllmModel } from './types.js';
 
 /** Keys in the chat completion body that must not be overwritten by options spread. */
 const PROTECTED_BODY_KEYS = new Set(['model', 'messages', 'stream', 'stream_options']);

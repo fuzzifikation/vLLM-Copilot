@@ -68,7 +68,13 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.options = { enableScripts: true, localResourceRoots: [resourcesUri] };
 
-    webviewView.webview.onDidReceiveMessage(
+    // View-scoped disposables — torn down with this view, NOT the whole extension.
+    // `context.subscriptions` lives for the extension lifetime, so pushing the
+    // message and config listeners there would leak one of each on every
+    // re-resolution of the view (dispose + re-show). The workspace config
+    // listener is the real leak — it outlives the webview and would fire
+    // `refreshWebview` against a disposed (or stale) view.
+    const msgDisposable = webviewView.webview.onDidReceiveMessage(
       async (msg: FromWebviewMessage) => {
         if (msg.type === 'ready') {
           this.isWebviewReady = true;
@@ -79,17 +85,18 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
           await vscode.commands.executeCommand('vllm-copilot.setModelPersonality');
         }
       },
-      undefined,
-      this.context.subscriptions,
     );
 
-    this.context.subscriptions.push(
-      vscode.workspace.onDidChangeConfiguration(e => {
-        if (e.affectsConfiguration('vllm-copilot.models')) {
-          this.refreshWebview();
-        }
-      }),
-    );
+    const configDisposable = vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('vllm-copilot.models')) {
+        this.refreshWebview();
+      }
+    });
+
+    webviewView.onDidDispose(() => {
+      msgDisposable.dispose();
+      configDisposable.dispose();
+    });
 
     // Set HTML synchronously - references external files
     webviewView.webview.html = `<!DOCTYPE html>

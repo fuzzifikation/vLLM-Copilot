@@ -22,7 +22,6 @@ class ServerTreeItem extends vscode.TreeItem {
   constructor(
     public readonly serverUrl: string,
     public readonly metrics: ServerMetrics,
-    public readonly requestHeaders: Record<string, string>,
   ) {
     const displayName = shortUrl(serverUrl);
     const statusIcon = metrics.online
@@ -187,7 +186,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
         );
 
         const servers = Array.from(serverMap.entries()).map(([url, entry], i) =>
-          new ServerTreeItem(url, results[i], entry.requestHeaders),
+          new ServerTreeItem(url, results[i]),
         );
         return [...items, ...servers, new AddServerTreeItem(), new TestRefreshTreeItem()];
       } catch (err) {

@@ -182,6 +182,18 @@ Access via **View → vLLM-Copilot → Server Settings** or the sidebar section 
 
 </td></tr></table>
 
+### Server Deep-Dive
+
+A per-server details webview that opens in the editor area with the full set of live server statistics — everything the dashboard sidebar aggregates, plus histogram breakdowns.
+
+- **Open from the Dashboard**: right-click any server node → **vLLM Deep-Dive** (or click the server row in a future release)
+- **Live polling**: refreshes at the same `vllm-copilot.dashboard.pollIntervalMs` interval as the sidebar
+- **Histograms with tooltips**: TTFT/TPOT/token-count distributions rendered as hoverable bars
+- **Full raw metric dump**: the same parser that feeds the dashboard sidebar, shown in full
+- **One panel per server**: opening the same server again focuses the existing panel instead of duplicating
+
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/deep-dive.png" width="700" alt="vLLM Deep-Dive webview with full server statistics">
+
 ### Auto-Continue on Empty Responses
 
 Some models (notably Qwen) occasionally return zero tokens or truncated output. The extension automatically retries with an assistant prefill — you never see a blank or cut-off response. Configurable per-model (`autoContinueRetries`, default: 1).
