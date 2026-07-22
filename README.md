@@ -192,7 +192,7 @@ A per-server details webview that opens in the editor area with the full set of 
 - **Full raw metric dump**: the same parser that feeds the dashboard sidebar, shown in full
 - **One panel per server**: opening the same server again focuses the existing panel instead of duplicating
 
-<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/deep-dive.png" width="700" alt="vLLM Deep-Dive webview with full server statistics">
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/vLLM-Stats-View.png" width="700" alt="vLLM Deep-Dive webview with full server statistics">
 
 ### Auto-Continue on Empty Responses
 
