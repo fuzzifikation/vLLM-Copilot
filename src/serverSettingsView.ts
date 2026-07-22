@@ -51,6 +51,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly outputChannel: vscode.OutputChannel,
+    private readonly clearCache?: () => void,
   ) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -174,6 +175,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     await cfg.update('models', models, vscode.ConfigurationTarget.Global);
     vscode.window.showInformationMessage(`Settings saved for "${updates.displayName || targetVllmId}"`);
     this.outputChannel.appendLine(`[SETTINGS] Saved config for ${targetVllmId}`);
+    this.clearCache?.();
     this.refreshWebview();
   }
 }
