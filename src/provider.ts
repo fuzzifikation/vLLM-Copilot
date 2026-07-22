@@ -143,7 +143,19 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         }
 
         const serverModel = { id: vllmModelId, max_model_len: maxModelLen };
-        return { model: buildModelInfo(serverModel, override, settings), error: null };
+        return {
+          model: buildModelInfo(serverModel, override, settings, (family, modelId) => {
+            // Fires only when no preset-declared family was available AND
+            // HuggingFace auto-discovery did not provide one — the heuristic
+            // fell through to the org-name guess. The family is just a sort key
+            // in the model picker so this is non-fatal, but the user should
+            // know the discovery path didn't reach HuggingFace.
+            this.output.appendLine(
+              `[WARN] Model "${modelId}" — family estimated as "${family}" from org-name fallback (no preset/HuggingFace family available). Family is informational only; use a preset or run auto-discovery for authoritative values.`
+            );
+          }),
+          error: null,
+        };
       } catch (err) {
         const id = override.id || vllmModelId || '(unnamed model)';
         return {

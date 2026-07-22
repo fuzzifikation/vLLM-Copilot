@@ -82,6 +82,18 @@ export interface WireChunk {
   error?: { message?: string } | string;
 }
 
+/** A single model entry in the vLLM `/v1/models` response `data` array. */
+export interface VllmModel {
+  id: string;
+  object: string;
+  owned_by: string;
+  max_model_len?: number;
+  /** Underlying checkpoint id. vLLM sets this to the HF repo when the model is a
+   *  `--served-model-name` alias, so it links aliases back to their real model. */
+  root?: string;
+  permission?: unknown[];
+}
+
 /** Wire-format for vLLM repetition_detection parameter. */
 export interface WireRepetitionDetectionConfig {
   max_pattern_size: number;

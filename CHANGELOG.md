@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.19.3 — Dead-code cleanup and a small UX fix
+
+- **Added: `[WARN]` Output when model family falls back to the heuristic** — `extractFamily`'s known-family list only covers 8 names, and any model without a preset-declared or HuggingFace-derived `family` falls through to the org-name guess. The provider now emits a `[WARN]` to the Output channel for each affected model on every non-silent discovery pass, so users can tell the family shown in the picker is an estimate rather than authoritative. Silent discovery (cached) does not re-emit the warning. The family string remains a non-fatal sort key.
+- **Fixed: webview listener leak in `ServerSettingsViewProvider`** — `resolveWebviewView` pushed the `onDidReceiveMessage` and `onDidChangeConfiguration` disposables into `context.subscriptions`, which lives for the entire extension lifetime. Re-resolution of the view (after dispose + re-show) leaked an additional pair of listeners each time, eventually causing duplicated `save` events and `refreshWebview` calls against stale views. Both disposables are now chained to `webviewView.onDidDispose`, so they are torn down with their owning view. Matches the existing pattern in `deepDiveView.ts`.
+- **Removed: dead `autoConfigureModel()` `preFetchedInfo` parameter and branch** — no caller passed it; the caching shortcut was speculative. Re-add only when a caller actually needs it.
+- **Removed: unused `VllmModelInfo.owned_by` field** — declared in `autoConfig.ts` but never read for matching or generation.
+- **Removed: dead `ServerTreeItem.requestHeaders` field** — populated in the dashboard tree-item constructor but never read by any consumer. Context-menu commands extract `arg?.serverUrl` and re-read config via `vscode.workspace.getConfiguration()`.
+- **Unified: `FetchModel` (commands.ts) and `VllmModel` (vllmClient.ts) into a single shared wire type** — `VllmModel` now lives in `types.ts` alongside the other `/v1/models` and SSE wire contracts; one declaration instead of two that could drift.
+
 ## v1.19.2 — Bug fixes
 - **Fixed: Server Settings webview silently discarded vllmModelId edits** — the Models dropdown is the vllmModelId selector; a redundant text input was rendered as editable but silently overwritten on save. Removed the text input and relabeled the dropdown.
 - **Fixed: Status bar showed first-server health independent of selected model** — the status bar polled the first configured server on a hardcoded 15 s interval and could not track picker changes. Removed entirely — server health is available in the dashboard tree view.
