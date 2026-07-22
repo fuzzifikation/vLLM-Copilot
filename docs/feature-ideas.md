@@ -91,6 +91,47 @@ Two buckets:
 
 ---
 
+## ✨ Last Request Details Dashboard Entry
+
+> **Category:** Dashboard / observability — a "vitamin" that gives users immediate feedback on the last chat completion without digging into logs. Built on the `usage` object vLLM returns at end of every stream.
+
+**What happens today:** After every chat-completion request, vLLM returns a `usage` block with `prompt_tokens`, `completion_tokens`, `total_tokens`, `reasoning_tokens`, `cached_tokens`, `prompt_time`, `decode_time`, and `num_prompt_tokens`. The extension currently tracks this for token-budget bookkeeping but never surfaces it to the user in the sidebar.
+
+**What it does:** A collapsible tree node in the Dashboard showing the last request's token breakdown per model, sorted by input and output tokens, with a timestamp and "time to first token" (TTFT).
+
+**Feature idea:** Add a **"Last Request Details"** node under each server in the Dashboard tree. Each row shows one completed request with:
+
+- **Model ID** — `vllmModelId` (the server-side alias, not the preset name)
+- **Timestamp** — when the request finished (relative, e.g. "2 min ago")
+- **Input tokens** — `prompt_tokens` (expanded: cached tokens, reasoning tokens if applicable)
+- **Output tokens** — `completion_tokens` (expanded: reasoning tokens, decode tokens)
+- **TTFT** — `prompt_time` or derived from response metadata
+- **Latency / throughput** — total time and tokens/sec (derived from `decode_time` + `completion_tokens`)
+
+**VS Code use cases:**
+- **Token budget sanity-check:** "Why is my context window so small?" → see the input token count
+- **Cached prefix awareness:** "Is the prefix cache actually helping?" → compare `cached_tokens` across requests
+- **Model comparison:** "Does model A use more tokens than model B for the same prompt?"
+- **Debugging slow responses:** High TTFT vs. low throughput tells you whether the bottleneck is prefill or decode
+
+**Why it matters:** The dashboard already shows server-level throughput and queue depth. Adding per-request token details gives users the missing "micro" view — why did *my* last request take that long and cost that many tokens? This is something BYOK never shows.
+
+**Implementation:**
+- Store the last N request-usage objects per model (in-memory or `ExtensionContext.storagePath`; N = 1 or 10, TBD)
+- Parse `usage` from the end-of-stream `WireUsage` in `streamReader.ts` → `sseParser.ts`
+- Add a `LastRequestTreeItem` class (following `ServerTreeItem` / `MetricTreeItem` pattern)
+- Auto-purge entries older than a configurable threshold (default: 10 minutes; `vllm-copilot.dashboard.lastRequestRetentionMs`)
+- Collapse by default; expand to show sorted rows (by `total_tokens` or timestamp)
+- One row per model, or one row per recent request (design decision pending)
+
+**Open questions:**
+- **How many entries to keep?** Last one only (lightweight) vs. last N (e.g. 10) for comparison. More entries = more tree items = more UI clutter.
+- **Per-model or per-server?** Group under the server node that served the request (model is shown in the row).
+- **Persistence?** In-memory only (resets on reload) vs. persisted to `storagePath` (survives reload but adds I/O).
+- **Should this integrate with the Deep-Dive view?** Deep-Dive already shows raw Prometheus metrics; a "recent requests" table could live there too.
+
+---
+
 ## Already Exposed ✅ (reference, not ideas)
 
 These are shipped and live in `defaultParams`/`modelModes`. Listed here only to avoid re-proposing:
