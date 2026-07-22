@@ -50,6 +50,7 @@ export interface RawMetricEntry {
   labels: Record<string, string>;
   value: number;
   type?: 'gauge' | 'counter' | 'histogram';
+  description?: string;
 }
 
 export interface ServerRawData {
@@ -66,9 +67,8 @@ export interface ServerRawData {
   };
 }
 
-// ─── Prometheus Parser ───────────────────────────────────────────────
-
-class MetricsParser {
+// ─── Prometheus Parser (dashboard sidebar) ─────────────────────────
+export class MetricsParser {
   models = new Map<string, ModelAccumulator>();
 
   private getAccum(model: string): ModelAccumulator {
@@ -226,7 +226,7 @@ class MetricsParser {
   }
 }
 
-function parseLabels(raw: string | undefined): Record<string, string> {
+export function parseLabels(raw: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   if (!raw) return out;
   for (const m of raw.matchAll(/(\w+)="([^"]*)"/g)) {
@@ -234,6 +234,9 @@ function parseLabels(raw: string | undefined): Record<string, string> {
   }
   return out;
 }
+
+// Re-export for testing
+export type { ModelAccumulator };
 
 // ─── Fetch ───────────────────────────────────────────────────────────
 
@@ -382,16 +385,18 @@ async function safeFetch(url: string, options: RequestInit): Promise<Response> {
  * Parse raw Prometheus text into categorized buckets (gauges, counters, histograms, etc.).
  * This is a simpler parser than MetricsParser — it just categorizes raw entries.
  */
-function parseRawMetrics(rawText: string, metrics: ServerRawData['metrics']): void {
+export function parseRawMetrics(rawText: string, metrics: ServerRawData['metrics']): void {
   const lineRe = /^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{([^}]*)\})?\s+([-+0-9.eE+-]+)$/;
   const typeHints: Record<string, 'gauge' | 'counter' | 'histogram'> = {};
+  const helpDesc: Record<string, string> = {};
 
-  // First pass: detect types from HELP lines
+  // First pass: detect types + descriptions from HELP lines
   for (const line of rawText.split('\n')) {
     const trimmed = line.trim();
-    const helpMatch = trimmed.match(/^# HELP ([a-zA-Z_:][a-zA-Z0-9_:]*)/);
+    const helpMatch = trimmed.match(/^# HELP ([a-zA-Z_:][a-zA-Z0-9_:]*)\s+(.+)/);
     if (helpMatch) {
       const name = helpMatch[1];
+      helpDesc[name] = helpMatch[2].trim();
       if (name.includes('_total') || name.includes('count')) typeHints[name] = 'counter';
       else if (name.includes('_bucket')) typeHints[name] = 'histogram';
       else typeHints[name] = 'gauge';
@@ -412,11 +417,16 @@ function parseRawMetrics(rawText: string, metrics: ServerRawData['metrics']): vo
     if (isNaN(value)) continue;
 
     const entry: RawMetricEntry = { name, labels, value };
-    const bucket = typeHints[name] ?? name.includes('_bucket') ? 'histogram'
+    const bucket = typeHints[name] ?? (name.includes('_bucket') ? 'histogram'
       : name.includes('_total') || name.includes('count') ? 'counter'
-      : 'gauge';
+      : 'gauge');
 
     entry.type = bucket;
+
+    // Attach description from HELP line (use base name for _bucket/_sum/_count suffixes)
+    const baseName = name.replace(/_bucket$/, '').replace(/_sum$/, '').replace(/_count$/, '');
+    if (helpDesc[name]) entry.description = helpDesc[name];
+    else if (helpDesc[baseName]) entry.description = helpDesc[baseName];
 
     if (name.startsWith('vllm:') && name.includes('cache_config')) {
       const shortName = name.replace('vllm:cache_config_', '');
