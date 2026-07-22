@@ -13,6 +13,7 @@ import * as path from 'path';
 import { VllmChatModelProvider } from './provider.js';
 import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildAuthHeaders } from './config.js';
 import type { ModelConfig } from './config.js';
+import type { VllmModel } from './types.js';
 import { pickModelFromServer, saveModelConfig, parseHeadersInput } from './autoConfig.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
@@ -68,15 +69,6 @@ async function discoverPersonalityPresets(
   return results;
 }
 
-interface FetchModel {
-  id: string;
-  object: string;
-  owned_by: string;
-  max_model_len?: number;
-  root?: string;
-  permission?: unknown[];
-}
-
 /**
  * One row of Test & Refresh output. `mismatch` is set only when the model's
  * `vllmModelId` is not on its server; the post-check phase uses it to offer
@@ -89,7 +81,7 @@ interface TestResult {
   detail: string;
   mismatch?: {
     model: ModelConfig;
-    serverModels: FetchModel[];
+    serverModels: VllmModel[];
     serverUrl: string;
     vllmModelId: string;
   };
@@ -194,7 +186,7 @@ export function registerTestAndRefreshModelsCommand(
 
         const data: any = await resp.json();
         const serverModels = data.data || [];
-        const found = serverModels.find((m: FetchModel) => m.id === vllmModelId || m.root === vllmModelId);
+        const found = serverModels.find((m: VllmModel) => m.id === vllmModelId || m.root === vllmModelId);
 
         if (!found) {
           // Defer the corrective picker to the sequential post-check phase so
@@ -204,7 +196,7 @@ export function registerTestAndRefreshModelsCommand(
             label: `✗ ${id}`,
             description: 'not found on server',
             detail: `${serverUrl} — check vllmModelId`,
-            mismatch: { model, serverModels: serverModels as FetchModel[], serverUrl, vllmModelId },
+            mismatch: { model, serverModels: serverModels as VllmModel[], serverUrl, vllmModelId },
           };
         }
 
