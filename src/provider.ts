@@ -620,11 +620,16 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     // so always surface the reason — both to the user and to Output.
     if (!producedOutput) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      const reason = finishReason
-        ? `finish_reason: ${finishReason}`
-        : hadReasoning
-          ? 'only reasoning/thinking tokens were produced'
-          : 'no data received';
+      let reason: string;
+      if (finishReason && hadReasoning) {
+        reason = `model stopped after only producing reasoning/thinking tokens (finish_reason: ${finishReason})`;
+      } else if (finishReason) {
+        reason = `finish_reason: ${finishReason}`;
+      } else if (hadReasoning) {
+        reason = 'only reasoning/thinking tokens were produced (no finish_reason received)';
+      } else {
+        reason = 'no data received';
+      }
 
       let hint: string;
       if (finishReason === 'length') {
@@ -632,24 +637,33 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       } else if (finishReason === 'content_filter') {
         hint = 'The server blocked the response (content filter).';
       } else if (hadReasoning) {
-        hint = actualAttempts > 1
-          ? `The model produced only reasoning/thinking tokens after ${actualAttempts} attempt(s) — try again or adjust the model mode.`
-          : 'The model produced only reasoning/thinking tokens and no answer — try again or adjust the model mode.';
+        if (finishReason === 'stop') {
+          hint = actualAttempts > 1
+            ? `Model stopped on its own after ${actualAttempts} attempt(s), producing only reasoning. Try increasing maxOutputTokens, lowering reasoning_effort, or adjusting the model mode.`
+            : 'Model stopped on its own after producing only reasoning tokens. Try increasing maxOutputTokens, lowering reasoning_effort, or adjusting the model mode.';
+        } else {
+          hint = actualAttempts > 1
+            ? `The model produced only reasoning/thinking tokens after ${actualAttempts} attempt(s) — try again or adjust the model mode.`
+            : 'The model produced only reasoning/thinking tokens and no answer — try again or adjust the model mode.';
+        }
       } else {
         hint = actualAttempts > 1
           ? `Empty response after ${actualAttempts} attempt(s) — check model configuration and server logs.`
           : 'Check the model configuration and server logs (Output → vLLM-Copilot).';
       }
 
+      // maxOutputTokens is only relevant when the model hit its token ceiling.
+      const extraCtx = finishReason === 'length' ? `, maxOutputTokens=${model.maxOutputTokens}` : '';
+
       if (actualAttempts > 1) {
         this.diag(
           'WARN',
-          `${model.id}: empty response after ${actualAttempts} attempt(s) (${reason}) — giving up after ${elapsed}s, maxOutputTokens=${model.maxOutputTokens}`
+          `${model.id}: empty response after ${actualAttempts} attempt(s) (${reason}) — giving up after ${elapsed}s${extraCtx}`
         );
       } else {
         this.diag(
           'WARN',
-          `${model.id}: empty response (${reason}) after ${elapsed}s, maxOutputTokens=${model.maxOutputTokens}`
+          `${model.id}: empty response (${reason}) after ${elapsed}s${extraCtx}`
         );
       }
 
