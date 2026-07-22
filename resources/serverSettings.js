@@ -157,7 +157,7 @@
     let h = '<div class="mode-card" data-mn="' + E(name) + '">';
     h += '<div class="mode-header"><span class="mode-title">' + E(name) + '</span><div class="mode-actions">';
     h += '<button class="secondary rename-mode-btn">Rename</button>';
-    h += '<button class="danger remove-mode-btn">Remove</button>';
+    h += '<button class="secondary remove-mode-btn">Remove</button>';
     h += '</div></div><div class="mode-params">';
     for (const [key, val] of Object.entries(params)) {
       const known = S.knownParams[key];
@@ -172,7 +172,7 @@
             : typeof val === 'string'
               ? '<input type="text" data-mk="' + E(key) + '" value="' + E(val) + '">' 
               : '<input type="number" data-mk="' + E(key) + '" value="' + E(String(val)) + '" step="any">') +
-        '<button class="danger remove-param-btn" data-mk="' + E(key) + '">⊗</button>' +
+        '<button class="secondary remove-param-btn" data-mk="' + E(key) + '">⊗</button>' +
         '</div>';
     }
     h += '<div style="margin-top:4px"><button class="secondary add-mode-param-btn">+ Add Parameter</button></div>';
@@ -196,7 +196,7 @@
             : typeof val === 'string'
               ? '<input type="text" data-dk="' + E(key) + '" value="' + E(val) + '">' 
               : '<input type="number" data-dk="' + E(key) + '" value="' + E(String(val)) + '" step="any">') +
-        '<button class="danger remove-param-btn" data-dk="' + E(key) + '">⊗</button>' +
+        '<button class="secondary remove-param-btn" data-dk="' + E(key) + '">⊗</button>' +
         '</div>';
     }
     h += '</div><button class="secondary" id="addDpBtn">+ Add Parameter</button>';
@@ -306,7 +306,7 @@
            '</select>'
          : type === 'text' ? '<input type="text" data-mk="' + E(key) + '">' :
          '<input type="number" data-mk="' + E(key) + '" step="any">') +
-      '<button class="danger remove-param-btn">⊗</button>';
+      '<button class="secondary remove-param-btn">⊗</button>';
     cont.appendChild(div);
   }
   function removeParam(btn) {
@@ -321,19 +321,19 @@
     const div = document.createElement('div'); div.className = 'field-param'; div.dataset.dk = pick.key;
     if (pick.info.type === 'json')
       div.innerHTML = '<label>' + E(pick.info.label) + '</label><textarea data-dk="' + E(pick.key) + '">{}</textarea>' +
-        '<button class="danger remove-param-btn" data-dk="' + E(pick.key) + '">⊗</button>';
+        '<button class="secondary remove-param-btn" data-dk="' + E(pick.key) + '">⊗</button>';
     else if (pick.info.options)
       div.innerHTML = '<label>' + E(pick.info.label) + '</label><select data-dk="' + E(pick.key) + '">' +
         '<option value="">(auto)</option>' +
         pick.info.options.map(o => '<option value="' + E(o) + '">' + E(o) + '</option>').join('') +
         '</select>' +
-        '<button class="danger remove-param-btn" data-dk="' + E(pick.key) + '">⊗</button>';
+        '<button class="secondary remove-param-btn" data-dk="' + E(pick.key) + '">⊗</button>';
     else if (pick.info.type === 'string')
       div.innerHTML = '<label>' + E(pick.info.label) + '</label><input type="text" data-dk="' + E(pick.key) + '">' +
-        '<button class="danger remove-param-btn" data-dk="' + E(pick.key) + '">⊗</button>';
+        '<button class="secondary remove-param-btn" data-dk="' + E(pick.key) + '">⊗</button>';
     else
       div.innerHTML = '<label>' + E(pick.info.label) + '</label><input type="number" data-dk="' + E(pick.key) + '" step="any">' +
-        '<button class="danger remove-param-btn" data-dk="' + E(pick.key) + '">⊗</button>';
+        '<button class="secondary remove-param-btn" data-dk="' + E(pick.key) + '">⊗</button>';
     list.appendChild(div);
   }
   function webviewParamPick(avail) {
