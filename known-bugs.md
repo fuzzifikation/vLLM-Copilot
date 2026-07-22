@@ -35,8 +35,13 @@ These are not necessarily user-visible failures, but they impose a concrete main
 - **`buildAuthHeaders()` is documented as the canonical header builder without stating its scope** - runtime requests use sanitized per-model `requestHeaders` through `resolveServerConfig`; `buildAuthHeaders()` is used by write and migration paths. The JSDoc should distinguish those paths.
 - **`promptReplacer.ts` parses each personality file twice** - discovery calls `loadPersonalityMeta()`, then applying the selected file calls `loadPromptReplacements()`, so the same file is read and JSON-parsed again. A shared parser can return metadata and rules together while preserving the existing discovery and application APIs.
 
+### P2 - Untested Shared Data Layer
+
+- **`vllmMetrics.ts` and `dashboard.ts` have zero test coverage** — the Prometheus parser (`MetricsParser`), aggregation logic, formatting helpers, and raw-data fetcher (`fetchServerRawData`) are shared between the sidebar and the upcoming deep-dive webview, but have no unit or integration tests. A bug in metric-line regex parsing would silently corrupt every dashboard poll. Prioritize parser tests before the webview depends on this code.
+
 ### P2 - Smaller Structural Costs
 
+- **`ServerTreeItem.requestHeaders` is dead code** — the field is populated during construction but never read by any consumer. Context-menu commands (`updateServerAuth`, `removeServer`) extract `arg?.serverUrl` and re-read config from `vscode.workspace.getConfiguration()`. Remove the field or use it if a command needs per-server headers without a config round-trip.
 - **`commands.ts` and `vllmClient.ts` define duplicate server-model shapes** - the `FetchModel` and `VllmModel` interfaces carry the same wire fields in separate modules. A shared type would prevent the two declarations from drifting.
 - **`modelInfo.ts::buildModelInfo()` redeclares a partial model override shape inline** - the local structural type can silently omit fields as `ModelConfig` evolves. Reuse `ModelConfig` or name an intentional subset so the narrowing remains visible.
 - **`logger.ts::clearLogFiles()` performs synchronous directory and unlink operations inside an `async` function** - clearing a large log directory blocks the extension host even though callers receive a Promise. Use the promise-based filesystem APIs or make the synchronous behavior explicit.
@@ -74,6 +79,10 @@ Reviewed 2026-07-21. Items below were first filed as bugs and then rejected as i
 ### P1 - Dashboard & webview use the first model's `requestHeaders` per `serverUrl`
 
 - **Per-server grouped UI collapses multiple presets to one set of headers.** Filed under the premise that two presets on the same `serverUrl` could legitimately need different credentials. **Rejected:** on a real vLLM server `--api-key` is global to the process, and `--served-model-name` aliases all point at the same underlying model — so two presets on one `serverUrl` cannot have different auth. Using the first preset's headers per server is correct. *Adjacent observation (not the originally filed bug):* `requestHeaders` is stored per `ModelConfig`, so editing headers on one preset of a shared server does not propagate to the others in settings — separate concern about the data model, not the read-side "wrong credentials" claim originally filed.
+
+### P3 - Dashboard bypasses provider config cache on every poll
+
+- **`dashboard.ts::getChildren()` calls `getConfig(context)` on every tree refresh**, which invokes `vscode.workspace.getConfiguration()` ~every 15 seconds when the sidebar is visible. `VllmClient` already maintains a config cache, but the dashboard has no reference to it without creating a circular dependency. At current poll intervals this is acceptable overhead, but it would become a problem if the interval drops or if settings reads grow more expensive. Consider passing a config-snapshot getter from the provider when wiring the dashboard in `extension.ts`.
 
 ---
 

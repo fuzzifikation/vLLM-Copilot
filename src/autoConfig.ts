@@ -660,8 +660,9 @@ async function confirmAndSaveAddedModel(
   modelId: string,
   serverUrl: string,
   detail: string,
-  output: vscode.OutputChannel
-): Promise<void> {
+  output: vscode.OutputChannel,
+  onSaved?: () => void
+): Promise<boolean> {
   output.appendLine(`[INFO] Add server ${serverUrl} → ${modelId}:`);
   output.appendLine(detail);
   output.appendLine(`Config: ${JSON.stringify(finalConfig, null, 2)}`);
@@ -675,11 +676,14 @@ async function confirmAndSaveAddedModel(
 
   if (action === 'Save to Settings') {
     await saveModelConfig(finalConfig);
+    onSaved?.();
     vscode.window.showInformationMessage(`Model "${modelId}" added.`);
+    return true;
   } else if (action === 'Copy JSON') {
     await vscode.env.clipboard.writeText(JSON.stringify(finalConfig, null, 2));
     vscode.window.showInformationMessage('Model config copied to clipboard.');
   }
+  return false;
 }
 
 /**
@@ -750,6 +754,7 @@ function tryRepair(text: string): string | undefined {
  */
 export function registerAddServerModelCommand(
   context: vscode.ExtensionContext,
+  provider: any, // VllmChatModelProvider — avoids circular import
   output: vscode.OutputChannel
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.addServerModel', async () => {
@@ -763,6 +768,27 @@ export function registerAddServerModelCommand(
     });
     if (!urlInput) return;
     const serverUrl = normalizeServerUrl(urlInput);
+
+    // Check if this server already exists
+    const existingModels: ModelConfig[] = vscode.workspace.getConfiguration('vllm-copilot').get('models') || [];
+    const existingServerModels = existingModels.filter(
+      m => m.serverUrl && normalizeServerUrl(m.serverUrl) === serverUrl
+    );
+
+    if (existingServerModels.length > 0) {
+      const modelNames = existingServerModels.map(m => m.displayName || m.vllmModelId || m.id).join(', ');
+      const pick = await vscode.window.showInformationMessage(
+        `Server already configured with: ${modelNames}`,
+        { modal: true },
+        'Add Different Model',
+        'Update Auth',
+      );
+      if (pick === 'Update Auth') {
+        // Delegate to update auth command
+        return vscode.commands.executeCommand('vllm-copilot.updateServerAuth', serverUrl);
+      }
+      if (pick !== 'Add Different Model') return; // cancelled
+    }
 
     // 2. API key (optional). Folded into headers as Authorization: Bearer.
     const apiKeyInput = await vscode.window.showInputBox({
@@ -843,6 +869,24 @@ export function registerAddServerModelCommand(
     const modelId = await pickModelFromServer(models, serverUrl, 'Add vLLM Server & Model (4/4)');
     if (!modelId) return;
 
+    // Check if this model already exists on this server
+    const newVllmId = modelId;
+    const existingSameModel = existingServerModels.find(m => resolveVllmModelId(m) === newVllmId);
+
+    if (existingSameModel) {
+      const pick = await vscode.window.showInformationMessage(
+        `"${modelId}" already exists on this server. Update auth only, or replace entire config?`,
+        { modal: true },
+        'Update Auth',
+        'Replace Config',
+      );
+      if (pick === 'Update Auth') {
+        // Update auth for all models on this server (reuses updateServerAuth)
+        return vscode.commands.executeCommand('vllm-copilot.updateServerAuth', serverUrl);
+      }
+      if (pick !== 'Replace Config') return; // cancelled
+    }
+
     const discoveryResult = await resolveModelConfigForAdd(
       context, modelId, serverUrl, hasHeaders ? requestHeaders : undefined,
       models.find((m: any) => m.id === modelId)?.root
@@ -862,7 +906,7 @@ export function registerAddServerModelCommand(
       finalConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
     }
 
-    await confirmAndSaveAddedModel(finalConfig, modelId, serverUrl, discoveryResult.summary.join('\n'), output);
+    await confirmAndSaveAddedModel(finalConfig, modelId, serverUrl, discoveryResult.summary.join('\n'), output, () => provider.clearCache());
   });
 }
 
@@ -923,6 +967,7 @@ export async function resolveModelConfigForAdd(
  */
 export function registerAutoConfigureModelCommand(
   context: vscode.ExtensionContext,
+  provider: any, // VllmChatModelProvider — avoids circular import
   output: vscode.OutputChannel
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async () => {
@@ -990,7 +1035,7 @@ export function registerAutoConfigureModelCommand(
       newConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
     }
 
-    await applyAutoConfigUpdate(newConfig, vllmId, discoveryResult.summary.join('\n'), output);
+    await applyAutoConfigUpdate(newConfig, vllmId, discoveryResult.summary.join('\n'), output, () => provider.clearCache());
   });
 }
 
@@ -1003,7 +1048,8 @@ async function applyAutoConfigUpdate(
   newConfig: ModelConfig,
   vllmId: string,
   detail: string,
-  output: vscode.OutputChannel
+  output: vscode.OutputChannel,
+  onSaved?: () => void
 ): Promise<void> {
   output.appendLine(`[INFO] Auto-configure ${vllmId}:`);
   output.appendLine(detail);
@@ -1017,13 +1063,8 @@ async function applyAutoConfigUpdate(
 
   if (action === 'Save') {
     await saveModelConfig(newConfig);
-    const reload = await vscode.window.showInformationMessage(
-      `Model "${vllmId}" updated. Reload window to apply changes?`,
-      'Reload Now'
-    );
-    if (reload) {
-      vscode.commands.executeCommand('workbench.action.reloadWindow');
-    }
+    onSaved?.();
+    vscode.window.showInformationMessage(`Model "${vllmId}" updated.`);
   } else if (action === 'Copy JSON') {
     await vscode.env.clipboard.writeText(JSON.stringify(newConfig, null, 2));
     vscode.window.showInformationMessage('Model config copied to clipboard.');

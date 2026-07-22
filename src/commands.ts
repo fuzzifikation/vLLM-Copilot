@@ -11,9 +11,9 @@ import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { VllmChatModelProvider } from './provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId } from './config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildAuthHeaders } from './config.js';
 import type { ModelConfig } from './config.js';
-import { pickModelFromServer, saveModelConfig } from './autoConfig.js';
+import { pickModelFromServer, saveModelConfig, parseHeadersInput } from './autoConfig.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
 import { runDiagnostics, formatReport } from './diagnostics.js';
@@ -627,39 +627,120 @@ export function registerSetModelPersonalityCommand(
 }
 
 /**
- * Configure server settings - opens VS Code settings filtered to show relevant model configs.
+ * Update auth (API key + request headers) for all models on a server.
+ * Triggered from right-click context menu on a server node in the dashboard.
  */
-export function registerConfigureServerCommand(
-  context: vscode.ExtensionContext,
+export function registerUpdateServerAuthCommand(
+  _context: vscode.ExtensionContext,
+  _provider: VllmChatModelProvider,
   outputChannel: vscode.OutputChannel,
 ): vscode.Disposable {
-  return vscode.commands.registerCommand('vllm-copilot.configureServer', async (serverUrl?: string) => {
-    try {
-      const config = await getConfig(context);
-
-      // Get unique server URLs
-      const servers = [...new Set(config.models.map(m => m.serverUrl).filter((s): s is string => !!s))];
-
-      if (servers.length === 0) {
-        vscode.window.showInformationMessage('No servers configured. Use "Add vLLM Server & Model" to add one.');
-        return;
-      }
-
-      // If no server URL provided, let user pick
-      const selectedServer = serverUrl ?? (await vscode.window.showQuickPick(
-        servers.map(url => ({ label: url, value: url })),
-        { placeHolder: 'Select server to configure' }
-      ))?.value;
-
-      if (!selectedServer) return;
-
-      // Open settings filtered to show vllm-copilot.models
-      await vscode.commands.executeCommand('workbench.action.openSettings', 'vllm-copilot.models');
-
-      outputChannel.appendLine(`[INFO] Opened settings for server: ${selectedServer}`);
-    } catch (err) {
-      outputChannel.appendLine(`[ERROR] Configure server failed: ${err instanceof Error ? err.message : String(err)}`);
-      vscode.window.showErrorMessage('Failed to open settings.');
+  return vscode.commands.registerCommand('vllm-copilot.updateServerAuth', async (arg?: any) => {
+    // VS Code passes the tree item for context menus; extract serverUrl.
+    const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
+    if (!serverUrl) {
+      vscode.window.showErrorMessage('Server URL not provided.');
+      return;
     }
+
+    // Step 1: API key (optional)
+    const apiKeyInput = await vscode.window.showInputBox({
+      title: `Update Auth for ${serverUrl} (1/2)`,
+      prompt: 'API key for this server (optional). Sent as "Authorization: Bearer <key>". Leave empty to clear.',
+      placeHolder: 'Leave empty if the server needs no key.',
+      ignoreFocusOut: true,
+      password: true,
+    });
+    if (apiKeyInput === undefined) return; // cancelled
+    const apiKey = apiKeyInput.trim();
+
+    // Step 2: Custom headers (optional)
+    const headersInput = await vscode.window.showInputBox({
+      title: `Update Auth for ${serverUrl} (2/2)`,
+      prompt: 'Additional request headers. JSON or "Name: value" — leave empty to clear.',
+      placeHolder: '{"CF-Access-Client-Id": "..."}  or  X-Tenant: abc123',
+      ignoreFocusOut: true,
+      validateInput: (v) => {
+        const r = parseHeadersInput(v);
+        return 'error' in r ? r.error : undefined;
+      },
+    });
+    if (headersInput === undefined) return; // cancelled
+    const parsedHeaders = parseHeadersInput(headersInput);
+    if ('error' in parsedHeaders) {
+      vscode.window.showErrorMessage(parsedHeaders.error);
+      return;
+    }
+
+    // Combine: API-key-derived auth first, then custom headers (custom wins).
+    const newHeaders: Record<string, string> = { ...buildAuthHeaders(apiKey), ...parsedHeaders.headers };
+    const finalHeaders = Object.keys(newHeaders).length > 0 ? newHeaders : undefined;
+
+    // Update all models pointing to this server
+    const config = vscode.workspace.getConfiguration('vllm-copilot');
+    const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+    const normalizedUrl = normalizeServerUrl(serverUrl);
+    let updated = 0;
+    const updatedModels = existing.map(m => {
+      if (m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl) {
+        updated++;
+        return { ...m, requestHeaders: finalHeaders };
+      }
+      return m;
+    });
+
+    if (updated === 0) {
+      vscode.window.showWarningMessage(`No models found for server ${serverUrl}.`);
+      return;
+    }
+
+    await config.update('models', updatedModels, vscode.ConfigurationTarget.Global);
+    _provider.clearCache();
+    outputChannel.appendLine(`[INFO] Updated auth for ${updated} model(s) on ${serverUrl}.`);
+    vscode.window.showInformationMessage(`Updated auth for ${updated} model(s) on ${serverUrl}.`);
   });
 }
+
+/**
+ * Remove all models associated with a server.
+ * Triggered from right-click context menu on a server node in the dashboard.
+ */
+export function registerRemoveServerCommand(
+  _context: vscode.ExtensionContext,
+  _provider: VllmChatModelProvider,
+  outputChannel: vscode.OutputChannel,
+): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.removeServer', async (arg?: any) => {
+    // VS Code passes the tree item for context menus; extract serverUrl.
+    const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
+    if (!serverUrl) {
+      vscode.window.showErrorMessage('Server URL not provided.');
+      return;
+    }
+
+    const config = vscode.workspace.getConfiguration('vllm-copilot');
+    const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+    const normalizedUrl = normalizeServerUrl(serverUrl);
+    const filtered = existing.filter(m => !(m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl));
+    const removed = existing.length - filtered.length;
+
+    if (removed === 0) {
+      vscode.window.showWarningMessage(`No models found for server ${serverUrl}.`);
+      return;
+    }
+
+    const confirm = await vscode.window.showWarningMessage(
+      `Remove ${removed} model(s) from ${serverUrl}?`,
+      { modal: true },
+      'Remove',
+      'Cancel',
+    );
+    if (confirm !== 'Remove') return;
+
+    await config.update('models', filtered, vscode.ConfigurationTarget.Global);
+    _provider.clearCache();
+    outputChannel.appendLine(`[INFO] Removed ${removed} model(s) from ${serverUrl}.`);
+    vscode.window.showInformationMessage(`Removed ${removed} model(s) from ${serverUrl}.`);
+  });
+}
+
