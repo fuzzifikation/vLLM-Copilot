@@ -23,8 +23,6 @@ button {
 button:hover { background: var(--vscode-button-hoverBackground); }
 button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
 button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
-button.danger { background: var(--vscode-inputValidation-errorBackground, #3a1a1a); color: var(--vscode-inputValidation-errorForeground, #f48771); }
-button.danger:hover { filter: brightness(1.15); }
 details { margin-bottom: 6px; }
 summary {
   cursor: pointer; padding: 4px 6px;
