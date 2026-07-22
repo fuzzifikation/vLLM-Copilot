@@ -120,6 +120,11 @@
         "command": "vllm-copilot.removeServer",
         "title": "Remove Server",
         "category": "vLLM-Copilot"
+      },
+      {
+        "command": "vllm-copilot.openDeepDive",
+        "title": "vLLM Deep-Dive",
+        "category": "vLLM-Copilot"
       }
     ],
     "menus": {
@@ -133,6 +138,11 @@
           "command": "vllm-copilot.removeServer",
           "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline)",
           "group": "1_server@2"
+        },
+        {
+          "command": "vllm-copilot.openDeepDive",
+          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline)",
+          "group": "2_deepDive@1"
         }
       ]
     },
