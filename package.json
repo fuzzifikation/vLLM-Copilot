@@ -27,6 +27,14 @@
     "AI",
     "Chat"
   ],
+  "keywords": [
+    "vllm",
+    "copilot",
+    "local-llm",
+    "model-mode",
+    "thinking-mode",
+    "structured-output"
+  ],
   "activationEvents": [
     "languageModel_chatVendor:vllm-copilot"
   ],

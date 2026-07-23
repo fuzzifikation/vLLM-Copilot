@@ -24,11 +24,9 @@ out/**/*.map
 
 # Dev docs (not needed at runtime)
 docs/
-# Personality presets are bundled — shipped for the Set Model Personality command
-!docs/prompt-replacements-*.json
 # Extension logo — needed for Marketplace icon
 !docs/images/logo.png
-# prompt-replacements/ is included for the Set Model Personality command
+# prompt-replacements/ is shipped for the Set Model Personality command
 !prompt-replacements/
 known-bugs.md
 publication-plan.md
