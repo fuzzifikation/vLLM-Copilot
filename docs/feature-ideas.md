@@ -26,7 +26,7 @@ Two buckets:
 - 🛡️ **Painkillers (the moat)** — sampling / structured-output params BYOK literally cannot send. These make the extension _irreplaceable_.
 - ✨ **Vitamins (on-brand, but replaceable)** — informational / UX features like the Server Status UI and the Model Configuration UI. Genuinely differentiating and worth building, but Microsoft could add equivalents.
 
-> **Current UX gap:** Six vLLM-specific params (`response_format`, `bad_words`, `structured_outputs`, `repetition_detection`, `ignore_eos`, `min_tokens`) can be sent but lack `KNOWN_PARAMS` UI entries — requiring manual `settings.json` edits. Adding them to [UI-Feature.md F9](./UI-Feature.md#f9-model-configuration-ui-priority-high) is the highest-leverage improvement.
+> **Fixed.** All six vLLM-specific params (`response_format`, `bad_words`, `structured_outputs`, `repetition_detection`, `ignore_eos`, `min_tokens`) now have `KNOWN_PARAMS` UI entries.
 
 ---
 
@@ -99,9 +99,7 @@ These params are available in the Server Settings UI (`KNOWN_PARAMS` in `serverS
 | `reasoning_effort`                                            | string (options)    | Thinking depth    |
 | `parallel_tool_calls`                                         | string (true/false) | Tool calling      |
 
-These params work via `defaultParams`/`modelModes` but are **not yet in KNOWN_PARAMS** (require manual `settings.json` edit):
-
-- `response_format`, `bad_words`, `structured_outputs`, `repetition_detection`, `ignore_eos`
+(All params supported via `defaultParams`/`modelModes` now also have `KNOWN_PARAMS` UI entries.)
 
 ---
 
