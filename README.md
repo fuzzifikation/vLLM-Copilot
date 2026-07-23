@@ -11,6 +11,9 @@
 Model modes, thinking toggles, structured output, bad words, repetition detection,
 personality presets, and system message control. All switchable from the model picker.
 
+[![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/System-Sciences.vllm-copilot?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/System-Sciences.vllm-copilot)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot)
+
 </div>
 
 <div align="center">
