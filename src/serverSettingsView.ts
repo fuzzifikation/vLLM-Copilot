@@ -6,26 +6,42 @@
 import * as vscode from 'vscode';
 import { getConfig, buildEndpoint, type ModelConfig } from './config.js';
 
+// Ordered by frequency of use: common sampling → length → penalties → output control → niche.
 const KNOWN_PARAMS: Record<string, { label: string; type: 'number' | 'string' | 'json'; options?: string[] }> = {
+  // Sampling (most common)
   temperature: { label: 'Temperature', type: 'number' },
   top_p: { label: 'Top P', type: 'number' },
-  top_k: { label: 'Top K', type: 'number' },
-  min_p: { label: 'Min P', type: 'number' },
-  presence_penalty: { label: 'Presence Penalty', type: 'number' },
-  frequency_penalty: { label: 'Frequency Penalty', type: 'number' },
-  repetition_penalty: { label: 'Repetition Penalty', type: 'number' },
+
+  // Output length
   max_tokens: { label: 'Max Tokens', type: 'number' },
   min_tokens: { label: 'Min Tokens', type: 'number' },
-  chat_template_kwargs: { label: 'Chat Template Kwargs', type: 'json' },
+
+  // Sampling refinement
+  top_k: { label: 'Top K', type: 'number' },
+  min_p: { label: 'Min P', type: 'number' },
+
+  // Penalties
+  repetition_penalty: { label: 'Repetition Penalty', type: 'number' },
+  presence_penalty: { label: 'Presence Penalty', type: 'number' },
+  frequency_penalty: { label: 'Frequency Penalty', type: 'number' },
+
+  // Output control
   stop: { label: 'Stop Sequences', type: 'json' },
+  response_format: { label: 'Response Format', type: 'json' },
   reasoning_effort: { label: 'Reasoning Effort', type: 'string', options: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
+
+  // Reproducibility
   seed: { label: 'Seed', type: 'number' },
+
+  // Tool / formatting
   parallel_tool_calls: { label: 'Parallel Tool Calls', type: 'string', options: ['true', 'false'] },
   skip_special_tokens: { label: 'Skip Special Tokens', type: 'string', options: ['true', 'false'] },
-  response_format: { label: 'Response Format', type: 'json' },
+
+  // vLLM-specific (advanced)
   bad_words: { label: 'Bad Words', type: 'json' },
   structured_outputs: { label: 'Structured Outputs', type: 'json' },
   repetition_detection: { label: 'Repetition Detection', type: 'json' },
+  chat_template_kwargs: { label: 'Chat Template Kwargs', type: 'json' },
   ignore_eos: { label: 'Ignore EOS', type: 'string', options: ['true', 'false'] },
 };
 
