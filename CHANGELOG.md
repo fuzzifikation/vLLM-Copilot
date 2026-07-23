@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.19.4 — Repo housekeeping and documentation
+
+- **Added: CONTRIBUTING.md** — development setup, key rules, and PR/issue guidelines.
+- **Added: Issue and PR templates** — standardized bug reports, feature requests, and PR checklists.
+- **Fixed: README badges** — replaced retired shields.io VS Marketplace badges with working alternatives (GitHub release, last commit, static Marketplace link).
+- **Fixed: GitHub release notes** — replaced broken `vscode-file://` URLs in v1.19.3 release with proper Marketplace link.
+- **Added: Repo topics** — discoverability keywords (vllm, copilot, vscode-extension, ai, llm, local-llm).
+- **Added: Keywords in package.json** — matches repo topics for Marketplace discoverability.
+- **Fixed: .vscodeignore duplication** — removed redundant `docs/prompt-replacements-*.json` include (only `prompt-replacements/` is shipped).
+
 ## v1.19.3 — Dead-code cleanup and a small UX fix
 
 - **Added: `[WARN]` Output when model family falls back to the heuristic** — `extractFamily`'s known-family list only covers 8 names, and any model without a preset-declared or HuggingFace-derived `family` falls through to the org-name guess. The provider now emits a `[WARN]` to the Output channel for each affected model on every non-silent discovery pass, so users can tell the family shown in the picker is an estimate rather than authoritative. Silent discovery (cached) does not re-emit the warning. The family string remains a non-fatal sort key.
