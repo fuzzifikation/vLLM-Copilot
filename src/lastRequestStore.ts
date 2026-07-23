@@ -50,13 +50,3 @@ export function getLastRequest(serverUrl: string): LastRequestData | undefined {
 export function setLastRequest(data: LastRequestData): void {
   store.set(data.serverUrl, data);
 }
-
-/** Get all stored entries (e.g., for iteration). */
-export function getAllRequests(): LastRequestData[] {
-  return Array.from(store.values());
-}
-
-/** Clear all entries (e.g., on dispose). */
-export function clearRequests(): void {
-  store.clear();
-}

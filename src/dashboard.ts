@@ -355,6 +355,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     if (e.cachedTokens != null && e.cachedTokens > 0) {
       items.push(new RequestMetricTreeItem('Cached Tokens', String(e.cachedTokens), 'check-all'));
     }
+    if (e.createdCacheTokens != null && e.createdCacheTokens > 0) {
+      items.push(new RequestMetricTreeItem('Cache Write Tokens', String(e.createdCacheTokens), 'symbol-struct'));
+    }
     items.push(new RequestMetricTreeItem('Output Tokens', String(e.completionTokens), 'symbol-method'));
     if (e.reasoningTokens != null && e.reasoningTokens > 0) {
       items.push(new RequestMetricTreeItem('Reasoning Tokens', String(e.reasoningTokens), 'symbol-enum'));
