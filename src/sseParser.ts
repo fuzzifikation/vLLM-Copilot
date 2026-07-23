@@ -49,10 +49,11 @@ export function processSSEChunk(
   const choice = parsed.choices?.[0];
 
   if (parsed.usage) event.usage = parsed.usage;
+  if (parsed.metrics) event.metrics = parsed.metrics;
 
   // Usage-only chunk (empty choices array) — final stats from vLLM
   if (!choice) {
-    return event.usage ? event : null;
+    return (event.usage || event.metrics) ? event : null;
   }
 
   const delta = choice.delta;

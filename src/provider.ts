@@ -6,6 +6,8 @@ import { resolveVllmModelId, resolveOverrideForModel, resolveServerConfig, resol
 import { FileLogger } from './logger.js';
 import { buildModelInfo } from './modelInfo.js';
 import { reportTokenUsage, logTokenUsage } from './usageReporting.js';
+import { setLastRequest, type LastRequestData } from './lastRequestStore.js';
+import type { WireMetrics } from './types.js';
 import {
   messageToText,
   convertMessages,
@@ -296,7 +298,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
           token,
           serverConfig
         );
-        await this.consumeStream(stream, model, progress, token, startTime, outcome);
+        await this.consumeStream(stream, model, progress, token, startTime, outcome, serverConfig.serverUrl, vllmModelId);
 
         // Retry when the model stopped (finish_reason: stop) either with no content at all,
         // or mid-sentence on a trailing colon. Use the full buffer (not the last chunk) so a
@@ -471,7 +473,9 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken,
     startTime: number,
-    outcome: StreamOutcome
+    outcome: StreamOutcome,
+    serverUrl: string,
+    vllmModelId: string,
   ): Promise<void> {
     // Track reported tool calls to avoid duplicates
     const reportedToolCallIds = new Set<string>();
@@ -486,6 +490,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     // [TOKENS] lines. We store the latest usage and report it exactly once after
     // the loop — the final chunk always has the correct cumulative stats.
     let pendingUsage: WireUsage | undefined;
+    let pendingMetrics: WireMetrics | undefined;
 
     for await (const event of stream) {
       if (token.isCancellationRequested) {
@@ -542,6 +547,9 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       if (event.usage) {
         pendingUsage = event.usage;
       }
+      if (event.metrics) {
+        pendingMetrics = event.metrics;
+      }
 
       if (event.finishReason) {
         outcome.finishReason = event.finishReason;
@@ -554,6 +562,25 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       reportTokenUsage(progress, pendingUsage);
       this.fileLogger?.logStreamFinish(outcome.finishReason || 'unknown', pendingUsage);
       logTokenUsage(this.output, model.id, pendingUsage, totalElapsedMs, outcome.firstTokenTime);
+
+      // Store last request data for the dashboard
+      const hasCacheDetails = !!pendingUsage.prompt_tokens_details;
+      const hasMetrics = !!pendingMetrics;
+      const lastRequestData: LastRequestData = {
+        serverUrl,
+        modelId: vllmModelId,
+        timestamp: Date.now(),
+        promptTokens: pendingUsage.prompt_tokens,
+        completionTokens: pendingUsage.completion_tokens,
+        totalTokens: pendingUsage.total_tokens,
+        cachedTokens: pendingUsage.prompt_tokens_details?.cached_tokens,
+        createdCacheTokens: pendingUsage.prompt_tokens_details?.created_cache_tokens,
+        reasoningTokens: pendingUsage.completion_tokens_details?.reasoning_tokens,
+        metrics: pendingMetrics,
+        hasMetrics,
+        hasCacheDetails,
+      };
+      setLastRequest(lastRequestData);
     }
   }
 

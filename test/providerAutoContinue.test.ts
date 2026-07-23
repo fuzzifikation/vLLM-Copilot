@@ -53,6 +53,7 @@ function setupProvider(streams: StreamEvent[][], autoContinueRetries = 1) {
     vllmModelId: 'm',
     openaiMessages: [{ role: 'user', content: 'hi' }],
     mergedOptions: { temperature: 0 },
+    serverConfig: { serverUrl: 'http://localhost:8000', requestHeaders: {} },
   });
 
   const captured: Captured[] = [];
