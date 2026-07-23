@@ -97,7 +97,7 @@ All 12 remaining params are specialized. None are P1 (high-impact, general-purpo
 | Param                           | Category           | Notes                                                                                                                         |
 | ------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
 | `n`                             | Generation Control | **Blocked** — Chat Provider API can't render parallel outputs. Would need `InlineCompletionItemProvider` + `/v1/completions`. |
-| `logprobs`                      | Logprobs           | Token confidence display. Requires UI for visualization (diagnostics, decorations).                                           |
+| `logprobs`                      | Logprobs           | **See below** — Logprob Viewer (P2, researched)                                                          |
 | `prompt_logprobs`               | Logprobs           | Input token analysis. Dependent on logprobs infrastructure.                                                                   |
 | `flat_logprobs`                 | Logprobs           | Perf optimization. Dependent on logprobs infrastructure.                                                                      |
 | `logprob_token_ids`             | Logprobs           | Targeted scoring. Dependent on logprobs infrastructure.                                                                       |
@@ -111,3 +111,58 @@ All 12 remaining params are specialized. None are P1 (high-impact, general-purpo
 | `spaces_between_special_tokens` | Output Formatting  | Formatting tweak. Minor.                                                                                                      |
 
 **Common theme:** Logprobs and logits-processing params are interesting but require tokenizer access or new UI infrastructure to be useful. Output formatting params are debugging-only.
+
+---
+
+## 💡 Logprob Viewer (P2 — Researched)
+
+> **Category:** Token confidence visualization — a power-user feature that makes the extension irreplaceable. BYOK cannot send `logprobs` in the request body, so this is pure moat.
+
+**What it does:** Shows per-token confidence scores for the last request, color-coded from confident (green) to uncertain (red), covering both reasoning tokens and final output tokens.
+
+**Why it matters:**
+- **Debug model quality:** "Why did it generate this wrong answer?" → see where confidence dropped
+- **Compare models:** "Which model is more confident in this output?"
+- **Reasoning transparency:** See where the model was uncertain **during its thinking process**, not just in the final answer
+- **Prompt analysis:** Check if the model actually paid attention to your system prompt
+
+**What vLLM returns (per token):**
+```
+{
+  "token": "hello",
+  "logprob": -0.012,        // ~99.8% confident
+  "top_logprobs": [
+    { "token": "hello", "logprob": -0.012 },
+    { "token": "hi", "logprob": -2.34 },
+    { "token": "hey", "logprob": -3.11 }
+  ]
+}
+```
+
+**What vLLM returns (reasoning tokens):**
+- ✅ Reasoning CONTENT tokens get logprobs
+- ❌ Hidden reasoning delimiters (`<think>`, `</think>`) have logprobs suppressed
+- Content tokens get logprobs as usual
+
+**Why a webview (not chat window):**
+- VS Code chat markdown renderer strips inline HTML (`<span style="...">`)
+- KaTeX works because it's an explicit markdown plugin
+- Webview gives full CSS control for color-coded rendering
+- Follows existing Deep-Dive webview pattern
+- Keeps streaming intact in chat (no buffering needed)
+
+**Implementation plan:**
+1. Add `logprobs` to `KNOWN_PARAMS` (number field: top N candidates per token)
+2. Capture logprobs from SSE stream alongside usage/metrics
+3. Store in `lastRequestStore` alongside token counts and timing
+4. Dashboard shows "Token Confidence" node under Last Request
+5. Clicking opens Logprob Viewer webview with color-coded output
+6. Separate sections for reasoning tokens and content tokens
+
+**Open questions:**
+- **How much data to store?** Logprobs can be large (top N candidates × tokens). Last request only, or configurable?
+- **Color scheme?** Green→yellow→red gradient? Or configurable?
+- **Show top alternatives?** Just the chosen token + confidence, or the top 3 candidates?
+- **Integrate with Deep-Dive?** Or standalone webview? Could complement the metrics view.
+
+**Effort:** Medium-high. Requires new webview, stream capture changes, and storage in `lastRequestStore`. But the moat value is significant — BYOK literally cannot do this.
