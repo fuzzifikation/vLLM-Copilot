@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.19.5 — Last Request Details, createdCacheTokens, and Server Settings params
+
+- **New: Last Request Details in Dashboard** — collapsible tree node under each server showing per-request token counts (input, output, total, cached, reasoning), timing metrics (TTFT, queue time, generation time), and throughput. Requires vLLM server flags `--enable-prompt-tokens-details` (for cache tokens) and `--enable-per-request-metrics` (for timing). Displays a hint when server flags aren't set so users know what to enable.
+- **Fixed: createdCacheTokens not shown** — dashboard now displays `createdCacheTokens` from the vLLM usage block (cache creation tokens, distinct from `cachedTokens` which are cache hits). Removed unused exports from `lastRequestStore.ts`.
+- **Added: 6 missing vLLM params to Server Settings** — `min_tokens`, `response_format`, `bad_words`, `structured_outputs`, `repetition_detection`, and `ignore_eos` are now available in the KNOWN_PARAMS picker. Combined with the previous 13, all vLLM params supported via `defaultParams`/`modelModes` now have UI entries.
+- **Reordered: KNOWN_PARAMS by usage frequency** — organized into logical groups (sampling → output length → sampling refinement → penalties → output control → reproducibility → tools/formatting → vLLM-specific) instead of alphabetical.
+
 ## v1.19.4 — Repo housekeeping and documentation
 
 - **Added: CONTRIBUTING.md** — development setup, key rules, and PR/issue guidelines.

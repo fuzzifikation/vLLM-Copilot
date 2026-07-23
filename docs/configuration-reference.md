@@ -97,9 +97,26 @@ The **vLLM Dashboard** sidebar shows live metrics for each configured vLLM serve
 | `vllm-copilot.dashboard.enabled` | `true` | Enable the Dashboard sidebar and polling |
 | `vllm-copilot.dashboard.pollIntervalMs` | `15000` | How often to refresh metrics (ms). Click **Refresh Interval** in the sidebar to change — enter `15s`, `30s`, `1m`, etc. Also editable in Settings |
 
-### Status Bar
+### Last Request Details
 
-A color-coded indicator in the status bar shows the first server's KV cache usage (`$(circle-filled) vLLM: 78% KV`). Clicking refreshes the dashboard. Green = online, Red = offline.
+Under each server in the Dashboard tree, a collapsible **Last Request** node shows detailed stats from the most recent completed request:
+
+| Field | Source | Description |
+|---|---|---|
+| **Model** | Config | Model ID used for the request |
+| **Time** | Local | Relative timestamp (e.g. "12s ago") |
+| **Input tokens** | vLLM usage | Prompt tokens consumed |
+| **Output tokens** | vLLM usage | Completion tokens generated |
+| **Total tokens** | vLLM usage | Sum of input + output + reasoning |
+| **Cached tokens** | vLLM usage | Tokens served from KV cache (requires `--enable-prompt-tokens-details`) |
+| **Cache creation** | vLLM usage | Cache tokens created during this request (requires `--enable-prompt-tokens-details`) |
+| **Reasoning tokens** | vLLM usage | Tokens spent in thinking/reasoning (if applicable) |
+| **Queue time** | Per-request metrics | Time spent in queue before generation (requires `--enable-per-request-metrics`) |
+| **TTFT** | Per-request metrics | Time to first token (requires `--enable-per-request-metrics`) |
+| **Generation time** | Per-request metrics | Total generation duration (requires `--enable-per-request-metrics`) |
+| **Throughput** | Derived | Output tokens / generation time |
+
+When server flags aren't set, the node shows a hint: "Start vLLM with `--enable-prompt-tokens-details` and `--enable-per-request-metrics` for full details."
 
 ---
 

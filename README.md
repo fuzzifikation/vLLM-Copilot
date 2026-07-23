@@ -162,6 +162,7 @@ A native Tree View sidebar shows live metrics for each configured vLLM server �
 - **At-a-glance queue status:** Each server shows running and waiting request counts (or *idle*)
 - **Expandable metrics:** Model IDs, vLLM version, context window, KV cache usage & hit rate, TTFT, throughput (tokens/sec)
 - **MTP / speculative decoding:** Acceptance rate, draft depth, proposal count (when active)
+- **Last Request Details:** Per-server node showing the most recent request's token counts (input, output, cached, reasoning), timing metrics (TTFT, queue time, generation time), and throughput. Requires vLLM `--enable-prompt-tokens-details` and `--enable-per-request-metrics` server flags for full detail. Displays hints when flags aren't set.
 - **Configurable polling:** Click **Refresh Interval** at the top of the tree to change — enter `15s`, `30s`, `1m`, etc.
 
 Access via **View → vLLM-Copilot → Dashboard** or the sidebar section header.
@@ -206,9 +207,11 @@ Some models (notably Qwen) occasionally return zero tokens or truncated output. 
 ### Token Usage & Performance Stats
 
 After every request, the Output channel shows exact token counts from vLLM:
-- Input/output tokens, cached tokens (prefix cache hit %)
+- Input/output tokens, cached tokens (prefix cache hit %), cache creation tokens
 - Output throughput (tokens/sec), time-to-first-token
 - Speculative decoding stats (accepted/rejected predictions)
+
+Additionally, the Dashboard sidebar shows **Last Request Details** per server with the same token and timing data in a persistent, at-a-glance view.
 
 ### Connection Diagnostics
 
@@ -249,6 +252,9 @@ a fresh start. Access via `Ctrl+Shift+P` → **Clean Copilot Sessions** (under U
 | **Test & Refresh Models** | Verify servers, list models, correct ID mismatches, check network settings |
 | **Set Model Personality** | Pick a model, pick a personality preset, apply instantly |
 | **Configure Utility Model** | Switch utility model for MCP servers (`mainAgent` / `copilot` / `none`) |
+| **Update Auth** | Rotate API key or change auth headers for a model (context menu on server node) |
+| **Remove Server** | Remove a configured server and all its models (context menu on server node) |
+| **vLLM Deep-Dive** | Open per-server webview with full metrics and histograms (context menu on server node) |
 | **Open Log File** | Open today's debug log |
 | **Clear Log Files** | Delete all debug logs (except the active one) |
 

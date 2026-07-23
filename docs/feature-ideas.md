@@ -56,11 +56,16 @@ These params are available in the Server Settings UI (`KNOWN_PARAMS` in `serverS
 | `repetition_penalty`, `presence_penalty`, `frequency_penalty` | number              | Penalty control   |
 | `max_tokens`, `min_tokens`                                    | number              | Output length     |
 | `stop`                                                        | json (array)        | Stop sequences    |
+| `response_format`                                             | json                | Output format     |
 | `seed`                                                        | number              | Reproducibility   |
 | `skip_special_tokens`                                         | string (true/false) | Output formatting |
+| `parallel_tool_calls`                                         | string (true/false) | Tool calling      |
 | `chat_template_kwargs`                                        | json                | Template control  |
 | `reasoning_effort`                                            | string (options)    | Thinking depth    |
-| `parallel_tool_calls`                                         | string (true/false) | Tool calling      |
+| `bad_words`                                                   | json                | Blocked tokens    |
+| `structured_outputs`                                          | json                | Token constraints |
+| `repetition_detection`                                        | json                | N-gram early-stop |
+| `ignore_eos`                                                  | string (true/false) | Ignore EOS        |
 
 (All params supported via `defaultParams`/`modelModes` now also have `KNOWN_PARAMS` UI entries.)
 
