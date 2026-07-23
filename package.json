@@ -28,8 +28,7 @@
     "Chat"
   ],
   "activationEvents": [
-    "languageModel_chatVendor:vllm-copilot",
-    "onView:vllm-copilot.serverSettings"
+    "languageModel_chatVendor:vllm-copilot"
   ],
   "main": "./out/extension.js",
   "extensionKind": [
@@ -50,12 +49,14 @@
       "vllm-dashboard": [
         {
           "id": "vllm-copilot.dashboard",
-          "name": "Dashboard"
+          "name": "Dashboard",
+          "icon": "$(pulse)"
         },
         {
           "id": "vllm-copilot.serverSettings",
           "type": "webview",
-          "name": "Server Settings"
+          "name": "Server Settings",
+          "icon": "$(settings-gear)"
         }
       ]
     },
