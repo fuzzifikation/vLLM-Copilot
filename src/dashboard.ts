@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import { getConfig, resolveServerConfig } from './config.js';
 import { ServerMetrics, fetchServerMetrics, fmtPct, fmtMs, fmtN, fmtTokens, fmtThroughput, shortUrl } from './vllmMetrics.js';
+import { getLastRequest } from './lastRequestStore.js';
 
 // ─── Tree Items ──────────────────────────────────────────────────────
 
@@ -99,10 +100,71 @@ class TestRefreshTreeItem extends vscode.TreeItem {
   }
 }
 
+/** Collapsible "Last Request" node showing per-request details */
+class LastRequestTreeItem extends vscode.TreeItem {
+  constructor(
+    public readonly serverUrl: string,
+    public readonly modelId: string,
+    public readonly timestamp: number,
+    public readonly promptTokens: number,
+    public readonly completionTokens: number,
+    public readonly totalTokens: number,
+    public readonly cachedTokens?: number,
+    public readonly createdCacheTokens?: number,
+    public readonly reasoningTokens?: number,
+    public readonly hasMetrics: boolean = false,
+    public readonly hasCacheDetails: boolean = false,
+    public readonly ttftMs?: number,
+    public readonly generationMs?: number,
+    public readonly queueMs?: number,
+  ) {
+    super('Last Request', vscode.TreeItemCollapsibleState.Collapsed);
+    this.iconPath = new vscode.ThemeIcon('info');
+    this.id = `lastRequest:${serverUrl}`;
+    const ago = timeAgo(this.timestamp);
+    this.description = `${ago} · ${modelId}`;
+    this.tooltip = new vscode.MarkdownString(
+      `Model: ${modelId}\nTime: ${ago}\nTokens: ${promptTokens} in → ${completionTokens} out`
+    );
+  }
+}
+
+/** A metric row under Last Request (label: value) */
+class RequestMetricTreeItem extends vscode.TreeItem {
+  constructor(label: string, value: string, icon?: string) {
+    super(label, vscode.TreeItemCollapsibleState.None);
+    this.description = value;
+    if (icon) {
+      this.iconPath = new vscode.ThemeIcon(icon);
+    }
+    this.tooltip = `${label}: ${value}`;
+  }
+}
+
+/** Hint row suggesting vLLM server flags for more data */
+class FlagHintTreeItem extends vscode.TreeItem {
+  constructor(message: string) {
+    super(message, vscode.TreeItemCollapsibleState.None);
+    this.iconPath = new vscode.ThemeIcon('lightbulb', new vscode.ThemeColor('charts.yellow'));
+    this.tooltip = message;
+  }
+}
+
+/** Format a relative time string from a timestamp */
+function timeAgo(ts: number): string {
+  const seconds = Math.floor((Date.now() - ts) / 1000);
+  if (seconds < 5) return 'just now';
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
+
 // ─── Tree Data Provider ──────────────────────────────────────────────
 
-export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem> {
-  private _onDidChangeTreeData = new vscode.EventEmitter<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | undefined | void>();
+export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -145,11 +207,11 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     return new PollIntervalTreeItem(label);
   }
 
-  getTreeItem(element: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem): vscode.TreeItem {
+  getTreeItem(element: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem): vscode.TreeItem {
     return element;
   }
 
-  async getChildren(element?: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem): Promise<(ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem)[]> {
+  async getChildren(element?: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem): Promise<(ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem)[]> {
     if (!element) {
       const items: (ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem)[] = [this.getPollIntervalTreeItem()];
       try {
@@ -196,18 +258,22 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     }
 
     if (element instanceof ServerTreeItem) {
-      return this.getServerMetricsChildren(element.metrics);
+      return this.getServerMetricsChildren(element.metrics, element.serverUrl);
     }
 
     if (element instanceof ModelsTreeItem) {
       return element.modelNames.map(name => new ModelTreeItem(name));
     }
 
+    if (element instanceof LastRequestTreeItem) {
+      return this.getLastRequestChildren(element);
+    }
+
     return [];
   }
 
-  private getServerMetricsChildren(m: ServerMetrics): MetricTreeItem[] {
-    const items: MetricTreeItem[] = [];
+  private getServerMetricsChildren(m: ServerMetrics, serverUrl?: string): (MetricTreeItem | ModelsTreeItem | LastRequestTreeItem | FlagHintTreeItem)[] {
+    const items: (MetricTreeItem | ModelsTreeItem | LastRequestTreeItem | FlagHintTreeItem)[] = [];
     if (!m.online) {
       return [new MetricTreeItem('Error', m.error || 'Connection failed', 'error')];
     }
@@ -253,6 +319,74 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     }
     if (m.evictions != null) {
       items.push(new MetricTreeItem('Evictions', String(m.evictions), 'error'));
+    }
+
+    // Last request details (if we have data for this server)
+    if (serverUrl) {
+      const lastRequest = getLastRequest(serverUrl);
+      if (lastRequest) {
+        items.push(new LastRequestTreeItem(
+          lastRequest.serverUrl,
+          lastRequest.modelId,
+          lastRequest.timestamp,
+          lastRequest.promptTokens,
+          lastRequest.completionTokens,
+          lastRequest.totalTokens,
+          lastRequest.cachedTokens,
+          lastRequest.createdCacheTokens,
+          lastRequest.reasoningTokens,
+          lastRequest.hasMetrics,
+          lastRequest.hasCacheDetails,
+          lastRequest.metrics?.time_to_first_token_ms,
+          lastRequest.metrics?.generation_time_ms,
+          lastRequest.metrics?.queue_time_ms,
+        ));
+      }
+    }
+
+    return items;
+  }
+
+  private getLastRequestChildren(e: LastRequestTreeItem): (RequestMetricTreeItem | FlagHintTreeItem)[] {
+    const items: (RequestMetricTreeItem | FlagHintTreeItem)[] = [];
+
+    // Token counts
+    items.push(new RequestMetricTreeItem('Input Tokens', String(e.promptTokens), 'symbol-parameter'));
+    if (e.cachedTokens != null && e.cachedTokens > 0) {
+      items.push(new RequestMetricTreeItem('Cached Tokens', String(e.cachedTokens), 'check-all'));
+    }
+    items.push(new RequestMetricTreeItem('Output Tokens', String(e.completionTokens), 'symbol-method'));
+    if (e.reasoningTokens != null && e.reasoningTokens > 0) {
+      items.push(new RequestMetricTreeItem('Reasoning Tokens', String(e.reasoningTokens), 'symbol-enum'));
+    }
+    items.push(new RequestMetricTreeItem('Total Tokens', String(e.totalTokens), 'symbol-numeric'));
+
+    // Timing metrics (if available)
+    if (e.hasMetrics && (e.ttftMs != null || e.generationMs != null)) {
+      if (e.queueMs != null && e.queueMs > 0) {
+        items.push(new RequestMetricTreeItem('Queue Time', `${fmtMs(e.queueMs)}`, 'debug-pause'));
+      }
+      if (e.ttftMs != null) {
+        items.push(new RequestMetricTreeItem('TTFT', `${fmtMs(e.ttftMs)}`, 'clock'));
+      }
+      if (e.generationMs != null) {
+        items.push(new RequestMetricTreeItem('Generation', `${fmtMs(e.generationMs)}`, 'rocket'));
+      }
+      // Throughput
+      if (e.generationMs != null && e.generationMs > 0) {
+        const tokPerSec = (e.completionTokens / e.generationMs) * 1000;
+        items.push(new RequestMetricTreeItem('Throughput', `${tokPerSec.toFixed(1)} tok/s`, 'zap'));
+      }
+    }
+
+    // Hints for missing data
+    const missingFlags: string[] = [];
+    if (!e.hasCacheDetails) missingFlags.push('--enable-prompt-tokens-details');
+    if (!e.hasMetrics) missingFlags.push('--enable-per-request-metrics');
+    if (missingFlags.length > 0) {
+      items.push(new FlagHintTreeItem(
+        `⚡ More data with ${missingFlags.join(' & ')}`
+      ));
     }
 
     return items;

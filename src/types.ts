@@ -79,7 +79,22 @@ export interface WireChoice {
 export interface WireChunk {
   choices?: WireChoice[];
   usage?: WireUsage;
+  /** Per-request timing metrics (requires `--enable-per-request-metrics` on server). */
+  metrics?: WireMetrics;
   error?: { message?: string } | string;
+}
+
+/**
+ * Per-request timing metrics from vLLM.
+ * Only available when server is started with `--enable-per-request-metrics`.
+ */
+export interface WireMetrics {
+  /** Time to first token in ms. */
+  time_to_first_token_ms?: number;
+  /** Total generation time in ms. */
+  generation_time_ms?: number;
+  /** Time spent in queue before generation started in ms. */
+  queue_time_ms?: number;
 }
 
 /** A single model entry in the vLLM `/v1/models` response `data` array. */
@@ -186,4 +201,6 @@ export interface StreamEvent {
    */
   error?: string;
   usage?: WireUsage;
+  /** Per-request timing metrics (requires `--enable-per-request-metrics`). */
+  metrics?: WireMetrics;
 }
