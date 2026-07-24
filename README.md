@@ -157,8 +157,6 @@ Replacements are exact substring matches, applied sequentially to every system m
 
 A native Tree View sidebar shows live metrics for each configured vLLM server — no webviews, no extra ports.
 
-<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/dashboard-sidebar.png" width="500" alt="Dashboard sidebar with server metrics">
-
 - **At-a-glance queue status:** Each server shows running and waiting request counts (or *idle*)
 - **Expandable metrics:** Model IDs, vLLM version, context window, KV cache usage & hit rate, TTFT, throughput (tokens/sec)
 - **MTP / speculative decoding:** Acceptance rate, draft depth, proposal count (when active)
@@ -182,10 +180,6 @@ A sibling webview to the dashboard lets you edit per-model configuration without
 
 Access via **View → vLLM-Copilot → Server Settings** or the sidebar section header.
 
-</td><td>
-
-<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/server-settings.png" width="400" alt="Server Settings webview showing per-model configuration UI">
-
 </td></tr></table>
 
 ### Server Deep-Dive
@@ -197,8 +191,6 @@ A per-server details webview that opens in the editor area with the full set of 
 - **Histograms with tooltips**: TTFT/TPOT/token-count distributions rendered as hoverable bars
 - **Full raw metric dump**: the same parser that feeds the dashboard sidebar, shown in full
 - **One panel per server**: opening the same server again focuses the existing panel instead of duplicating
-
-<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/vLLM-Stats-View.png" width="700" alt="vLLM Deep-Dive webview with full server statistics">
 
 ### Auto-Continue on Empty Responses
 

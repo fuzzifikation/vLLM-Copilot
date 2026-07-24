@@ -154,8 +154,8 @@ A working chat model — minimum viable config. No modes, no custom params, just
     // ── Server & auth (per-model, isolated) ──────────────
     "serverUrl": "http://localhost:8000",             // required
     "requestHeaders": {                               // auth/routing; never shared across servers
-      "Authorization": "Bearer token-abc123",
-      "X-Custom-Header": "value"
+      "Authorization": "Bearer <your-token>",
+      "X-Custom-Header": "<your-value>"
     },
 
     // ── Token budgets ─────────────────────────────────────
