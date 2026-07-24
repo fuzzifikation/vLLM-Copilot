@@ -59,13 +59,13 @@ class ModelTreeItem extends vscode.TreeItem {
 
 /** A metric row (label: value) */
 class MetricTreeItem extends vscode.TreeItem {
-  constructor(label: string, value: string, icon?: string) {
+  constructor(label: string, value: string, icon?: string, tooltip?: string) {
     super(label, vscode.TreeItemCollapsibleState.None);
     this.description = value;
     if (icon) {
       this.iconPath = new vscode.ThemeIcon(icon);
     }
-    this.tooltip = `${label}: ${value}`;
+    this.tooltip = tooltip ?? `${label}: ${value}`;
   }
 }
 
@@ -117,6 +117,9 @@ class LastRequestTreeItem extends vscode.TreeItem {
     public readonly ttftMs?: number,
     public readonly generationMs?: number,
     public readonly queueMs?: number,
+    public readonly maxModelLen: number = 0,
+    public readonly maxOutputTokens: number = 0,
+    public readonly firstTokenTimeMs: number | null = null,
   ) {
     super('Last Request', vscode.TreeItemCollapsibleState.Collapsed);
     this.iconPath = new vscode.ThemeIcon('info');
@@ -131,13 +134,13 @@ class LastRequestTreeItem extends vscode.TreeItem {
 
 /** A metric row under Last Request (label: value) */
 class RequestMetricTreeItem extends vscode.TreeItem {
-  constructor(label: string, value: string, icon?: string) {
+  constructor(label: string, value: string, icon?: string, tooltip?: string) {
     super(label, vscode.TreeItemCollapsibleState.None);
     this.description = value;
     if (icon) {
       this.iconPath = new vscode.ThemeIcon(icon);
     }
-    this.tooltip = `${label}: ${value}`;
+    this.tooltip = tooltip ?? `${label}: ${value}`;
   }
 }
 
@@ -285,17 +288,52 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     if (m.models.length > 0) {
       items.push(new ModelsTreeItem(m.models));
     }
-    items.push(new MetricTreeItem('Context Window', fmtTokens(m.maxModelLen), 'layers'));
+    items.push(new MetricTreeItem(
+      'Context Window',
+      fmtTokens(m.maxModelLen),
+      'layers',
+      'Maximum context length (input + output combined) for this model.',
+    ));
 
     // Server stats
-    items.push(new MetricTreeItem('KV Cache', fmtPct(m.kvCacheUsagePercent), 'graph'));
-    items.push(new MetricTreeItem('KV Cache Hit', fmtPct(m.cacheHitRate), 'check-all'));
-    items.push(new MetricTreeItem('Avg TTFT', fmtMs(m.avgTTFTMs), 'clock'));
-    items.push(new MetricTreeItem('Throughput', fmtThroughput(m.avgTPOTMs), 'rocket'));
+    items.push(new MetricTreeItem(
+      'KV Cache',
+      fmtPct(m.kvCacheUsagePercent),
+      'graph',
+      'Current KV cache utilization. High usage means less headroom for concurrent requests.',
+    ));
+    items.push(new MetricTreeItem(
+      'KV Cache Hit',
+      fmtPct(m.cacheHitRate),
+      'check-all',
+      'Percentage of input tokens served from cache (prefill skipped). Higher = faster prompts.',
+    ));
+    items.push(new MetricTreeItem(
+      'Avg TTFT',
+      fmtMs(m.avgTTFTMs),
+      'clock',
+      'Average time to first token across recent requests (queue + prompt processing).',
+    ));
+    items.push(new MetricTreeItem(
+      'Throughput',
+      fmtThroughput(m.avgTPOTMs),
+      'rocket',
+      'Average token generation throughput (inverse of time per output token).',
+    ));
 
     // Queue position
-    items.push(new MetricTreeItem('Running', fmtN(m.runningRequests), 'play'));
-    items.push(new MetricTreeItem('Waiting', fmtN(m.waitingRequests), 'debug-pause'));
+    items.push(new MetricTreeItem(
+      'Running',
+      fmtN(m.runningRequests),
+      'play',
+      'Number of requests currently being processed by the GPU.',
+    ));
+    items.push(new MetricTreeItem(
+      'Waiting',
+      fmtN(m.waitingRequests),
+      'debug-pause',
+      'Number of requests queued, waiting for GPU resources.',
+    ));
 
     // Speculative decoding
     {
@@ -309,16 +347,31 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
         else parts.push('—');
         if (m.specDraftDepth != null) parts.push(`depth ${m.specDraftDepth.toFixed(1)}`);
         if (m.specDraftsTotal != null) parts.push(`${m.specDraftsTotal} drafts`);
-        items.push(new MetricTreeItem('MTP', parts.join('  ·  '), 'lightbulb'));
+        items.push(new MetricTreeItem(
+          'MTP',
+          parts.join('  ·  '),
+          'lightbulb',
+          'Multi-Token Prediction (speculative decoding). Acceptance rate = percentage of draft tokens accepted without verification.',
+        ));
       }
     }
 
     // Pressure indicators (only if > 0)
     if (m.preemptions != null) {
-      items.push(new MetricTreeItem('Preemptions', String(m.preemptions), 'warning'));
+      items.push(new MetricTreeItem(
+        'Preemptions',
+        String(m.preemptions),
+        'warning',
+        'Number of requests preempted (evicted from KV cache) due to memory pressure. High values indicate cache contention.',
+      ));
     }
     if (m.evictions != null) {
-      items.push(new MetricTreeItem('Evictions', String(m.evictions), 'error'));
+      items.push(new MetricTreeItem(
+        'Evictions',
+        String(m.evictions),
+        'error',
+        'Number of requests evicted from the queue without being processed due to resource exhaustion.',
+      ));
     }
 
     // Last request details (if we have data for this server)
@@ -340,6 +393,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
           lastRequest.metrics?.time_to_first_token_ms,
           lastRequest.metrics?.generation_time_ms,
           lastRequest.metrics?.queue_time_ms,
+          lastRequest.maxModelLen,
+          lastRequest.maxOutputTokens,
+          lastRequest.firstTokenTimeMs,
         ));
       }
     }
@@ -350,36 +406,92 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   private getLastRequestChildren(e: LastRequestTreeItem): (RequestMetricTreeItem | FlagHintTreeItem)[] {
     const items: (RequestMetricTreeItem | FlagHintTreeItem)[] = [];
 
-    // Token counts
-    items.push(new RequestMetricTreeItem('Input Tokens', String(e.promptTokens), 'symbol-parameter'));
-    if (e.cachedTokens != null && e.cachedTokens > 0) {
-      items.push(new RequestMetricTreeItem('Cached Tokens', String(e.cachedTokens), 'check-all'));
+    // 1. Total Tokens — context window usage (always available)
+    if (e.maxModelLen > 0) {
+      const pct = ((e.totalTokens / e.maxModelLen) * 100).toFixed(1);
+      items.push(new RequestMetricTreeItem(
+        'Total Tokens',
+        `${fmtTokens(e.totalTokens)}  ·  ${pct}% of context`,
+        'symbol-numeric',
+        'Total tokens consumed (input + output) as a percentage of the model\'s context window.',
+      ));
     }
-    if (e.createdCacheTokens != null && e.createdCacheTokens > 0) {
-      items.push(new RequestMetricTreeItem('Cache Write Tokens', String(e.createdCacheTokens), 'symbol-struct'));
-    }
-    items.push(new RequestMetricTreeItem('Output Tokens', String(e.completionTokens), 'symbol-method'));
-    if (e.reasoningTokens != null && e.reasoningTokens > 0) {
-      items.push(new RequestMetricTreeItem('Reasoning Tokens', String(e.reasoningTokens), 'symbol-enum'));
-    }
-    items.push(new RequestMetricTreeItem('Total Tokens', String(e.totalTokens), 'symbol-numeric'));
 
-    // Timing metrics (if available)
-    if (e.hasMetrics && (e.ttftMs != null || e.generationMs != null)) {
-      if (e.queueMs != null && e.queueMs > 0) {
-        items.push(new RequestMetricTreeItem('Queue Time', `${fmtMs(e.queueMs)}`, 'debug-pause'));
-      }
-      if (e.ttftMs != null) {
-        items.push(new RequestMetricTreeItem('TTFT', `${fmtMs(e.ttftMs)}`, 'clock'));
-      }
-      if (e.generationMs != null) {
-        items.push(new RequestMetricTreeItem('Generation', `${fmtMs(e.generationMs)}`, 'rocket'));
-      }
-      // Throughput
-      if (e.generationMs != null && e.generationMs > 0) {
-        const tokPerSec = (e.completionTokens / e.generationMs) * 1000;
-        items.push(new RequestMetricTreeItem('Throughput', `${tokPerSec.toFixed(1)} tok/s`, 'zap'));
-      }
+    // 2. Input Tokens — always available from usage block; cache % needs --enable-prompt-tokens-details
+    if (e.cachedTokens != null && e.cachedTokens > 0) {
+      const cachedPct = ((e.cachedTokens / e.promptTokens) * 100).toFixed(1);
+      items.push(new RequestMetricTreeItem(
+        'Input Tokens',
+        `${fmtTokens(e.promptTokens)}  ·  ${cachedPct}% cached`,
+        'symbol-parameter',
+        'Tokens in the prompt. Cached tokens were served from KV cache (not recomputed).',
+      ));
+    } else {
+      items.push(new RequestMetricTreeItem(
+        'Input Tokens',
+        fmtTokens(e.promptTokens),
+        'symbol-parameter',
+        'Tokens in the prompt.',
+      ));
+    }
+
+    // 3. Output Tokens — always available from usage block; budget % always available from settings
+    if (e.maxOutputTokens > 0) {
+      const pct = ((e.completionTokens / e.maxOutputTokens) * 100).toFixed(1);
+      items.push(new RequestMetricTreeItem(
+        'Output Tokens',
+        `${fmtTokens(e.completionTokens)}  ·  ${pct}% of max output`,
+        'code',
+        'Tokens generated by the model. Max output = configured output budget from settings.',
+      ));
+    }
+
+    // 4. Generation time + throughput (requires --enable-per-request-metrics)
+    if (e.hasMetrics && e.generationMs != null && e.generationMs > 0) {
+      const sec = (e.generationMs / 1000).toFixed(2);
+      const tokPerSec = ((e.completionTokens / e.generationMs) * 1000).toFixed(1);
+      items.push(new RequestMetricTreeItem(
+        'Generation',
+        `${sec}s  ·  ${tokPerSec} tok/s`,
+        'rocket',
+        'Time to generate all output tokens. Throughput = output tokens / generation time.',
+      ));
+    }
+
+    // 5. Queue Time (requires --enable-per-request-metrics)
+    if (e.hasMetrics && e.queueMs != null && e.queueMs > 0) {
+      items.push(new RequestMetricTreeItem(
+        'Queue Time',
+        `${fmtMs(e.queueMs)}`,
+        'debug-pause',
+        'Time spent waiting in vLLM\'s request queue before processing started.',
+      ));
+    }
+
+    // 6. TTFT — always shown (provider-measured); also show server-reported when available.
+    // The difference is client overhead + network latency (config, request build, HTTP handshake, SSE parse).
+    if (e.ttftMs != null && e.firstTokenTimeMs != null) {
+      const overheadMs = Math.max(0, e.firstTokenTimeMs - e.ttftMs);
+      items.push(new RequestMetricTreeItem(
+        'TTFT',
+        `reported: ${(e.ttftMs / 1000).toFixed(2)}s  ·  measured: ${(e.firstTokenTimeMs / 1000).toFixed(2)}s  ·  overhead: ${fmtMs(overheadMs)}`,
+        'clock',
+        'Time to first token. Reported = server\'s queue+prompt time. Measured = client wall-clock. Overhead = difference (network + client processing).',
+      ));
+    } else if (e.ttftMs != null) {
+      items.push(new RequestMetricTreeItem(
+        'TTFT',
+        `${fmtMs(e.ttftMs)}`,
+        'clock',
+        'Time to first token (server-reported: queue + prompt processing).',
+      ));
+    } else if (e.firstTokenTimeMs != null) {
+      items.push(new RequestMetricTreeItem(
+        'TTFT',
+        `${fmtMs(e.firstTokenTimeMs)}`,
+        'clock',
+        'Time to first token (client-measured wall-clock: includes network + server processing).',
+      ));
     }
 
     // Hints for missing data
@@ -390,8 +502,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       items.push(new FlagHintTreeItem(
         `⚡ More data with ${missingFlags.join(' & ')}`
       ));
+      // The flag hint already has a tooltip set to the message itself,
+      // which is fine — it reiterates the action needed.
     }
-
     return items;
   }
 

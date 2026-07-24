@@ -165,6 +165,10 @@ A native Tree View sidebar shows live metrics for each configured vLLM server �
 
 Access via **View → vLLM-Copilot → Dashboard** or the sidebar section header.
 
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/ServerDashboard-with-Last-Request.png" width="500" alt="Server dashboard sidebar showing live metrics and last request details">
+
+*Live server metrics with Last Request details — token counts with context/budget percentages, TTFT (reported vs. measured), generation throughput, and queue time.*
+
 ### Server Settings
 
 <table><tr><td>
@@ -180,6 +184,10 @@ A sibling webview to the dashboard lets you edit per-model configuration without
 
 Access via **View → vLLM-Copilot → Server Settings** or the sidebar section header.
 
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/Server-Settings.png" width="500" alt="Server Settings webview for editing per-model configuration">
+
+*Edit model configuration in a visual editor — no `settings.json` required.*
+
 </td></tr></table>
 
 ### Server Deep-Dive
@@ -191,6 +199,10 @@ A per-server details webview that opens in the editor area with the full set of 
 - **Histograms with tooltips**: TTFT/TPOT/token-count distributions rendered as hoverable bars
 - **Full raw metric dump**: the same parser that feeds the dashboard sidebar, shown in full
 - **One panel per server**: opening the same server again focuses the existing panel instead of duplicating
+
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/Server-Stats-Webview.png" width="500" alt="Server Deep-Dive webview showing full live metrics with histograms">
+
+*Full per-server metrics with live polling, histogram breakdowns, and raw metric dump.*
 
 ### Auto-Continue on Empty Responses
 
