@@ -33,6 +33,12 @@ export interface LastRequestData {
   hasMetrics: boolean;
   /** Whether --enable-prompt-tokens-details is available (true if cache details were received). */
   hasCacheDetails: boolean;
+  /** Context window (max_model_len from server). */
+  maxModelLen: number;
+  /** Output budget (max_output_tokens from settings). */
+  maxOutputTokens: number;
+  /** Time-to-first-token in ms, measured by the provider. Always available. */
+  firstTokenTimeMs: number | null;
 }
 
 /**

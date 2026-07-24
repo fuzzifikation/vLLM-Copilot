@@ -579,6 +579,9 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         metrics: pendingMetrics,
         hasMetrics,
         hasCacheDetails,
+        maxModelLen: model.maxInputTokens || 0,
+        maxOutputTokens: model.maxOutputTokens || 0,
+        firstTokenTimeMs: outcome.firstTokenTime ?? null,
       };
       setLastRequest(lastRequestData);
     }
