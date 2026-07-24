@@ -1,5 +1,5 @@
 # Changelog
-
+
 ## v1.19.5 — Last Request Details, createdCacheTokens, and Server Settings params
 
 - **New: Last Request Details in Dashboard** — collapsible tree node under each server showing per-request token counts (input, output, total, cached, reasoning), timing metrics (TTFT, queue time, generation time), and throughput. Requires vLLM server flags `--enable-prompt-tokens-details` (for cache tokens) and `--enable-per-request-metrics` (for timing). Displays a hint when server flags aren't set so users know what to enable.

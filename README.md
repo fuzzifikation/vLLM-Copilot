@@ -24,6 +24,12 @@ personality presets, and system message control. All switchable from the model p
 *Fully integrated into the Copilot model picker, chat, and context window — no workarounds, no missing features.*
 </div>
 
+<div align="center">
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/full-copilot-support.png" width="500" alt="vLLM model shown in Copilot model picker with full context window stats">
+
+*Fully integrated into the Copilot model picker, chat, and context window — no workarounds, no missing features.*
+</div>
+
 ---
 
 ## What makes this different from BYOK?
