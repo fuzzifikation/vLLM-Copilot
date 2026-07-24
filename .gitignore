@@ -9,3 +9,10 @@ temp/
 keep_this/
 .vllm/
 temp/
+
+# Local connection settings and credentials must never be committed.
+.env
+.env.*
+!.env.example
+*.local.json
+*.local.code-workspace
