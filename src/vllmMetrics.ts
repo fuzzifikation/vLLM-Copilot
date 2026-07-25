@@ -55,7 +55,9 @@ export interface RawMetricEntry {
 
 export interface ServerRawData {
   version?: Record<string, unknown>;
-  health?: string;
+  healthStatus?: number;
+  healthBody?: string;
+  serverLoad?: number;
   models: Array<Record<string, unknown>>;
   metrics: {
     gauges: Record<string, RawMetricEntry[]>;
@@ -339,17 +341,19 @@ export async function fetchServerRawData(
   };
 
   // Fetch all endpoints in parallel
-  const [healthRes, versionRes, modelsRes, metricsRes] = await Promise.all([
+  const [healthRes, versionRes, modelsRes, metricsRes, loadRes] = await Promise.all([
     safeFetch(`${baseUrl}/health`, { signal: controller.signal, headers }),
     safeFetch(`${baseUrl}/version`, { signal: controller.signal, headers }),
     safeFetch(`${baseUrl}/v1/models`, { signal: controller.signal, headers }),
     safeFetch(`${baseUrl}/metrics`, { signal: controller.signal, headers }),
+    safeFetch(`${baseUrl}/load`, { signal: controller.signal, headers }),
   ]);
   clearTimeout(timer);
 
-  // Health
+  // Health — status code is the signal, body is optional detail
+  result.healthStatus = healthRes.status;
   if (healthRes.ok) {
-    result.health = await healthRes.text();
+    result.healthBody = await healthRes.text();
   }
 
   // Version
@@ -362,6 +366,14 @@ export async function fetchServerRawData(
     try {
       const data = await modelsRes.json() as { data?: Array<Record<string, unknown>> };
       result.models = data.data ?? [];
+    } catch { /* ignore */ }
+  }
+
+  // Server load
+  if (loadRes.ok) {
+    try {
+      const loadData = await loadRes.json() as { server_load?: number };
+      if (loadData.server_load != null) result.serverLoad = loadData.server_load;
     } catch { /* ignore */ }
   }
 
@@ -416,6 +428,9 @@ export function parseRawMetrics(rawText: string, metrics: ServerRawData['metrics
     const value = parseFloat(valueRaw);
     if (isNaN(value)) continue;
 
+    // Skip Prometheus auto-generated _created timestamps — noise, not data
+    if (name.endsWith('_created')) continue;
+
     const entry: RawMetricEntry = { name, labels, value };
     const bucket = typeHints[name] ?? (name.includes('_bucket') ? 'histogram'
       : name.includes('_total') || name.includes('count') ? 'counter'
@@ -428,9 +443,19 @@ export function parseRawMetrics(rawText: string, metrics: ServerRawData['metrics
     if (helpDesc[name]) entry.description = helpDesc[name];
     else if (helpDesc[baseName]) entry.description = helpDesc[baseName];
 
+    // Cache config: handle both old vllm:cache_config_<key> and new vllm:cache_config_info{labels}
     if (name.startsWith('vllm:') && name.includes('cache_config')) {
       const shortName = name.replace('vllm:cache_config_', '');
-      metrics.cache_config[shortName] = value;
+      if (shortName === 'info' && Object.keys(labels).length > 0) {
+        // New format: vllm:cache_config_info{kv_cache_max_concurrency="2.5",block_size="16",...} 1.0
+        // Labels ARE the config values
+        for (const [k, v] of Object.entries(labels)) {
+          metrics.cache_config[k] = v;
+        }
+      } else if (shortName !== 'info') {
+        // Old format: vllm:cache_config_block_size 16
+        metrics.cache_config[shortName] = value;
+      }
     } else if (name.startsWith('process_')) {
       const arr = (metrics.process[name] = metrics.process[name] || []);
       arr.push(entry);

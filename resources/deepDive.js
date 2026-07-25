@@ -16,6 +16,12 @@
     if (data.type === 'data') {
       lastData = data.raw;
       render();
+      // Reset find overlay state — innerHTML replaced all DOM nodes
+      if (window._findMatches) {
+        window._findMatches = [];
+        var fc = document.querySelector('.find-count');
+        if (fc) fc.textContent = '';
+      }
     } else if (data.type === 'error') {
       document.getElementById('content').innerHTML =
         '<div class="error-msg">Error: ' + E(data.message) + '</div>';
@@ -24,6 +30,154 @@
 
   // Tell extension we're ready
   vscode.postMessage({ type: 'ready' });
+
+  // ── Ctrl+F Search Overlay ───────────────────────────────────
+  // WebviewPanel doesn't support findWidget, so we build our own.
+  (function initFindOverlay() {
+    var overlay = document.createElement('div');
+    overlay.id = 'find-overlay';
+    overlay.style.display = 'none';
+    overlay.innerHTML = '<div class="find-widget">' +
+      '<input type="text" class="find-input" placeholder="Search…" spellcheck="false">' +
+      '<span class="find-count"></span>' +
+      '<button class="find-btn" data-action="prev" title="Previous">▲</button>' +
+      '<button class="find-btn" data-action="next" title="Next">▼</button>' +
+      '<button class="find-btn" data-action="close" title="Close">✕</button>' +
+      '</div>';
+    document.body.appendChild(overlay);
+
+    var input = overlay.querySelector('.find-input');
+    var countEl = overlay.querySelector('.find-count');
+    var currentMatch = -1;
+
+    function removeAllHighlights() {
+      var marks = document.querySelectorAll('#content mark.find-match');
+      for (var i = 0; i < marks.length; i++) {
+        var parent = marks[i].parentNode;
+        if (!parent) continue;
+        parent.replaceChild(document.createTextNode(marks[i].textContent), marks[i]);
+        parent.normalize();
+      }
+      currentMatch = -1;
+    }
+
+    function highlightAll(query) {
+      removeAllHighlights();
+      window._findMatches = [];
+      if (!query || query.length < 1) { countEl.textContent = ''; return; }
+
+      var content = document.getElementById('content');
+      if (!content) return;
+
+      // Collect all text nodes FIRST, then process — DOM mutation during TreeWalker is UB
+      var textNodes = [];
+      var walker = document.createTreeWalker(
+        content,
+        NodeFilter.SHOW_TEXT,
+        {
+          acceptNode: function (node) {
+            var p = node.parentElement;
+            if (p && p.tagName === 'SCRIPT') return NodeFilter.FILTER_REJECT;
+            if (p && p.id === 'find-overlay') return NodeFilter.FILTER_REJECT;
+            if (p && p.tagName === 'MARK') return NodeFilter.FILTER_REJECT;
+            return node.textContent.toLowerCase().indexOf(query.toLowerCase()) >= 0
+              ? NodeFilter.FILTER_ACCEPT
+              : NodeFilter.FILTER_REJECT;
+          }
+        }
+      );
+      while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+      // Now safe to mutate — we have a static snapshot of nodes
+      var qLen = query.length;
+      var qLower = query.toLowerCase();
+      for (var t = 0; t < textNodes.length; t++) {
+        var node = textNodes[t];
+        // Node may have been removed (e.g. previous iteration replaced parent)
+        if (!node.parentNode) continue;
+        var text = node.textContent;
+        var lower = text.toLowerCase();
+        var frag = document.createDocumentFragment();
+        var lastIdx = 0;
+        var idx = lower.indexOf(qLower, lastIdx);
+        while (idx >= 0) {
+          if (idx > lastIdx) frag.appendChild(document.createTextNode(text.substring(lastIdx, idx)));
+          var mark = document.createElement('mark');
+          mark.className = 'find-match';
+          mark.textContent = text.substring(idx, idx + qLen);
+          frag.appendChild(mark);
+          window._findMatches.push(mark);
+          lastIdx = idx + qLen;
+          idx = lower.indexOf(qLower, lastIdx);
+        }
+        if (lastIdx < text.length) frag.appendChild(document.createTextNode(text.substring(lastIdx)));
+        node.parentNode.replaceChild(frag, node);
+      }
+      countEl.textContent = window._findMatches.length > 0 ? '0/' + window._findMatches.length : 'No results';
+      currentMatch = -1;
+    }
+
+    function navigateFind(dir) {
+      var matches = window._findMatches || [];
+      if (!matches.length) return;
+      var prev = document.querySelector('#content mark.find-match.is-active');
+      if (prev) prev.classList.remove('is-active');
+      currentMatch += dir;
+      if (currentMatch >= matches.length) currentMatch = 0;
+      if (currentMatch < 0) currentMatch = matches.length - 1;
+      var el = matches[currentMatch];
+      el.classList.add('is-active');
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      countEl.textContent = (currentMatch + 1) + '/' + matches.length;
+    }
+
+    function showFind() {
+      overlay.style.display = 'block';
+      input.value = '';
+      countEl.textContent = '';
+      removeAllHighlights();
+      input.focus();
+      input.select();
+    }
+
+    function hideFind() {
+      overlay.style.display = 'none';
+      removeAllHighlights();
+      input.value = '';
+      countEl.textContent = '';
+    }
+
+    var typingTimer;
+    input.addEventListener('input', function () {
+      clearTimeout(typingTimer);
+      typingTimer = setTimeout(function () { highlightAll(input.value); }, 150);
+    });
+
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        navigateFind(e.shiftKey ? -1 : 1);
+      }
+      if (e.key === 'Escape') { hideFind(); e.stopPropagation(); }
+    });
+
+    overlay.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      var action = btn.getAttribute('data-action');
+      if (action === 'close') hideFind();
+      else if (action === 'next') navigateFind(1);
+      else if (action === 'prev') navigateFind(-1);
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        overlay.style.display === 'block' ? hideFind() : showFind();
+      }
+      if (e.key === 'Escape' && overlay.style.display === 'block') hideFind();
+    });
+  })();
 
   document.addEventListener('pointermove', function (event) {
     var bar = event.target.closest && event.target.closest('.histogram-bar');
@@ -217,30 +371,59 @@
     'num_requests_running': 'Number of requests currently being processed',
     'num_requests_swapped': 'Number of requests in CPU swap space',
     'num_requests_waiting': 'Number of requests queued waiting for resources',
+    'num_requests_waiting_by_reason': 'Waiting requests by reason (capacity vs deferred)',
     'gpu_prefix_cache_hit_rate': 'GPU prefix cache hit rate',
     'cache_prefix_cache_hit_rate': 'Cache prefix (APC) hit rate',
+    'engine_sleep_state': 'Engine state (awake, weights_offloaded, discard_all)',
+    'lora_requests_info': 'Active LoRA requests info',
+    'websocket_connections_active': 'Active WebSocket connections',
     // Counters
     'prompt_tokens_total': 'Total prompt tokens processed',
+    'prompt_tokens_by_source_total': 'Prompt tokens by source',
     'generation_tokens_total': 'Total generation tokens produced',
     'prompt_tokens_cached_total': 'Prompt tokens served from cache',
     'num_preemptions_total': 'Total request preemptions (context eviction)',
     'request_eviction_total': 'Total requests evicted from cache',
+    'request_success_total': 'Successfully finished requests (by finish reason)',
+    'corrupted_requests_total': 'Requests with NaNs detected in logits',
+    'prefix_cache_queries_total': 'Prefix cache queries (token-level)',
+    'prefix_cache_hits_total': 'Prefix cache hits (token-level)',
+    'external_prefix_cache_queries_total': 'Cross-instance KV connector queries',
+    'external_prefix_cache_hits_total': 'Cross-instance KV connector hits',
+    'mm_cache_queries_total': 'Multi-modal cache queries',
+    'mm_cache_hits_total': 'Multi-modal cache hits',
     'spec_decode_num_draft_tokens_total': 'Total speculative draft tokens',
     'spec_decode_num_accepted_tokens_total': 'Total accepted speculative tokens',
     'spec_decode_num_drafts_total': 'Total speculative decoding rounds',
+    'spec_decode_num_accepted_tokens_per_pos_total': 'Accepted tokens per draft position',
+    'estimated_flops_per_gpu_total': 'Estimated FLOPs per GPU (for MFU calculation)',
+    'estimated_read_bytes_per_gpu_total': 'Bytes read from memory per GPU',
+    'estimated_write_bytes_per_gpu_total': 'Bytes written to memory per GPU',
+    'tool_call_parser_invocations_total': 'Tool call parser invocations by outcome',
     // Histograms
     'time_to_first_token_seconds': 'Latency from request arrival to first output token',
     'inter_token_latency_seconds': 'Time between consecutive output tokens (TPOT)',
     'request_prompt_tokens': 'Number of tokens in each request prompt',
     'request_generation_tokens': 'Number of generated tokens per request',
+    'request_max_num_generation_tokens': 'Max requested generation tokens per request',
+    'request_prefill_kv_computed_tokens': 'New KV tokens computed during prefill (excl. cached)',
+    'request_params_n': 'The n (number of completions) request parameter',
+    'request_params_max_tokens': 'The max_tokens request parameter',
     'e2e_request_latency_seconds': 'End-to-end request completion latency',
     'iteration_tokens': 'Tokens processed per decoder iteration',
     'request_queue_time_seconds': 'Time a request spent waiting in queue',
+    'request_prefill_time_seconds': 'Time spent in prefill phase per request',
+    'request_decode_time_seconds': 'Time spent in decode phase per request',
+    'request_inference_time_seconds': 'Total time in RUNNING phase per request',
     'prefill_time': 'Time spent in the prefill phase',
     'decode_time': 'Time spent in the decode phase',
     'time_per_output_token': 'Average time per output token',
+    'request_time_per_output_token_seconds': 'Per-request average time per output token',
     'scheduler_time': 'Time spent in scheduler per step',
     'decode_time_per_token': 'Decode time per token per step',
+    'kv_block_lifetime_seconds': 'Lifetime of KV cache blocks',
+    'kv_block_idle_before_evict_seconds': 'Idle time before KV block eviction',
+    'kv_block_reuse_gap_seconds': 'Gap between KV block reuses',
     // Process
     'process_cpu_seconds': 'Total CPU time in seconds',
     'process_resident_memory_bytes': 'Process RSS in bytes',
@@ -279,16 +462,43 @@
 
     // ── Health Status ──────────────────────────────────────────
     {
-      var h = data.health;
+      var hs = data.healthStatus;
+      var hb = data.healthBody || '';
       var badge = '';
-      if (h === 'OK' || h === '"OK"' || (typeof h === 'string' && h.includes('OK'))) {
-        badge = '<span class="badge badge-green">OK</span>';
-      } else if (h === '' || h === null || h === undefined) {
-        badge = '<span class="badge badge-gray">No response</span>';
+      var detail = '';
+      if (hs !== null && hs !== undefined && hs > 0) {
+        if (hs >= 200 && hs < 300) {
+          badge = '<span class="badge badge-green">Healthy</span>';
+        } else if (hs >= 500) {
+          badge = '<span class="badge badge-red">Error</span>';
+        } else {
+          badge = '<span class="badge badge-yellow">Unhealthy</span>';
+        }
+        detail = '<span style="color:var(--vscode-descriptionForeground);font-size:12px;margin-left:8px">HTTP ' + hs + '</span>';
+        if (hb && hb !== 'OK' && hb !== '"OK"') {
+          detail += '<span style="color:var(--vscode-descriptionForeground);font-size:12px;margin-left:4px">— ' + E(hb) + '</span>';
+        }
       } else {
-        badge = '<span class="badge badge-yellow">' + E(String(h)) + '</span>';
+        badge = '<span class="badge badge-gray">No response</span>';
       }
-      html += buildSection('Health Status', '/health', '<div style="padding:8px">' + badge + '</div>');
+      html += buildSection('Health Status', '/health', '<div style="padding:8px">' + badge + detail + '</div>');
+    }
+
+    // ── Server Load ────────────────────────────────────────────
+    {
+      var sl = data.serverLoad;
+      var loadHtml = '<div class="kv-grid">';
+      if (sl !== null && sl !== undefined) {
+        loadHtml += '<div class="kv-item">' +
+          '<span class="kv-label">GPU-Utilizing Requests</span>' +
+          '<span class="kv-value">' + formatValue(sl) + '</span></div>';
+      } else {
+        loadHtml += '<div class="kv-item">' +
+          '<span class="kv-label">Server Load</span>' +
+          '<span class="kv-value"><span class="value-zero">—</span></span></div>';
+      }
+      loadHtml += '</div>';
+      html += buildSection('Server Load', '/load', loadHtml);
     }
 
     // ── Models ─────────────────────────────────────────────────
