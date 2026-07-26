@@ -38,16 +38,31 @@ export async function activate(context: vscode.ExtensionContext) {
     const extKindLabel = context.extension.extensionKind === vscode.ExtensionKind.UI ? 'UI' : 'Workspace';
     outputChannel.appendLine(`[INFO] Remote detection: remoteName="${vscode.env.remoteName ?? 'none'}", extensionKind=${extKindLabel}`);
 
-    // Running locally while connected to a remote — auto-install on the remote host.
+    // Running locally while connected to a remote — notify user and offer to install on the remote host.
     if (vscode.env.remoteName && context.extension.extensionKind === vscode.ExtensionKind.UI) {
-      outputChannel.appendLine(`[WARN] Extension is not installed on the ${vscode.env.remoteName} remote — triggering auto-install from Marketplace.`);
-      void vscode.commands.executeCommand(
-        'workbench.extensions.installExtension',
-        'System-Sciences.vllm-copilot'
-      ).then(
-        () => outputChannel.appendLine(`[INFO] Auto-install on ${vscode.env.remoteName} remote triggered.`),
-        (err) => outputChannel.appendLine(`[WARN] Auto-install on ${vscode.env.remoteName} remote failed: ${err instanceof Error ? err.message : String(err)}`)
-      );
+      const remoteHost = vscode.env.remoteName;
+      outputChannel.appendLine(`[WARN] Extension is running locally while connected to ${remoteHost} remote — it must be installed on the remote to function.`);
+      const helpAction = `Show Me`;
+      vscode.window.showWarningMessage(
+        `vLLM-Copilot is not installed on the ${remoteHost} remote. Chat features will not work until installed.`,
+        helpAction,
+        'Dismiss'
+      ).then((choice) => {
+        if (choice === helpAction) {
+          outputChannel.appendLine(`[INFO] User triggered install flow for ${remoteHost} remote.`);
+          // Open Extensions view with our extension pre-searched so the user sees
+          // the "Install on {remote}" button. We can't install remotely from a local
+          // UI extension — VS Code API always installs to the current host.
+          vscode.commands.executeCommand('workbench.extensions.search', 'System-Sciences.vllm-copilot');
+          // After installing, the user needs to reload. We can't detect when the
+          // remote install completes, so they'll see the same popup again on reload
+          // if they dismiss it.
+          vscode.window.showInformationMessage(
+            `After installing on ${remoteHost}, reload the window to activate vLLM-Copilot. Don't forget to enable auto-updates — they're disabled for extensions using proposed APIs.`,
+            'Dismiss'
+          );
+        }
+      });
     }
 
     // publisher/name changes.

@@ -1,8 +1,8 @@
 {
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
-  "description": "Use your own vLLM-hosted AI models directly in GitHub Copilot — full tool calling, thinking modes, and vision support and all vLLM special features.",
-  "version": "1.19.7",
+  "description": "The full Copilot integration for vLLM models — all features supported. Optimized for local AI with switchable model modes, every vLLM parameter with UI support, and complete server settings and monitoring.",
+  "version": "1.19.8",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",

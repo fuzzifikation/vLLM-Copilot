@@ -101,6 +101,11 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     options: { silent: boolean },
     _token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelChatInformation[]> {
+    // If extension is not installed on the remote, don't show ghost models that can't work.
+    if (vscode.env.remoteName && this.context.extension.extensionKind === vscode.ExtensionKind.UI) {
+      return [];
+    }
+
     // If silent mode, return cached models without recomputing
     if (options.silent && this.cachedModels) {
       return this.cachedModels;
