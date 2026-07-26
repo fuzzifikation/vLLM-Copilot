@@ -16,7 +16,7 @@ personality presets, and system message control. All switchable from the model p
 [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
 
-> **⚠️ Manual updates required.** This extension uses VS Code proposed APIs (`chatProvider`), so the Marketplace disables auto-updates. Check for updates periodically via **Extensions → Check for Updates** or watch the [Releases page](https://github.com/fuzzifikation/vLLM-Copilot/releases). Auto-updates will resume once the API stabilizes.
+> **💡 Tip:** Enable `extensions.autoUpdate` in VS Code settings to get automatic updates. (Auto-updates are disabled by default for extensions using proposed APIs like `chatProvider`.)
 
 </div>
 
