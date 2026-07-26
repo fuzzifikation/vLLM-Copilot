@@ -1,5 +1,10 @@
 # Changelog
-
+
+
+## v1.19.8 — Remote connection UX fix
+
+- **Fixed: confusing behavior when extension is not installed on remote** — Previously, connecting via Remote-SSH/WSL/devcontainer with the extension installed locally would silently fail with no clear error. Now: (1) a warning popup appears at activation explaining the issue, (2) clicking "Show Me" opens the Extensions view pre-searched for vLLM-Copilot where you can click "Install on {remote}", and (3) the model picker returns no models so ghost entries can't be selected.
+
 ## v1.19.5 — Last Request Details, createdCacheTokens, and Server Settings params
 
 - **New: Last Request Details in Dashboard** — collapsible tree node under each server showing per-request token counts (input, output, total, cached, reasoning), timing metrics (TTFT, queue time, generation time), and throughput. Requires vLLM server flags `--enable-prompt-tokens-details` (for cache tokens) and `--enable-per-request-metrics` (for timing). Displays a hint when server flags aren't set so users know what to enable.
