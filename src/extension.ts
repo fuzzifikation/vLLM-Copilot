@@ -58,7 +58,7 @@ export async function activate(context: vscode.ExtensionContext) {
           // remote install completes, so they'll see the same popup again on reload
           // if they dismiss it.
           vscode.window.showInformationMessage(
-            `After installing on ${remoteHost}, reload the window to activate vLLM-Copilot. Don't forget to enable auto-updates — they're disabled for extensions using proposed APIs.`,
+            `After installing on ${remoteHost}, reload the window to activate vLLM-Copilot. Enable \`extensions.autoUpdate\` in settings to get automatic updates.`,
             'Dismiss'
           );
         }
