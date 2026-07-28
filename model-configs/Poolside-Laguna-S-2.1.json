@@ -41,12 +41,17 @@
 //     significantly (e.g., Terminal-Bench 60% → 70%, DeepSWE 17% → 40%).
 //   - "No Think": direct responses, no reasoning tokens.
 //   - There are NO intermediate effort levels (low/medium/high) — binary on/off only.
-//     Use vLLM server defaults or define `defaultParams` in your settings.json.
+//     We provide two thinking modes with different temperatures:
+//     - "Think (General)": temperature=0.7 (Poolside NVFP4 recommendation)
+//     - "Think (Code)": temperature=0.2 for deterministic code completion
+//   - For "No Think", use vLLM server defaults (top_k=20 from generation_config.json).
 //
-//   - Sampling parameters: no per-mode inference parameters are set.
-//     vLLM server defaults apply (Poolside recommends temperature=0.7 for
-//     the NVFP4 quantization variant). Change via `defaultParams` in
-//     settings.json if you want different sampling per mode.
+//   - Sampling parameters: per-mode temperature is set directly in modelModes.
+//     - "Think (General)": temperature=0.7, top_p=0.95 (Poolside NVFP4 recommendation
+//       from https://huggingface.co/poolside/Laguna-S-2.1-NVFP4 "Recommended sampling")
+//     - "Think (Code)": temperature=0.2 for deterministic code completion
+//     - "No Think": vLLM server defaults (top_k=20 from generation_config.json)
+//     Change via `defaultParams` (model-scope) in your settings.json if you want different sampling.
 //
 {
   "id": "poolside/Laguna-S-2.1",
@@ -59,11 +64,21 @@
     "imageInput": false
   },
   "modelModes": {
-    "Think": {
+    "Think (General)": {
       "chat_template_kwargs": {
         "enable_thinking": true,
         "preserve_thinking": true
-      }
+      },
+      "temperature": 0.7,
+      "top_p": 0.95
+    },
+    "Think (Code)": {
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "preserve_thinking": true
+      },
+      "temperature": 0.2,
+      "top_p": 0.95
     },
     "No Think": {
       "chat_template_kwargs": {
@@ -71,5 +86,5 @@
       }
     }
   },
-  "defaultMode": "Think"
+  "defaultMode": "Think (General)"
 }
