@@ -1,6 +1,10 @@
 # Changelog
 
 
+## v1.19.86 — Fixed cached_tokens always reported as 0
+
+- **Fixed: `cached_tokens` always 0 in VS Code usage reporting** — `createUsageDataPart()` was reading `usage.cached_tokens` (top-level) instead of `usage.prompt_tokens_details?.cached_tokens` (nested per OpenAI/vLLM schema). This caused Copilot's usage tracker to report zero cached tokens, making prefix-cached requests appear as full fresh input. Cost accounting for environments with differential pricing (e.g., cache-read cheaper than input) was significantly overestimated. Now reads the correct nested path with a fallback to the top-level field for non-standard backends. Thanks to @BinaryFusion-00 for the detailed report.
+
 ## v1.19.8 — Remote connection UX fix
 
 - **Fixed: confusing behavior when extension is not installed on remote** — Previously, connecting via Remote-SSH/WSL/devcontainer with the extension installed locally would silently fail with no clear error. Now: (1) a warning popup appears at activation explaining the issue, (2) clicking "Show Me" opens the Extensions view pre-searched for vLLM-Copilot where you can click "Install on {remote}", and (3) the model picker returns no models so ghost entries can't be selected.
