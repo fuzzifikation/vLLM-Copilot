@@ -75,7 +75,7 @@ async function discoverPersonalityPresets(
  * a corrective picker (sharing the picker UX with `addServerModel`) and to
  * persist the corrected id in place via `saveModelConfig`.
  */
-interface TestResult {
+export interface TestResult {
   label: string;
   description: string;
   detail: string;
@@ -115,6 +115,39 @@ function checkNetworkGatingSettings(): string[] {
   }
 
   return warnings;
+}
+
+/**
+ * Pick which mismatched-model rows from Test & Refresh should trigger the
+ * corrective "Pick Model" prompt. A missing model only warrants a prompt
+ * when NO sibling on the same server verified ✓ — i.e. the server is up but
+ * serves nothing the user configured. Otherwise the missing model is
+ * treated as parked (e.g. a Qwen preset kept around while vLLM is only
+ * running Laguna); its ✗ row still shows in the per-model modal at the end.
+ * @internal Exported for testing.
+ */
+export function selectMismatchesToPrompt(
+  models: ModelConfig[],
+  results: TestResult[]
+): TestResult[] {
+  const serverOkCount = new Map<string, number>();
+  for (let i = 0; i < models.length; i++) {
+    const m = models[i];
+    if (!m.serverUrl) continue;
+    if (results[i].label.startsWith('✓')) {
+      const url = normalizeServerUrl(m.serverUrl);
+      serverOkCount.set(url, (serverOkCount.get(url) ?? 0) + 1);
+    }
+  }
+
+  const out: TestResult[] = [];
+  for (const r of results) {
+    if (!r.mismatch) continue;
+    const url = normalizeServerUrl(r.mismatch.serverUrl);
+    if ((serverOkCount.get(url) ?? 0) > 0) continue;
+    out.push(r);
+  }
+  return out;
 }
 
 /**
@@ -186,7 +219,11 @@ export function registerTestAndRefreshModelsCommand(
 
         const data: any = await resp.json();
         const serverModels = data.data || [];
-        const found = serverModels.find((m: VllmModel) => m.id === vllmModelId || m.root === vllmModelId);
+        // Match only on the served model id. Do NOT match via `m.root === vllmModelId`:
+        // `root` is the underlying checkpoint, which is shared across many served
+        // aliases and quantizations — matching on it produces spurious ✓ rows
+        // where the server isn't actually serving the user's `vllmModelId`.
+        const found = serverModels.find((m: VllmModel) => m.id === vllmModelId);
 
         if (!found) {
           // Defer the corrective picker to the sequential post-check phase so
@@ -221,15 +258,16 @@ export function registerTestAndRefreshModelsCommand(
 
     const results = await Promise.all(checks);
 
-    // Offer to correct mismatched `vllmModelId` values. Done sequentially (not
-    // in the parallel check) so concurrent `saveModelConfig` writes cannot
-    // race — each call re-reads the config array, mutates one entry, and
-    // writes it back; running them serially keeps that atomic per entry.
-    // The picker UX is shared with `addServerModel` via `pickModelFromServer`;
-    // persistence goes through the same `saveModelConfig` path, so dedup,
-    // server/headers preservation, and the BYOK utility default all carry over.
-    for (const result of results) {
-      if (!result.mismatch) continue;
+    // Prompt only for mismatches on servers with no ✓ sibling (see
+    // selectMismatchesToPrompt). Parked models show a ✗ row only — no nag.
+    const promptable = selectMismatchesToPrompt(models, results);
+
+    // Persist corrections sequentially (not in the parallel check) so
+    // concurrent `saveModelConfig` writes cannot race — each call re-reads
+    // the config array, mutates one entry, and writes it back; running them
+    // serially keeps that atomic per entry.
+    for (const result of promptable) {
+      if (!result.mismatch) continue; // type-narrow; helper already filtered
       const { model, serverModels, serverUrl, vllmModelId } = result.mismatch;
       if (serverModels.length === 0) continue; // different problem — leave row as-is
 

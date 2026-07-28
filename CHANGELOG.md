@@ -1,6 +1,15 @@
 # Changelog
 
 
+## v1.19.92 — Test & Refresh: stop nagging about parked models
+
+- **Fixed: false ✓ rows in Test & Refresh** — the `found` matcher compared a model's `root` (the underlying checkpoint) against the user's `vllmModelId`. Since `root` is shared across aliases and quantizations, the check would return ✓ for models the server isn't actually serving. Matching is now strictly on `m.id === vllmModelId`.
+- **Fixed: Test & Refresh nagged about intentionally parked models** — if you keep multiple model presets on the same server but only run one at a time (e.g. a Qwen preset alongside Laguna), every other entry got the "Pick Model" modal because it wasn't on the server. Now: the corrective prompt fires only when NO configured model on that server verified ✓ (i.e. the server is up but serves nothing the user configured). Healthy-server / parked-model cases are reported as a single ✗ row in the per-model modal and skipped from the prompt loop. The stale config stays in your settings untouched until you actually swap servers.
+
+## v1.19.91 — Fixed NVFP4 quantization suffix matching
+
+- **Fixed: Poolside Laguna-S-2.1 preset not picked up for NVFP4 variants** — `normalizeModelId()` did not recognize `-NVFP4` as a quantization suffix, so a server serving `poolside/Laguna-S-2.1-NVFP4` would not match the bundled preset for `poolside/Laguna-S-2.1`. Added `-NVFP4` to the recognized suffix list so all quantized variants resolve to the base model preset.
+
 ## v1.19.90 — Poolside Laguna-S-2.1 config and aligned default temperature
 
 - **Added: Poolside Laguna-S-2.1 model config** — new preset with Think and No Think modes, sampling parameters from Poolside's published M.1/XS.2 technical report (temperature=1.0, top_k=20, same recipe and eval harness). Requires vLLM `--reasoning-parser poolside_v1 --tool-call-parser poolside_v1`. Text-only model, no vision.

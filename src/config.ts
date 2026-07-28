@@ -193,6 +193,7 @@ export function normalizeModelId(modelId: string): string {
   const suffixes = [
     '-GGUF', '-GPTQ', '-AWQ', '-AQLM', '-EAGLE',
     '-FP8', '-INT8', '-INT4', '-NF4',
+    '-NVFP4',
     '-4bit', '-8bit',
   ];
   let normalized = modelId;
