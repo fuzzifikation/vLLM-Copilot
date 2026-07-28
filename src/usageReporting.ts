@@ -18,13 +18,14 @@ import type { WireUsage } from './types.js';
  *   - Must include `prompt_tokens_details`
  */
 export function createUsageDataPart(
-  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cached_tokens?: number }
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cached_tokens?: number; prompt_tokens_details?: Record<string, number> }
 ): vscode.LanguageModelDataPart {
+  const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? usage.cached_tokens ?? 0;
   const usageData = {
     prompt_tokens: usage.prompt_tokens,
     completion_tokens: usage.completion_tokens,
     total_tokens: usage.total_tokens,
-    prompt_tokens_details: { cached_tokens: usage.cached_tokens ?? 0 },
+    prompt_tokens_details: { cached_tokens: cachedTokens },
   };
   const usageBytes = new TextEncoder().encode(JSON.stringify(usageData));
   return new vscode.LanguageModelDataPart(usageBytes, 'usage');
@@ -36,7 +37,7 @@ export function createUsageDataPart(
  */
 export function reportTokenUsage(
   progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number },
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; prompt_tokens_details?: Record<string, number> },
 ): void {
   const dataPart = createUsageDataPart(usage);
   progress.report(dataPart);
