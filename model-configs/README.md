@@ -6,6 +6,7 @@ Ready-to-use model configurations shipped with the extension. **Add vLLM Server 
 |------|-------|-------|--------|----------|
 | `Agents-A1-config.json` | Agents-A1 (InternScience) | Think (General), Think (Coding), Think (Science), No Think | ✅ | ✅ |
 | `Qwen-Qwen3.6-27B.json` | Qwen3.6-27B | Think (General), Think (Coding), No Think | ✅ | ✅ |
+| `Poolside-Laguna-S-2.1.json` | Laguna-S-2.1 (Poolside) | Think, No Think | ❌ | ✅ |
 | `Tencent-Hy3-config.json` | Hy3 (Tencent) | Think (Deep), Think (Light), No Think | ❌ | ✅ |
 | `DeepSeek-V4-Flash.json` | DeepSeek V4 Flash | Think (Max), Think (High), No Think | ❌ | ✅ |
 | `glm-5.2-config.json` | GLM-5.2 (Z-AI) | Think (Max), Think (High), No Think | ❌ | ✅ |
