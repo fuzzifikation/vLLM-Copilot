@@ -160,8 +160,14 @@ export async function discoverWorkspaces(): Promise<WorkspaceEntry[]> {
 }
 
 // ── SQLite operations (via node:sqlite) ────────────────────────────────────
-// node:sqlite ships with VS Code's bundled Node (≥1.125 → Node 24, where it is
-// stable and unflagged). No Python dependency, no native binding, no temp files.
+// node:sqlite ships with VS Code's bundled Node. The `--experimental-sqlite`
+// flag was removed on Node 22.13.0 (Jan 2025, PR nodejs/node#55890), so any
+// VS Code version bundling Node ≥ 22.13 has `DatabaseSync` available without a
+// flag (it may emit an `ExperimentalWarning`, which is informational — the
+// module is Stability 1.2/R release-candidate as of Node 26). VS Code 1.122
+// (May 2026) ships Node 22.22.1 (`cgmanifest.json`, tag 1.122.0), well past the
+// unflag — that is the basis for `engines.vscode` = ^1.122.0. No Python
+// dependency, no native binding, no temp files.
 
 /**
  * Delete the CHAT_KEYS from a given state.vscdb.
