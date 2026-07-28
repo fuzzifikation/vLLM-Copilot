@@ -57,7 +57,7 @@ describe('structured_outputs via resolveRequestParams', () => {
 describe('resolveRequestParams layering', () => {
   it('applies built-in defaults (temperature, top_p) when nothing set', () => {
     const params = resolveRequestParams(undefined, undefined);
-    expect(params.temperature).toBe(0.7);
+    expect(params.temperature).toBe(1.0);
     expect(params.top_p).toBe(1.0);
   });
 

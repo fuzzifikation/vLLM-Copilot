@@ -1,6 +1,11 @@
 # Changelog
 
 
+## v1.19.9 — Poolside Laguna-S-2.1 config and aligned default temperature
+
+- **Added: Poolside Laguna-S-2.1 model config** — new preset with Think and No Think modes, sampling parameters from Poolside's published M.1/XS.2 technical report (temperature=1.0, top_k=20, same recipe and eval harness). Requires vLLM `--reasoning-parser poolside_v1 --tool-call-parser poolside_v1`. Text-only model, no vision.
+- **Fixed: built-in default temperature aligned with vLLM** — `DEFAULT_REQUEST_PARAMS.temperature` changed from 0.7 to 1.0 to match vLLM's OpenAI-compatible API default. Model presets that specify their own temperature remain unaffected; this only changes the fallback for models without explicit params.
+
 ## v1.19.86 — Fixed cached_tokens always reported as 0
 
 - **Fixed: `cached_tokens` always 0 in VS Code usage reporting** — `createUsageDataPart()` was reading `usage.cached_tokens` (top-level) instead of `usage.prompt_tokens_details?.cached_tokens` (nested per OpenAI/vLLM schema). This caused Copilot's usage tracker to report zero cached tokens, making prefix-cached requests appear as full fresh input. Cost accounting for environments with differential pricing (e.g., cache-read cheaper than input) was significantly overestimated. Now reads the correct nested path with a fallback to the top-level field for non-standard backends. Thanks to @BinaryFusion-00 for the detailed report.

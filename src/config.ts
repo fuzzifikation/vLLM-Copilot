@@ -90,7 +90,7 @@ export interface VllmConfig {
  * Users who want it can enable it per-model via defaultParams in their config.
  */
 export const DEFAULT_REQUEST_PARAMS: Record<string, unknown> = {
-  temperature: 0.7,
+  temperature: 1.0,
   top_p: 1.0,
 };
 

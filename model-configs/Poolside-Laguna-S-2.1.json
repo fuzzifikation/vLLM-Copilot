@@ -1,0 +1,78 @@
+// Laguna-S-2.1 — Model configuration
+// Source: Poolside model card + release blog post
+// https://huggingface.co/poolside/Laguna-S-2.1
+// https://poolside.ai/blog/introducing-laguna-s-2-1
+// Verified 2026-07-28.
+//
+// NOTE: These params work for ANY quantization variant (NVFP4, FP8, INT4, GGUF, etc.).
+// The extension's model matcher strips quantization suffixes automatically.
+//
+// Chat template parameters (all Jinja template variables, passed via chat_template_kwargs):
+//   - `enable_thinking: true/false` — enables/disables native interleaved reasoning
+//   - `preserve_thinking: true` — keeps <thinking>...</thinking> blocks visible in
+//     multi-turn conversation history. Poolside recommends preserving reasoning
+//     content for agentic coding workflows so the model can see prior reasoning steps.
+//
+// Copy the "id" object below into your settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//
+// Requirements:
+//   - vLLM launched with --reasoning-parser poolside_v1 --tool-call-parser poolside_v1
+//   - For tool calling: also add --enable-auto-tool-choice
+//   - Optional: --default-chat-template-kwargs '{"enable_thinking": true}'
+//   - For speculative decoding: add --speculative-config with DFlash draft model
+//
+// Token budgets (assuming max_model_len 262,144):
+//   - maxOutputTokens: 32,768 (suitable for Copilot chat turns)
+//   - maxInputTokens: auto-computed as ~229,376
+//   - Note: model supports up to 1M context and routinely generates 100K+ tokens
+//     in thinking mode for agentic tasks. Increase maxOutputTokens for long-horizon use.
+//
+// Important: The Laguna-S-2.1 release card does not list sampling parameters.
+// The values below (temperature=1.0, top_k=20) are taken from Poolside's
+// internal evaluation harness for the Laguna M.1 / XS.2 series — same recipe,
+// same team, same eval infrastructure. Published in the technical report:
+//   https://poolside.ai/assets/laguna/laguna-m1-xs2-technical-report.pdf
+//   (Section 6.2.1 "Settings": "We sample LAGUNA XS.2 and LAGUNA M.1 with a
+//   temperature of 1.0 and top_k = 20, with thinking mode enabled.")
+//
+// Thinking modes (per Poolside):
+//   - "Think" (max): model self-determines reasoning budget. Lifts benchmark scores
+//     significantly (e.g., Terminal-Bench 60% → 70%, DeepSWE 17% → 40%).
+//   - "No Think": direct responses, no reasoning tokens.
+//   - There are NO intermediate effort levels (low/medium/high) — binary on/off only.
+//     Use vLLM server defaults or define `defaultParams` in your settings.json.
+//
+
+{
+  "id": "poolside/Laguna-S-2.1",
+  "vllmModelId": "poolside/Laguna-S-2.1",
+  "displayName": "Laguna-S-2.1",
+  "family": "laguna",
+  "maxOutputTokens": 32768,
+  "capabilities": {
+    "toolCalling": true,
+    "imageInput": false
+  },
+//   - Sampling parameters from M.1/XS.2 technical report (same recipe):
+//     temperature=1.0, top_k=20. Used for both Think and No Think modes.
+//
+  "modelModes": {
+    "Think": {
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "preserve_thinking": true
+      },
+      "temperature": 1.0,
+      "top_k": 20
+    },
+    "No Think": {
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      },
+      "temperature": 1.0,
+      "top_k": 20
+    }
+  },
+  "defaultMode": "Think"
+}
