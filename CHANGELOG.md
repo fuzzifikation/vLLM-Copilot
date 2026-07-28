@@ -1,7 +1,7 @@
 # Changelog
 
 
-## v1.19.9 — Poolside Laguna-S-2.1 config and aligned default temperature
+## v1.19.90 — Poolside Laguna-S-2.1 config and aligned default temperature
 
 - **Added: Poolside Laguna-S-2.1 model config** — new preset with Think and No Think modes, sampling parameters from Poolside's published M.1/XS.2 technical report (temperature=1.0, top_k=20, same recipe and eval harness). Requires vLLM `--reasoning-parser poolside_v1 --tool-call-parser poolside_v1`. Text-only model, no vision.
 - **Fixed: built-in default temperature aligned with vLLM** — `DEFAULT_REQUEST_PARAMS.temperature` changed from 0.7 to 1.0 to match vLLM's OpenAI-compatible API default. Model presets that specify their own temperature remain unaffected; this only changes the fallback for models without explicit params.
