@@ -83,9 +83,29 @@ Audited against current source. Each item is verified reproducible from the code
 
 - **`provider.ts:669`** is an `async` function that calls `await this.client.getConfigCached()`. If the config cache is cold, this triggers a full `getConfig()` which calls `vscode.workspace.getConfiguration()` — a synchronous, blocking call. VS Code calls `provideTokenCount` repeatedly during chat to compute token budgets. If the config isn't cached yet (or was just invalidated), the first token-count call blocks the event loop while reading settings from disk. **Fix:** ensure the config is pre-warmed during activation, or make the token-count path fall back to the default estimate (3.5 chars/token) when config isn't available, rather than awaiting the cache.
 
+### P3 - Dashboard bypasses provider config cache on every poll
+
+- **dashboard.ts::getChildren() calls getConfig(context)** on every tree refresh, which invokes `vscode.workspace.getConfiguration()` ~every 15 seconds when the sidebar is visible. VllmClient already maintains a config cache, but the dashboard has no reference to it without creating a circular dependency. At current poll intervals this is acceptable overhead, but it would become a problem if the interval drops or if settings reads grow more expensive. Consider passing a config-snapshot getter from the provider when wiring the dashboard.
+
 ### P3 - `diagnostics.ts::extensionVersion` module state causes silent failures in tests
 
 - **`diagnostics.ts:132`** stores the extension version in a module-level `let` that defaults to `'unknown'` and is only set via `setExtensionVersion()` called from `extension.ts::activate()`. Any code path that calls `runDiagnostics()` without first setting the version (e.g. in unit tests that don't mock `extension.ts`) gets a report with `extensionVersion: 'unknown'`. This is not a runtime bug, but it makes the diagnostic output misleading in tests and could mask version-related issues. The known-bugs.md already lists this as a "P2 - Module-Level Extension Version State" under Maintainability, but it has a concrete behavioral impact on diagnostics quality.
+
+### P3 - `sessionManager.ts::deleteChatKeys` returns 0 on `SQLITE_BUSY`, indistinguishable from "no keys"
+
+- **`sessionManager.ts::deleteChatKeys` (line 162)** opens a `DatabaseSync` in default writable mode, runs `DELETE` on `CHAT_KEYS` (11 keys), then `db?.close()` in `finally`. On Windows, `node:sqlite`'s `DatabaseSync` uses exclusive file locking — if VS Code (or another Copilot extension instance) holds a handle to `state.vscdb`, `new DatabaseSync(dbPath)` **throws `SQLITE_BUSY`**. The `catch` block logs `[ERROR] Failed to delete keys...` and returns `0`. `cleanWorkspace()` then proceeds to `removeChatDir`, `removeChatSessions`, `removeChatEditingSessions` and reports `dbKeysRemoved: 0` to the user as if **zero keys existed** rather than "deletion failed due to a locked DB."
+- **The `node:sqlite` import type resolves** via `@types/node@^26` (already in devDependencies), so this is **not** a build-breaking issue. The concern is purely the runtime `SQLITE_BUSY` behavior described above.
+- **Fix**: Surface `SQLITE_BUSY` as a distinct error message ("VS Code may be using the database — close all Copilot chat sessions and retry") rather than silently reporting `0` keys removed.
+
+### P3 - `serverSettings.js` `d.ontoggle` is a no-op in the VS Code Webview, breaking section state persistence across re-renders
+
+- **`resources/serverSettings.js` line 114**: `d.ontoggle = () => { if (title) secState[title] = d.open; };` registers a toggle handler on each `<details>` element. `secState` is only used in `render()` (line 128) to restore section expansion state: `const isOpen = secState[title] !== false;`. In the VS Code Webview (Chromium 128), `ontoggle` only fires when the user clicks the `<summary>` triangle — it does **not** fire on programmatic `details.open` changes.
+- **Impact**: If a section is expanded/collapsed by the rendering logic itself (not by user click), `secState` is never updated. This means the section state is not persisted across re-renders triggered by server/model switches. The **config values are still saved correctly** (the `save()` function reads from `[data-f]`, `[data-k]`, `.mode-card`, and `[data-dk]` elements — not from `secState`) — but the UI expansion state can be inconsistent after a re-render.
+- **Severity**: Low. This is a UI-only cosmetic issue — no data loss.
+
+### FALSE POSITIVE — `commands.ts::selectMismatchesToPrompt` is exported and called
+
+- **Verification (2026-07-28):** `commands.ts:263` calls `selectMismatchesToPrompt(models, results)` inside `testAndRefreshModels`. The function IS used — it was not dead code. The earlier grep was scoped to test files only and missed the in-file call. **No bug.** Entry moved to False Positives.
 
 ### Code Smells
 
@@ -102,10 +122,6 @@ Reviewed 2026-07-21. Items below were first filed as bugs and then rejected as i
 ### P1 - Dashboard & webview use the first model's `requestHeaders` per `serverUrl`
 
 - **Per-server grouped UI collapses multiple presets to one set of headers.** Filed under the premise that two presets on the same `serverUrl` could legitimately need different credentials. **Rejected:** on a real vLLM server `--api-key` is global to the process, and `--served-model-name` aliases all point at the same underlying model — so two presets on one `serverUrl` cannot have different auth. Using the first preset's headers per server is correct. *Adjacent observation (not the originally filed bug):* `requestHeaders` is stored per `ModelConfig`, so editing headers on one preset of a shared server does not propagate to the others in settings — separate concern about the data model, not the read-side "wrong credentials" claim originally filed.
-
-### P3 - Dashboard bypasses provider config cache on every poll
-
-- **`dashboard.ts::getChildren()` calls `getConfig(context)` on every tree refresh**, which invokes `vscode.workspace.getConfiguration()` ~every 15 seconds when the sidebar is visible. `VllmClient` already maintains a config cache, but the dashboard has no reference to it without creating a circular dependency. At current poll intervals this is acceptable overhead, but it would become a problem if the interval drops or if settings reads grow more expensive. Consider passing a config-snapshot getter from the provider when wiring the dashboard in `extension.ts`.
 
 ---
 
