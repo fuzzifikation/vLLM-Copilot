@@ -43,7 +43,11 @@
 //   - There are NO intermediate effort levels (low/medium/high) — binary on/off only.
 //     Use vLLM server defaults or define `defaultParams` in your settings.json.
 //
-
+//   - Sampling parameters: no per-mode inference parameters are set.
+//     vLLM server defaults apply (Poolside recommends temperature=0.7 for
+//     the NVFP4 quantization variant). Change via `defaultParams` in
+//     settings.json if you want different sampling per mode.
+//
 {
   "id": "poolside/Laguna-S-2.1",
   "vllmModelId": "poolside/Laguna-S-2.1",
@@ -54,24 +58,17 @@
     "toolCalling": true,
     "imageInput": false
   },
-//   - Sampling parameters from M.1/XS.2 technical report (same recipe):
-//     temperature=1.0, top_k=20. Used for both Think and No Think modes.
-//
   "modelModes": {
     "Think": {
       "chat_template_kwargs": {
         "enable_thinking": true,
         "preserve_thinking": true
-      },
-      "temperature": 1.0,
-      "top_k": 20
+      }
     },
     "No Think": {
       "chat_template_kwargs": {
         "enable_thinking": false
-      },
-      "temperature": 1.0,
-      "top_k": 20
+      }
     }
   },
   "defaultMode": "Think"

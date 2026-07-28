@@ -56,6 +56,7 @@ describe('normalizeModelId', () => {
     expect(normalizeModelId('Qwen/Qwen3.6-27B-INT4')).toBe('Qwen/Qwen3.6-27B');
     expect(normalizeModelId('Qwen/Qwen3.6-27B-INT8')).toBe('Qwen/Qwen3.6-27B');
     expect(normalizeModelId('Qwen/Qwen3.6-27B-NF4')).toBe('Qwen/Qwen3.6-27B');
+    expect(normalizeModelId('poolside/Laguna-S-2.1-NVFP4')).toBe('poolside/Laguna-S-2.1');
   });
 
   it('leaves base model ids unchanged', () => {
