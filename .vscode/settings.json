@@ -4,5 +4,8 @@
             "approve": true,
             "matchCommandLine": true
         }
+    },
+    "files.associations": {
+        "model-configs/*.json": "jsonc"
     }
 }
