@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.19.95 — Dashboard shows only server-present models
+
+- **Fixed: Dashboard showed model IDs from settings even when not on the server** — `fetchServerMetrics` merged `configModelIds` (user settings) into the model list alongside server-reported models. This caused phantom entries in the server dashboard when a model was configured in settings but not loaded on the vLLM server. The model list now only reflects models actually served by the server.
+
 ## v1.19.94 — Lower VS Code floor to 1.122; correct `node:sqlite` rationale; known-bugs audit
 
 - **Lowered `engines.vscode` from `^1.125.0` to `^1.122.0`.** The previous `^1.125.0` floor was set in v0.15.1 on the claim that `node:sqlite` only became loadable without `--experimental-sqlite` once VS Code bundled Node 24. That was wrong: `--experimental-sqlite` was removed on the Node 22.x line in **Node 22.13.0 (Jan 2025, PR nodejs/node#55890)**. **VS Code 1.122.0 (May 2026) bundles Node 22.22.1** per its `cgmanifest.json` (tag `nodejs/node@22.22.1`) — well past the unflag, so `import { DatabaseSync } from 'node:sqlite'` loads cleanly and only emits an `ExperimentalWarning`. Verified against the bundled Node here: a `:memory:` DB is opened, written, and queried successfully without any flag. The prior CHANGELOG entry conflated "stable" with "unflagged" and is corrected for the record.
