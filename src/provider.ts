@@ -308,9 +308,17 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         // Retry when the model stopped (finish_reason: stop) either with no content at all,
         // or mid-sentence on a trailing colon. Use the full buffer (not the last chunk) so a
         // trailing whitespace-only chunk can't hide the colon.
+        //
+        // `!outcome.hadToolCalls` guards the empty branch: a pure tool-call turn
+        // (no text content, but a finalized tool call) is a COMPLETE turn, not a
+        // failed one — `finish_reason: 'stop'` after a tool call is the OpenAI/vLLM
+        // convention for "done, here's my tool call." Retrying would re-ask the
+        // model after it already took a valid action. The colon branch is already
+        // gated by `hadContent`, so `hadToolCalls` only matters for the empty case.
         if (token.isCancellationRequested) break;
         const endsWithColon = !!outcome.contentBuffer && outcome.contentBuffer.trimEnd().endsWith(':');
         const shouldRetry = (!outcome.hadContent || endsWithColon)
+          && !outcome.hadToolCalls
           && outcome.finishReason === 'stop'
           && attempt < maxRetries;
         if (!shouldRetry) break;

@@ -1,7 +1,8 @@
 # Changelog
 
-## v1.19.95 — Cross-org model matching; dashboard shows only server-present models
+## v1.19.95 — Cross-org model matching; auto-continue fix; dashboard shows only server-present models
 
+- **Fixed: auto-continue retried after a pure tool-call turn.** A pure tool-call response (no text content, but a finalized tool call with `finish_reason: 'stop'`) is a COMPLETE turn — the OpenAI/vLLM convention for "done, here's my tool call" — not a failed empty response. The old retry condition `(!hadContent || endsWithColon) && finishReason==='stop'` couldn't tell "model gave nothing" from "model gave a tool call" (both have `hadContent=false`), so it re-asked the model after it had already taken a valid action. Added `&& !outcome.hadToolCalls` as a guard. The colon branch is already gated by `hadContent`, so the guard only affects the empty branch. Regression test in `providerAutoContinue.test.ts`.
 - **Added: cross-org + quantization-agnostic model matching.** `findPresetForModel` and `resolveOverrideForModel` now match on model *name* only, ignoring the org prefix and quantization suffix. `nvidia/DeepSeek-V4-Flash-NVFP4` now resolves to the `deepseek-ai/DeepSeek-V4-Flash` preset. New `modelMatchKey()` strips org + quantization, then lowercases. Quantization only affects weight precision, not inference params, so a preset for one org's checkpoint applies to any quantized variant. Tiered: exact → quantization-agnostic (org-aware) → cross-org + quantization-agnostic, so org-specific overrides still win when present.
 - **Fixed: dashboard phantom entries.** `fetchServerMetrics` merged user `configModelIds` into the model list, so configured-but-unserved models showed in the dashboard. Now only server-reported models are listed.
 

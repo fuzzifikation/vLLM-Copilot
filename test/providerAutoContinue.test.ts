@@ -188,6 +188,26 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
     expect(captured[2].options.add_generation_prompt).toBe(false);
     expect(reportedText(progress)).toBe('Step: more: done');
   });
+
+  it('does not retry a pure tool-call turn (complete action, not empty)', async () => {
+    // A pure tool-call response has no text content (hadContent=false) but a
+    // finalized tool call (hadToolCalls=true) and finish_reason 'stop'. This is a
+    // COMPLETE turn — the OpenAI/vLLM convention for "done, here's my tool call."
+    // Retrying would re-ask the model after it already took a valid action.
+    const { provider, spy } = setupProvider([
+      [ev({
+        finishedToolCalls: [{
+          id: 'call_1', name: 'get_weather', arguments: '{"city":"Berlin"}',
+        } as any],
+        finishReason: 'stop',
+      })],
+    ]);
+    const progress = { report: vi.fn() };
+
+    await run(provider, progress);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('remote-install guard', () => {
