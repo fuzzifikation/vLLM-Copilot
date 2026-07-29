@@ -185,6 +185,9 @@ export function buildModelId(serverUrl: string, vllmModelId: string): string {
  *
  * Quantization format doesn't affect inference parameters (temperature, top_p, etc.),
  * so configs for the base model should match all quantized variants.
+ *
+ * NOTE: This keeps the org prefix. For cross-org matching (e.g. a `nvidia/`-served
+ * quantized variant of a `deepseek-ai/` model), use {@link modelMatchKey} instead.
  */
 export function normalizeModelId(modelId: string): string {
   // Common quantization/format suffixes (order matters: check longer suffixes first).
@@ -207,6 +210,35 @@ export function normalizeModelId(modelId: string): string {
 }
 
 /**
+ * Canonical comparison key for matching model configs across orgs and
+ * quantization formats.
+ *
+ * Strips everything up to and including the first `/` (the org/company prefix),
+ * then strips quantization suffixes, then lowercases. Two model ids that share
+ * the same base model name — regardless of who served them or how they were
+ * quantized — produce the same key.
+ *
+ * e.g. "nvidia/DeepSeek-V4-Flash-NVFP4" → "deepseek-v4-flash"
+ *      "deepseek-ai/DeepSeek-V4-Flash"  → "deepseek-v4-flash"
+ *
+ * Quantization only changes weight precision, not inference parameters, so a
+ * preset authored for one org's checkpoint applies to any other org's quantized
+ * variant of the same model. We deliberately ignore the company that produced
+ * the weights — matching on the model *name* only.
+ *
+ * Models without a `/` (e.g. a `--served-model-name` alias like `zai-glm-52`)
+ * are left intact (minus quantization), so they only match presets whose base
+ * name equals the alias.
+ */
+export function modelMatchKey(modelId: string): string {
+  // Drop the org/company prefix: everything up to and including the first '/'.
+  // HF repo ids contain at most one '/', so this is safe.
+  const slashIndex = modelId.indexOf('/');
+  const withoutOrg = slashIndex >= 0 ? modelId.slice(slashIndex + 1) : modelId;
+  return normalizeModelId(withoutOrg).toLowerCase();
+}
+
+/**
  * Find the user override that produced a given VS Code model id.
  *
  * `buildModelInfo` sets a model's id to `override.id || serverModel.id`, so an
@@ -214,22 +246,30 @@ export function normalizeModelId(modelId: string): string {
  * server id. Matching on `o.id` alone would miss those and silently drop the
  * model's `modelModes`, so we resolve via the vLLM model id too.
  *
- * Matching is fuzzy: quantization suffixes (-FP8, -AWQ, -GGUF, etc.) are stripped
- * before comparison, so a config for "Qwen/Qwen3.6-27B" also matches a server
- * running "Qwen/Qwen3.6-27B-FP8".
+ * Matching is fuzzy in two tiers:
+ * 1. Quantization-agnostic (org-aware): strips -FP8/-AWQ/-GGUF/etc. suffixes,
+ *    so a config for "Qwen/Qwen3.6-27B" matches "Qwen/Qwen3.6-27B-FP8".
+ * 2. Cross-org + quantization-agnostic: additionally strips the company prefix,
+ *    so a config for "deepseek-ai/DeepSeek-V4-Flash" matches a server running
+ *    "nvidia/DeepSeek-V4-Flash-NVFP4". Quantization only affects weight
+ *    precision, not inference parameters, and the org that served the checkpoint
+ *    is irrelevant to sampling config.
  */
 export function resolveOverrideForModel(
   overrides: ModelConfig[],
   modelId: string
 ): ModelConfig | undefined {
   const normalized = normalizeModelId(modelId);
+  const matchKey = modelMatchKey(modelId);
   return overrides.find(o => {
     const oId = o.id || resolveVllmModelId(o);
     if (!oId) return false;
     // Exact match first
     if (oId === modelId) return true;
-    // Fuzzy match (quantization-agnostic)
-    return normalizeModelId(oId) === normalized;
+    // Fuzzy match: quantization-agnostic (org-aware)
+    if (normalizeModelId(oId) === normalized) return true;
+    // Fuzzy match: cross-org + quantization-agnostic (model name only)
+    return modelMatchKey(oId) === matchKey;
   });
 }
 

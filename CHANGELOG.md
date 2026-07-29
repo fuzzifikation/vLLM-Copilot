@@ -1,8 +1,9 @@
 # Changelog
 
-## v1.19.95 — Dashboard shows only server-present models
+## v1.19.95 — Cross-org model matching; dashboard shows only server-present models
 
-- **Fixed: Dashboard showed model IDs from settings even when not on the server** — `fetchServerMetrics` merged `configModelIds` (user settings) into the model list alongside server-reported models. This caused phantom entries in the server dashboard when a model was configured in settings but not loaded on the vLLM server. The model list now only reflects models actually served by the server.
+- **Added: cross-org + quantization-agnostic model matching.** `findPresetForModel` and `resolveOverrideForModel` now match on model *name* only, ignoring the org prefix and quantization suffix. `nvidia/DeepSeek-V4-Flash-NVFP4` now resolves to the `deepseek-ai/DeepSeek-V4-Flash` preset. New `modelMatchKey()` strips org + quantization, then lowercases. Quantization only affects weight precision, not inference params, so a preset for one org's checkpoint applies to any quantized variant. Tiered: exact → quantization-agnostic (org-aware) → cross-org + quantization-agnostic, so org-specific overrides still win when present.
+- **Fixed: dashboard phantom entries.** `fetchServerMetrics` merged user `configModelIds` into the model list, so configured-but-unserved models showed in the dashboard. Now only server-reported models are listed.
 
 ## v1.19.94 — Lower VS Code floor to 1.122; correct `node:sqlite` rationale; known-bugs audit
 
