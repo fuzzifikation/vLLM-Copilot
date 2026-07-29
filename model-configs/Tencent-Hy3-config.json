@@ -34,7 +34,6 @@
 
 
 {
-  "id": "tencent/Hy3",
   "vllmModelId": "tencent/Hy3",
   "displayName": "Hy3",
   "family": "hy_v3",

@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.19.96 — Removed `id` from bundled model presets
+
+- **Removed `"id"` from all 7 model presets.** Preset matching uses `vllmModelId` only — `id` is reserved for the user's own settings identifier.
+
 ## v1.19.95 — Cross-org model matching; auto-continue fix; dashboard fixes
 
 - **Fixed: auto-continue retried after a pure tool-call turn.** Added `&& !outcome.hadToolCalls` guard so the model isn't re-asked after it already issued a tool call with `finish_reason: 'stop'`.

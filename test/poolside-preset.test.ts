@@ -14,7 +14,7 @@ describe('Poolside Laguna-S-2.1 preset', () => {
     const text = await fs.readFile(PRESET_PATH, 'utf8');
     const config = parsePresetJson(text);
     expect(config).not.toBeNull();
-    expect(config?.id).toBe('poolside/Laguna-S-2.1');
+    expect(config?.vllmModelId).toBe('poolside/Laguna-S-2.1');
 
     const preset = { config: config!, sourceFile: 'Poolside-Laguna-S-2.1.json' };
     const servedId = 'poolside/Laguna-S-2.1-NVFP4';

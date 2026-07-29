@@ -54,7 +54,6 @@
 //     Change via `defaultParams` (model-scope) in your settings.json if you want different sampling.
 //
 {
-  "id": "poolside/Laguna-S-2.1",
   "vllmModelId": "poolside/Laguna-S-2.1",
   "displayName": "Laguna-S-2.1",
   "family": "laguna",
