@@ -245,7 +245,6 @@ export type { ModelAccumulator };
 export async function fetchServerMetrics(
   serverUrl: string,
   requestHeaders: Record<string, string>,
-  configModelIds: string[] = [],
   timeout = 5000,
 ): Promise<ServerMetrics> {
   const baseUrl = serverUrl.replace(/\/+$/, '');
@@ -293,7 +292,9 @@ export async function fetchServerMetrics(
     parser.parse(rawMetrics);
     const aggregated = parser.aggregate();
 
-    const allModels = [...new Set([...configModelIds, ...modelNames, ...aggregated.models])];
+    // Only include models actually present on the server (from /v1/models and Prometheus metrics).
+    // Do NOT merge configModelIds — those are user settings and may reference models not loaded on the server.
+    const allModels = [...new Set([...modelNames, ...aggregated.models])];
     return { online: true, version, ...aggregated, models: allModels, maxModelLen };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

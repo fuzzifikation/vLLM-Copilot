@@ -219,18 +219,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       const items: (ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem)[] = [this.getPollIntervalTreeItem()];
       try {
         const config = await getConfig(this.context);
-        // [url] -> { requestHeaders, configModelIds }
-        const serverMap = new Map<string, { requestHeaders: Record<string, string>; configModelIds: string[] }>();
+        // [url] -> { requestHeaders }
+        const serverMap = new Map<string, { requestHeaders: Record<string, string> }>();
         for (const model of config.models) {
           if (!model.serverUrl) continue;
           if (!serverMap.has(model.serverUrl)) {
             const serverConfig = resolveServerConfig(model);
-            serverMap.set(model.serverUrl, { requestHeaders: serverConfig.requestHeaders, configModelIds: [] });
-          }
-          const entry = serverMap.get(model.serverUrl)!;
-          const modelIdentifier = model.vllmModelId || model.id;
-          if (modelIdentifier && !entry.configModelIds.includes(modelIdentifier)) {
-            entry.configModelIds.push(modelIdentifier);
+            serverMap.set(model.serverUrl, { requestHeaders: serverConfig.requestHeaders });
           }
         }
 
@@ -238,7 +233,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
         const results = await Promise.all(
           Array.from(serverMap.entries()).map(async ([url, entry]) => {
             try {
-              return await fetchServerMetrics(url, entry.requestHeaders, entry.configModelIds);
+              return await fetchServerMetrics(url, entry.requestHeaders);
             } catch {
               return {
                 online: false, error: 'Fetch failed',
