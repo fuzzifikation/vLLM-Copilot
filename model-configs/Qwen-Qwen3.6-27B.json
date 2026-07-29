@@ -36,7 +36,6 @@
 
 
 {
-  "id": "Qwen/Qwen3.6-27B",
   "vllmModelId": "Qwen/Qwen3.6-27B",
   "displayName": "Qwen3.6-27B",
   "family": "qwen3_5",

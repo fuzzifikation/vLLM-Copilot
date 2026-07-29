@@ -135,14 +135,18 @@ export function parsePresetJson(text: string): ModelConfig | null {
 }
 
 /**
- * Find a preset that matches the given model. Matches a preset's `id`/`vllmModelId`
+ * Find a preset that matches the given model. Matches a preset's `vllmModelId`
  * against the model id, and — when provided — against the server model's `root`
  * (the underlying checkpoint). The `root` match lets any `--served-model-name`
  * alias (e.g. `zai-glm-52`) resolve to the preset authored for its real repo id
  * (e.g. `zai-org/GLM-5.2`).
  *
+ * Presets only set `vllmModelId` (they never set `id` — that's the user's own
+ * identifier in settings). Using `vllmModelId` for matching avoids any risk of
+ * the preset's `id` leaking into the user's model config.
+ *
  * Matching tiers (in order):
- * 1. Exact (case-sensitive) match on id/vllmModelId.
+ * 1. Exact (case-sensitive) match on vllmModelId.
  * 2. Quantization-agnostic (org-aware): strip -FP8/-AWQ/-GGUF/etc., compare
  *    case-insensitively. "Qwen/Qwen3.6-27B" matches "Qwen/Qwen3.6-27B-FP8".
  * 3. Cross-org + quantization-agnostic: additionally drop the company prefix,
@@ -150,8 +154,6 @@ export function parsePresetJson(text: string): ModelConfig | null {
  *    Quantization only affects weight precision, not inference parameters, and
  *    the serving org is irrelevant to sampling config — we match on model name.
  *
- * A preset's `id`/`vllmModelId` are used ONLY for this comparison; applying the
- * preset never overwrites the user's own id/vllmModelId (see mergePresetWithUserConfig).
  * @internal Exported for testing.
  */
 export function findPresetForModel(
@@ -165,16 +167,17 @@ export function findPresetForModel(
   const rootKey = root !== undefined ? modelMatchKey(root) : undefined;
 
   return presets.find(p => {
-    const presetIds = [p.config.id, p.config.vllmModelId].filter((v): v is string => !!v);
+    if (!p.config.vllmModelId) return false;
+    const pid = p.config.vllmModelId;
     // Exact match first (preserves case-sensitive matches)
-    if (presetIds.includes(modelId)) return true;
-    if (root !== undefined && presetIds.includes(root)) return true;
+    if (pid === modelId) return true;
+    if (root !== undefined && pid === root) return true;
     // Fuzzy match: strip quantization suffixes, then case-insensitive comparison
-    if (presetIds.some(pid => normalizeModelId(pid).toLowerCase() === normalizedModel)) return true;
-    if (normalizedRoot !== undefined && presetIds.some(pid => normalizeModelId(pid).toLowerCase() === normalizedRoot)) return true;
+    if (normalizeModelId(pid).toLowerCase() === normalizedModel) return true;
+    if (normalizedRoot !== undefined && normalizeModelId(pid).toLowerCase() === normalizedRoot) return true;
     // Fuzzy match: cross-org + quantization-agnostic (model name only)
-    if (presetIds.some(pid => modelMatchKey(pid) === modelKey)) return true;
-    if (rootKey !== undefined && presetIds.some(pid => modelMatchKey(pid) === rootKey)) return true;
+    if (modelMatchKey(pid) === modelKey) return true;
+    if (rootKey !== undefined && modelMatchKey(pid) === rootKey) return true;
     return false;
   });
 }
