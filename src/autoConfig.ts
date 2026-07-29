@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from './config.js';
-import { buildEndpoint, buildAuthHeaders, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildModelId, normalizeModelId } from './config.js';
+import { buildEndpoint, buildAuthHeaders, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildModelId, normalizeModelId, modelMatchKey } from './config.js';
 import { describeError } from './messageConverter.js';
 import { jsonrepair } from 'jsonrepair';
 
@@ -141,6 +141,15 @@ export function parsePresetJson(text: string): ModelConfig | null {
  * alias (e.g. `zai-glm-52`) resolve to the preset authored for its real repo id
  * (e.g. `zai-org/GLM-5.2`).
  *
+ * Matching tiers (in order):
+ * 1. Exact (case-sensitive) match on id/vllmModelId.
+ * 2. Quantization-agnostic (org-aware): strip -FP8/-AWQ/-GGUF/etc., compare
+ *    case-insensitively. "Qwen/Qwen3.6-27B" matches "Qwen/Qwen3.6-27B-FP8".
+ * 3. Cross-org + quantization-agnostic: additionally drop the company prefix,
+ *    so "deepseek-ai/DeepSeek-V4-Flash" matches "nvidia/DeepSeek-V4-Flash-NVFP4".
+ *    Quantization only affects weight precision, not inference parameters, and
+ *    the serving org is irrelevant to sampling config — we match on model name.
+ *
  * A preset's `id`/`vllmModelId` are used ONLY for this comparison; applying the
  * preset never overwrites the user's own id/vllmModelId (see mergePresetWithUserConfig).
  * @internal Exported for testing.
@@ -152,6 +161,8 @@ export function findPresetForModel(
 ): ModelPreset | undefined {
   const normalizedModel = normalizeModelId(modelId).toLowerCase();
   const normalizedRoot = root !== undefined ? normalizeModelId(root).toLowerCase() : undefined;
+  const modelKey = modelMatchKey(modelId);
+  const rootKey = root !== undefined ? modelMatchKey(root) : undefined;
 
   return presets.find(p => {
     const presetIds = [p.config.id, p.config.vllmModelId].filter((v): v is string => !!v);
@@ -161,6 +172,9 @@ export function findPresetForModel(
     // Fuzzy match: strip quantization suffixes, then case-insensitive comparison
     if (presetIds.some(pid => normalizeModelId(pid).toLowerCase() === normalizedModel)) return true;
     if (normalizedRoot !== undefined && presetIds.some(pid => normalizeModelId(pid).toLowerCase() === normalizedRoot)) return true;
+    // Fuzzy match: cross-org + quantization-agnostic (model name only)
+    if (presetIds.some(pid => modelMatchKey(pid) === modelKey)) return true;
+    if (rootKey !== undefined && presetIds.some(pid => modelMatchKey(pid) === rootKey)) return true;
     return false;
   });
 }

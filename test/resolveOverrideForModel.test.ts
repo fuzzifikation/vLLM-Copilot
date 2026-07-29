@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOverrideForModel, normalizeModelId } from '../src/config.js';
+import { resolveOverrideForModel, normalizeModelId, modelMatchKey } from '../src/config.js';
 import type { ModelConfig } from '../src/config.js';
 
 describe('resolveOverrideForModel', () => {
@@ -45,6 +45,25 @@ describe('resolveOverrideForModel', () => {
     // Llama-FP8 should NOT match Qwen config
     expect(resolveOverrideForModel(overrides, 'meta-llama/Llama-4-Scalar-FP8')).not.toBe(overrides[0]);
   });
+
+  it('matches a cross-org quantized variant against the base model (name-only)', () => {
+    // nvidia's NVFP4 quantized DeepSeek-V4-Flash must resolve to the
+    // deepseek-ai preset: quantization only changes weight precision, and the
+    // serving org is irrelevant to inference parameters.
+    const overrides: ModelConfig[] = [
+      { id: 'deepseek-ai/DeepSeek-V4-Flash', vllmModelId: 'deepseek-ai/DeepSeek-V4-Flash' },
+    ];
+    expect(resolveOverrideForModel(overrides, 'nvidia/DeepSeek-V4-Flash-NVFP4')).toBe(overrides[0]);
+  });
+
+  it('does not cross-match different models that share an org-stripped token substring', () => {
+    // "DeepSeek-V4-Flash" must not match a "DeepSeek-V4-Chat" preset just because
+    // they share the "deepseek" prefix after org stripping.
+    const overrides: ModelConfig[] = [
+      { id: 'deepseek-ai/DeepSeek-V4-Chat', vllmModelId: 'deepseek-ai/DeepSeek-V4-Chat' },
+    ];
+    expect(resolveOverrideForModel(overrides, 'nvidia/DeepSeek-V4-Flash-NVFP4')).toBeUndefined();
+  });
 });
 
 describe('normalizeModelId', () => {
@@ -63,5 +82,23 @@ describe('normalizeModelId', () => {
     expect(normalizeModelId('Qwen/Qwen3.6-27B')).toBe('Qwen/Qwen3.6-27B');
     expect(normalizeModelId('deepseek-ai/DeepSeek-V4-Flash')).toBe('deepseek-ai/DeepSeek-V4-Flash');
     expect(normalizeModelId('InternScience/Agents-A1')).toBe('InternScience/Agents-A1');
+  });
+});
+
+describe('modelMatchKey', () => {
+  it('strips the org prefix and quantization suffix, then lowercases', () => {
+    expect(modelMatchKey('nvidia/DeepSeek-V4-Flash-NVFP4')).toBe('deepseek-v4-flash');
+    expect(modelMatchKey('deepseek-ai/DeepSeek-V4-Flash')).toBe('deepseek-v4-flash');
+  });
+
+  it('leaves org-less ids intact (minus quantization)', () => {
+    expect(modelMatchKey('zai-glm-52')).toBe('zai-glm-52');
+    expect(modelMatchKey('zai-glm-52-FP8')).toBe('zai-glm-52');
+  });
+
+  it('distinguishes different base models that share a prefix token', () => {
+    expect(modelMatchKey('deepseek-ai/DeepSeek-V4-Chat')).not.toBe(
+      modelMatchKey('nvidia/DeepSeek-V4-Flash-NVFP4')
+    );
   });
 });
