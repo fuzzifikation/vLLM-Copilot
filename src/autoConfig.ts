@@ -555,14 +555,30 @@ export async function saveModelConfig(newConfig: ModelConfig): Promise<void> {
     // token budgets, transport settings) is overwritten by the preset — that's the
     // whole point: the preset configures the model as an "expert" would, and the
     // user keeps their server URL, auth headers, and personal replacements file.
+    //
+    // systemMessageReplacementsFile: undefined preserves the previous value
+    // (auto-configure must not wipe a user's personality). Empty string is an
+    // explicit clear from Set Model Personality → Default.
     const prev = existing[idx];
-    existing[idx] = {
+    const replacementsFile =
+      newConfig.systemMessageReplacementsFile !== undefined
+        ? newConfig.systemMessageReplacementsFile
+        : prev.systemMessageReplacementsFile;
+    const merged: ModelConfig = {
       ...newConfig,
       serverUrl: newConfig.serverUrl ?? prev.serverUrl,
       requestHeaders: newConfig.requestHeaders ?? prev.requestHeaders,
-      systemMessageReplacementsFile: newConfig.systemMessageReplacementsFile ?? prev.systemMessageReplacementsFile,
     };
+    if (replacementsFile) {
+      merged.systemMessageReplacementsFile = replacementsFile;
+    } else {
+      delete merged.systemMessageReplacementsFile;
+    }
+    existing[idx] = merged;
   } else {
+    if (!newConfig.systemMessageReplacementsFile) {
+      delete newConfig.systemMessageReplacementsFile;
+    }
     existing.push(newConfig);
   }
 

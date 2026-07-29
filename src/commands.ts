@@ -582,26 +582,97 @@ export function registerSetModelPersonalityCommand(
         return true;
       });
 
-      if (uniquePresets.length === 0) {
+      type PersonalityPick = {
+        label: string;
+        description?: string;
+        clear?: boolean;
+        fileName?: string;
+        sourcePath?: string;
+        kind?: vscode.QuickPickItemKind;
+      };
+
+      // Resolve which option is currently active from the model's replacements file.
+      // Paths are compared by basename so relative/absolute forms all match.
+      const currentReplacements = (modelPick.model.systemMessageReplacementsFile || '').trim();
+      const currentBase = currentReplacements ? path.basename(currentReplacements) : '';
+      const isDefaultActive = !currentBase;
+
+      const markCurrent = (label: string, description: string | undefined, active: boolean): Pick<PersonalityPick, 'label' | 'description'> => ({
+        label: active ? `$(check) ${label}` : label,
+        description: active
+          ? (description ? `${description} · current` : 'current')
+          : description,
+      });
+
+      const pickItems: PersonalityPick[] = [
+        {
+          ...markCurrent(
+            'Default (no personality)',
+            "Clear replacements — use Copilot's original system prompt",
+            isDefaultActive,
+          ),
+          clear: true,
+        },
+      ];
+
+      let matchedPreset = false;
+      if (uniquePresets.length > 0) {
+        pickItems.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
+        for (const p of uniquePresets) {
+          const presetBase = path.basename(p.sourcePath);
+          const isCurrent = !isDefaultActive && currentBase === presetBase;
+          if (isCurrent) matchedPreset = true;
+          pickItems.push({
+            ...markCurrent(p.name, p.description, isCurrent),
+            fileName: p.fileName,
+            sourcePath: p.sourcePath,
+          });
+        }
+      }
+
+      const currentLabel = isDefaultActive
+        ? 'Default (no personality)'
+        : matchedPreset
+          ? uniquePresets.find((p) => path.basename(p.sourcePath) === currentBase)?.name ?? currentBase
+          : currentBase;
+
+      const personalityPick = await vscode.window.showQuickPick(pickItems, {
+        title: 'Set Model Personality (step 2/2)',
+        placeHolder: `Current: ${currentLabel}`,
+      });
+      if (!personalityPick || personalityPick.kind === vscode.QuickPickItemKind.Separator) return;
+
+      // Clear path: remove systemMessageReplacementsFile so no replacements run
+      if (personalityPick.clear) {
+        outputChannel.appendLine(
+          `[INFO] Personality presets: clearing personality for ${modelPick.label}`
+        );
+        try {
+          await saveModelConfig({
+            ...modelPick.model,
+            // Empty string is the explicit clear signal (undefined would preserve the previous value).
+            systemMessageReplacementsFile: '',
+          });
+        } catch (err) {
+          vscode.window.showErrorMessage(
+            `Failed to clear personality: ${describeError(err)}`
+          );
+          return;
+        }
+
+        vscode.window.showInformationMessage(
+          `Cleared personality for "${modelPick.label}". Using Copilot's original system prompt.`
+        );
+        provider.clearCache();
+        return;
+      }
+
+      const sourcePath = personalityPick.sourcePath;
+      if (!sourcePath) {
         vscode.window.showWarningMessage('No personality presets found.');
         return;
       }
 
-      const personalityPick = await vscode.window.showQuickPick(
-        uniquePresets.map((p) => ({
-          label: p.name,
-          description: p.description,
-          fileName: p.fileName,
-          sourcePath: p.sourcePath,
-        })),
-        {
-          title: 'Set Model Personality (step 2/2)',
-          placeHolder: 'Select a personality',
-        }
-      );
-      if (!personalityPick) return;
-
-      const sourcePath = personalityPick.sourcePath;
       const presetFileName = path.basename(sourcePath);
       outputChannel.appendLine(`[INFO] Personality presets: selected ${sourcePath}`);
 
