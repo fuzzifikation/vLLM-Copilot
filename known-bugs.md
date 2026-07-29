@@ -55,9 +55,9 @@ These are not necessarily user-visible failures, but they impose a concrete main
 
 Audited against current source. Each item is verified reproducible from the code.
 
-### P1 - `LastRequestData.maxModelLen` stores input budget, not context window
+### P3 - `LastRequestData.maxModelLen` stored input budget instead of context window (fixed 2026-07-29)
 
-- **`provider.ts:587`** sets `lastRequestData.maxModelLen = model.maxInputTokens || 0`, but the field is documented as "context window (max_model_len from server)". `model.maxInputTokens` is only the input half of the context window (context minus output budget). The actual `maxModelLen` from `deriveTokenBudget` is available but never set on the `LanguageModelChatInformation` object, so the provider can't access it. **Impact:** the dashboard's "Total Tokens" line shows `input + output` as a percentage of `maxInputTokens` only, so context-window usage is inflated to 2× the real number (e.g. 50% utilization displays as 100%). **Fix:** either set `maxModelLen` on the model info object in `modelInfo.ts::buildModelInfo()`, or compute it as `model.maxInputTokens + model.maxOutputTokens` at the call site in `provider.ts`.
+- **`provider.ts:595`** set `lastRequestData.maxModelLen = model.maxInputTokens || 0`, but the field represents the context window. The dashboard's "Total Tokens" line divided `input + output` by the input-only budget, mildly inflating the percentage (e.g. 44K/120K ≈ 36.7% instead of 44K/128K ≈ 34.4% for a 128K context with 8K output). **Fixed:** changed to `(model.maxInputTokens || 0) + (model.maxOutputTokens || 0)`.
 
 ### P1 - Migration writes per-model `maxModelLen` never flow through to token budgeting on re-activation
 
