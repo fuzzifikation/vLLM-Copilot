@@ -51,7 +51,8 @@
 //       from https://huggingface.co/poolside/Laguna-S-2.1-NVFP4 "Recommended sampling")
 //     - "Think (Code)": temperature=0.2 for deterministic code completion
 //     - "No Think": vLLM server defaults (top_k=20 from generation_config.json)
-//     Change via `defaultParams` (model-scope) in your settings.json if you want different sampling.
+//     Default repetition_penalty=1.05 is set via `defaultParams` (model-scope baseline
+//     shared by all modes). Override per-mode by adding the key inside a specific mode entry.
 //
 {
   "vllmModelId": "poolside/Laguna-S-2.1",
@@ -61,6 +62,9 @@
   "capabilities": {
     "toolCalling": true,
     "imageInput": false
+  },
+  "defaultParams": {
+    "repetition_penalty": 1.05
   },
   "modelModes": {
     "Think (General)": {
