@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.20.1 — Drain consolidation, double-parse fix, doc corrections
+
+- **Consolidated `streamReader.ts` drain loop** — replaced 3 near-identical `eventQueue` drain sites with a single `drainAndCheck()` helper generator. `STOP_ITERATION` sentinel cleanly separates "break" from real errors.
+- **Corrected `streamReader.ts` abort signal comment** — the old comment claimed the abort signal was "inert" after streaming started, which is wrong. Updated to explain `reader.cancel()` is the preferred path for clean teardown.
+- **Fixed: `buildAuthHeaders()` JSDoc didn't document its limited scope** — now clearly marked as "write/migration paths only" (Add Server, Update Auth). Runtime never uses it.
+- **Fixed: `promptReplacer.ts` parsed each personality file twice** — both `loadPersonalityMeta()` and `loadPromptReplacements()` independently read+parsed the same file. Extracted shared `readPersonalityFile()` with a module-level `Map` cache so discovery and application share the same I/O+parse. Exported `clearPersonalityCache()` for the Set Personality command to use when it copies a new file.
+- Updated `known-bugs.md`: removed three fixed entries for v1.20.1, updated `streamReader.ts` line-number reference in false positives, added new "cache poisoning on personality rewrite" P2 item.
+
 ## v1.20.0 — Bug crush: dead code, abort leaks, SQLite error masking
 
 - **Removed `src/migration.ts` (237 lines), `test/migration.test.ts` (56 lines), and their registration in `extension.ts`.** The repo's initial commit (2e6f710) was a clean public release imported from a private repo — no user of this public release has ever had legacy global settings. Eliminates two globalState flags, a latent write-shadowing bug, and 293 lines of cargo-culted dead code.

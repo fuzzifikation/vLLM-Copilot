@@ -19,14 +19,6 @@ Do not bump version without asking.
 - `provider.ts` ~1,012 lines (stream, auto-continue, diagnostics, error classification)
 - `testAndRefreshModels` ~200-line closure with 5 responsibilities
 
-### P2 - Stream queue redundancy
-`streamReader.ts` drains `eventQueue` in 3 near-identical places. `eventsource-parser` calls `onEvent` synchronously during `parser.feed()`, so post-feed drains are redundant for normal flow.
-
-### P2 - Misleading docs
-- `streamReader.ts` comment says abort signal is inert after streaming starts — it can still cancel the body stream
-- `buildAuthHeaders()` JSDoc doesn't distinguish its scope (write/migration paths only, runtime uses per-model `requestHeaders`)
-- `promptReplacer.ts` parses each personality file twice (discovery + application)
-
 ### P2 - Untested data layer
 `fetchServerMetrics` HTTP layer, `dashboard.ts` tree provider, and formatting helpers lack tests. `parseLabels`, `MetricsParser`, `parseRawMetrics`, `fmtPct`, `fmtMs` are covered.
 
@@ -49,7 +41,7 @@ Do not bump version without asking.
 - **`serverSettings.js` `d.ontoggle`** — `secState` is the only source of truth on every render; config values use `[data-f]`/`[data-k]`/`.mode-card` paths, not `secState`.
 - **`provideTokenCount` blocks event loop** — `getConfiguration()` is in-memory, not disk. Cold-cache cost is negligible.
 - **`dashboard.ts` `Promise.all` has no per-fetch timeout** — `fetchServerMetrics` has its own 5s `AbortController`. Fixed mid-flight abort bug in v1.20.0.
-- **`vllmClient.ts:214` Promise.race fragility** — code now in `streamReader.ts:139-152`, pattern is correct: `timeoutId` assigned synchronously, `result` never read in error path.
+- **`vllmClient.ts:214` Promise.race fragility** — code now in `streamReader.ts:153-169`, pattern is correct: `timeoutId` assigned synchronously, `result` never read in error path.
 - **`selectMismatchesToPrompt` dead code** — called at `commands.ts:263` inside `testAndRefreshModels`.
 
 ---
