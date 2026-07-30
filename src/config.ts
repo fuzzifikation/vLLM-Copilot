@@ -347,6 +347,12 @@ export function buildEndpoint(baseUrl: string, path: string): string {
  * emit. Other schemes (e.g. a gateway's `x-api-key` or Cloudflare Access headers)
  * are a separate concern — users add those as custom request headers. Returns an
  * empty object when no key is set.
+ *
+ * ⚠️ **Scope: write/migration paths only.** This function is used only by the
+ * Add Server and Update Auth commands (`autoConfig.ts`, `commands.ts`) to
+ * construct headers from user-provided key input. Runtime chat requests do
+ * NOT call this — auth comes from the per-model `requestHeaders` in settings.
+ * Wiring this into runtime code would silently add or omit the wrong headers.
  */
 export function buildAuthHeaders(apiKey?: string): Record<string, string> {
   if (!apiKey) return {};

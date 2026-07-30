@@ -95,9 +95,30 @@ All are niche or debugging-focused. No P1 (high-impact, general-purpose) feature
 
 ---
 
-## Remaining Ideas (all P2–P5, niche)
+## Personality Presets Should Be Global, Not Workspace-Local
 
-All 12 remaining params are specialized. None are P1 (high-impact, general-purpose).
+**Category:** Vitamins (UX polish)
+**Status:** Considered, not yet implemented
+
+### Problem
+
+The **Set Model Personality** command copies the chosen preset file to `.vllm/` in the current workspace root and sets `systemMessageReplacementsFile` to a workspace-relative path (e.g. `.vllm/prompt-replacements-tough-love.json`). This means:
+
+- The personality is tied to one workspace — opening a different folder loses it. Users who work across multiple repos must re-run the command for each.
+- The `.vllm/` directory is workspace-scoped state that doesn't belong in version control (it's user preference, not project config), yet it lives inside the workspace tree.
+- Personality selection should logically be a **model-level** (or user-level) preference, not a workspace artifact.
+
+### Suggestion
+
+Store the personality file in the extension's global storage directory (`context.globalStorageUri`) and set `systemMessageReplacementsFile` to its absolute path there. This way:
+
+- The personality follows the user across all workspaces.
+- No `.vllm/` directory is created in the workspace.
+- The Set Personality command works even when no workspace folder is open (currently it bails with "Open a folder first").
+
+### Status
+
+Not yet implemented. The current design (workspace-scoped `.vllm/`) was chosen as the simplest initial approach. Moving to global storage is the right long-term home.
 
 | Param                           | Category           | Notes                                                                                                                         |
 | ------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
