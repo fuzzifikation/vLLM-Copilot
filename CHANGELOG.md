@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.20.0 — Bug crush: dead code, abort leaks, SQLite error masking
+
+- **Removed `src/migration.ts` (237 lines), `test/migration.test.ts` (56 lines), and their registration in `extension.ts`.** The repo's initial commit (2e6f710) was a clean public release imported from a private repo — no user of this public release has ever had legacy global settings. Eliminates two globalState flags, a latent write-shadowing bug, and 293 lines of cargo-culted dead code.
+- **Fixed: `fetchServerMetrics` shared `AbortController` swallowed timeout aborts as "online with zero models".** Each inner catch now detects `controller.signal.aborted` and re-throws to the outer handler, producing `{ online: false, error: 'Cannot connect: ...' }` instead of reporting the server as online with no models.
+- **Fixed: `deleteChatKeys` returned `0` on any failure, indistinguishable from "no keys existed."** Now returns `-1` on error; `cleanWorkspace` propagates `dbError: boolean` to `commands.ts`, which shows a warning when database deletion fails.
+- Updated `known-bugs.md`: removed three fixed entries, updated Code Smells references.
+
 ## v1.19.96 — Removed `id` from bundled model presets
 
 - **Removed `"id"` from all 7 model presets.** Preset matching uses `vllmModelId` only — `id` is reserved for the user's own settings identifier.
