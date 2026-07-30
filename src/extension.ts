@@ -3,7 +3,6 @@ import { VllmChatModelProvider } from './provider.js';
 import { getConfig, validateConfig, resolveServerConfig } from './config.js';
 import { FileLogger } from './logger.js';
 import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault } from './autoConfig.js';
-import { migrateToPerModelServer, migrateToCompositeIds } from './migration.js';
 import { setSessionManagerOutput } from './sessionManager.js';
 import {
   registerTestAndRefreshModelsCommand,
@@ -70,16 +69,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Wire output channel to sessionManager for logging
     setSessionManagerOutput(outputChannel);
-
-    // One-time migration: move legacy global server/sampling settings into per-model config.
-    try {
-      await migrateToPerModelServer(context, outputChannel);
-      // Then rewrite ids to the composite "<model> on <host>" form (runs after the
-      // per-model migration so every model already has its serverUrl).
-      await migrateToCompositeIds(context, outputChannel);
-    } catch (err) {
-      outputChannel.appendLine(`[WARN] Per-model migration failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
 
     // Initialize file logger
     fileLogger = new FileLogger(context, outputChannel);

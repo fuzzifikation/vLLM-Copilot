@@ -514,20 +514,23 @@ export function registerCleanSessionsCommand(
     let totalChatDirs = 0;
     let totalChatSessions = 0;
     let totalChatEditing = 0;
+    let dbErrors = 0;
 
     // Use id directly — no brittle label matching
     for (const item of selected) {
       const result = await cleanWorkspace(item.id);
-      totalKeys += result.dbKeysRemoved;
+      totalKeys += result.dbKeysRemoved > 0 ? result.dbKeysRemoved : 0;
       totalChatDirs += result.chatDirRemoved ? 1 : 0;
       totalChatSessions += result.chatSessionsRemoved ? 1 : 0;
       totalChatEditing += result.chatEditingSessionsRemoved ? 1 : 0;
+      if (result.dbError) dbErrors++;
     }
 
-    vscode.window.showInformationMessage(
-      `Cleaned ${totalKeys} key(s), removed ${totalChatDirs} chat dir(s), ${totalChatSessions} chatSessions dir(s), ${totalChatEditing} chatEditingSessions dir(s).\n\nRestart VS Code for changes to take effect.`,
-      'OK'
-    );
+    const msg = dbErrors > 0
+      ? `Cleaned ${totalKeys} key(s), removed ${totalChatDirs} chat dir(s), ${totalChatSessions} chatSessions dir(s), ${totalChatEditing} chatEditingSessions dir(s).\n\n⚠ ${dbErrors} workspace(s) had database errors — key removal may be incomplete. Close all Copilot chat sessions and retry.\n\nRestart VS Code for changes to take effect.`
+      : `Cleaned ${totalKeys} key(s), removed ${totalChatDirs} chat dir(s), ${totalChatSessions} chatSessions dir(s), ${totalChatEditing} chatEditingSessions dir(s).\n\nRestart VS Code for changes to take effect.`;
+
+    vscode.window.showInformationMessage(msg, 'OK');
   });
 }
 

@@ -269,7 +269,10 @@ export async function fetchServerMetrics(
           if (m.max_model_len != null && m.max_model_len > 0) maxModelLen = m.max_model_len;
         }
       }
-    } catch { /* non-critical */ }
+    } catch (e) {
+      if (controller.signal.aborted) throw e; // timeout aborted — stop, don't report "online with zero models"
+      /* non-critical */
+    }
 
     let version: string | undefined;
     try {
@@ -278,7 +281,10 @@ export async function fetchServerMetrics(
         const data = await verRes.json() as { version?: string };
         version = data.version;
       }
-    } catch { /* optional */ }
+    } catch (e) {
+      if (controller.signal.aborted) throw e;
+      /* optional */
+    }
 
     let rawMetrics = '';
     try {
@@ -286,7 +292,10 @@ export async function fetchServerMetrics(
       if (metRes.ok) {
         rawMetrics = await metRes.text();
       }
-    } catch { /* metrics may be disabled */ }
+    } catch (e) {
+      if (controller.signal.aborted) throw e;
+      /* metrics may be disabled */
+    }
 
     const parser = new MetricsParser();
     parser.parse(rawMetrics);

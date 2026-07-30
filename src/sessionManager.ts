@@ -193,7 +193,7 @@ export async function deleteChatKeys(dbPath: string): Promise<number> {
     return total;
   } catch (err) {
     log('ERROR', `Failed to delete keys from ${dbPath}: ${err instanceof Error ? err.message : String(err)}`);
-    return 0;
+    return -1; // distinguish "operation failed" from "no keys existed"
   } finally {
     db?.close();
   }
@@ -314,12 +314,14 @@ async function countFilesInDir(dirPath: string): Promise<number> {
  */
 export async function cleanWorkspace(wsId: string): Promise<{
   dbKeysRemoved: number;
+  dbError: boolean;
   chatDirRemoved: boolean;
   chatSessionsRemoved: boolean;
   chatEditingSessionsRemoved: boolean;
 }> {
   const dbPath = wsId === '__global__' ? globalDbPath() : wsDbPath(wsId);
   const keysRemoved = await deleteChatKeys(dbPath);
+  const dbError = keysRemoved < 0;
   const dirRemoved = wsId !== '__global__' && (await removeChatDir(wsId));
 
   // Clean filesystem session directories (workspaceStorage only — globalStorage has none)
@@ -331,7 +333,7 @@ export async function cleanWorkspace(wsId: string): Promise<{
     chatEditingSessionsRemoved = await removeChatEditingSessions(wsId);
   }
 
-  return { dbKeysRemoved: keysRemoved, chatDirRemoved: dirRemoved, chatSessionsRemoved, chatEditingSessionsRemoved };
+  return { dbKeysRemoved: keysRemoved, dbError, chatDirRemoved: dirRemoved, chatSessionsRemoved, chatEditingSessionsRemoved };
 }
 
 // ── Internal helpers ───────────────────────────────────────────────────────
