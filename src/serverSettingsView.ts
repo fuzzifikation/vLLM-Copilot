@@ -4,7 +4,7 @@
  */
 
 import * as vscode from 'vscode';
-import { getConfig, buildEndpoint, type ModelConfig } from './config.js';
+import { getConfig, buildEndpoint, findModelConfigIndex, type ModelConfig } from './config.js';
 
 // Ordered by frequency of use: common sampling → length → penalties → output control → niche.
 const KNOWN_PARAMS: Record<string, { label: string; type: 'number' | 'string' | 'json'; options?: string[] }> = {
@@ -184,10 +184,9 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     const models: ModelConfig[] = cfg.get<ModelConfig[]>('models') || [];
     const targetVllmId = updates.vllmModelId || updates.id || '';
     const targetServer = updates.serverUrl || '';
-    const idx = models.findIndex(m => {
-      const mVllmId = m.vllmModelId || m.id || '';
-      return mVllmId === targetVllmId && m.serverUrl === targetServer;
-    });
+    const idx = targetVllmId && targetServer
+      ? findModelConfigIndex(models, targetVllmId, targetServer)
+      : -1;
     if (idx < 0) {
       // New model entry - add to config
       const newEntry: ModelConfig = {

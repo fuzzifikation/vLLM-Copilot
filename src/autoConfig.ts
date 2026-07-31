@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from './config.js';
-import { buildEndpoint, buildAuthHeaders, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildModelId, normalizeModelId, modelMatchKey } from './config.js';
+import { buildEndpoint, buildAuthHeaders, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildModelId, normalizeModelId, modelMatchKey, findModelConfigIndex } from './config.js';
 import { describeError } from './messageConverter.js';
 import { jsonrepair } from 'jsonrepair';
 
@@ -536,30 +536,24 @@ export async function saveModelConfig(newConfig: ModelConfig): Promise<void> {
   const config = vscode.workspace.getConfiguration('vllm-copilot');
   const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
 
-  // Match by the true identity: same server URL AND same vLLM model id. This lets
-  // the same model served from two different servers coexist as separate entries
-  // (manual load balancing) while re-adding the same (server, model) replaces in
-  // place. Fall back to an exact `id` match for hand-written entries that predate
-  // the composite-id scheme.
   const newVllmId = resolveVllmModelId(newConfig);
-  const newServer = newConfig.serverUrl ? normalizeServerUrl(newConfig.serverUrl) : undefined;
-  const idx = existing.findIndex(m => {
-    const sameIdentity =
-      newServer !== undefined &&
-      m.serverUrl !== undefined &&
-      normalizeServerUrl(m.serverUrl) === newServer &&
-      resolveVllmModelId(m) === newVllmId;
-    const sameId = m.id !== undefined && m.id === newConfig.id;
-    return sameIdentity || sameId;
-  });
-  if (idx >= 0) {
+  const newServer = newConfig.serverUrl;
+  const idx = newVllmId && newServer
+    ? findModelConfigIndex(existing, newVllmId, newServer)
+    : -1;
+  // Also try matching by exact `id` for hand-written entries that predate the composite-id scheme
+  const idIdx = idx < 0 && newConfig.id
+    ? existing.findIndex(m => m.id !== undefined && m.id === newConfig.id)
+    : -1;
+  const useIdx = idIdx >= 0 ? idIdx : idx;
+  if (useIdx >= 0) {
     // Preserve ONLY infrastructure/personal fields that the preset cannot know.
     // Everything model-specific (modelModes, family, capabilities, defaultParams,
     // token budgets, transport settings) is overwritten by the preset — that's the
     // whole point: the preset configures the model as an "expert" would, and the
     // user keeps their server URL, auth headers, and personal replacements file.
-    const prev = existing[idx];
-    existing[idx] = {
+    const prev = existing[useIdx];
+    existing[useIdx] = {
       ...newConfig,
       serverUrl: newConfig.serverUrl ?? prev.serverUrl,
       requestHeaders: newConfig.requestHeaders ?? prev.requestHeaders,
