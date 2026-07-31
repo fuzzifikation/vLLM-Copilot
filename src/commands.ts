@@ -11,10 +11,10 @@ import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { VllmChatModelProvider } from './provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildAuthHeaders } from './config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, normalizeServerUrl } from './config.js';
 import type { ModelConfig } from './config.js';
 import type { VllmModel } from './types.js';
-import { pickModelFromServer, saveModelConfig, parseHeadersInput } from './autoConfig.js';
+import { pickModelFromServer, saveModelConfig, promptForServerAuth } from './autoConfig.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
 import { runDiagnostics, formatReport } from './diagnostics.js';
@@ -679,38 +679,17 @@ export function registerUpdateServerAuthCommand(
       return;
     }
 
-    // Step 1: API key (optional)
-    const apiKeyInput = await vscode.window.showInputBox({
-      title: `Update Auth for ${serverUrl} (1/2)`,
-      prompt: 'API key for this server (optional). Sent as "Authorization: Bearer <key>". Leave empty to clear.',
-      placeHolder: 'Leave empty if the server needs no key.',
-      ignoreFocusOut: true,
-      password: true,
+    // Step 1+2: API key + custom headers
+    const combinedHeaders = await promptForServerAuth({
+      apiKeyTitle: `Update Auth for ${serverUrl} (1/2)`,
+      apiKeyPrompt: '(optional) vLLM API key. Sent as "Authorization: Bearer <key>". Leave empty to clear.',
+      apiKeyPlaceholder: 'abc123... or leave empty to clear',
+      headersTitle: `Update Auth for ${serverUrl} (2/2)`,
+      headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty to clear.',
+      headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
     });
-    if (apiKeyInput === undefined) return; // cancelled
-    const apiKey = apiKeyInput.trim();
-
-    // Step 2: Custom headers (optional)
-    const headersInput = await vscode.window.showInputBox({
-      title: `Update Auth for ${serverUrl} (2/2)`,
-      prompt: 'Additional request headers. JSON or "Name: value" — leave empty to clear.',
-      placeHolder: '{"CF-Access-Client-Id": "..."}  or  X-Tenant: abc123',
-      ignoreFocusOut: true,
-      validateInput: (v) => {
-        const r = parseHeadersInput(v);
-        return 'error' in r ? r.error : undefined;
-      },
-    });
-    if (headersInput === undefined) return; // cancelled
-    const parsedHeaders = parseHeadersInput(headersInput);
-    if ('error' in parsedHeaders) {
-      vscode.window.showErrorMessage(parsedHeaders.error);
-      return;
-    }
-
-    // Combine: API-key-derived auth first, then custom headers (custom wins).
-    const newHeaders: Record<string, string> = { ...buildAuthHeaders(apiKey), ...parsedHeaders.headers };
-    const finalHeaders = Object.keys(newHeaders).length > 0 ? newHeaders : undefined;
+    if (combinedHeaders === undefined) return; // cancelled
+    const finalHeaders = Object.keys(combinedHeaders).length > 0 ? combinedHeaders : undefined;
 
     // Update all models pointing to this server
     const config = vscode.workspace.getConfiguration('vllm-copilot');
