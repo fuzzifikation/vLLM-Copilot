@@ -15,6 +15,8 @@
  */
 
 import * as vscode from 'vscode';
+import { buildEndpoint } from './config.js';
+import { buildRequestHeaders } from './fetchRetry.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -426,18 +428,18 @@ async function fetchAllEndpoints(
   const baseUrl = serverUrl.replace(/\/+$/, '');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
-  const headers = { ...requestHeaders };
+  const headers = buildRequestHeaders(undefined, requestHeaders);
 
   // Fetch all endpoints in parallel. Read all bodies as text immediately
   // (Response body can only be consumed once).
   const [
     healthRes, modelsText, versionText, metricsText, loadText,
   ] = await Promise.all([
-    safeFetch(`${baseUrl}/health`, { signal: controller.signal, headers }),
-    safeFetch(`${baseUrl}/v1/models`, { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
-    safeFetch(`${baseUrl}/version`, { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
-    safeFetch(`${baseUrl}/metrics`, { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
-    safeFetch(`${baseUrl}/load`, { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
+    safeFetch(buildEndpoint(baseUrl, 'health'), { signal: controller.signal, headers }),
+    safeFetch(buildEndpoint(baseUrl, 'v1/models'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
+    safeFetch(buildEndpoint(baseUrl, 'version'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
+    safeFetch(buildEndpoint(baseUrl, 'metrics'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
+    safeFetch(buildEndpoint(baseUrl, 'load'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
   ]);
   clearTimeout(timer);
 
