@@ -494,4 +494,22 @@ function validateRequestParams(params: Record<string, unknown> | undefined, labe
   return warnings;
 }
 
-
+/**
+ * Find the index of a model in the array by its vLLM model ID and server URL.
+ * Uses normalized URL comparison and the canonical {@link resolveVllmModelId} helper.
+ * Returns -1 if no match is found.
+ *
+ * Shared by both {@link saveModelConfig} implementations (autoConfig.ts and
+ * serverSettingsView.ts) so matching logic stays in one place.
+ */
+export function findModelConfigIndex(
+  models: ModelConfig[],
+  vllmModelId: string,
+  serverUrl: string,
+): number {
+  const normalizedUrl = normalizeServerUrl(serverUrl);
+  return models.findIndex(m => {
+    if (!m.serverUrl) return false;
+    return resolveVllmModelId(m) === vllmModelId && normalizeServerUrl(m.serverUrl) === normalizedUrl;
+  });
+}

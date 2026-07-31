@@ -25,6 +25,7 @@ import {
   WorkspaceEntry,
 } from './sessionManager.js';
 import { loadPersonalityMeta, clearPersonalityCache } from './promptReplacer.js';
+import { getMetricsEngine } from './vllmMetrics.js';
 
 /**
  * Discover personality preset files in prompt-replacements/ directory.
@@ -731,6 +732,8 @@ export function registerUpdateServerAuthCommand(
 
     await config.update('models', updatedModels, vscode.ConfigurationTarget.Global);
     _provider.clearCache();
+    // Push new headers to the metrics engine so open deep-dive uses fresh auth
+    getMetricsEngine(serverUrl)?.setHeaders(finalHeaders ?? {});
     outputChannel.appendLine(`[INFO] Updated auth for ${updated} model(s) on ${serverUrl}.`);
     vscode.window.showInformationMessage(`Updated auth for ${updated} model(s) on ${serverUrl}.`);
   });

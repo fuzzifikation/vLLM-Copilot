@@ -15,22 +15,12 @@ Do not bump version without asking.
 ### P2 - Untested data layer
 Dashboard tree items, deep-dive webview, and formatting helpers lack tests. `MetricsParser`, `parseRawMetrics`, `parseLabels`, `fmtPct`, `fmtMs` are covered.
 
-### P3 - Deep-dive engine retains stale auth headers on header-only update
-When `registerUpdateServerAuthCommand` updates auth headers, it writes to settings and calls `provider.clearCache()` but does NOT update the `ServerMetricsEngine`'s request headers. If the dashboard is NOT visible (`refreshSubscriptions` not running), the engine's `setHeaders` is never called. A deep-dive panel that is open (or hidden with `retainContextWhenHidden`) continues polling with the old headers until the dashboard re-subscribes. The engine tick uses `this.requestHeaders` which still holds the pre-update values.
-
-### P3 - Two independent `saveModelConfig` functions
-`autoConfig.ts::saveModelConfig()` and `serverSettingsView.ts::saveModelConfig()` are separate implementations with different model-matching logic:
-- `autoConfig.ts`: matches by `resolveVllmModelId` + normalized `serverUrl`, with `id` fallback. Preserves infrastructure fields.
-- `serverSettingsView.ts`: matches by `vllmModelId || id` + raw `serverUrl`. Full-merge replacement.
-
-Both handle different entry points, but a third path that calls the wrong one would get incorrect matching or field preservation.
-
 ---
 
 ## False Positives (keep AI from re-filing)
 
 - **Global writes** — `saveModelConfig` writes to Global only. Intentional: design is "always write to user settings."
-- **`saveModelConfig` matches by `vllmModelId + serverUrl`** — correct. Both fields derive from same dropdown selection; no orphan/overwrite scenario exists.
+- **`saveModelConfig` matches by `vllmModelId + serverUrl`** — correct (now shared via `findModelConfigIndex` in config.ts).
 - **Dashboard uses first model's `requestHeaders` per server** — correct. `--api-key` is global per vLLM process; two presets on one server can't have different auth.
 - **`serverSettings.js` `d.ontoggle`** — `secState` is the only source of truth on every render; config values use `[data-f]`/`[data-k]`/`.mode-card` paths, not `secState`.
 - **`provideTokenCount` blocks event loop** — `getConfiguration()` is in-memory, not disk. Cold-cache cost is negligible.
