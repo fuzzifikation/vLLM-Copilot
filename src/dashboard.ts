@@ -173,6 +173,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   /** Active engine subscriptions: serverUrl → { metrics, dispose } */
   private subscriptions: Array<{ serverUrl: string; metrics: ServerMetrics; dispose: () => void }> = [];
   private outputChannel: vscode.OutputChannel;
+  /** Flag to coalesce multiple per-server updates into one tree re-render. */
+  private refreshScheduled = false;
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -181,21 +183,30 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     this.outputChannel = outputChannel;
     this.context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration(e => {
-        // Re-subscribe on poll interval change (interval re-read per tick) or
-        // any models/config change (servers added/removed/updated).
         if (e.affectsConfiguration('vllm-copilot')) {
           this.refreshSubscriptions();
-          this._onDidChangeTreeData.fire();
+          this.fireTreeUpdate();
         }
       }),
     );
+  }
+
+  /** Schedule a single tree update, coalescing multiple rapid requests. */
+  private fireTreeUpdate(): void {
+    if (!this.refreshScheduled) {
+      this.refreshScheduled = true;
+      queueMicrotask(() => {
+        this.refreshScheduled = false;
+        this._onDidChangeTreeData.fire();
+      });
+    }
   }
 
   /** Call when the tree view becomes visible or hidden */
   setVisible(visible: boolean): void {
     if (visible) {
       this.refreshSubscriptions();
-      this._onDidChangeTreeData.fire(); // refresh on show
+      this.fireTreeUpdate(); // refresh on show
     } else {
       this.disposeSubscriptions();
     }
@@ -218,10 +229,10 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       for (const [url, headers] of serverMap) {
         const engine = getMetricsEngine(url, headers);
         const sub = engine.subscribe((aggregated) => {
-          // Update cached metrics and trigger re-render
+          // Update cached metrics and schedule a single re-render
           const entry = this.subscriptions.find(s => s.serverUrl === url);
           if (entry) entry.metrics = aggregated;
-          this._onDidChangeTreeData.fire();
+          this.fireTreeUpdate();
         });
         this.subscriptions.push({
           serverUrl: url,
