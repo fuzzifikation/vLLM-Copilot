@@ -1,15 +1,24 @@
 # Changelog
 
-## v1.20.0 — Drain consolidation, double-parse fix, bug crush, doc corrections
+## v1.20.0 — Drain consolidation, double-parse fix, structural cleanup, unified metrics engine, doc corrections
 
+- **Unified metrics engine** — created `ServerMetricsEngine` in `vllmMetrics.ts`: reference-counted polling engine shared by dashboard and deep-dive. Starts on first subscriber, stops on last. Single fetch cycle produces both `ServerMetrics` (aggregated) and `ServerRawData` (raw buckets) from one set of HTTP responses. Eliminated duplicate 2x-per-interval fetches when both views were open. Removed standalone `fetchServerMetrics()` and `fetchServerRawData()` (logic subsumed into `fetchAllEndpoints()`).
+- **Dashboard: removed config cache bypass bug** — no longer calls `getConfig(context)` on every 15s poll. Config read once on visibility change and re-read on settings change. Dashboard subscribes to the shared engine; tree re-renders coalesced via `queueMicrotask` gate.
+- **Deep-dive: no longer owns its poll cycle** — subscribes to the shared engine, receives push notifications. Removed independent `fetchServerRawData()` timer.
 - **Consolidated `streamReader.ts` drain loop** — replaced 3 near-identical `eventQueue` drain sites with a single `drainAndCheck()` helper generator. `STOP_ITERATION` sentinel cleanly separates "break" from real errors.
 - **Corrected `streamReader.ts` abort signal comment** — the old comment claimed the abort signal was "inert" after streaming started, which is wrong. Updated to explain `reader.cancel()` is the preferred path for clean teardown.
 - **Fixed: `buildAuthHeaders()` JSDoc didn't document its limited scope** — now clearly marked as "write/migration paths only" (Add Server, Update Auth). Runtime never uses it.
 - **Fixed: `promptReplacer.ts` parsed each personality file twice** — both `loadPersonalityMeta()` and `loadPromptReplacements()` independently read+parsed the same file. Extracted shared `readPersonalityFile()` with a module-level `Map` cache so discovery and application share the same I/O+parse. Exported `clearPersonalityCache()` for the Set Personality command to use when it copies a new file.
+- **Fixed: cache poisoning on personality rewrite** — `registerSetModelPersonalityCommand()` now imports and calls `clearPersonalityCache()` after copying a new preset file, so the next request loads fresh rules instead of stale cached ones.
 - **Removed `src/migration.ts` (237 lines), `test/migration.test.ts` (56 lines), and their registration in `extension.ts`.** The repo's initial commit (2e6f710) was a clean public release imported from a private repo — no user of this public release has ever had legacy global settings. Eliminates two globalState flags, a latent write-shadowing bug, and 293 lines of cargo-culted dead code.
 - **Fixed: `fetchServerMetrics` shared `AbortController` swallowed timeout aborts as "online with zero models".** Each inner catch now detects `controller.signal.aborted` and re-throws to the outer handler, producing `{ online: false, error: 'Cannot connect: ...' }` instead of reporting the server as online with no models.
 - **Fixed: `deleteChatKeys` returned `0` on any failure, indistinguishable from "no keys existed."** Now returns `-1` on error; `cleanWorkspace` propagates `dbError: boolean` to `commands.ts`, which shows a warning when database deletion fails.
-- Updated `known-bugs.md`: removed six fixed entries, updated `streamReader.ts` line-number reference in false positives, identified and fixed "cache poisoning on personality rewrite" P2 item, updated Code Smells references.
+- **Removed `RetryLogger` interface** (single implementation, YAGNI). `fetchWithRetry` now takes plain `onRetry`/`onRetrySuccess` callbacks instead of a strategy object.
+- **Fixed: `clearLogFiles()` sync-in-async** — switched from synchronous `readdirSync`/`unlinkSync` to async `fs.promises` calls to match the function's async signature.
+- **Fixed: `buildModelInfo()` inline type redeclaration** — changed `override` parameter from inline type duplicating `ModelConfig` to `Partial<ModelConfig>` so new fields propagate automatically. Same fix applied to `buildConfigurationSchema()` (`Pick<ModelConfig, 'modelModes' | 'defaultMode'>`).
+- **Fixed: session manager logs silently dropped before init** — replaced `outputWarned` flag with pre-init message queue that flushes to the output channel once `setSessionManagerOutput()` is called.
+- **Metrics polling now reuses shared helpers** — `fetchAllEndpoints()` uses `buildEndpoint()` (from `config.ts`) and `buildRequestHeaders()` (from `fetchRetry.ts`) instead of inline URL/header construction, removing the last duplication between the chat and metrics HTTP paths.
+- Updated `known-bugs.md`: removed seven fixed entries (dashboard cache bypass, RetryLogger, clearLogFiles, buildModelInfo redeclaration, async/sync DatabaseSync, cache poisoning, session manager silent drop). Updated large modules to reference function names instead of line counts.
 
 ## v1.19.96 — Removed `id` from bundled model presets
 
