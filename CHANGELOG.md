@@ -32,7 +32,31 @@
 - **Fixed: engine auth headers not propagated on re-use** — `getMetricsEngine()` calls `engine.setHeaders()` when returning an existing engine, so dashboard re-subscribes pick up changed auth.
 - **Fixed: deep-dive stale auth headers on header-only update** — `registerUpdateServerAuthCommand()` now pushes new headers to the metrics engine via `getMetricsEngine(serverUrl)?.setHeaders()`, so an open deep-dive panel uses fresh auth immediately.
 - **Shared model matching helper** — added `findModelConfigIndex()` to `config.ts` using `normalizeServerUrl` + `resolveVllmModelId`. Both `autoConfig.ts` and `serverSettingsView.ts` now call the same function for model identity matching, eliminating the URL-normalization divergence between the two `saveModelConfig` implementations.
-- Updated `known-bugs.md`: removed nine fixed entries (dashboard cache bypass, RetryLogger, clearLogFiles, buildModelInfo redeclaration, async/sync DatabaseSync, cache poisoning, session manager silent drop, stale deep-dive auth headers, duplicate saveModelConfig matching). Updated large modules to reference function names instead of line counts.
+
+### Test & Refresh: server-grouped testing, auto-configure in no-match flow
+
+- **Refactored `testAndRefreshModels`** — models are now grouped by unique server (fingerprinted by URL + auth headers) so each server is queried exactly once. Single consolidated popup replaces N per-model modals. Server-level status: ✓ (ok), ✗ (error), or no-match (reachable but nothing configured).
+- **New no-match flow** — when a server is reachable but no configured model ID matches, the user is offered to **Pick Model** or **Auto-Configure** inline, with the option to update an existing config in-place or add a new entry.
+- **Extracted helpers** — `serverFingerprint()`, `groupModelsByServer()`, `handleNoMatchServers()`, `updateExistingConfig()`, `addNewConfig()`. The closure is no longer a single 5-responsibility function.
+- **Removed `selectMismatchesToPrompt()`** — superseded by the server-grouped no-match flow.
+
+### Server Settings: Auto-Configure and Remove Server buttons
+
+- **Dashboard right-click menu trimmed** — now only shows **Update Auth** and **vLLM Deep-Dive**. The destructive "Remove Server" and "Auto-Configure" are moved to the Server Settings webview.
+- **Server Settings webview** — two new action buttons at the top: **Auto-Configure** (re-runs preset/HuggingFace discovery for the selected model) and **Remove Server** (deletes all models for that server from settings, with a confirm dialog). Both delegate to existing commands.
+- **`registerAutoConfigureModelCommand`** — now accepts optional `{ serverUrl, vllmModelId }` arg to skip the QuickPick when called from the webview.
+- **`registerRemoveServerCommand`** — accepts `skipConfirm` flag. Webview passes it (the webview already shows its own confirm). Dashboard right-click path still shows the modal.
+- **`applyAutoConfigUpdate`** exported for reuse.
+
+### Smart URL normalization
+
+- **`normalizeServerUrl`** — port-based scheme detection: `host:8000` → `http://`, bare `host` → `https://`. Also strips trailing `/v1` path segment (commonly copied from OpenAI base URLs like `https://api.openai.com/v1`).
+- **New tests** — 7 test cases for scheme detection and `/v1` stripping.
+
+### Updated `known-bugs.md`
+
+- Crossed off `registerTestAndRefreshModelsCommand()` as a large module (refactored).
+- Removed stale `selectMismatchesToPrompt` false-positive entry (function no longer exists).
 
 ## v1.19.96 — Removed `id` from bundled model presets
 
