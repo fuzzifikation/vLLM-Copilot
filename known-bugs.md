@@ -10,7 +10,7 @@ Do not bump version without asking.
 ### P1 - Large modules
 - `autoConfig.ts` (~15 exported functions) — `autoConfigureModel()`, `loadModelPresets()`, `findPresetForModel()`, `saveModelConfig()`, `registerAddServerModelCommand()`, `resolveModelConfigForAdd()`, and more. Grab-bag of presets, HF fetch, config gen, BYOK, progress UI.
 - `provider.ts` — `provideLanguageModelChatResponse()` (~550 lines), `consumeStream()` (~290 lines), `provideLanguageModelChatInformation()` (~124 lines). Stream, auto-continue, diagnostics, error classification.
-- `registerTestAndRefreshModelsCommand()` in `commands.ts` — single large closure with 5 responsibilities (discovery, health check, mismatch detection, model picker prompt, config save).
+- ~~`registerTestAndRefreshModelsCommand()` — single large closure with 5 responsibilities~~ (v1.21.0: refactored to extracted helpers + single consolidated output).
 
 ### P2 - Untested data layer
 Dashboard tree items, deep-dive webview, and formatting helpers lack tests. `MetricsParser`, `parseRawMetrics`, `parseLabels`, `fmtPct`, `fmtMs` are covered.
@@ -26,8 +26,6 @@ Dashboard tree items, deep-dive webview, and formatting helpers lack tests. `Met
 - **`provideTokenCount` blocks event loop** — `getConfiguration()` is in-memory, not disk. Cold-cache cost is negligible.
 - **`dashboard.ts` `Promise.all` has no per-fetch timeout** — `fetchAllEndpoints` in `vllmMetrics.ts` has a 5s `AbortController` covering all parallel requests. Bug fixed in v1.20.0.
 - **`vllmClient.ts:214` Promise.race fragility** — code now in `streamReader.ts:153-169`, pattern is correct: `timeoutId` assigned synchronously, `result` never read in error path.
-- **`selectMismatchesToPrompt` dead code** — it IS called at `commands.ts:263` inside `testAndRefreshModels`. Not dead code, kept for documentation to prevent re-filing.
-
 ---
 
 ## Known Limitations

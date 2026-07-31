@@ -145,11 +145,6 @@
           "group": "1_server@1"
         },
         {
-          "command": "vllm-copilot.removeServer",
-          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline)",
-          "group": "1_server@2"
-        },
-        {
           "command": "vllm-copilot.openDeepDive",
           "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline)",
           "group": "2_deepDive@1"

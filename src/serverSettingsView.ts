@@ -64,7 +64,13 @@ interface SetPersonalityMessage {
   type: 'setPersonality';
 }
 
-type FromWebviewMessage = ReadyMessage | SaveMessage | SetPersonalityMessage;
+interface WebviewAction {
+  type: 'autoConfigure' | 'removeServer';
+  serverUrl: string;
+  vllmModelId?: string;
+}
+
+type FromWebviewMessage = ReadyMessage | SaveMessage | SetPersonalityMessage | WebviewAction;
 
 export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
@@ -105,6 +111,16 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
           await this.saveModelConfig(msg.config);
         } else if (msg.type === 'setPersonality') {
           await vscode.commands.executeCommand('vllm-copilot.setModelPersonality');
+        } else if (msg.type === 'autoConfigure') {
+          await vscode.commands.executeCommand('vllm-copilot.autoConfigureModel', {
+            serverUrl: msg.serverUrl,
+            vllmModelId: msg.vllmModelId,
+          });
+        } else if (msg.type === 'removeServer') {
+          await vscode.commands.executeCommand('vllm-copilot.removeServer', {
+            serverUrl: msg.serverUrl,
+            skipConfirm: true,
+          });
         }
       },
     );

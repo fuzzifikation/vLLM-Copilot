@@ -1040,8 +1040,7 @@ export function registerAutoConfigureModelCommand(
   provider: any, // VllmChatModelProvider — avoids circular import
   output: vscode.OutputChannel
 ): vscode.Disposable {
-  return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async () => {
-    // 1. Pick an existing model
+  return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { serverUrl?: string; vllmModelId?: string }) => {
     const config = vscode.workspace.getConfiguration('vllm-copilot');
     const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
     if (existing.length === 0) {
@@ -1049,33 +1048,51 @@ export function registerAutoConfigureModelCommand(
       return;
     }
 
-    const items = existing.map((m, idx) => {
-      const label = m.displayName || resolveVllmModelId(m);
-      const server = m.serverUrl ? ` (${normalizeServerUrl(m.serverUrl)})` : '';
-      return {
-        label,
-        description: `#${idx + 1}`,
-        detail: m.serverUrl || '(no server)',
-      } as vscode.QuickPickItem;
-    });
+    let modelConfig: ModelConfig | undefined;
+    let vllmId: string;
+    const argServerUrl = arg?.serverUrl;
+    const argModelId = arg?.vllmModelId;
 
-    const selected = await vscode.window.showQuickPick(items, {
-      placeHolder: 'Select a model to re-configure',
-    });
-    if (!selected) return;
+    if (argServerUrl && argModelId) {
+      // Called with explicit server+model (e.g. from Server Settings webview)
+      modelConfig = existing.find(
+        m => (resolveVllmModelId(m) === argModelId) && m.serverUrl &&
+             normalizeServerUrl(m.serverUrl) === normalizeServerUrl(argServerUrl)
+      );
+      if (!modelConfig) {
+        vscode.window.showErrorMessage(`No config found for "${argModelId}" on ${argServerUrl}.`);
+        return;
+      }
+      vllmId = argModelId;
+    } else {
+      // No args — show QuickPick to select a model
+      const items = existing.map((m, idx) => {
+        const label = m.displayName || resolveVllmModelId(m);
+        const server = m.serverUrl ? ` (${normalizeServerUrl(m.serverUrl)})` : '';
+        return {
+          label,
+          description: `#${idx + 1}`,
+          detail: m.serverUrl || '(no server)',
+        } as vscode.QuickPickItem;
+      });
 
-    // Find the matching config entry
-    const idx = items.indexOf(selected);
-    const modelConfig = existing[idx];
-    if (!modelConfig) return;
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select a model to re-configure',
+      });
+      if (!selected) return;
 
-    const vllmId = resolveVllmModelId(modelConfig);
-    if (!vllmId) {
-      vscode.window.showErrorMessage('Selected model has no identifiable vLLM model id.');
-      return;
+      const idx = items.indexOf(selected);
+      modelConfig = existing[idx];
+      if (!modelConfig) return;
+
+      vllmId = resolveVllmModelId(modelConfig) || '';
+      if (!vllmId) {
+        vscode.window.showErrorMessage('Selected model has no identifiable vLLM model id.');
+        return;
+      }
     }
-    const serverUrl = modelConfig.serverUrl;
 
+    const serverUrl = modelConfig.serverUrl;
     if (!serverUrl) {
       vscode.window.showErrorMessage(`Model "${vllmId}" has no serverUrl configured.`);
       return;
@@ -1114,7 +1131,7 @@ export function registerAutoConfigureModelCommand(
  * or copy its JSON. Shared by the preset and HuggingFace branches so both end
  * the same way.
  */
-async function applyAutoConfigUpdate(
+export async function applyAutoConfigUpdate(
   newConfig: ModelConfig,
   vllmId: string,
   detail: string,
