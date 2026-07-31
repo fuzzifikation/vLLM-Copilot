@@ -15,9 +15,6 @@ Do not bump version without asking.
 ### P2 - Untested data layer
 Dashboard tree items, deep-dive webview, and formatting helpers lack tests. `MetricsParser`, `parseRawMetrics`, `parseLabels`, `fmtPct`, `fmtMs` are covered.
 
-### P3 - Session manager coupling
-- Module-level output channel state; `setSessionManagerOutput()` must run first or logs silently drop (fixed: pre-init messages are queued and flushed on init)
-
 ---
 
 ## False Positives (keep AI from re-filing)
