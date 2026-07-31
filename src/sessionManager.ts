@@ -5,18 +5,25 @@ import { DatabaseSync } from 'node:sqlite';
 import * as vscode from 'vscode';
 
 let outputChannel: vscode.OutputChannel | undefined;
-let outputWarned = false;
+/** Buffer for log messages produced before setSessionManagerOutput() is called. */
+const preInitQueue: Array<{ level: string; msg: string }> = [];
 
 export function setSessionManagerOutput(channel: vscode.OutputChannel): void {
   outputChannel = channel;
+  // Flush any messages that accumulated before init
+  for (const entry of preInitQueue) {
+    outputChannel.appendLine(`[sessionManager] [${entry.level}] ${entry.msg}`);
+  }
+  preInitQueue.length = 0;
 }
 
 function log(level: 'INFO' | 'WARN' | 'ERROR', msg: string): void {
-  if (!outputChannel && !outputWarned) {
-    outputWarned = true;
-    console.warn('[sessionManager] outputChannel not set — logs will be suppressed. Call setSessionManagerOutput().');
+  const line = `[sessionManager] [${level}] ${msg}`;
+  if (outputChannel) {
+    outputChannel.appendLine(line);
+  } else {
+    preInitQueue.push({ level, msg });
   }
-  outputChannel?.appendLine(`[sessionManager] [${level}] ${msg}`);
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────

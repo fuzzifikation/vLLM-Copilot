@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { getConfig, buildEndpoint, DEFAULT_MODEL_SETTINGS, type VllmConfig } from './config.js';
-import { fetchWithRetry, type RetryLogger } from './fetchRetry.js';
+import { fetchWithRetry } from './fetchRetry.js';
 import { readSseStream } from './streamReader.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
@@ -53,21 +53,11 @@ export class VllmClient {
     this.cachedConfigPromise = null;
   }
 
-  /**
-   * Shared retry logger — surfaces fetch retry warnings/successes to both the
-   * Output channel and the file log. Used by every fetchWithRetry call so retry
-   * visibility is consistent across getModelContextWindow and chatCompletionStream.
-   */
-  private get retryLogger(): RetryLogger {
+  /** Shared retry callbacks used by getModelContextWindow and chatCompletionStream. */
+  private get retryCallbacks(): { onRetry: (error: string) => void; onRetrySuccess: (status: number) => void } {
     return {
-      onRetry: (error) => {
-        const warnMsg = `[WARN] ${error}, retrying in 1500ms…`;
-        this.output.appendLine(warnMsg);
-      },
-      onRetrySuccess: (status) => {
-        const successMsg = `[INFO] Retry succeeded — received HTTP ${status}`;
-        this.output.appendLine(successMsg);
-      },
+      onRetry: (error) => this.output.appendLine(`[WARN] ${error}, retrying in 1500ms…`),
+      onRetrySuccess: (status) => this.output.appendLine(`[INFO] Retry succeeded — received HTTP ${status}`),
     };
   }
 
@@ -90,7 +80,7 @@ export class VllmClient {
 
       const response = await fetchWithRetry(url, {
         method: 'GET',
-      }, requestHeaders, this.retryLogger);
+      }, requestHeaders, this.retryCallbacks.onRetry, this.retryCallbacks.onRetrySuccess);
 
       const data: any = await response.json();
       this.fileLogger?.logResponse(response.status, url, this.getResponseHeaders(response), data);
@@ -181,7 +171,8 @@ export class VllmClient {
           signal: controller.signal,
         },
         serverConfig?.requestHeaders ?? {},
-        this.retryLogger
+        this.retryCallbacks.onRetry,
+        this.retryCallbacks.onRetrySuccess
       );
 
       // Now start the pre-fetch timer — fetch succeeded, so if the server doesn't

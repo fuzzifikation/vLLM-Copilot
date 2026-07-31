@@ -53,18 +53,6 @@ function normalizeHeaders(headers: RequestInit['headers']): Record<string, strin
 }
 
 /**
- * Optional callback invoked on retry attempts and retry success.
- * Stable infrastructure stays logging-free; the caller decides where messages go
- * (Output channel, file logger, DevTools, or nowhere).
- */
-export interface RetryLogger {
-  /** Called before a retry attempt. */
-  onRetry?(error: string): void;
-  /** Called after a retry attempt succeeds. */
-  onRetrySuccess?(status: number): void;
-}
-
-/**
  * Fetch with retry on transient failures.
  *
  * @param url - Request URL
@@ -72,13 +60,15 @@ export interface RetryLogger {
  * @param requestHeaders - The target model server's isolated request headers
  *   (auth, routing). Each model targets its own server, so these headers are used
  *   as-is — there is no global auth layer to merge or leak across servers.
- * @param retryLogger - Optional callback for retry events.
+ * @param onRetry - Called before a retry attempt, with the error that triggered it.
+ * @param onRetrySuccess - Called after a retry attempt succeeds, with the HTTP status.
  */
 export async function fetchWithRetry(
   url: string,
   init: RequestInit,
   requestHeaders: Record<string, string>,
-  retryLogger?: RetryLogger
+  onRetry?: (error: string) => void,
+  onRetrySuccess?: (status: number) => void
 ): Promise<Response> {
   const headers = buildRequestHeaders(normalizeHeaders(init.headers), requestHeaders);
   const callerSignal = init.signal as AbortSignal | undefined;
@@ -92,7 +82,7 @@ export async function fetchWithRetry(
   let lastError: string | undefined;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
-      retryLogger?.onRetry?.(lastError!);
+      onRetry?.(lastError!);
       await sleep(1500);
     }
 
@@ -136,7 +126,7 @@ export async function fetchWithRetry(
 
     // Log retry success if applicable
     if (attempt > 0) {
-      retryLogger?.onRetrySuccess?.(response.status);
+      onRetrySuccess?.(response.status);
     }
 
     return response;
