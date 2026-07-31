@@ -192,3 +192,37 @@ Not yet implemented. The current design (workspace-scoped `.vllm/`) was chosen a
 - **Integrate with Deep-Dive?** Or standalone webview? Could complement the metrics view.
 
 **Effort:** Medium-high. Requires new webview, stream capture changes, and storage in `lastRequestStore`. But the moat value is significant — BYOK literally cannot do this.
+
+---
+
+## 🛡️ Cache `/v1/models` Responses in Server Settings Webview
+
+**Category:** Painkiller (performance)
+**Status:** Not implemented
+
+**What:** `serverSettingsView.ts::refreshWebview()` fetches `/v1/models` from ALL configured servers on every webview refresh: initial load, config change (`onDidChangeConfiguration`), and after every model save (`saveModelConfig`). The model list is static until the vLLM server restarts — re-fetching it on every interaction is wasteful.
+
+**Suggestion:** Cache the model list per server URL in a `Map<string, string[]>` with lazy invalidation. Re-fetch only when:
+- The webview first loads
+- The user explicitly triggers a refresh
+- A fetch fails (server might have restarted)
+- Settings change (new server added, URL changed)
+
+Since the model list is small (typically < 20 entries) and the server is local/close, the actual cost is negligible for one user. But repeated fetches on every save/config change accumulate — especially with multiple servers.
+
+---
+
+## 🛡️ Centralized Engine Header Update Path
+
+**Category:** Painkiller (correctness)
+**Status:** Not implemented
+
+**What:** When `registerUpdateServerAuthCommand` changes auth headers, it updates settings and calls `provider.clearCache()` but does NOT propagate the new headers to `ServerMetricsEngine` instances. The dashboard's `refreshSubscriptions()` does this on re-subscribe (via `getMetricsEngine` which calls `setHeaders`), but only when the dashboard is visible.
+
+If only the deep-dive is open (dashboard hidden) when auth is updated, the engine's subscription continues using old headers until the dashboard is shown and re-subscribes.
+
+**Suggestion:** Either:
+1. Have `updateServerAuthCommand` call `updateEngineHeaders()` to push new headers to any existing engine, or
+2. Have the `onDidChangeConfiguration` handler in the dashboard also update engine headers even when not visible
+
+The fix is small (< 10 lines) and eliminates a correctness gap.
