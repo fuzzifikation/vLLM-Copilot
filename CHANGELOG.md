@@ -18,7 +18,12 @@
 - **Fixed: `buildModelInfo()` inline type redeclaration** — changed `override` parameter from inline type duplicating `ModelConfig` to `Partial<ModelConfig>` so new fields propagate automatically. Same fix applied to `buildConfigurationSchema()` (`Pick<ModelConfig, 'modelModes' | 'defaultMode'>`).
 - **Fixed: session manager logs silently dropped before init** — replaced `outputWarned` flag with pre-init message queue that flushes to the output channel once `setSessionManagerOutput()` is called.
 - **Metrics polling now reuses shared helpers** — `fetchAllEndpoints()` uses `buildEndpoint()` (from `config.ts`) and `buildRequestHeaders()` (from `fetchRetry.ts`) instead of inline URL/header construction, removing the last duplication between the chat and metrics HTTP paths.
-- Updated `known-bugs.md`: removed seven fixed entries (dashboard cache bypass, RetryLogger, clearLogFiles, buildModelInfo redeclaration, async/sync DatabaseSync, cache poisoning, session manager silent drop). Updated large modules to reference function names instead of line counts.
+- **Fixed: metrics engine stalls on fetch error** — `tick()` wrapped in `try/catch/finally` so polling continues on transient failures instead of stopping permanently.
+- **Fixed: engine `dispose()` left zombie in registry** — `dispose()` now removes the engine from the registry on cleanup.
+- **Fixed: engine auth headers not propagated on re-use** — `getMetricsEngine()` calls `engine.setHeaders()` when returning an existing engine, so dashboard re-subscribes pick up changed auth.
+- **Fixed: deep-dive stale auth headers on header-only update** — `registerUpdateServerAuthCommand()` now pushes new headers to the metrics engine via `getMetricsEngine(serverUrl)?.setHeaders()`, so an open deep-dive panel uses fresh auth immediately.
+- **Shared model matching helper** — added `findModelConfigIndex()` to `config.ts` using `normalizeServerUrl` + `resolveVllmModelId`. Both `autoConfig.ts` and `serverSettingsView.ts` now call the same function for model identity matching, eliminating the URL-normalization divergence between the two `saveModelConfig` implementations.
+- Updated `known-bugs.md`: removed nine fixed entries (dashboard cache bypass, RetryLogger, clearLogFiles, buildModelInfo redeclaration, async/sync DatabaseSync, cache poisoning, session manager silent drop, stale deep-dive auth headers, duplicate saveModelConfig matching). Updated large modules to reference function names instead of line counts.
 
 ## v1.19.96 — Removed `id` from bundled model presets
 
