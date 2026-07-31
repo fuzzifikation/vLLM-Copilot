@@ -304,8 +304,8 @@ export class ServerMetricsEngine {
     return { dispose: () => this.unsubscribe(callback) };
   }
 
-  /** Update the request headers (e.g. after auth change). */
-  updateRequestHeaders(headers: Record<string, string>): void {
+  /** Update request headers in-place (called by getMetricsEngine on re-use). */
+  setHeaders(headers: Record<string, string>): void {
     this.requestHeaders = { ...headers };
   }
 
@@ -314,6 +314,10 @@ export class ServerMetricsEngine {
     this.subscriberCount = 0;
     this.callbacks = [];
     this.stopPolling();
+    // Prevent registry from returning this disposed zombie
+    if (engineRegistry.get(this.serverUrl) === this) {
+      engineRegistry.delete(this.serverUrl);
+    }
   }
 
   private unsubscribe(callback: (aggregated: ServerMetrics, raw: ServerRawData) => void): void {
@@ -330,20 +334,26 @@ export class ServerMetricsEngine {
   private async tick(): Promise<void> {
     if (this._disposed) return;
 
-    const { aggregated, raw } = await fetchAllEndpoints(this.serverUrl, this.requestHeaders);
+    try {
+      const { aggregated, raw } = await fetchAllEndpoints(this.serverUrl, this.requestHeaders);
 
-    if (this._disposed) return;
-    this._lastAggregated = aggregated;
-    this._lastRaw = raw;
+      if (this._disposed) return;
+      this._lastAggregated = aggregated;
+      this._lastRaw = raw;
 
-    // Notify all subscribers
-    for (const cb of this.callbacks) {
-      try { cb(aggregated, raw); } catch { /* subscriber error — best-effort */ }
-    }
-
-    // Schedule next cycle
-    if (!this._disposed && this.subscriberCount > 0) {
-      this.pollTimer = setTimeout(() => this.tick(), getPollSettingMs());
+      // Notify all subscribers
+      for (const cb of this.callbacks) {
+        try { cb(aggregated, raw); } catch { /* subscriber error — best-effort */ }
+      }
+    } catch (err) {
+      // fetchAllEndpoints is error-proof via safeFetch, so this only fires on
+      // programming errors (OOM, JSON bomb, etc.). Log and schedule retry.
+      console.error('[vllm-copilot] metrics engine tick failed:', err);
+    } finally {
+      // Always schedule next cycle — even on error we retry
+      if (!this._disposed && this.subscriberCount > 0) {
+        this.pollTimer = setTimeout(() => this.tick(), getPollSettingMs());
+      }
     }
   }
 
@@ -372,7 +382,11 @@ const engineRegistry = new Map<string, ServerMetricsEngine>();
 /**
  * Get or create a {@link ServerMetricsEngine} for the given server.
  * Engines are shared across the dashboard and deep-dive views via this registry.
- * The engine is disposed when the last subscriber unsubscribes.
+ * The engine is disposed-rece when the last subscriber unsubscribes.
+ *
+ * When an engine already exists for the given URL, its request headers are
+ * updated with the provided values (so auth changes propagate without needing
+ * to unsubscribe/resubscribe).
  *
  * @param serverUrl - The vLLM server URL
  * @param requestHeaders - Auth/routing headers for this server
@@ -385,19 +399,11 @@ export function getMetricsEngine(
   if (!engine) {
     engine = new ServerMetricsEngine(serverUrl, requestHeaders ?? {});
     engineRegistry.set(serverUrl, engine);
+  } else if (requestHeaders && Object.keys(requestHeaders).length > 0) {
+    // Update headers on re-use so auth changes propagate
+    engine.setHeaders(requestHeaders);
   }
   return engine;
-}
-
-/**
- * Update request headers for an existing engine (e.g. after auth change).
- * No-op if no engine exists for this server.
- */
-export function updateEngineHeaders(serverUrl: string, headers: Record<string, string>): void {
-  const engine = engineRegistry.get(serverUrl);
-  if (engine) {
-    engine.updateRequestHeaders(headers);
-  }
 }
 
 // ─── Unified Fetch ──────────────────────────────────────────────────
