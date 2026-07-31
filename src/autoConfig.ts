@@ -749,6 +749,114 @@ function tryRepair(text: string): string | undefined {
 }
 
 /**
+ * Prompt user for server auth credentials (API key + custom headers) via two
+ * sequential input boxes. Handles cancellation, validation, and combines both
+ * into a single headers object. Returns `undefined` if the user cancelled at
+ * either step.
+ */
+export async function promptForServerAuth(options: {
+  apiKeyTitle: string;
+  apiKeyPrompt: string;
+  apiKeyPlaceholder: string;
+  headersTitle: string;
+  headersPrompt: string;
+  headersPlaceholder: string;
+}): Promise<Record<string, string> | undefined> {
+  // API key (optional). Folded into headers as Authorization: Bearer.
+  const apiKeyInput = await vscode.window.showInputBox({
+    title: options.apiKeyTitle,
+    prompt: options.apiKeyPrompt,
+    placeHolder: options.apiKeyPlaceholder,
+    ignoreFocusOut: true,
+    password: true,
+  });
+  if (apiKeyInput === undefined) return undefined; // cancelled
+  const apiKey = apiKeyInput.trim();
+
+  // Custom headers (optional). Accepts JSON or forgiving shorthand.
+  // Merged on top of the key-derived auth headers, so a custom header wins.
+  const headersInput = await vscode.window.showInputBox({
+    title: options.headersTitle,
+    prompt: options.headersPrompt,
+    placeHolder: options.headersPlaceholder,
+    ignoreFocusOut: true,
+    validateInput: (v) => {
+      const r = parseHeadersInput(v);
+      return 'error' in r ? r.error : undefined;
+    },
+  });
+  if (headersInput === undefined) return undefined; // cancelled
+  const parsedHeaders = parseHeadersInput(headersInput);
+  if ('error' in parsedHeaders) {
+    vscode.window.showErrorMessage(parsedHeaders.error);
+    return undefined;
+  }
+
+  // Combine: API-key-derived auth first, then custom headers (custom wins).
+  return { ...buildAuthHeaders(apiKey), ...parsedHeaders.headers };
+}
+
+/**
+ * Prompt user what to do when a server cannot be contacted during Add Server.
+ * Presents three options: Discard, Run Diagnostic, or Keep Anyway.
+ * Always stops the wizard — the caller should `return` after calling this.
+ */
+async function handleServerFailure(
+  serverUrl: string,
+  requestHeaders: Record<string, string>,
+  detail: string,
+  output: vscode.OutputChannel,
+  onSaved: () => void,
+): Promise<boolean> {
+  const action = await vscode.window.showWarningMessage(
+    `Cannot connect to ${serverUrl}: ${detail}`,
+    { modal: true },
+    'Discard',
+    'Run Diagnostic',
+    'Keep Anyway',
+  );
+
+  // Discard or dismissed → stop
+  if (action === 'Discard' || action === undefined) return true;
+
+  // Run Diagnostic — uses in-memory values, no settings write needed
+  if (action === 'Run Diagnostic') {
+    const { runDiagnostics, formatReport } = await import('./diagnostics.js');
+    const report = await runDiagnostics(buildEndpoint(serverUrl, 'v1/models'), requestHeaders);
+    output.show(true);
+    output.appendLine(formatReport(report));
+    output.appendLine('');
+    output.appendLine('Copy this report (right-click → Copy) and share it when reporting issues.');
+    return true;
+  }
+
+  // Keep Anyway — save a minimal stub so the user can fix it later
+  const modelId = await vscode.window.showInputBox({
+    title: 'Keep Anyway — Model ID',
+    prompt: 'Enter a model identifier for this server. You can auto-configure or edit it later.',
+    placeHolder: 'e.g. my-model or the model name from the server',
+    ignoreFocusOut: true,
+    validateInput: (v) => (v.trim() ? undefined : 'Model ID is required'),
+  });
+  if (!modelId) return true; // cancelled → stop
+
+  const finalConfig: ModelConfig = {
+    id: buildModelId(serverUrl, modelId),
+    vllmModelId: modelId,
+    serverUrl,
+    ...(Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {}),
+  };
+
+  await saveModelConfig(finalConfig);
+  onSaved();
+  output.appendLine(`[INFO] Saved stub config for "${modelId}" on ${serverUrl} — server was unreachable.`);
+  vscode.window.showInformationMessage(
+    `Stub saved for "${modelId}" on ${serverUrl}. Right-click → Auto-Configure when the server is reachable.`
+  );
+  return true;
+}
+
+/**
  * Guided command: add a vLLM server (URL + optional headers), discover its models,
  * auto-configure the chosen one, and save it as a per-model entry. This is the
  * end-to-end flow for onboarding a second server without hand-editing settings.json.
@@ -791,37 +899,16 @@ export function registerAddServerModelCommand(
       if (pick !== 'Add Different Model') return; // cancelled
     }
 
-    // 2. API key (optional). Folded into headers as Authorization: Bearer.
-    const apiKeyInput = await vscode.window.showInputBox({
-      title: 'Add vLLM Server & Model (2/4)',
-      prompt: 'API key for this server (optional). Sent as "Authorization: Bearer <key>". For other schemes (e.g. x-api-key), use custom headers next.',
-      placeHolder: 'Leave empty if the server needs no key, or use custom headers next.',
-      ignoreFocusOut: true,
-      password: true,
+    // 2. API key + custom headers (optional). Cancellation aborts the flow.
+    const requestHeaders = await promptForServerAuth({
+      apiKeyTitle: 'Add vLLM Server & Model (2/4)',
+      apiKeyPrompt: '(optional) vLLM API key. Sent as "Authorization: Bearer <key>". Leave empty if not present.',
+      apiKeyPlaceholder: 'abc123... or leave empty',
+      headersTitle: 'Add vLLM Server & Model (3/4)',
+      headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty for none.',
+      headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
     });
-    if (apiKeyInput === undefined) return; // cancelled
-    const apiKey = apiKeyInput.trim();
-
-    // 3. Custom headers (optional). Accepts JSON or forgiving shorthand.
-    //    Merged on top of the key-derived auth headers, so a custom header wins.
-    const headersInput = await vscode.window.showInputBox({
-      title: 'Add vLLM Server & Model (3/4)',
-      prompt: 'Additional request headers for this server. JSON or "Name: value" — leave empty for none.',
-      placeHolder: '{"CF-Access-Client-Id": "..."}  or  X-Tenant: abc123',
-      ignoreFocusOut: true,
-      validateInput: (v) => {
-        const r = parseHeadersInput(v);
-        return 'error' in r ? r.error : undefined;
-      },
-    });
-    if (headersInput === undefined) return; // cancelled
-    const parsedHeaders = parseHeadersInput(headersInput);
-    if ('error' in parsedHeaders) {
-      vscode.window.showErrorMessage(parsedHeaders.error);
-      return;
-    }
-    // Combine: API-key-derived auth first, then custom headers (custom wins).
-    const requestHeaders = { ...buildAuthHeaders(apiKey), ...parsedHeaders.headers };
+    if (requestHeaders === undefined) return;
     const hasHeaders = Object.keys(requestHeaders).length > 0;
 
     // 4. Discover models on that server, using its headers
@@ -830,35 +917,17 @@ export function registerAddServerModelCommand(
       const url = buildEndpoint(serverUrl, 'v1/models');
       const resp = await fetchWithTimeout(url, { timeoutMs: 10000, requestHeaders });
       if (!resp.ok) {
-        vscode.window.showErrorMessage(
-          resp.status === 401 || resp.status === 403
-            ? `Authentication failed (status ${resp.status}). Check the API key or request headers for ${serverUrl}.`
-            : `Cannot reach ${serverUrl} (status ${resp.status}).`
-        );
+        const detail = resp.status === 401 || resp.status === 403
+          ? `Authentication failed (status ${resp.status})`
+          : `Server returned status ${resp.status}`;
+        await handleServerFailure(serverUrl, requestHeaders, detail, output, () => provider.clearCache());
         return;
       }
       const data: any = await resp.json();
       models = data.data || [];
     } catch (err) {
       output.appendLine(`[ERROR] Add server: cannot connect to ${serverUrl}: ${describeError(err)}`);
-      // Offer a deep diagnostic using the in-memory values the user just typed
-      // (not from settings.json — the server isn't saved yet). This tests the
-      // exact request that failed: same URL, same headers.
-      const runDiag = await vscode.window.showWarningMessage(
-        `Cannot connect to ${serverUrl}: ${describeError(err)}`,
-        'Run Diagnostic',
-        'Cancel'
-      );
-      if (runDiag === 'Run Diagnostic') {
-        const { runDiagnostics, formatReport } = await import('./diagnostics.js');
-        const report = await runDiagnostics(buildEndpoint(serverUrl, 'v1/models'), requestHeaders);
-        output.show(true);
-        output.appendLine(formatReport(report));
-        output.appendLine('');
-        output.appendLine(
-          'Copy this report (right-click → Copy) and share it when reporting issues.'
-        );
-      }
+      await handleServerFailure(serverUrl, requestHeaders, describeError(err), output, () => provider.clearCache());
       return;
     }
 

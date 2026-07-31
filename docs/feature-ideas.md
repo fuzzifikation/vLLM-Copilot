@@ -167,7 +167,7 @@ Not yet implemented. The current design (workspace-scoped `.vllm/`) was chosen a
 
 **What vLLM returns (reasoning tokens):**
 - ✅ Reasoning CONTENT tokens get logprobs
-- ❌ Hidden reasoning delimiters (`<think>`, `</think>`) have logprobs suppressed
+- ❌ Hidden reasoning delimiters (`ground`, `ground`) have logprobs suppressed
 - Content tokens get logprobs as usual
 
 **Why a webview (not chat window):**
