@@ -8,6 +8,14 @@
 - **Consolidated `streamReader.ts` drain loop** — replaced 3 near-identical `eventQueue` drain sites with a single `drainAndCheck()` helper generator. `STOP_ITERATION` sentinel cleanly separates "break" from real errors.
 - **Corrected `streamReader.ts` abort signal comment** — the old comment claimed the abort signal was "inert" after streaming started, which is wrong. Updated to explain `reader.cancel()` is the preferred path for clean teardown.
 - **Fixed: `buildAuthHeaders()` JSDoc didn't document its limited scope** — now clearly marked as "write/migration paths only" (Add Server, Update Auth). Runtime never uses it.
+- **Refactored auth input** — extracted `promptForServerAuth()` shared helper (`autoConfig.ts`) for API key + custom headers input. Used by both Add Server and Update Auth. Single source of truth for the two-step input, validation, and combination.
+- **Eliminated duplicate import** in `commands.ts` — removed `buildAuthHeaders` and `parseHeadersInput` imports (both now accessed via `promptForServerAuth`). `buildAuthHeaders` is only used internally in `autoConfig.ts`.
+- **Added three-way failure dialog** — `handleServerFailure()` in `autoConfig.ts` replaces the old Cancel-only exit when Add Server cannot reach the server. Users now choose:
+  - **Discard** — abandon, try again later
+  - **Run Diagnostic** — runs `runDiagnostics` with the exact in-memory URL + headers (no settings write needed)
+  - **Keep Anyway** — saves a minimal stub (`{ id, vllmModelId, serverUrl, requestHeaders }`) so the user can auto-configure or edit later
+- **New model preset** — `Qwen/Qwen3.6-35B-A3B` with Think (General), Think (Coding), and No Think modes.
+- **Updated `model-configs/README.md`** — added Qwen3.6-35B-A3B to the preset table.
 - **Fixed: `promptReplacer.ts` parsed each personality file twice** — both `loadPersonalityMeta()` and `loadPromptReplacements()` independently read+parsed the same file. Extracted shared `readPersonalityFile()` with a module-level `Map` cache so discovery and application share the same I/O+parse. Exported `clearPersonalityCache()` for the Set Personality command to use when it copies a new file.
 - **Fixed: cache poisoning on personality rewrite** — `registerSetModelPersonalityCommand()` now imports and calls `clearPersonalityCache()` after copying a new preset file, so the next request loads fresh rules instead of stale cached ones.
 - **Removed `src/migration.ts` (237 lines), `test/migration.test.ts` (56 lines), and their registration in `extension.ts`.** The repo's initial commit (2e6f710) was a clean public release imported from a private repo — no user of this public release has ever had legacy global settings. Eliminates two globalState flags, a latent write-shadowing bug, and 293 lines of cargo-culted dead code.
