@@ -24,7 +24,7 @@ import {
   SessionPickedItem,
   WorkspaceEntry,
 } from './sessionManager.js';
-import { loadPersonalityMeta } from './promptReplacer.js';
+import { loadPersonalityMeta, clearPersonalityCache } from './promptReplacer.js';
 
 /**
  * Discover personality preset files in prompt-replacements/ directory.
@@ -626,6 +626,8 @@ export function registerSetModelPersonalityCommand(
           const content = await fs.readFile(sourcePath, 'utf-8');
           await fs.writeFile(targetPath, content, 'utf-8');
         }
+        // Cache still holds the old parsed content — force re-read on next load.
+        clearPersonalityCache();
       } catch (err) {
         vscode.window.showErrorMessage(
           `Failed to copy preset file: ${describeError(err)}`

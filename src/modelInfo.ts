@@ -7,6 +7,7 @@
 import * as vscode from 'vscode';
 import { extractFamilyWithSource } from './modelUtils.js';
 import { deriveTokenBudget } from './tokenBudget.js';
+import type { ModelConfig } from './config.js';
 
 /**
  * Build the `configurationSchema` for a model's picker settings.
@@ -16,10 +17,7 @@ import { deriveTokenBudget } from './tokenBudget.js';
  * @param override - Per-model override from `vllm-copilot.models` settings
  */
 export function buildConfigurationSchema(
-  override: {
-    modelModes?: Record<string, Record<string, unknown>>;
-    defaultMode?: string;
-  } | undefined
+  override: Pick<ModelConfig, 'modelModes' | 'defaultMode'> | undefined
 ): { properties: Record<string, unknown> } | undefined {
   if (override?.modelModes && Object.keys(override.modelModes).length > 0) {
     const modes = Object.keys(override.modelModes);
@@ -49,17 +47,7 @@ export function buildConfigurationSchema(
  */
 export function buildModelInfo(
   serverModel: { id: string; max_model_len?: number },
-  override: {
-    id?: string;
-    vllmModelId?: string;
-    displayName?: string;
-    family?: string;
-    maxInputTokens?: number;
-    maxOutputTokens?: number;
-    capabilities?: { toolCalling?: boolean; imageInput?: boolean };
-    modelModes?: Record<string, Record<string, unknown>>;
-    defaultMode?: string;
-  } | undefined,
+  override: Partial<ModelConfig> | undefined,
   config: { maxOutputTokens: number },
   /**
    * Invoked once with `(family, modelId)` when no preset/HuggingFace family was
