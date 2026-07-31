@@ -226,3 +226,79 @@ If only the deep-dive is open (dashboard hidden) when auth is updated, the engin
 2. Have the `onDidChangeConfiguration` handler in the dashboard also update engine headers even when not visible
 
 The fix is small (< 10 lines) and eliminates a correctness gap.
+
+---
+
+## 🛡️ Token & Credit Usage Tracker
+
+**Category:** Painkiller (transparency)
+**Status:** Not implemented
+
+**What:** A persistent counter showing cumulative token consumption (input, output, cached, reasoning) and estimated AI credits used by the local vLLM model — per session, per day, or total. Displayed somewhere accessible: the dashboard, a status bar item, or a hover tooltip.
+
+**Why it matters:**
+- Users with limited compute budgets (cloud vLLM instances, API proxies) need to track how much they've consumed
+- Unlike GitHub Copilot's own credit tracker (which only counts Copilot API calls), this tracks tokens flowing through the local vLLM server — both chat and tool-call usage
+- Helps identify expensive sessions or unexpectedly high token consumption
+- Gives a sense of "how much work did this model do today"
+
+**What we already have:**
+- `usageReporting.ts` already reports per-request token counts to VS Code via `LanguageModelDataPart` with MIME type `'usage'`
+- `lastRequestStore.ts` stores the last request's token counts per server
+- `WireUsage` in `types.ts` already carries `prompt_tokens`, `completion_tokens`, `total_tokens`, cached tokens, and reasoning tokens
+
+**What's missing:**
+- An accumulator that sums token usage across multiple requests (not just the last one)
+- A persistence layer (extension local storage or globalState) so counts survive window reloads
+- A UI element to display the running totals
+
+**Suggestion:**
+1. Create a `TokenAccumulator` in a new `src/tokenTracker.ts` that reads the last request from `setLastRequest` and increments running totals stored in `context.globalState`
+2. Accumulate per model ID (or per server URL) so users with multiple models can see individual usage
+3. Store counters with timestamps for daily/weekly/monthly breakdowns
+4. Display in the Dashboard as a collapsible "Token Usage" node under each server, showing:
+   - Total tokens consumed today (input + output)
+   - Total tokens this session
+   - Estimated credits (if a conversion rate is configured — e.g. 1 credit = 1000 tokens)
+   - Percentage of any configured budget
+5. Optionally add a status bar item showing total tokens used today
+
+**What it is NOT:** This is not a replacement for server-side metrics (`/metrics`). The vLLM `/metrics` endpoint already reports cumulative token counts from server start. This tracker is about *client-side* usage that the user can see without looking at the metrics endpoint, and that survives restarts of individual vLLM server instances.
+
+**Effort:** Low-Medium (~1-2h). The data flows already exist; the work is in the accumulator, persistence, and dashboard tree items. No changes to the chat or stream path are needed.
+
+---
+
+## 🛡️ Surface Routed Experts Information
+
+**Category:** Painkiller (MoE transparency)
+**Status:** Not implemented
+
+**What:** vLLM supports `--enable-return-routed-experts` (server flag) and `enable_return_routed_experts` (per-request sampling param). When enabled, vLLM returns which experts were used for each token in the response. This is a **per-request output field** — not a Prometheus metric. Currently the extension ignores it.
+
+**Why it matters:**
+- **MoE load balancing insight:** See which experts are actually being used for your requests — reveals routing skew
+- **Debug unexpected behavior:** If a model is not using certain experts, you can spot it
+- **Purely per-request data:** No server-wide Prometheus metrics exist for expert routing — the only way to get this is from the response body
+
+**What vLLM exposes:**
+- `--enable-return-routed-experts` CLI flag enables per-request expert routing data
+- `routed_experts_prompt_start` sampling param skips N prompt tokens from the returned routing data (multi-turn dedup)
+- Response includes per-token expert assignments alongside generated tokens
+- No Prometheus metrics for expert utilization — only the per-request response path
+
+**Limits:**
+- No server-wide aggregated expert stats in `/metrics`
+- vLLM has `count_expert_num_tokens()` and `RoutedExpertsCapturer.get()` internally, but those are Python APIs, not HTTP endpoints
+- Exposing aggregated stats would need a custom vLLM plugin or new `/metrics` endpoint
+- Only works with MoE (Mixture of Experts) models like Qwen3.6, DeepSeek, Mixtral, etc.
+
+**Implementation sketch:**
+1. **Request level** — parse `routed_experts` from the SSE response in `sseParser.ts` alongside tool calls and usage
+2. **Store** — add routed experts data to `lastRequestStore` alongside token counts and timing
+3. **Display** — show per-token expert assignments in a collapsible section, or add a new "Routed Experts" node under Last Request in the dashboard
+4. **Parameter** — add `enable_return_routed_experts` to `KNOWN_PARAMS` (string: true/false) and document `routed_experts_prompt_start`
+
+**Moat value:** BYOK cannot request routed experts — `modelOptions` is limited to `temperature` and `top_p`. This is pure moat.
+
+**Effort:** Medium. Requires SSE response parsing, new storage fields, and dashboard UI. No server-side changes needed — all data comes from the existing vLLM response.
