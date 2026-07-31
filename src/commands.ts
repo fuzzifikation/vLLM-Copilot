@@ -682,11 +682,11 @@ export function registerUpdateServerAuthCommand(
     // Step 1+2: API key + custom headers
     const combinedHeaders = await promptForServerAuth({
       apiKeyTitle: `Update Auth for ${serverUrl} (1/2)`,
-      apiKeyPrompt: 'API key for this server (optional). Sent as "Authorization: Bearer <key>". Leave empty to clear.',
-      apiKeyPlaceholder: 'Leave empty if the server needs no key.',
+      apiKeyPrompt: '(optional) vLLM API key. Sent as "Authorization: Bearer <key>". Leave empty to clear.',
+      apiKeyPlaceholder: 'abc123... or leave empty to clear',
       headersTitle: `Update Auth for ${serverUrl} (2/2)`,
-      headersPrompt: 'Additional request headers. JSON or "Name: value" — leave empty to clear.',
-      headersPlaceholder: '{"CF-Access-Client-Id": "..."}  or  X-Tenant: abc123',
+      headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty to clear.',
+      headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
     });
     if (combinedHeaders === undefined) return; // cancelled
     const finalHeaders = Object.keys(combinedHeaders).length > 0 ? combinedHeaders : undefined;
