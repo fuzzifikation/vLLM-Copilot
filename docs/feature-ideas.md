@@ -167,7 +167,7 @@ Not yet implemented. The current design (workspace-scoped `.vllm/`) was chosen a
 
 **What vLLM returns (reasoning tokens):**
 - ✅ Reasoning CONTENT tokens get logprobs
-- ❌ Hidden reasoning delimiters (`<think>`, `</think>`) have logprobs suppressed
+- ❌ Hidden reasoning delimiters (`ground`, `ground`) have logprobs suppressed
 - Content tokens get logprobs as usual
 
 **Why a webview (not chat window):**
@@ -226,3 +226,39 @@ If only the deep-dive is open (dashboard hidden) when auth is updated, the engin
 2. Have the `onDidChangeConfiguration` handler in the dashboard also update engine headers even when not visible
 
 The fix is small (< 10 lines) and eliminates a correctness gap.
+
+---
+
+## 🛡️ Surface Routed Experts Information
+
+**Category:** Painkiller (MoE transparency)
+**Status:** Not implemented
+
+**What:** vLLM supports `--enable-return-routed-experts` (server flag) and `enable_return_routed_experts` (per-request sampling param). When enabled, vLLM returns which experts were used for each token in the response. This is a **per-request output field** — not a Prometheus metric. Currently the extension ignores it.
+
+**Why it matters:**
+- **MoE load balancing insight:** See which experts are actually being used for your requests — reveals routing skew
+- **Debug unexpected behavior:** If a model is not using certain experts, you can spot it
+- **Purely per-request data:** No server-wide Prometheus metrics exist for expert routing — the only way to get this is from the response body
+
+**What vLLM exposes:**
+- `--enable-return-routed-experts` CLI flag enables per-request expert routing data
+- `routed_experts_prompt_start` sampling param skips N prompt tokens from the returned routing data (multi-turn dedup)
+- Response includes per-token expert assignments alongside generated tokens
+- No Prometheus metrics for expert utilization — only the per-request response path
+
+**Limits:**
+- No server-wide aggregated expert stats in `/metrics`
+- vLLM has `count_expert_num_tokens()` and `RoutedExpertsCapturer.get()` internally, but those are Python APIs, not HTTP endpoints
+- Exposing aggregated stats would need a custom vLLM plugin or new `/metrics` endpoint
+- Only works with MoE (Mixture of Experts) models like Qwen3.6, DeepSeek, Mixtral, etc.
+
+**Implementation sketch:**
+1. **Request level** — parse `routed_experts` from the SSE response in `sseParser.ts` alongside tool calls and usage
+2. **Store** — add routed experts data to `lastRequestStore` alongside token counts and timing
+3. **Display** — show per-token expert assignments in a collapsible section, or add a new "Routed Experts" node under Last Request in the dashboard
+4. **Parameter** — add `enable_return_routed_experts` to `KNOWN_PARAMS` (string: true/false) and document `routed_experts_prompt_start`
+
+**Moat value:** BYOK cannot request routed experts — `modelOptions` is limited to `temperature` and `top_p`. This is pure moat.
+
+**Effort:** Medium. Requires SSE response parsing, new storage fields, and dashboard UI. No server-side changes needed — all data comes from the existing vLLM response.

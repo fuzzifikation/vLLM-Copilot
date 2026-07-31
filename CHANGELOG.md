@@ -14,6 +14,7 @@
   - **Discard** — abandon, try again later
   - **Run Diagnostic** — runs `runDiagnostics` with the exact in-memory URL + headers (no settings write needed)
   - **Keep Anyway** — saves a minimal stub (`{ id, vllmModelId, serverUrl, requestHeaders }`) so the user can auto-configure or edit later
+- **Aligned auth input prompts** — both Add Server and Update Auth now use the same wording for API key and custom headers descriptions. Clarified quotation requirements for custom header input.
 - **New model preset** — `Qwen/Qwen3.6-35B-A3B` with Think (General), Think (Coding), and No Think modes.
 - **Updated `model-configs/README.md`** — added Qwen3.6-35B-A3B to the preset table.
 - **Fixed: `promptReplacer.ts` parsed each personality file twice** — both `loadPersonalityMeta()` and `loadPromptReplacements()` independently read+parsed the same file. Extracted shared `readPersonalityFile()` with a module-level `Map` cache so discovery and application share the same I/O+parse. Exported `clearPersonalityCache()` for the Set Personality command to use when it copies a new file.

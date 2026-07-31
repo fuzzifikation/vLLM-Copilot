@@ -902,11 +902,11 @@ export function registerAddServerModelCommand(
     // 2. API key + custom headers (optional). Cancellation aborts the flow.
     const requestHeaders = await promptForServerAuth({
       apiKeyTitle: 'Add vLLM Server & Model (2/4)',
-      apiKeyPrompt: 'API key for this server (optional). Sent as "Authorization: Bearer <key>". For other schemes (e.g. x-api-key), use custom headers next.',
-      apiKeyPlaceholder: 'Leave empty if the server needs no key, or use custom headers next.',
+      apiKeyPrompt: '(optional) vLLM API key. Sent as "Authorization: Bearer <key>". Leave empty if not present.',
+      apiKeyPlaceholder: 'abc123... or leave empty',
       headersTitle: 'Add vLLM Server & Model (3/4)',
-      headersPrompt: 'Additional request headers for this server. JSON or "Name: value" — leave empty for none.',
-      headersPlaceholder: '{"CF-Access-Client-Id": "..."}  or  X-Tenant: abc123',
+      headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty for none.',
+      headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
     });
     if (requestHeaders === undefined) return;
     const hasHeaders = Object.keys(requestHeaders).length > 0;
