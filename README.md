@@ -178,8 +178,8 @@ Access via **View → vLLM-Copilot → Dashboard** or the sidebar section header
 A sibling webview to the dashboard lets you edit per-model configuration without touching `settings.json`.
 
 - **Server & model selectors** — pick a server and model from dropdowns; unconfigured models can be selected and saved instantly
-- **Auto-Configure button** — re-runs preset/HuggingFace discovery for the selected model, updating modelModes, capabilities, token budgets, and defaults
-- **Remove Server button** — deletes all model entries for the selected server from settings (with a confirm dialog)
+- **Auto-Configure button** — re-runs preset/HuggingFace discovery for the selected model, updating modelModes, capabilities, token budgets, and defaults. Works on unconfigured models too: it borrows the server's auth from a sibling model and creates a full new settings entry
+- **Remove Model button** — deletes only the selected model's settings entry (with a confirm dialog); never touches other models on the same server
 - **Sectioned layout (general → specific):** General, Token Budget, Capabilities, Request Params (baseline), Transport, Model Modes (overrides), System Prompt
 - **Parameter picker** — "Add Parameter" offers a dropdown of known params (temperature, top_p, top_k, min_p, seed, reasoning_effort, parallel_tool_calls, skip_special_tokens, etc.) with friendly labels and type hints
 - **Enum dropdowns** — `reasoning_effort` renders as a dropdown (none, minimal, low, medium, high, xhigh, max); boolean params show as true/false dropdowns
@@ -262,7 +262,8 @@ a fresh start. Access via `Ctrl+Shift+P` → **Clean Copilot Sessions** (under U
 | **Configure Utility Model** | Switch utility model for MCP servers (`mainAgent` / `copilot` / `none`) |
 | **Update Auth** | Rotate API key or change auth headers for a server (right-click on server node) |
 | **vLLM Deep-Dive** | Open per-server webview with full metrics and histograms (right-click on server node) |
-| **Remove Server** | Remove a configured server and all its models (button in Server Settings webview) |
+| **Remove Model** | Remove a single configured model (button in Server Settings webview) |
+| **Remove Server** | Remove a configured server and all its models (command palette, with confirm) |
 | **Open Log File** | Open today's debug log |
 | **Clear Log Files** | Delete all debug logs (except the active one) |
 

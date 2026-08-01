@@ -90,7 +90,7 @@
     // Action buttons row
     h += '<div class="action-btn-row">';
     h += '<button id="autoConfigureBtn" class="secondary">Auto-Configure</button>';
-    h += '<button id="removeServerBtn" class="secondary" style="color:var(--vscode-errorForeground)">Remove Server</button>';
+    h += '<button id="removeModelBtn" class="secondary" style="color:var(--vscode-errorForeground)">Remove Model</button>';
     h += '</div>';
 
     if (S.mc) {
@@ -130,10 +130,10 @@
     if (personalityButton) personalityButton.onclick = () => vscode.postMessage({ type: 'setPersonality', serverUrl: S.selServer, vllmModelId: S.selModel });
     const autoCfgBtn = document.getElementById('autoConfigureBtn');
     if (autoCfgBtn) autoCfgBtn.onclick = () => vscode.postMessage({ type: 'autoConfigure', serverUrl: S.selServer, vllmModelId: S.selModel });
-    const rmBtn = document.getElementById('removeServerBtn');
+    const rmBtn = document.getElementById('removeModelBtn');
     if (rmBtn) rmBtn.onclick = async () => {
-      if (await webviewConfirm('Remove ALL models from ' + S.selServer + '?')) {
-        vscode.postMessage({ type: 'removeServer', serverUrl: S.selServer });
+      if (await webviewConfirm('Remove model "' + S.selModel + '" from ' + S.selServer + '?')) {
+        vscode.postMessage({ type: 'removeModel', serverUrl: S.selServer, vllmModelId: S.selModel });
       }
     };
   }

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.20.2 — Server Settings UX fixes
+
+- **Fixed: Auto-Configure now works on unconfigured models** — Server Settings lists server-reported models even when they have no settings entry, but clicking **Auto-Configure** on one failed with "No config found". It now borrows the server's auth headers from a sibling configured model and runs the full add flow (preset/HuggingFace discovery), producing a complete new `vllm-copilot.models` entry.
+- **Fixed: "Remove Server" button removed ALL models on a server** — renamed to **Remove Model**: it now deletes only the selected model's settings entry, never its siblings on the same server.
+- **New command** — `vllm-copilot.removeModel` (title "Remove Model"), registered in package.json and wired into the Server Settings webview. `vllm-copilot.removeServer` remains available from the command palette for an explicit, confirmed server-wide removal.
+
 ## v1.20.1 — DeepSeek-V4-Flash-0731 model config
 
 - **New model preset** — `DeepSeek-V4-Flash-0731`: dedicated config for the official 0731 release with model-card-recommended sampling parameters (`temperature=1.0`, `top_p=0.95`). Think modes only send `reasoning_effort` (vLLM auto-injects `enable_thinking`); No Think sends all params directly. Updated documentation with links to DeepSeek API thinking mode docs, vLLM reasoning parser behavior, and HuggingFace model card recommendations.
