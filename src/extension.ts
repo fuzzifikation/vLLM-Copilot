@@ -13,6 +13,7 @@ import {
   registerSetModelPersonalityCommand,
   registerUpdateServerAuthCommand,
   registerRemoveServerCommand,
+  registerRemoveModelCommand,
 } from './commands.js';
 import { setExtensionVersion } from './diagnostics.js';
 import { DashboardTreeProvider } from './dashboard.js';
@@ -143,6 +144,7 @@ export async function activate(context: vscode.ExtensionContext) {
       registerSetModelPersonalityCommand(context, activeProvider, outputChannel),
       registerUpdateServerAuthCommand(context, activeProvider, outputChannel),
       registerRemoveServerCommand(context, activeProvider, outputChannel),
+      registerRemoveModelCommand(context, activeProvider, outputChannel),
     );
 
     // Deep-Dive: open editor-area webview for a single server

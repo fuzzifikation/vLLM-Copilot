@@ -1054,16 +1054,45 @@ export function registerAutoConfigureModelCommand(
     const argModelId = arg?.vllmModelId;
 
     if (argServerUrl && argModelId) {
-      // Called with explicit server+model (e.g. from Server Settings webview)
+      const argServerNorm = normalizeServerUrl(argServerUrl);
+      // Called with explicit server+model (e.g. from Server Settings webview).
       modelConfig = existing.find(
         m => (resolveVllmModelId(m) === argModelId) && m.serverUrl &&
-             normalizeServerUrl(m.serverUrl) === normalizeServerUrl(argServerUrl)
+             normalizeServerUrl(m.serverUrl) === argServerNorm
       );
+      vllmId = argModelId;
+
       if (!modelConfig) {
-        vscode.window.showErrorMessage(`No config found for "${argModelId}" on ${argServerUrl}.`);
+        // Unconfigured model: the server reports it but settings has no entry
+        // (Server Settings lists server-reported models even when unconfigured).
+        // Auto-configure it as a NEW model — borrow auth from a sibling model on
+        // the same server. That sibling is guaranteed to exist: the server group
+        // only appears in the webview because it has at least one configured model.
+        const sibling = existing.find(
+          m => m.serverUrl && normalizeServerUrl(m.serverUrl) === argServerNorm
+        );
+        const serverUrl = normalizeServerUrl(sibling?.serverUrl ?? argServerUrl);
+        const discoveryResult = await resolveModelConfigForAdd(
+          context, vllmId, serverUrl, sibling?.requestHeaders
+        );
+        if (!discoveryResult) return;
+
+        const newConfig: ModelConfig = {
+          ...discoveryResult.modelConfig,
+          id: buildModelId(serverUrl, vllmId),
+          vllmModelId: vllmId,
+          serverUrl,
+          ...(sibling?.requestHeaders ? { requestHeaders: sibling.requestHeaders } : {}),
+        };
+        if (discoveryResult.suggestedMaxOutputTokens !== undefined && newConfig.maxOutputTokens === undefined) {
+          newConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
+        }
+        await confirmAndSaveAddedModel(
+          newConfig, vllmId, serverUrl, discoveryResult.summary.join('\n'), output,
+          () => provider.clearCache()
+        );
         return;
       }
-      vllmId = argModelId;
     } else {
       // No args — show QuickPick to select a model
       const items = existing.map((m, idx) => {

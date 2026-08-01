@@ -951,3 +951,66 @@ export function registerRemoveServerCommand(
   });
 }
 
+/**
+ * Filter out the single model matching (serverUrl, vllmModelId) from a config
+ * array. Never touches sibling models on the same server. Pure helper, exported
+ * for testing.
+ */
+export function removeModelFromConfig(
+  existing: ModelConfig[],
+  serverUrl: string,
+  vllmModelId: string,
+): { filtered: ModelConfig[]; removed: number } {
+  const normalizedUrl = normalizeServerUrl(serverUrl);
+  const filtered = existing.filter(
+    m => !(m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl && resolveVllmModelId(m) === vllmModelId)
+  );
+  return { filtered, removed: existing.length - filtered.length };
+}
+
+/**
+ * Remove a single model entry from a server.
+ * Triggered from the Server Settings webview "Remove Model" button.
+ * Removes only the selected (serverUrl, vllmModelId) entry — never sibling
+ * models on the same server.
+ */
+export function registerRemoveModelCommand(
+  _context: vscode.ExtensionContext,
+  _provider: VllmChatModelProvider,
+  outputChannel: vscode.OutputChannel,
+): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.removeModel', async (arg?: any) => {
+    const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
+    const vllmModelId = typeof arg === 'object' ? arg?.vllmModelId : undefined;
+    const skipConfirm = typeof arg === 'object' && arg?.skipConfirm === true;
+    if (!serverUrl || !vllmModelId) {
+      vscode.window.showErrorMessage('Server URL and model ID are required.');
+      return;
+    }
+
+    const config = vscode.workspace.getConfiguration('vllm-copilot');
+    const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+    const { filtered, removed } = removeModelFromConfig(existing, serverUrl, vllmModelId);
+
+    if (removed === 0) {
+      vscode.window.showWarningMessage(`No configured model "${vllmModelId}" found on ${serverUrl}.`);
+      return;
+    }
+
+    if (!skipConfirm) {
+      const confirm = await vscode.window.showWarningMessage(
+        `Remove model "${vllmModelId}" from ${serverUrl}?`,
+        { modal: true },
+        'Remove',
+        'Cancel',
+      );
+      if (confirm !== 'Remove') return;
+    }
+
+    await config.update('models', filtered, vscode.ConfigurationTarget.Global);
+    _provider.clearCache();
+    outputChannel.appendLine(`[INFO] Removed model "${vllmModelId}" from ${serverUrl}.`);
+    vscode.window.showInformationMessage(`Removed model "${vllmModelId}" from ${serverUrl}.`);
+  });
+}
+
