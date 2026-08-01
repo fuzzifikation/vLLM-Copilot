@@ -4,7 +4,7 @@
 
 - **New model preset** — `DeepSeek-V4-Flash-0731`: dedicated config for the official 0731 release with model-card-recommended sampling parameters (`temperature=1.0`, `top_p=0.95`). Think modes only send `reasoning_effort` (vLLM auto-injects `enable_thinking`); No Think sends all params directly. Updated documentation with links to DeepSeek API thinking mode docs, vLLM reasoning parser behavior, and HuggingFace model card recommendations.
 
-## v1.20.0 — Bug-squash edition: engine unification, structural cleanup, 9 bugs fixed
+## v1.20.0 — Major Improvement! Bug-squash edition: engine unification, structural cleanup, 9 bugs fixed, and better UX for server adding
 
 - **Unified metrics engine** — created `ServerMetricsEngine` in `vllmMetrics.ts`: reference-counted polling engine shared by dashboard and deep-dive. Starts on first subscriber, stops on last. Single fetch cycle produces both `ServerMetrics` (aggregated) and `ServerRawData` (raw buckets) from one set of HTTP responses. Eliminated duplicate 2x-per-interval fetches when both views were open. Removed standalone `fetchServerMetrics()` and `fetchServerRawData()` (logic subsumed into `fetchAllEndpoints()`).
 - **Dashboard: removed config cache bypass bug** — no longer calls `getConfig(context)` on every 15s poll. Config read once on visibility change and re-read on settings change. Dashboard subscribes to the shared engine; tree re-renders coalesced via `queueMicrotask` gate.
