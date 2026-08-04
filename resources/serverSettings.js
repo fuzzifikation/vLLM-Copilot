@@ -5,16 +5,26 @@
   'use strict';
 
   const vscode = acquireVsCodeApi();
-  let S = { servers: [], selServer: '', selModel: '', mc: null, knownParams: {} };
+  let S = { servers: [], selServer: '', selModel: '', mc: null, knownParams: {}, personalities: [], activePersonalities: {} };
   const secState = {};
 
   // Wait for data from extension
   window.addEventListener('message', e => {
     if (e.data && e.data.type === 'data') {
+      // Preserve the user's current server/model selection across refreshes —
+      // the host always posts the first server/first model, which would reset
+      // the dropdown to #1 after e.g. applying a personality to a lower model.
+      // Fall back to the posted values only when the current selection is gone.
+      const prevServer = S.selServer;
+      const prevModel = S.selModel;
       S.servers = e.data.servers;
-      S.selServer = e.data.selectedServerUrl;
-      S.selModel = e.data.selectedModelVllmId;
+      S.selServer = S.servers.some(s => s.url === prevServer) ? prevServer : e.data.selectedServerUrl;
+      const sv = S.servers.find(s => s.url === S.selServer);
+      const modelExists = !!sv && [...(sv.models || []).map(m => m.vllmModelId || m.id), ...(sv.serverModelIds || [])].includes(prevModel);
+      S.selModel = modelExists ? prevModel : e.data.selectedModelVllmId;
       S.knownParams = e.data.knownParams || {};
+      S.personalities = e.data.personalities || [];
+      S.activePersonalities = e.data.activePersonalities || {};
       try { render(); } catch(err) {
         document.getElementById('root').innerHTML = '<p style="color:var(--vscode-errorForeground)">Render error: ' + E(err.message) + '</p>';
       }
@@ -87,7 +97,7 @@
     });
     h += '</select></div>';
 
-    // Action buttons row
+    // Action buttons row — these address the model, not the personality.
     h += '<div class="action-btn-row">';
     h += '<button id="autoConfigureBtn" class="secondary">Auto-Configure</button>';
     h += '<button id="removeModelBtn" class="secondary" style="color:var(--vscode-errorForeground)">Remove Model</button>';
@@ -95,7 +105,11 @@
 
     if (S.mc) {
       const m = S.mc;
-      h += sec('General', fields([{ k: 'displayName', t: 'text', v: m.displayName || '', h: 'Name shown in model picker' }]));
+      // Personality picker lives in General, alongside the model's identity fields —
+      // the Auto-Configure/Remove buttons above address the model, not the personality.
+      const isConfigured = configuredIds.has(S.selModel);
+      const activeName = S.activePersonalities[S.selModel] || '';
+      h += sec('General', fields([{ k: 'displayName', t: 'text', v: m.displayName || '', h: 'Name shown in model picker' }]) + personalityCard(isConfigured, activeName));
       h += sec('Token Budget', fields([{ k: 'maxOutputTokens', t: 'number', v: m.maxOutputTokens ?? 4096, h: 'Max output tokens (default: 4096)' },
         { k: 'maxInputTokens', t: 'number', v: m.maxInputTokens ?? '', h: 'Auto-computed; set to reserve headroom' },
         { k: 'estimateCharsPerToken', t: 'number', v: m.estimateCharsPerToken ?? 3.5, h: 'Avg chars/token (default: 3.5)' }]));
@@ -109,8 +123,7 @@
       h += sec('System Prompt',
         '<div class="field"><label>systemMessageReplacementsFile</label>' +
         '<input type="text" data-f="systemMessageReplacementsFile" value="' + E(String(m.systemMessageReplacementsFile || '')) + '">' +
-        '<div class="field-hint">Path to JSON find/replace rules file</div></div>' +
-        '<button class="secondary" id="personalityBtn" style="margin-top:6px">Set Personality...</button>');
+        '<div class="field-hint">Path to JSON find/replace rules file</div></div>');
       h += '<div class="btn-row"><button id="saveBtn">Save All Changes</button><button class="secondary" id="revertBtn" style="margin-left:8px">Revert</button></div>';
     }
     r.innerHTML = h;
@@ -122,12 +135,29 @@
 
     document.getElementById('sSel').onchange = () => { S.selServer = document.getElementById('sSel').value; render(); };
     document.getElementById('mSel').onchange = () => { S.selModel = document.getElementById('mSel').value; render(); };
+    const pSel = document.getElementById('personalitySel');
+    if (pSel) {
+      const activeName = S.activePersonalities[S.selModel] || '';
+      for (let i = 0; i < pSel.options.length; i++) {
+        if (pSel.options[i].dataset.name === activeName) { pSel.selectedIndex = i; break; }
+      }
+      pSel.onchange = () => {
+        const opt = pSel.options[pSel.selectedIndex];
+        const targetPath = opt.value; // '' for Default
+        const sourcePath = opt.dataset.src || '';
+        // Sync the raw systemMessageReplacementsFile input so a quick "Save All
+        // Changes" writes the new value instead of the stale one.
+        const pathInput = document.querySelector('[data-f="systemMessageReplacementsFile"]');
+        if (pathInput) pathInput.value = targetPath;
+        vscode.postMessage(targetPath === ''
+          ? { type: 'applyPersonality', serverUrl: S.selServer, vllmModelId: S.selModel, clear: true }
+          : { type: 'applyPersonality', serverUrl: S.selServer, vllmModelId: S.selModel, sourcePath: sourcePath });
+      };
+    }
     const saveButton = document.getElementById('saveBtn');
     if (saveButton) saveButton.onclick = save;
     const revertButton = document.getElementById('revertBtn');
     if (revertButton) revertButton.onclick = render;
-    const personalityButton = document.getElementById('personalityBtn');
-    if (personalityButton) personalityButton.onclick = () => vscode.postMessage({ type: 'setPersonality', serverUrl: S.selServer, vllmModelId: S.selModel });
     const autoCfgBtn = document.getElementById('autoConfigureBtn');
     if (autoCfgBtn) autoCfgBtn.onclick = () => vscode.postMessage({ type: 'autoConfigure', serverUrl: S.selServer, vllmModelId: S.selModel });
     const rmBtn = document.getElementById('removeModelBtn');
@@ -150,6 +180,23 @@
         : '<input type="text" data-f="' + E(s.k) + '" value="' + E(String(s.v)) + '">') +
       (s.h ? '<div class="field-hint">' + E(s.h) + '</div>' : '') +
       '</div>').join('');
+  }
+
+  function personalityCard(isConfigured, activeName) {
+    let h = '<div class="personality-card">';
+    h += '<label>Personality</label>';
+    h += '<select id="personalitySel"' + (isConfigured ? '' : ' disabled') + '>';
+    h += '<option value="" data-name="">Default (no personality)</option>';
+    S.personalities.forEach(p => {
+      // value = the global target path (what gets stored); data-src = source to copy from.
+      h += '<option value="' + E(p.targetPath) + '" data-name="' + E(p.name) + '" data-src="' + E(p.sourcePath) + '">' + E(p.name) + '</option>';
+    });
+    h += '</select>';
+    h += '<div class="field-hint">' + (isConfigured
+      ? (activeName ? 'Active: ' + E(activeName) : 'Copilot\'s original system prompt')
+      : 'Configure this model first to set a personality.') + '</div>';
+    h += '</div>';
+    return h;
   }
 
   function modesSection(mc) {

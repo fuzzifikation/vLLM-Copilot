@@ -95,12 +95,12 @@ All are niche or debugging-focused. No P1 (high-impact, general-purpose) feature
 
 ---
 
-## Personality Presets Should Be Global, Not Workspace-Local
+## ✅ Personality Presets Should Be Global, Not Workspace-Local
 
 **Category:** Vitamins (UX polish)
-**Status:** Considered, not yet implemented
+**Status:** Implemented — personalities now copy into the extension's global storage (`personalities/`), follow the user across workspaces, and the **Set Model Personality** command works without an open workspace. The **Server Settings** sidebar has a personality dropdown in each model's **General** section.
 
-### Problem
+### Problem (original)
 
 The **Set Model Personality** command copies the chosen preset file to `.vllm/` in the current workspace root and sets `systemMessageReplacementsFile` to a workspace-relative path (e.g. `.vllm/prompt-replacements-tough-love.json`). This means:
 
@@ -108,7 +108,7 @@ The **Set Model Personality** command copies the chosen preset file to `.vllm/` 
 - The `.vllm/` directory is workspace-scoped state that doesn't belong in version control (it's user preference, not project config), yet it lives inside the workspace tree.
 - Personality selection should logically be a **model-level** (or user-level) preference, not a workspace artifact.
 
-### Suggestion
+### Suggestion (original)
 
 Store the personality file in the extension's global storage directory (`context.globalStorageUri`) and set `systemMessageReplacementsFile` to its absolute path there. This way:
 
@@ -118,7 +118,7 @@ Store the personality file in the extension's global storage directory (`context
 
 ### Status
 
-Not yet implemented. The current design (workspace-scoped `.vllm/`) was chosen as the simplest initial approach. Moving to global storage is the right long-term home.
+Implemented as suggested: personalities are materialized in global storage and referenced by absolute path. Legacy `.vllm/` copies are still discovered and migrated on next selection.
 
 | Param                           | Category           | Notes                                                                                                                         |
 | ------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |

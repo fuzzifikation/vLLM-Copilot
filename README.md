@@ -85,7 +85,7 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 1. **Install** from the VS Code Marketplace
 2. **Add a model:** `Ctrl+Shift+P` → **Add vLLM Server & Model** → enter your server URL → pick a model → done. The extension auto-configures everything (model family, thinking modes, context window) from bundled presets or HuggingFace.
 3. **Edit settings:** Open the **Server Settings** sidebar to adjust displayName, params, model modes, and more — no `settings.json` editing required.
-4. **Change the personality (optional):** `Ctrl+Shift+P` → **Set Model Personality** → pick your model → pick a personality → done. Four bundled presets replace Copilot's boilerplate with something actually useful. Pick **Default (no personality)** later to clear it.
+4. **Change the personality (optional):** in the **vLLM Server Settings** sidebar, pick a model and choose a personality from the dropdown in its **General** section (or `Ctrl+Shift+P` → **Set Model Personality**). Pick **Default (no personality)** later to clear it.
 5. **Chat:** Open Copilot Chat, pick your model from the dropdown. Switch modes from the same picker.
 
 > **Remote (SSH/WSL/Containers):** This extension runs on the remote host automatically when installed from the Marketplace. VS Code will install it on the remote extension host.
@@ -129,11 +129,14 @@ Each mode is a set of parameters merged into the vLLM request. Common use cases:
 
 ### Personality Presets
 
-Four bundled personalities that replace Copilot's 21KB system prompt boilerplate with
-something actually useful. One command, no JSON editing:
+Personalities replace Copilot's 21KB system prompt boilerplate with something
+actually useful. Pick one per model — no JSON editing:
 
-1. **Set Model Personality:** `Ctrl+Shift+P` → pick your model → pick a personality → done
-2. **Clear it:** same command → pick **Default (no personality)** to remove replacements and restore Copilot's original system prompt. The active choice is marked with a check and shown in the placeholder.
+1. **Set it:** open the **vLLM Server Settings** sidebar, pick a model, choose a personality from the dropdown in the model's **General** section (or `Ctrl+Shift+P` → **Set Model Personality**)
+2. **Clear it:** pick **Default (no personality)** to remove replacements and restore Copilot's original system prompt. The active choice is marked and shown.
+
+The selected personality is copied to the extension's global storage, so it follows
+you across workspaces and survives extension upgrades.
 
 | Preset | What it does |
 |--------|--------------|
@@ -143,7 +146,8 @@ something actually useful. One command, no JSON editing:
 | **Sarcastic Robot** | Brilliant, condescending, politically incorrect. Finds human code amusingly primitive — but fixes it anyway. |
 | **Spartan** | Absolute minimalism. Zero fluff. Short answers. Code first, words only when necessary. |
 
-Want to customize? Copy any preset to `.vllm/my-replacements.json`, edit the `replace` fields, point your model at your copy.
+Want to customize? Apply a preset once, then edit the file in the extension's global
+storage `personalities/` directory (your edits apply everywhere).
 
 ### Hidden System Instructions (Capture & Replace)
 

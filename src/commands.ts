@@ -8,8 +8,6 @@
  */
 
 import * as vscode from 'vscode';
-import * as fs from 'fs/promises';
-import * as path from 'path';
 import { VllmChatModelProvider } from './provider.js';
 import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildModelId } from './config.js';
 import type { ModelConfig } from './config.js';
@@ -24,51 +22,8 @@ import {
   SessionPickedItem,
   WorkspaceEntry,
 } from './sessionManager.js';
-import { loadPersonalityMeta, clearPersonalityCache } from './promptReplacer.js';
+import { discoverPersonalities, ensureGlobalPersonality, resolveActivePersonality } from './personalityStore.js';
 import { getMetricsEngine } from './vllmMetrics.js';
-
-/**
- * Discover personality preset files in prompt-replacements/ directory.
- * Returns presets that have a valid `meta` block with `name` and `description`.
- * Files in legacy array format (no meta) are silently excluded.
- */
-async function discoverPersonalityPresets(
-  extensionUri: vscode.Uri,
-  presetDir: string,
-  outputChannel: vscode.OutputChannel,
-): Promise<Array<{ name: string; description: string; fileName: string; sourcePath: string }>> {
-  const presetDirPath = path.join(extensionUri.fsPath, presetDir);
-  const results: Array<{ name: string; description: string; fileName: string; sourcePath: string }> = [];
-  outputChannel.appendLine(`[INFO] Personality presets: scanning ${presetDirPath}`);
-
-  try {
-    const entries = await fs.readdir(presetDirPath);
-    outputChannel.appendLine(`[INFO] Personality presets: found ${entries.length} entries in ${presetDir}`);
-    for (const entry of entries) {
-      if (!entry.startsWith('prompt-replacements-') || !entry.endsWith('.json')) continue;
-
-      const filePath = path.join(presetDirPath, entry);
-      const stat = await fs.stat(filePath);
-      if (!stat.isFile()) continue;
-
-      const meta = await loadPersonalityMeta(filePath);
-      if (meta) {
-        const slug = entry.slice('prompt-replacements-'.length, -'.json'.length);
-        results.push({
-          name: meta.name,
-          description: meta.description,
-          fileName: slug,
-          sourcePath: filePath,
-        });
-      }
-    }
-  } catch (err) {
-    outputChannel.appendLine(`[ERROR] Personality presets: cannot read ${presetDirPath}: ${describeError(err)}`);
-  }
-
-  outputChannel.appendLine(`[INFO] Personality presets: found ${results.length} valid preset(s) in ${presetDir}`);
-  return results;
-}
 
 /**
  * Result of testing a single unique server (grouped by URL + auth).
@@ -754,39 +709,22 @@ export function registerSetModelPersonalityCommand(
       });
       if (!modelPick) return;
 
-      // Step 2: discover and pick the personality from prompt-replacements/ and .vllm/
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      const presetDirs: Array<[string, vscode.Uri]> = [['prompt-replacements', context.extensionUri]];
-      if (workspaceFolders?.[0]) {
-        presetDirs.push(['.vllm', workspaceFolders[0].uri]);
-      }
-
-      const presets = (await Promise.all(
-        presetDirs.map(async ([dirName, dir]) => discoverPersonalityPresets(dir, dirName, outputChannel))
-      )).flat();
-
-      // Deduplicate by name (meta.name), keeping first occurrence (bundled presets win over .vllm/)
-      const seen = new Set<string>();
-      const uniquePresets = presets.filter((p) => {
-        if (seen.has(p.name)) return false;
-        seen.add(p.name);
-        return true;
-      });
+      // Step 2: discover and pick the personality (bundled + global + legacy .vllm)
+      const presets = await discoverPersonalities(context);
 
       type PersonalityPick = {
         label: string;
         description?: string;
         clear?: boolean;
-        fileName?: string;
         sourcePath?: string;
         kind?: vscode.QuickPickItemKind;
       };
 
       // Resolve which option is currently active from the model's replacements file.
-      // Paths are compared by basename so relative/absolute forms all match.
-      const currentReplacements = (modelPick.model.systemMessageReplacementsFile || '').trim();
-      const currentBase = currentReplacements ? path.basename(currentReplacements) : '';
-      const isDefaultActive = !currentBase;
+      // A custom file that isn't a known personality still counts as "not default".
+      const hasReplacements = !!(modelPick.model.systemMessageReplacementsFile || '').trim();
+      const active = await resolveActivePersonality(context, modelPick.model.systemMessageReplacementsFile, presets);
+      const isDefaultActive = !hasReplacements;
 
       const markCurrent = (label: string, description: string | undefined, active: boolean): Pick<PersonalityPick, 'label' | 'description'> => ({
         label: active ? `$(check) ${label}` : label,
@@ -806,26 +744,20 @@ export function registerSetModelPersonalityCommand(
         },
       ];
 
-      let matchedPreset = false;
-      if (uniquePresets.length > 0) {
+      if (presets.length > 0) {
         pickItems.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
-        for (const p of uniquePresets) {
-          const presetBase = path.basename(p.sourcePath);
-          const isCurrent = !isDefaultActive && currentBase === presetBase;
-          if (isCurrent) matchedPreset = true;
+        for (const p of presets) {
+          const isCurrent = !isDefaultActive && active?.name === p.name;
           pickItems.push({
             ...markCurrent(p.name, p.description, isCurrent),
-            fileName: p.fileName,
             sourcePath: p.sourcePath,
           });
         }
       }
 
-      const currentLabel = isDefaultActive
+      const currentLabel = !hasReplacements
         ? 'Default (no personality)'
-        : matchedPreset
-          ? uniquePresets.find((p) => path.basename(p.sourcePath) === currentBase)?.name ?? currentBase
-          : currentBase;
+        : (active?.name ?? modelPick.model.systemMessageReplacementsFile) || 'Default (no personality)';
 
       const personalityPick = await vscode.window.showQuickPick(pickItems, {
         title: 'Set Model Personality (step 2/2)',
@@ -833,82 +765,29 @@ export function registerSetModelPersonalityCommand(
       });
       if (!personalityPick || personalityPick.kind === vscode.QuickPickItemKind.Separator) return;
 
-      // Clear path: remove systemMessageReplacementsFile so no replacements run
-      if (personalityPick.clear) {
-        outputChannel.appendLine(
-          `[INFO] Personality presets: clearing personality for ${modelPick.label}`
-        );
-        try {
-          await saveModelConfig({
-            ...modelPick.model,
-            // Empty string is the explicit clear signal (undefined would preserve the previous value).
-            systemMessageReplacementsFile: '',
-          });
-        } catch (err) {
-          vscode.window.showErrorMessage(
-            `Failed to clear personality: ${describeError(err)}`
-          );
-          return;
-        }
-
-        vscode.window.showInformationMessage(
-          `Cleared personality for "${modelPick.label}". Using Copilot's original system prompt.`
-        );
-        provider.clearCache();
-        return;
-      }
-
+      const clear = personalityPick.clear;
       const sourcePath = personalityPick.sourcePath;
-      if (!sourcePath) {
+      if (!clear && !sourcePath) {
         vscode.window.showWarningMessage('No personality presets found.');
         return;
       }
 
-      const presetFileName = path.basename(sourcePath);
-      outputChannel.appendLine(`[INFO] Personality presets: selected ${sourcePath}`);
-
-      // Destination: .vllm/ at the workspace root (first workspace)
-      if (!workspaceFolders?.length) {
-        vscode.window.showWarningMessage(
-          'No workspace folder is open. Open a folder first so the preset file can be saved to .vllm/.'
-        );
-        return;
-      }
-
-      const targetDir = path.join(workspaceFolders[0].uri.fsPath, '.vllm');
-      const targetPath = path.join(targetDir, presetFileName);
-
-      // Copy to .vllm/ (skip if source is already the target)
       try {
-        await fs.mkdir(targetDir, { recursive: true });
-        if (sourcePath !== targetPath) {
-          const content = await fs.readFile(sourcePath, 'utf-8');
-          await fs.writeFile(targetPath, content, 'utf-8');
-        }
-        // Cache still holds the old parsed content — force re-read on next load.
-        clearPersonalityCache();
-      } catch (err) {
-        vscode.window.showErrorMessage(
-          `Failed to copy preset file: ${describeError(err)}`
-        );
-        return;
-      }
-
-      // Build the relative path from workspace root → .vllm/prompt-replacements-{slug}.json.
-      // Use forward slashes (not path.sep) so the value stored in settings.json is
-      // OS-portable — path.join in provider.ts and path.basename matching both normalize it.
-      const relativePath = `.vllm/${path.basename(targetPath)}`;
-
-      // Update the model's systemMessageReplacementsFile
-      try {
+        // Applying always materializes the personality as a user-owned copy in
+        // global storage — portable across workspaces and immune to extension upgrades.
+        const replacementsFile = clear
+          ? ''
+          : await ensureGlobalPersonality(context, sourcePath!);
         await saveModelConfig({
           ...modelPick.model,
-          systemMessageReplacementsFile: relativePath,
+          // Empty string is the explicit clear signal (undefined would preserve the previous value).
+          systemMessageReplacementsFile: replacementsFile,
         });
-      } catch (err) {
-        vscode.window.showErrorMessage(
-          `Failed to save model config: ${describeError(err)}`
+        outputChannel.appendLine(
+          `[INFO] Personality presets: ${clear ? 'cleared' : `applied ${sourcePath}`} for ${modelPick.label}`
         );
+      } catch (err) {
+        vscode.window.showErrorMessage(`Failed to apply personality: ${describeError(err)}`);
         return;
       }
 
@@ -916,7 +795,9 @@ export function registerSetModelPersonalityCommand(
       // the currently-active one — strip it so the message reads cleanly.
       const plainLabel = personalityPick.label.replace(/^\$\(check\)\s*/, '');
       vscode.window.showInformationMessage(
-        `Applied "${plainLabel}" personality to "${modelPick.label}".\nPreset saved to ${relativePath}`
+        clear
+          ? `Cleared personality for "${modelPick.label}". Using Copilot's original system prompt.`
+          : `Applied "${plainLabel}" personality to "${modelPick.label}".`
       );
 
       // Invalidate the provider's config cache so replacements take effect immediately

@@ -175,7 +175,7 @@ A working chat model — minimum viable config. No modes, no custom params, just
     "autoContinueRetries": 1,                          // retries on empty response via assistant prefill; 0 = off
 
     // ── System message replacements (optional) ────────────
-    "systemMessageReplacementsFile": "../../.vllm/prompt-replacements.json",
+    "systemMessageReplacementsFile": ".vllm/prompt-replacements.json",
 
     // ── defaultParams: always-on, model-scope ────────────
     // Layered under selected mode. Built-in defaults: temperature=0.7, top_p=1.0.
@@ -300,7 +300,7 @@ After capturing system messages (see [Custom System Prompt](./custom-system-prom
 ]
 ```
 
-Then set `systemMessageReplacementsFile` on the model entry to point to this file (relative to `settings.json`).
+Then set `systemMessageReplacementsFile` on the model entry to point to this file. Relative paths are resolved against the **workspace root** at request time, so `.vllm/prompt-replacements.json` refers to the workspace's `.vllm/` folder. Absolute paths work too (and are what the personality picker stores).
 
 **How it works:**
 - Exact substring match (no regex)
@@ -323,7 +323,9 @@ The extension ships with four pre-built replacement files that transform Copilot
 | **Sarcastic Robot** | `prompt-replacements/prompt-replacements-sarcastic-robot.json` | Brilliant, condescending, politically incorrect. Finds human code amusingly primitive — but fixes it anyway. |
 | **Spartan** | `prompt-replacements/prompt-replacements-spartan.json` | Absolute minimalism. Zero fluff. Short answers. Code first, words only when necessary. |
 
-**Usage:** `Ctrl+Shift+P` → **Set Model Personality** → pick a model → pick a preset (or **Default (no personality)** to clear). Or set the path manually:
+**Usage:** In the **vLLM Server Settings** sidebar, pick a model and choose a personality from the dropdown in the model's **General** section. Or use `Ctrl+Shift+P` → **Set Model Personality**. Picking a personality copies it into the extension's **global storage** (`personalities/`) so it follows you across workspaces and survives extension upgrades. **Default (no personality)** clears the replacement and restores Copilot's original system prompt.
+
+Or set the path manually on the model entry:
 
 ```json
 {
@@ -331,15 +333,15 @@ The extension ships with four pre-built replacement files that transform Copilot
     {
       "id": "my-model",
       "serverUrl": "http://localhost:8000",
-      "systemMessageReplacementsFile": "../../prompt-replacements/prompt-replacements-tough-love.json"
+      "systemMessageReplacementsFile": "C:/.../globalStorage/vllm-copilot/personalities/prompt-replacements-tough-love.json"
     }
   ]
 }
 ```
 
-Path is relative to `settings.json` (usually in `.vscode/` or your user settings location). Use an absolute path if preferred.
+Relative paths resolve against the **workspace root**; absolute paths (like the global storage path the picker writes) work from any workspace.
 
-**Want to customize a preset?** Copy the file to `.vllm/my-replacements.json`, edit the `replace` fields, and point at your copy.
+**Want to customize a preset?** Apply it once, then edit the file in the extension's global storage `personalities/` directory — your edits apply in every workspace. Or copy it to `.vllm/`, edit, and point the model at your copy.
 
 ---
 
