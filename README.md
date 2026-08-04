@@ -12,7 +12,6 @@ Model modes, thinking toggles, structured output, bad words, repetition detectio
 personality presets, and system message control. All switchable from the model picker.
 
 [![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot)
-[![GitHub release](https://img.shields.io/github/v/release/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/releases)
 [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
 
