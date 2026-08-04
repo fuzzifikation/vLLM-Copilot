@@ -894,8 +894,10 @@ export function registerSetModelPersonalityCommand(
         return;
       }
 
-      // Build the relative path from workspace root → .vllm/prompt-replacements-{slug}.json
-      const relativePath = path.join('.vllm', path.basename(targetPath));
+      // Build the relative path from workspace root → .vllm/prompt-replacements-{slug}.json.
+      // Use forward slashes (not path.sep) so the value stored in settings.json is
+      // OS-portable — path.join in provider.ts and path.basename matching both normalize it.
+      const relativePath = `.vllm/${path.basename(targetPath)}`;
 
       // Update the model's systemMessageReplacementsFile
       try {
@@ -910,8 +912,11 @@ export function registerSetModelPersonalityCommand(
         return;
       }
 
+      // The label may carry the "$(check)" icon prefix when the picked preset is
+      // the currently-active one — strip it so the message reads cleanly.
+      const plainLabel = personalityPick.label.replace(/^\$\(check\)\s*/, '');
       vscode.window.showInformationMessage(
-        `Applied "${personalityPick.label}" personality to "${modelPick.label}".\nPreset saved to ${relativePath}`
+        `Applied "${plainLabel}" personality to "${modelPick.label}".\nPreset saved to ${relativePath}`
       );
 
       // Invalidate the provider's config cache so replacements take effect immediately
