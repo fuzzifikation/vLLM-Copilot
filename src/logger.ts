@@ -206,14 +206,14 @@ export class FileLogger implements vscode.Disposable {
     let deleted = 0;
 
     try {
-      const entries = fs.readdirSync(logDir);
+      const entries = await fs.promises.readdir(logDir);
       for (const entry of entries) {
         if (/^vllm-copilot-.*\.log$/.test(entry)) {
           const fullPath = path.join(logDir, entry);
-          // Skip the currently active log file
+
           if (activePath && fullPath === activePath) continue;
           try {
-            fs.unlinkSync(fullPath);
+            await fs.promises.unlink(fullPath);
             deleted++;
           } catch {
             // Best-effort: skip files that can't be deleted

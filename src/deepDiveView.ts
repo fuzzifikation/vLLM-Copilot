@@ -4,7 +4,8 @@
  */
 
 import * as vscode from 'vscode';
-import { fetchServerRawData } from './vllmMetrics.js';
+import { getMetricsEngine } from './vllmMetrics.js';
+import type { ServerRawData } from './vllmMetrics.js';
 
 interface ReadyMessage {
   type: 'ready';
@@ -12,10 +13,6 @@ interface ReadyMessage {
 
 /** Singleton — only one deep-dive panel per server at a time. */
 const openPanels = new Map<string, vscode.WebviewPanel>();
-
-function getPollInterval(): number {
-  return vscode.workspace.getConfiguration('vllm-copilot.dashboard').get<number>('pollIntervalMs', 15000);
-}
 
 export function openDeepDive(
   serverUrl: string,
@@ -47,55 +44,43 @@ export function openDeepDive(
 
   let isReady = false;
   let disposed = false;
-  let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  let engineSubscription: { dispose: () => void } | undefined;
 
-  function startPolling(): void {
-    if (pollTimer) clearTimeout(pollTimer);
-    // Use recursive setTimeout so getPollInterval() is re-read on each cycle
-    pollTimer = setTimeout(tick, getPollInterval());
-  }
-
-  function tick(): void {
-    if (disposed) return;
-    fetchData().finally(() => {
-      if (!disposed) pollTimer = setTimeout(tick, getPollInterval());
-    });
-  }
-
-  function stopPolling(): void {
-    if (pollTimer) {
-      clearTimeout(pollTimer);
-      pollTimer = undefined;
-    }
-  }
-
-  async function fetchData(): Promise<void> {
+  /** Push raw data to the webview (safely guards disposed state). */
+  function pushData(raw: ServerRawData): void {
     if (!isReady || disposed) return;
-    try {
-      const raw = await fetchServerRawData(serverUrl, requestHeaders);
-      if (disposed) return; // guard against post-dispose postMessage
-      panel.webview.postMessage({ type: 'data', raw });
-    } catch (err) {
-      if (disposed) return;
-      const message = err instanceof Error ? err.message : String(err);
-      outputChannel.appendLine(`[DEEP-DIVE] Fetch error for ${serverUrl}: ${message}`);
-      panel.webview.postMessage({ type: 'error', message });
-    }
+    panel.webview.postMessage({ type: 'data', raw });
+  }
+
+  function pushError(message: string): void {
+    if (!isReady || disposed) return;
+    panel.webview.postMessage({ type: 'error', message });
   }
 
   // Message handler — disposed when panel closes
   const msgDisposable = panel.webview.onDidReceiveMessage(async (msg: ReadyMessage) => {
     if (msg.type === 'ready') {
       isReady = true;
-      await fetchData();
-      startPolling();
+      const engine = getMetricsEngine(serverUrl, requestHeaders);
+
+      // Push cached data immediately (may be null before first tick completes)
+      const cached = engine.getCachedRaw();
+      if (cached) pushData(cached);
+
+      // Subscribe — engine starts polling if this is the first subscriber
+      engineSubscription = engine.subscribe((_aggregated, raw) => {
+        pushData(raw);
+      });
     }
   });
 
   // Single disposable handler for panel close
   panel.onDidDispose(() => {
     disposed = true;
-    stopPolling();
+    if (engineSubscription) {
+      try { engineSubscription.dispose(); } catch { /* best-effort */ }
+      engineSubscription = undefined;
+    }
     openPanels.delete(serverUrl);
     msgDisposable.dispose();
   });

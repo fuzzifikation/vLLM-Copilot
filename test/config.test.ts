@@ -8,8 +8,20 @@ function makeContext(): any {
 }
 
 describe('normalizeServerUrl', () => {
-  it('prepends http:// when scheme is missing', () => {
+  it('prepends http:// when scheme is missing and host has a port', () => {
     expect(normalizeServerUrl('localhost:8000')).toBe('http://localhost:8000');
+  });
+
+  it('prepends https:// when scheme is missing and host has no port', () => {
+    expect(normalizeServerUrl('example.com')).toBe('https://example.com');
+  });
+
+  it('prepends https:// for localhost without a port', () => {
+    expect(normalizeServerUrl('localhost')).toBe('https://localhost');
+  });
+
+  it('prepends http:// for bare IP with port', () => {
+    expect(normalizeServerUrl('192.168.1.50:8080')).toBe('http://192.168.1.50:8080');
   });
 
   it('keeps http:// when already present', () => {
@@ -26,6 +38,26 @@ describe('normalizeServerUrl', () => {
 
   it('removes trailing slashes when scheme is missing', () => {
     expect(normalizeServerUrl('localhost:8000///')).toBe('http://localhost:8000');
+  });
+
+  it('strips trailing /v1 path segment', () => {
+    expect(normalizeServerUrl('https://example.com/v1')).toBe('https://example.com');
+  });
+
+  it('strips /v1 even with trailing slash', () => {
+    expect(normalizeServerUrl('https://example.com/v1/')).toBe('https://example.com');
+  });
+
+  it('strips /v1 when scheme was missing', () => {
+    expect(normalizeServerUrl('localhost:8000/v1')).toBe('http://localhost:8000');
+  });
+
+  it('does not strip /v1 in a longer path', () => {
+    expect(normalizeServerUrl('https://example.com/v1/models')).toBe('https://example.com/v1/models');
+  });
+
+  it('does not strip non-trailing /v1 segments', () => {
+    expect(normalizeServerUrl('https://example.com/v1/proxy/v2')).toBe('https://example.com/v1/proxy/v2');
   });
 });
 

@@ -29,7 +29,6 @@
 //   - No Think:         Direct responses, no thinking tokens
 
 {
-  "id": "InternScience/Agents-A1",
   "vllmModelId": "InternScience/Agents-A1",
   "displayName": "Agents-A1",
   "family": "qwen3_5_moe",

@@ -95,9 +95,30 @@ All are niche or debugging-focused. No P1 (high-impact, general-purpose) feature
 
 ---
 
-## Remaining Ideas (all P2–P5, niche)
+## Personality Presets Should Be Global, Not Workspace-Local
 
-All 12 remaining params are specialized. None are P1 (high-impact, general-purpose).
+**Category:** Vitamins (UX polish)
+**Status:** Considered, not yet implemented
+
+### Problem
+
+The **Set Model Personality** command copies the chosen preset file to `.vllm/` in the current workspace root and sets `systemMessageReplacementsFile` to a workspace-relative path (e.g. `.vllm/prompt-replacements-tough-love.json`). This means:
+
+- The personality is tied to one workspace — opening a different folder loses it. Users who work across multiple repos must re-run the command for each.
+- The `.vllm/` directory is workspace-scoped state that doesn't belong in version control (it's user preference, not project config), yet it lives inside the workspace tree.
+- Personality selection should logically be a **model-level** (or user-level) preference, not a workspace artifact.
+
+### Suggestion
+
+Store the personality file in the extension's global storage directory (`context.globalStorageUri`) and set `systemMessageReplacementsFile` to its absolute path there. This way:
+
+- The personality follows the user across all workspaces.
+- No `.vllm/` directory is created in the workspace.
+- The Set Personality command works even when no workspace folder is open (currently it bails with "Open a folder first").
+
+### Status
+
+Not yet implemented. The current design (workspace-scoped `.vllm/`) was chosen as the simplest initial approach. Moving to global storage is the right long-term home.
 
 | Param                           | Category           | Notes                                                                                                                         |
 | ------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -146,7 +167,7 @@ All 12 remaining params are specialized. None are P1 (high-impact, general-purpo
 
 **What vLLM returns (reasoning tokens):**
 - ✅ Reasoning CONTENT tokens get logprobs
-- ❌ Hidden reasoning delimiters (`<think>`, `</think>`) have logprobs suppressed
+- ❌ Hidden reasoning delimiters (`ground`, `ground`) have logprobs suppressed
 - Content tokens get logprobs as usual
 
 **Why a webview (not chat window):**
@@ -171,3 +192,113 @@ All 12 remaining params are specialized. None are P1 (high-impact, general-purpo
 - **Integrate with Deep-Dive?** Or standalone webview? Could complement the metrics view.
 
 **Effort:** Medium-high. Requires new webview, stream capture changes, and storage in `lastRequestStore`. But the moat value is significant — BYOK literally cannot do this.
+
+---
+
+## 🛡️ Cache `/v1/models` Responses in Server Settings Webview
+
+**Category:** Painkiller (performance)
+**Status:** Not implemented
+
+**What:** `serverSettingsView.ts::refreshWebview()` fetches `/v1/models` from ALL configured servers on every webview refresh: initial load, config change (`onDidChangeConfiguration`), and after every model save (`saveModelConfig`). The model list is static until the vLLM server restarts — re-fetching it on every interaction is wasteful.
+
+**Suggestion:** Cache the model list per server URL in a `Map<string, string[]>` with lazy invalidation. Re-fetch only when:
+- The webview first loads
+- The user explicitly triggers a refresh
+- A fetch fails (server might have restarted)
+- Settings change (new server added, URL changed)
+
+Since the model list is small (typically < 20 entries) and the server is local/close, the actual cost is negligible for one user. But repeated fetches on every save/config change accumulate — especially with multiple servers.
+
+---
+
+## 🛡️ Centralized Engine Header Update Path
+
+**Category:** Painkiller (correctness)
+**Status:** Not implemented
+
+**What:** When `registerUpdateServerAuthCommand` changes auth headers, it updates settings and calls `provider.clearCache()` but does NOT propagate the new headers to `ServerMetricsEngine` instances. The dashboard's `refreshSubscriptions()` does this on re-subscribe (via `getMetricsEngine` which calls `setHeaders`), but only when the dashboard is visible.
+
+If only the deep-dive is open (dashboard hidden) when auth is updated, the engine's subscription continues using old headers until the dashboard is shown and re-subscribes.
+
+**Suggestion:** Either:
+1. Have `updateServerAuthCommand` call `updateEngineHeaders()` to push new headers to any existing engine, or
+2. Have the `onDidChangeConfiguration` handler in the dashboard also update engine headers even when not visible
+
+The fix is small (< 10 lines) and eliminates a correctness gap.
+
+---
+
+## 🛡️ Token & Credit Usage Tracker
+
+**Category:** Painkiller (transparency)
+**Status:** Not implemented
+
+**What:** A persistent counter showing cumulative token consumption (input, output, cached, reasoning) and estimated AI credits used by the local vLLM model — per session, per day, or total. Displayed somewhere accessible: the dashboard, a status bar item, or a hover tooltip.
+
+**Why it matters:**
+- Users with limited compute budgets (cloud vLLM instances, API proxies) need to track how much they've consumed
+- Unlike GitHub Copilot's own credit tracker (which only counts Copilot API calls), this tracks tokens flowing through the local vLLM server — both chat and tool-call usage
+- Helps identify expensive sessions or unexpectedly high token consumption
+- Gives a sense of "how much work did this model do today"
+
+**What we already have:**
+- `usageReporting.ts` already reports per-request token counts to VS Code via `LanguageModelDataPart` with MIME type `'usage'`
+- `lastRequestStore.ts` stores the last request's token counts per server
+- `WireUsage` in `types.ts` already carries `prompt_tokens`, `completion_tokens`, `total_tokens`, cached tokens, and reasoning tokens
+
+**What's missing:**
+- An accumulator that sums token usage across multiple requests (not just the last one)
+- A persistence layer (extension local storage or globalState) so counts survive window reloads
+- A UI element to display the running totals
+
+**Suggestion:**
+1. Create a `TokenAccumulator` in a new `src/tokenTracker.ts` that reads the last request from `setLastRequest` and increments running totals stored in `context.globalState`
+2. Accumulate per model ID (or per server URL) so users with multiple models can see individual usage
+3. Store counters with timestamps for daily/weekly/monthly breakdowns
+4. Display in the Dashboard as a collapsible "Token Usage" node under each server, showing:
+   - Total tokens consumed today (input + output)
+   - Total tokens this session
+   - Estimated credits (if a conversion rate is configured — e.g. 1 credit = 1000 tokens)
+   - Percentage of any configured budget
+5. Optionally add a status bar item showing total tokens used today
+
+**What it is NOT:** This is not a replacement for server-side metrics (`/metrics`). The vLLM `/metrics` endpoint already reports cumulative token counts from server start. This tracker is about *client-side* usage that the user can see without looking at the metrics endpoint, and that survives restarts of individual vLLM server instances.
+
+**Effort:** Low-Medium (~1-2h). The data flows already exist; the work is in the accumulator, persistence, and dashboard tree items. No changes to the chat or stream path are needed.
+
+---
+
+## 🛡️ Surface Routed Experts Information
+
+**Category:** Painkiller (MoE transparency)
+**Status:** Not implemented
+
+**What:** vLLM supports `--enable-return-routed-experts` (server flag) and `enable_return_routed_experts` (per-request sampling param). When enabled, vLLM returns which experts were used for each token in the response. This is a **per-request output field** — not a Prometheus metric. Currently the extension ignores it.
+
+**Why it matters:**
+- **MoE load balancing insight:** See which experts are actually being used for your requests — reveals routing skew
+- **Debug unexpected behavior:** If a model is not using certain experts, you can spot it
+- **Purely per-request data:** No server-wide Prometheus metrics exist for expert routing — the only way to get this is from the response body
+
+**What vLLM exposes:**
+- `--enable-return-routed-experts` CLI flag enables per-request expert routing data
+- `routed_experts_prompt_start` sampling param skips N prompt tokens from the returned routing data (multi-turn dedup)
+- Response includes per-token expert assignments alongside generated tokens
+- No Prometheus metrics for expert utilization — only the per-request response path
+
+**Limits:**
+- No server-wide aggregated expert stats in `/metrics`
+- vLLM has `count_expert_num_tokens()` and `RoutedExpertsCapturer.get()` internally, but those are Python APIs, not HTTP endpoints
+- Exposing aggregated stats would need a custom vLLM plugin or new `/metrics` endpoint
+- Only works with MoE (Mixture of Experts) models like Qwen3.6, DeepSeek, Mixtral, etc.
+
+**Implementation sketch:**
+1. **Request level** — parse `routed_experts` from the SSE response in `sseParser.ts` alongside tool calls and usage
+2. **Store** — add routed experts data to `lastRequestStore` alongside token counts and timing
+3. **Display** — show per-token expert assignments in a collapsible section, or add a new "Routed Experts" node under Last Request in the dashboard
+4. **Parameter** — add `enable_return_routed_experts` to `KNOWN_PARAMS` (string: true/false) and document `routed_experts_prompt_start`
+
+**Moat value:** BYOK cannot request routed experts — `modelOptions` is limited to `temperature` and `top_p`. This is pure moat.
+
+**Effort:** Medium. Requires SSE response parsing, new storage fields, and dashboard UI. No server-side changes needed — all data comes from the existing vLLM response.

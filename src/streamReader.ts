@@ -53,10 +53,11 @@ export async function* readSseStream(
   let contentChunks = 0;
 
   // Wire cancellation directly to reader.cancel() so the HTTP stream is torn
-  // down immediately, not just broken from. The abort signal on fetch() only
-  // affects the initial handshake; once the response body starts streaming,
-  // the signal is inert. Without this, a cancelled request keeps generating
-  // tokens server-side until the model naturally stops.
+  // down immediately. While AbortSignal can cancel the body stream in modern
+  // Node/undici, reader.cancel() is a more direct path that guarantees the
+  // reader is released and the underlying source is told to stop producing
+  // data. This also works as a cleanup in the finally block regardless of
+  // whether the reader is already closed or errored.
   const disposeCancel = token.onCancellationRequested(() => {
     reader.cancel(new Error('Request cancelled by user')).catch(() => {});
   });
@@ -110,6 +111,23 @@ export async function* readSseStream(
     },
   });
 
+  // Sentinel used by drainAndCheck: when streamDone is true, drainAndCheck throws
+  // this unique object. The call site catches it and breaks the outer loop instead
+  // of propagating it as an error. A unique object ensures no real Error matches.
+  const STOP_ITERATION = {};
+
+  /**
+   * Helper generator that yields all currently queued events, then checks
+   * for stream-level errors and completion. Consolidates the three near-identical
+   * drain sites into one so there is no risk of a fourth site diverging.
+   */
+  function* drainAndCheck(): Generator<StreamEvent> {
+    while (eventQueue.length > 0) {
+      yield eventQueue.shift()!;
+    }
+    if (streamError) throw streamError;
+    if (streamDone) throw STOP_ITERATION;
+  }
   try {
     const decoder = new TextDecoder();
 
@@ -118,12 +136,8 @@ export async function* readSseStream(
         break;
       }
 
-      // ── Yield any events queued by the parser callback ──────────────
-      while (eventQueue.length > 0) {
-        yield eventQueue.shift()!;
-      }
-      if (streamError) throw streamError;
-      if (streamDone) break;
+      // Drain any events queued by the parser callback, check error/done
+      try { yield* drainAndCheck(); } catch (e) { if (e === STOP_ITERATION) break; else throw e; }
 
       // ── Read next chunk with timeout ────────────────────────────────
       let done: boolean;
@@ -201,30 +215,20 @@ export async function* readSseStream(
       }
 
       // Yield events from this chunk (parser.onEvent fires synchronously)
-      while (eventQueue.length > 0) {
-        yield eventQueue.shift()!;
-      }
-      if (streamError) throw streamError;
-      if (streamDone) break;
+      try { yield* drainAndCheck(); } catch (e) { if (e === STOP_ITERATION) break; else throw e; }
 
       if (done) {
         // Flush any buffered event that lacked a trailing \n\n.
         // Feed two newlines: one to terminate the current line (if it lacks \n),
         // one more to create the empty line that triggers event dispatch.
         parser.feed('\n\n');
-        while (eventQueue.length > 0) {
-          yield eventQueue.shift()!;
-        }
-        if (streamError) throw streamError;
+        try { yield* drainAndCheck(); } catch (e) { if (e === STOP_ITERATION) break; else throw e; }
         break;
       }
     }
 
     // Drain any remaining events
-    while (eventQueue.length > 0) {
-      yield eventQueue.shift()!;
-    }
-    if (streamError) throw streamError;
+    try { yield* drainAndCheck(); } catch (e) { if (e !== STOP_ITERATION) throw e; }
 
     // Belt-and-suspenders: if the stream ended without [DONE] or finish_reason,
     // finalize any pending tool calls (e.g., reverse proxy closed connection).

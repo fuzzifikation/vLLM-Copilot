@@ -11,10 +11,10 @@ import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { VllmChatModelProvider } from './provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildAuthHeaders } from './config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildModelId } from './config.js';
 import type { ModelConfig } from './config.js';
 import type { VllmModel } from './types.js';
-import { pickModelFromServer, saveModelConfig, parseHeadersInput } from './autoConfig.js';
+import { pickModelFromServer, saveModelConfig, promptForServerAuth, autoConfigureModel } from './autoConfig.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
 import { runDiagnostics, formatReport } from './diagnostics.js';
@@ -24,7 +24,8 @@ import {
   SessionPickedItem,
   WorkspaceEntry,
 } from './sessionManager.js';
-import { loadPersonalityMeta } from './promptReplacer.js';
+import { loadPersonalityMeta, clearPersonalityCache } from './promptReplacer.js';
+import { getMetricsEngine } from './vllmMetrics.js';
 
 /**
  * Discover personality preset files in prompt-replacements/ directory.
@@ -70,21 +71,73 @@ async function discoverPersonalityPresets(
 }
 
 /**
- * One row of Test & Refresh output. `mismatch` is set only when the model's
- * `vllmModelId` is not on its server; the post-check phase uses it to offer
- * a corrective picker (sharing the picker UX with `addServerModel`) and to
- * persist the corrected id in place via `saveModelConfig`.
+ * Result of testing a single unique server (grouped by URL + auth).
+ * Each unique server is tested once regardless of how many model configs
+ * point to it.
  */
-export interface TestResult {
-  label: string;
-  description: string;
-  detail: string;
-  mismatch?: {
-    model: ModelConfig;
-    serverModels: VllmModel[];
-    serverUrl: string;
-    vllmModelId: string;
-  };
+export interface ServerTestResult {
+  serverUrl: string;
+  status: 'ok' | 'error' | 'no-match';
+  /** All model configs grouped under this server. */
+  modelConfigs: ModelConfig[];
+  /** Models whose vllmModelId matched a served model. */
+  matched: Array<{ config: ModelConfig; vllmModelId: string; maxModelLen?: number }>;
+  /** Models whose vllmModelId was NOT found on the server (parked). */
+  parked: Array<{ config: ModelConfig; vllmModelId: string }>;
+  errorMessage?: string;
+  /** The full model list returned by the server (for picker/diagnostic). */
+  serverModelList?: VllmModel[];
+}
+
+/**
+ * Internal grouping types for server-dedup logic.
+ */
+interface ServerGroup {
+  serverUrl: string;
+  requestHeaders: Record<string, string>;
+  models: ModelConfig[];
+}
+
+/**
+ * Build a deterministic fingerprint for a server from its URL and auth headers.
+ * Two model configs that point to the same server (same URL + same headers)
+ * produce the same fingerprint and are tested together.
+ * @internal Exported for testing.
+ */
+export function serverFingerprint(url: string, headers: Record<string, string>): string {
+  const sorted = Object.entries(headers)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify([url, sorted]);
+}
+
+/**
+ * Group model configs by unique server (URL + auth headers fingerprint).
+ * Each unique server appears once in the output; models without a serverUrl
+ * each get their own singleton group so they can be reported individually.
+ * @internal Exported for testing.
+ */
+export function groupModelsByServer(
+  models: ModelConfig[],
+  resolveServer: (m: ModelConfig) => { serverUrl: string; requestHeaders: Record<string, string> },
+  resolveId: (m: ModelConfig) => string | undefined,
+): ServerGroup[] {
+  const groups = new Map<string, ServerGroup>();
+  for (const model of models) {
+    if (!model.serverUrl) {
+      const fp = `__nourl__${model.id ?? resolveId(model) ?? Math.random()}`;
+      groups.set(fp, { serverUrl: '', requestHeaders: {}, models: [model] });
+      continue;
+    }
+    const { serverUrl, requestHeaders } = resolveServer(model);
+    const fp = serverFingerprint(serverUrl, requestHeaders);
+    const existing = groups.get(fp);
+    if (existing) {
+      existing.models.push(model);
+    } else {
+      groups.set(fp, { serverUrl, requestHeaders, models: [model] });
+    }
+  }
+  return Array.from(groups.values());
 }
 
 /**
@@ -118,48 +171,21 @@ function checkNetworkGatingSettings(): string[] {
 }
 
 /**
- * Pick which mismatched-model rows from Test & Refresh should trigger the
- * corrective "Pick Model" prompt. A missing model only warrants a prompt
- * when NO sibling on the same server verified ✓ — i.e. the server is up but
- * serves nothing the user configured. Otherwise the missing model is
- * treated as parked (e.g. a Qwen preset kept around while vLLM is only
- * running Laguna); its ✗ row still shows in the per-model modal at the end.
- * @internal Exported for testing.
- */
-export function selectMismatchesToPrompt(
-  models: ModelConfig[],
-  results: TestResult[]
-): TestResult[] {
-  const serverOkCount = new Map<string, number>();
-  for (let i = 0; i < models.length; i++) {
-    const m = models[i];
-    if (!m.serverUrl) continue;
-    if (results[i].label.startsWith('✓')) {
-      const url = normalizeServerUrl(m.serverUrl);
-      serverOkCount.set(url, (serverOkCount.get(url) ?? 0) + 1);
-    }
-  }
-
-  const out: TestResult[] = [];
-  for (const r of results) {
-    if (!r.mismatch) continue;
-    const url = normalizeServerUrl(r.mismatch.serverUrl);
-    if ((serverOkCount.get(url) ?? 0) > 0) continue;
-    out.push(r);
-  }
-  return out;
-}
-
-/**
  * Test all configured models and refresh the model list.
  *
- * For each model in settings:
- *  - Validates that serverUrl exists
- *  - Calls /v1/models with auth headers
- *  - Reports server status, model found/missing, and context window
+ * Models are grouped by unique server (normalized URL + auth headers),
+ * so each server is queried exactly once via GET /v1/models. The output
+ * is a single consolidated status message — one line per server — rather
+ * than one popup per model config.
  *
- * Results are shown as individual info/warning messages — one per model —
- * so the user gets immediate feedback for each server.
+ * If a server is reachable and at least one configured model matches a
+ * served model, that's reported as "OK" and the matching model(s) go into
+ * the Copilot model picker. Non-matching models on the same server are
+ * silently parked (kept in settings but not in the picker). An error is
+ * only shown when a server is unreachable, returns an error, or has no
+ * matching model at all — in which case the user is offered to pick or
+ * auto-configure a model from the server.
+ *
  * Cache is cleared so discovery re-runs.
  */
 export function registerTestAndRefreshModelsCommand(
@@ -180,171 +206,204 @@ export function registerTestAndRefreshModelsCommand(
       return;
     }
 
-    // Check each model in settings against its server — all queries run in parallel.
-    const checks = models.map(async (model): Promise<TestResult> => {
-      const id = model.displayName || model.id || resolveVllmModelId(model) || '(unnamed)';
-      const vllmModelId = resolveVllmModelId(model) || model.id || '';
+    // ── 1. Group models by unique server fingerprint (URL + auth headers) ──
+    // Servers with identical URL and headers share one fetch instead of N.
+    const groups = groupModelsByServer(models, resolveServerConfig, resolveVllmModelId);
 
-      if (!model.serverUrl) {
+    // ── 2. Test each unique server once (parallel) ──
+    const serverTasks = groups.map(async (group): Promise<ServerTestResult> => {
+      if (!group.serverUrl) {
+        // Models without a serverUrl — they cannot be tested.
         return {
-          label: `✗ ${id}`,
-          description: 'no serverUrl',
-          detail: 'Add a serverUrl or run "Add vLLM Server & Model"',
+          serverUrl: '',
+          status: 'error',
+          modelConfigs: group.models,
+          matched: [],
+          parked: group.models.map(m => ({
+            config: m,
+            vllmModelId: resolveVllmModelId(m) || m.id || '(unnamed)',
+          })),
+          errorMessage: 'No serverUrl configured',
         };
       }
 
-      const { serverUrl, requestHeaders } = resolveServerConfig(model);
-
       try {
-        const resp = await fetch(buildEndpoint(serverUrl, 'v1/models'), {
-          headers: { ...(requestHeaders ?? {}) },
+        const resp = await fetch(buildEndpoint(group.serverUrl, 'v1/models'), {
+          headers: group.requestHeaders,
           signal: AbortSignal.timeout(10000),
         });
 
         if (resp.status === 401 || resp.status === 403) {
           return {
-            label: `✗ ${id}`,
-            description: `auth failed (${resp.status})`,
-            detail: `${serverUrl} — check requestHeaders`,
+            serverUrl: group.serverUrl,
+            status: 'error',
+            modelConfigs: group.models,
+            matched: [],
+            parked: group.models.map(m => ({
+              config: m,
+              vllmModelId: resolveVllmModelId(m) || m.id || '(unnamed)',
+            })),
+            errorMessage: `Authentication failed (HTTP ${resp.status})`,
           };
         }
 
         if (!resp.ok) {
           return {
-            label: `✗ ${id}`,
-            description: `status ${resp.status}`,
-            detail: serverUrl,
+            serverUrl: group.serverUrl,
+            status: 'error',
+            modelConfigs: group.models,
+            matched: [],
+            parked: group.models.map(m => ({
+              config: m,
+              vllmModelId: resolveVllmModelId(m) || m.id || '(unnamed)',
+            })),
+            errorMessage: `HTTP ${resp.status}`,
           };
         }
 
         const data: any = await resp.json();
-        const serverModels = data.data || [];
-        // Match only on the served model id. Do NOT match via `m.root === vllmModelId`:
-        // `root` is the underlying checkpoint, which is shared across many served
-        // aliases and quantizations — matching on it produces spurious ✓ rows
-        // where the server isn't actually serving the user's `vllmModelId`.
-        const found = serverModels.find((m: VllmModel) => m.id === vllmModelId);
+        const serverModels: VllmModel[] = data.data || [];
 
-        if (!found) {
-          // Defer the corrective picker to the sequential post-check phase so
-          // concurrent `saveModelConfig` writes cannot race each other. Carry
-          // enough info to render the picker + persist the correction.
-          return {
-            label: `✗ ${id}`,
-            description: 'not found on server',
-            detail: `${serverUrl} — check vllmModelId`,
-            mismatch: { model, serverModels: serverModels as VllmModel[], serverUrl, vllmModelId },
-          };
+        // Match each configured model against the server's loaded models.
+        // Matching is strict on m.id (not m.root) to avoid false positives.
+        const matched: Array<{ config: ModelConfig; vllmModelId: string; maxModelLen?: number }> = [];
+        const parked: Array<{ config: ModelConfig; vllmModelId: string }> = [];
+
+        for (const model of group.models) {
+          const vllmModelId = resolveVllmModelId(model) || model.id || '';
+          if (!vllmModelId) {
+            parked.push({ config: model, vllmModelId: '(unnamed)' });
+            continue;
+          }
+          const found = serverModels.find((m: VllmModel) => m.id === vllmModelId);
+          if (found) {
+            matched.push({ config: model, vllmModelId, maxModelLen: found.max_model_len });
+          } else {
+            parked.push({ config: model, vllmModelId });
+          }
         }
 
-        const ctx = found.max_model_len ? `${found.max_model_len.toLocaleString()} ctx` : '';
-        return {
-          label: `✓ ${id}`,
-          description: ctx,
-          detail: `${serverUrl} (${vllmModelId})`,
-        };
+        if (matched.length > 0) {
+          return {
+            serverUrl: group.serverUrl,
+            status: 'ok',
+            modelConfigs: group.models,
+            matched,
+            parked,
+            serverModelList: serverModels,
+          };
+        } else {
+          return {
+            serverUrl: group.serverUrl,
+            status: 'no-match',
+            modelConfigs: group.models,
+            matched: [],
+            parked,
+            errorMessage: 'No configured model matches any served model',
+            serverModelList: serverModels,
+          };
+        }
       } catch (err) {
-        // describeError walks err.cause so TLS/proxy/DNS reasons surface
-        // (e.g. "fetch failed ← caused by: ... [UNABLE_TO_VERIFY_LEAF_SIGNATURE]")
-        // instead of just "fetch failed", which hides the real problem.
-        const msg = describeError(err);
         return {
-          label: `✗ ${id}`,
-          description: msg,
-          detail: serverUrl,
+          serverUrl: group.serverUrl,
+          status: 'error',
+          modelConfigs: group.models,
+          matched: [],
+          parked: group.models.map(m => ({
+            config: m,
+            vllmModelId: resolveVllmModelId(m) || m.id || '(unnamed)',
+          })),
+          errorMessage: describeError(err),
         };
       }
     });
 
-    const results = await Promise.all(checks);
+    const serverResults = await Promise.all(serverTasks);
 
-    // Prompt only for mismatches on servers with no ✓ sibling (see
-    // selectMismatchesToPrompt). Parked models show a ✗ row only — no nag.
-    const promptable = selectMismatchesToPrompt(models, results);
+    // ── 3. Show one popup per unique server ──
+    // Each deduped server gets its own individual info/warning message.
+    const anyFailure = serverResults.some(r => r.status === 'error');
 
-    // Persist corrections sequentially (not in the parallel check) so
-    // concurrent `saveModelConfig` writes cannot race — each call re-reads
-    // the config array, mutates one entry, and writes it back; running them
-    // serially keeps that atomic per entry.
-    for (const result of promptable) {
-      if (!result.mismatch) continue; // type-narrow; helper already filtered
-      const { model, serverModels, serverUrl, vllmModelId } = result.mismatch;
-      if (serverModels.length === 0) continue; // different problem — leave row as-is
+    for (const result of serverResults) {
+      const { serverUrl, status, matched, errorMessage } = result;
 
-      const pick = await vscode.window.showWarningMessage(
-        `"${vllmModelId}" is not on ${serverUrl}. ${serverModels.length} model(s) available — pick the right one?`,
-        'Pick Model'
-      );
-      if (pick !== 'Pick Model') continue;
-
-      const chosen = await pickModelFromServer(serverModels, serverUrl);
-      if (!chosen) continue; // cancelled — keep the failure row
-
-      try {
-        await saveModelConfig({ ...model, vllmModelId: chosen });
-        // No re-verification: the user just confirmed the id; the next Test &
-        // Refresh run will report ✓. Update this row so the modal below shows
-        // the corrected state instead of the stale ✗.
-        result.label = `✓ ${model.displayName || model.id || chosen} (corrected → ${chosen})`;
-        result.description = '';
-        result.detail = `${serverUrl} (${chosen}) — saved`;
-        result.mismatch = undefined;
-        vscode.window.showInformationMessage(`Corrected vllmModelId to "${chosen}" and saved.`);
-      } catch (saveErr) {
-        vscode.window.showErrorMessage(
-          `Failed to save corrected vllmModelId: ${describeError(saveErr)}`
-        );
-      }
-    }
-
-    // Intentional UX: show one modal per model (not a single combined list).
-    // This gives immediate visual feedback with ✓/✗ color distinction per model,
-    // which is preferred over a single dialog with all results crammed together.
-    for (const item of results) {
-      const msg = `${item.label}\n${item.description}\n\n${item.detail}`;
-      if (item.label.startsWith('✗')) {
+      if (status === 'ok') {
+        // One ✓ per server with a working model. Parked models on the same
+        // server are silent — kept in settings, not in the model picker,
+        // no popup noise.
+        const matchNames = matched.map(m => m.vllmModelId).join(', ');
+        const ctx = matched[0]?.maxModelLen
+          ? ` (${matched[0].maxModelLen.toLocaleString()} ctx)`
+          : '';
+        vscode.window.showInformationMessage(`✓ ${serverUrl} — ${matchNames}${ctx}`);
+      } else if (status === 'no-match') {
+        let msg = `✗ ${serverUrl} — reachable but no configured model is hosted there`;
+        if (result.serverModelList && result.serverModelList.length > 0) {
+          const serverNames = result.serverModelList.map(m => m.id).join(', ');
+          msg += `\n  Server hosts: ${serverNames}`;
+        }
         vscode.window.showWarningMessage(msg);
       } else {
-        vscode.window.showInformationMessage(msg);
+        // error (includes no-serverUrl)
+        if (serverUrl) {
+          let msg = `✗ ${serverUrl} — ${errorMessage}`;
+          if (result.modelConfigs.length > 1) {
+            const modelNames = result.modelConfigs
+              .map(m => m.displayName || m.id || resolveVllmModelId(m) || '(unnamed)')
+              .join(', ');
+            msg += `\n  Models: ${modelNames}`;
+          }
+          vscode.window.showWarningMessage(msg);
+        } else {
+          // No-serverUrl case: one popup per config (each is its own "server")
+          for (const cfg of result.modelConfigs) {
+            const id = cfg.displayName || cfg.id || resolveVllmModelId(cfg) || '(unnamed)';
+            vscode.window.showWarningMessage(`✗ ${id} — no serverUrl configured`);
+          }
+        }
       }
     }
 
-    // If any connection failed, proactively check VS Code's network gating settings.
-    // These are almost always at defaults; showing the warning only when at least one
-    // connection failed avoids noise for healthy setups while helping corporate/intranet
-    // users diagnose IT-pushed settings that break all VS Code networking.
-    const anyFailed = results.some((r) => r.label.startsWith('✗'));
-    if (anyFailed) {
+    // ── 4. Post-check corrective actions ──
+
+    // 4a. For 'no-match' servers: offer corrective action per server.
+    const noMatchResults = serverResults.filter(
+      r => r.status === 'no-match' && r.serverModelList && r.serverModelList.length > 0
+    );
+    for (const result of noMatchResults) {
+      await handleNoMatchServer(result);
+    }
+
+    // 4b. For errored servers: network check + diagnostic offer.
+    if (anyFailure) {
       const networkWarnings = checkNetworkGatingSettings();
       if (networkWarnings.length > 0) {
         const detail = networkWarnings.join('\n');
-        const pick = await vscode.window.showWarningMessage(
+        const settingsPick = await vscode.window.showWarningMessage(
           `VS Code network settings may be blocking the connection:\n\n${detail}\n\nThese settings gate the patched fetch that handles proxy routing and OS certificates.`,
           'Open Settings'
         );
-        if (pick) {
+        if (settingsPick) {
           await vscode.commands.executeCommand('workbench.action.openSettings', 'http.proxy');
         }
       }
 
-      // Offer a deep diagnostic on the first failed server. This compares
-      // platform-native fetch (SChannel on Windows, curl on macOS/Linux) vs
-      // Node fetch (VS Code patched fetch), checks DNS/TCP, and inspects the
-      // cert chain on TLS errors. The report goes to a dedicated Output
-      // channel the user can copy-paste when reporting the issue.
-      const firstFailed = models.find((m, i) => results[i]?.label.startsWith('✗'));
+      const firstFailed = serverResults.find(r => r.status === 'error');
       if (firstFailed?.serverUrl) {
-        const runDiag = await vscode.window.showWarningMessage(
-          'One or more models failed to connect. Run a deep diagnostic?',
+        const diagPick = await vscode.window.showWarningMessage(
+          'One or more servers failed to connect. Run a deep diagnostic?',
           'Run Diagnostic'
         );
-        if (runDiag === 'Run Diagnostic') {
-          const { requestHeaders: failedHeaders } = resolveServerConfig(firstFailed);
+        if (diagPick === 'Run Diagnostic') {
           outputChannel.show(true);
           outputChannel.appendLine('[INFO] Running diagnostics…');
           const report = await runDiagnostics(
             buildEndpoint(firstFailed.serverUrl, 'v1/models'),
-            failedHeaders,
+            // Use the first model's resolved headers for the diagnostic.
+            (() => {
+              const firstCfg = firstFailed.modelConfigs[0];
+              return firstCfg ? resolveServerConfig(firstCfg).requestHeaders : {};
+            })(),
           );
           outputChannel.appendLine(formatReport(report));
           outputChannel.appendLine('');
@@ -358,6 +417,135 @@ export function registerTestAndRefreshModelsCommand(
     // Clear cached models so the provider re-fetches on next use.
     provider.clearCache();
   });
+}
+
+/**
+ * Handle a no-match server: offer to pick a model (or auto-configure)
+ * and update an existing config or add a new one.
+ */
+async function handleNoMatchServer(result: ServerTestResult): Promise<void> {
+  // Offer Pick Model or Auto-Configure.
+  const method = await vscode.window.showWarningMessage(
+    `✗ ${result.serverUrl} — configure a model now?`,
+    'Pick Model',
+    'Auto-Configure',
+    'Skip'
+  );
+  if (method === 'Skip' || !method) return;
+
+  const serverModels = result.serverModelList!;
+  let chosen: string | undefined;
+  if (serverModels.length === 1) {
+    chosen = serverModels[0].id;
+  } else {
+    chosen = await pickModelFromServer(
+      serverModels,
+      result.serverUrl,
+      method === 'Auto-Configure' ? 'Select model to auto-configure' : 'Select a model to add'
+    );
+  }
+  if (!chosen) return;
+
+  try {
+    const firstCfg = result.modelConfigs[0];
+    const { requestHeaders } = firstCfg ? resolveServerConfig(firstCfg) : { requestHeaders: {} };
+
+    const parkedConfigs = result.parked.map(p => p.config);
+    let configToUpdate: ModelConfig | undefined;
+    if (parkedConfigs.length === 1) {
+      configToUpdate = parkedConfigs[0];
+    } else if (parkedConfigs.length > 1) {
+      const whichConfig = await vscode.window.showQuickPick(
+        parkedConfigs.map(c => ({
+          label: c.displayName || c.id || resolveVllmModelId(c) || '(unnamed)',
+          description: resolveVllmModelId(c) || '(no model ID)',
+          config: c,
+        })),
+        { placeHolder: 'Which existing config should point to the new model?' }
+      );
+      configToUpdate = whichConfig?.config;
+    }
+
+    if (configToUpdate) {
+      await updateExistingConfig(
+        configToUpdate, chosen, result.serverUrl, requestHeaders, method === 'Auto-Configure'
+      );
+    } else {
+      await addNewConfig(chosen, result.serverUrl, requestHeaders, method === 'Auto-Configure');
+    }
+  } catch (saveErr) {
+    vscode.window.showErrorMessage(
+      `Failed to save model config: ${describeError(saveErr)}`
+    );
+  }
+}
+
+/**
+ * Update an existing model config's vllmModelId in place.
+ * Optionally runs auto-configure (HF metadata) first.
+ */
+async function updateExistingConfig(
+  config: ModelConfig,
+  chosen: string,
+  serverUrl: string,
+  requestHeaders: Record<string, string>,
+  autoConfigure: boolean,
+): Promise<void> {
+  if (autoConfigure) {
+    const acResult = await autoConfigureModel(chosen, serverUrl, requestHeaders);
+    const merged: ModelConfig = {
+      ...acResult.modelConfig,
+      id: config.id,
+      vllmModelId: chosen,
+      serverUrl,
+      displayName: config.displayName,
+      requestHeaders: Object.keys(requestHeaders).length > 0 ? requestHeaders : config.requestHeaders,
+      systemMessageReplacementsFile: config.systemMessageReplacementsFile,
+    };
+    await saveModelConfig(merged);
+    vscode.window.showInformationMessage(
+      `Configured "${chosen}" with HF metadata and saved to existing config.`
+    );
+  } else {
+    const updated: ModelConfig = { ...config, vllmModelId: chosen };
+    await saveModelConfig(updated);
+    vscode.window.showInformationMessage(
+      `Updated "${config.displayName || config.id || chosen}" → "${chosen}".`
+    );
+  }
+}
+
+/**
+ * Add a new model config from a server (no existing config to update).
+ * Optionally runs auto-configure (HF metadata) first.
+ */
+async function addNewConfig(
+  chosen: string,
+  serverUrl: string,
+  requestHeaders: Record<string, string>,
+  autoConfigure: boolean,
+): Promise<void> {
+  if (autoConfigure) {
+    const acResult = await autoConfigureModel(chosen, serverUrl, requestHeaders);
+    const merged: ModelConfig = {
+      ...acResult.modelConfig,
+      serverUrl,
+      ...(Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {}),
+    };
+    await saveModelConfig(merged);
+    vscode.window.showInformationMessage(
+      `Configured "${chosen}" with HF metadata and saved as new entry.`
+    );
+  } else {
+    const newConfig: ModelConfig = {
+      id: buildModelId(serverUrl, chosen),
+      vllmModelId: chosen,
+      serverUrl,
+      ...(Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {}),
+    };
+    await saveModelConfig(newConfig);
+    vscode.window.showInformationMessage(`Added "${chosen}" on ${serverUrl}.`);
+  }
 }
 
 /**
@@ -514,20 +702,23 @@ export function registerCleanSessionsCommand(
     let totalChatDirs = 0;
     let totalChatSessions = 0;
     let totalChatEditing = 0;
+    let dbErrors = 0;
 
     // Use id directly — no brittle label matching
     for (const item of selected) {
       const result = await cleanWorkspace(item.id);
-      totalKeys += result.dbKeysRemoved;
+      totalKeys += result.dbKeysRemoved > 0 ? result.dbKeysRemoved : 0;
       totalChatDirs += result.chatDirRemoved ? 1 : 0;
       totalChatSessions += result.chatSessionsRemoved ? 1 : 0;
       totalChatEditing += result.chatEditingSessionsRemoved ? 1 : 0;
+      if (result.dbError) dbErrors++;
     }
 
-    vscode.window.showInformationMessage(
-      `Cleaned ${totalKeys} key(s), removed ${totalChatDirs} chat dir(s), ${totalChatSessions} chatSessions dir(s), ${totalChatEditing} chatEditingSessions dir(s).\n\nRestart VS Code for changes to take effect.`,
-      'OK'
-    );
+    const msg = dbErrors > 0
+      ? `Cleaned ${totalKeys} key(s), removed ${totalChatDirs} chat dir(s), ${totalChatSessions} chatSessions dir(s), ${totalChatEditing} chatEditingSessions dir(s).\n\n⚠ ${dbErrors} workspace(s) had database errors — key removal may be incomplete. Close all Copilot chat sessions and retry.\n\nRestart VS Code for changes to take effect.`
+      : `Cleaned ${totalKeys} key(s), removed ${totalChatDirs} chat dir(s), ${totalChatSessions} chatSessions dir(s), ${totalChatEditing} chatEditingSessions dir(s).\n\nRestart VS Code for changes to take effect.`;
+
+    vscode.window.showInformationMessage(msg, 'OK');
   });
 }
 
@@ -694,6 +885,8 @@ export function registerSetModelPersonalityCommand(
           const content = await fs.readFile(sourcePath, 'utf-8');
           await fs.writeFile(targetPath, content, 'utf-8');
         }
+        // Cache still holds the old parsed content — force re-read on next load.
+        clearPersonalityCache();
       } catch (err) {
         vscode.window.showErrorMessage(
           `Failed to copy preset file: ${describeError(err)}`
@@ -744,38 +937,17 @@ export function registerUpdateServerAuthCommand(
       return;
     }
 
-    // Step 1: API key (optional)
-    const apiKeyInput = await vscode.window.showInputBox({
-      title: `Update Auth for ${serverUrl} (1/2)`,
-      prompt: 'API key for this server (optional). Sent as "Authorization: Bearer <key>". Leave empty to clear.',
-      placeHolder: 'Leave empty if the server needs no key.',
-      ignoreFocusOut: true,
-      password: true,
+    // Step 1+2: API key + custom headers
+    const combinedHeaders = await promptForServerAuth({
+      apiKeyTitle: `Update Auth for ${serverUrl} (1/2)`,
+      apiKeyPrompt: '(optional) vLLM API key. Sent as "Authorization: Bearer <key>". Leave empty to clear.',
+      apiKeyPlaceholder: 'abc123... or leave empty to clear',
+      headersTitle: `Update Auth for ${serverUrl} (2/2)`,
+      headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty to clear.',
+      headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
     });
-    if (apiKeyInput === undefined) return; // cancelled
-    const apiKey = apiKeyInput.trim();
-
-    // Step 2: Custom headers (optional)
-    const headersInput = await vscode.window.showInputBox({
-      title: `Update Auth for ${serverUrl} (2/2)`,
-      prompt: 'Additional request headers. JSON or "Name: value" — leave empty to clear.',
-      placeHolder: '{"CF-Access-Client-Id": "..."}  or  X-Tenant: abc123',
-      ignoreFocusOut: true,
-      validateInput: (v) => {
-        const r = parseHeadersInput(v);
-        return 'error' in r ? r.error : undefined;
-      },
-    });
-    if (headersInput === undefined) return; // cancelled
-    const parsedHeaders = parseHeadersInput(headersInput);
-    if ('error' in parsedHeaders) {
-      vscode.window.showErrorMessage(parsedHeaders.error);
-      return;
-    }
-
-    // Combine: API-key-derived auth first, then custom headers (custom wins).
-    const newHeaders: Record<string, string> = { ...buildAuthHeaders(apiKey), ...parsedHeaders.headers };
-    const finalHeaders = Object.keys(newHeaders).length > 0 ? newHeaders : undefined;
+    if (combinedHeaders === undefined) return; // cancelled
+    const finalHeaders = Object.keys(combinedHeaders).length > 0 ? combinedHeaders : undefined;
 
     // Update all models pointing to this server
     const config = vscode.workspace.getConfiguration('vllm-copilot');
@@ -797,6 +969,8 @@ export function registerUpdateServerAuthCommand(
 
     await config.update('models', updatedModels, vscode.ConfigurationTarget.Global);
     _provider.clearCache();
+    // Push new headers to the metrics engine so open deep-dive uses fresh auth
+    getMetricsEngine(serverUrl)?.setHeaders(finalHeaders ?? {});
     outputChannel.appendLine(`[INFO] Updated auth for ${updated} model(s) on ${serverUrl}.`);
     vscode.window.showInformationMessage(`Updated auth for ${updated} model(s) on ${serverUrl}.`);
   });
@@ -814,6 +988,7 @@ export function registerRemoveServerCommand(
   return vscode.commands.registerCommand('vllm-copilot.removeServer', async (arg?: any) => {
     // VS Code passes the tree item for context menus; extract serverUrl.
     const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
+    const skipConfirm = typeof arg === 'object' && arg?.skipConfirm === true;
     if (!serverUrl) {
       vscode.window.showErrorMessage('Server URL not provided.');
       return;
@@ -830,18 +1005,83 @@ export function registerRemoveServerCommand(
       return;
     }
 
-    const confirm = await vscode.window.showWarningMessage(
-      `Remove ${removed} model(s) from ${serverUrl}?`,
-      { modal: true },
-      'Remove',
-      'Cancel',
-    );
-    if (confirm !== 'Remove') return;
+    if (!skipConfirm) {
+      const confirm = await vscode.window.showWarningMessage(
+        `Remove ${removed} model(s) from ${serverUrl}?`,
+        { modal: true },
+        'Remove',
+        'Cancel',
+      );
+      if (confirm !== 'Remove') return;
+    }
 
     await config.update('models', filtered, vscode.ConfigurationTarget.Global);
     _provider.clearCache();
     outputChannel.appendLine(`[INFO] Removed ${removed} model(s) from ${serverUrl}.`);
     vscode.window.showInformationMessage(`Removed ${removed} model(s) from ${serverUrl}.`);
+  });
+}
+
+/**
+ * Filter out the single model matching (serverUrl, vllmModelId) from a config
+ * array. Never touches sibling models on the same server. Pure helper, exported
+ * for testing.
+ */
+export function removeModelFromConfig(
+  existing: ModelConfig[],
+  serverUrl: string,
+  vllmModelId: string,
+): { filtered: ModelConfig[]; removed: number } {
+  const normalizedUrl = normalizeServerUrl(serverUrl);
+  const filtered = existing.filter(
+    m => !(m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl && resolveVllmModelId(m) === vllmModelId)
+  );
+  return { filtered, removed: existing.length - filtered.length };
+}
+
+/**
+ * Remove a single model entry from a server.
+ * Triggered from the Server Settings webview "Remove Model" button.
+ * Removes only the selected (serverUrl, vllmModelId) entry — never sibling
+ * models on the same server.
+ */
+export function registerRemoveModelCommand(
+  _context: vscode.ExtensionContext,
+  _provider: VllmChatModelProvider,
+  outputChannel: vscode.OutputChannel,
+): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.removeModel', async (arg?: any) => {
+    const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
+    const vllmModelId = typeof arg === 'object' ? arg?.vllmModelId : undefined;
+    const skipConfirm = typeof arg === 'object' && arg?.skipConfirm === true;
+    if (!serverUrl || !vllmModelId) {
+      vscode.window.showErrorMessage('Server URL and model ID are required.');
+      return;
+    }
+
+    const config = vscode.workspace.getConfiguration('vllm-copilot');
+    const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+    const { filtered, removed } = removeModelFromConfig(existing, serverUrl, vllmModelId);
+
+    if (removed === 0) {
+      vscode.window.showWarningMessage(`No configured model "${vllmModelId}" found on ${serverUrl}.`);
+      return;
+    }
+
+    if (!skipConfirm) {
+      const confirm = await vscode.window.showWarningMessage(
+        `Remove model "${vllmModelId}" from ${serverUrl}?`,
+        { modal: true },
+        'Remove',
+        'Cancel',
+      );
+      if (confirm !== 'Remove') return;
+    }
+
+    await config.update('models', filtered, vscode.ConfigurationTarget.Global);
+    _provider.clearCache();
+    outputChannel.appendLine(`[INFO] Removed model "${vllmModelId}" from ${serverUrl}.`);
+    vscode.window.showInformationMessage(`Removed model "${vllmModelId}" from ${serverUrl}.`);
   });
 }
 

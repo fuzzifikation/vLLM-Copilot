@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import { getConfig, resolveServerConfig } from './config.js';
-import { ServerMetrics, fetchServerMetrics, fmtPct, fmtMs, fmtN, fmtTokens, fmtThroughput, shortUrl } from './vllmMetrics.js';
+import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtTokens, fmtThroughput, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import { getLastRequest } from './lastRequestStore.js';
 
 // ─── Tree Items ──────────────────────────────────────────────────────
@@ -170,9 +170,11 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   private _onDidChangeTreeData = new vscode.EventEmitter<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-  private pollTimer: ReturnType<typeof setInterval> | undefined;
-  private isVisible = false;
+  /** Active engine subscriptions: serverUrl → { metrics, dispose } */
+  private subscriptions: Array<{ serverUrl: string; metrics: ServerMetrics; dispose: () => void }> = [];
   private outputChannel: vscode.OutputChannel;
+  /** Flag to coalesce multiple per-server updates into one tree re-render. */
+  private refreshScheduled = false;
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -181,31 +183,77 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     this.outputChannel = outputChannel;
     this.context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration(e => {
-        if (e.affectsConfiguration('vllm-copilot.dashboard.pollIntervalMs')) {
-          this.startPolling();
-          this._onDidChangeTreeData.fire();
+        if (e.affectsConfiguration('vllm-copilot')) {
+          this.refreshSubscriptions();
+          this.fireTreeUpdate();
         }
       }),
     );
   }
 
-  /** Call when the tree view becomes visible or hidden */
-  setVisible(visible: boolean): void {
-    this.isVisible = visible;
-    if (visible) {
-      this.startPolling();
-      this._onDidChangeTreeData.fire(); // refresh on show
-    } else {
-      this.stopPolling();
+  /** Schedule a single tree update, coalescing multiple rapid requests. */
+  private fireTreeUpdate(): void {
+    if (!this.refreshScheduled) {
+      this.refreshScheduled = true;
+      queueMicrotask(() => {
+        this.refreshScheduled = false;
+        this._onDidChangeTreeData.fire();
+      });
     }
   }
 
-  private getPollInterval(): number {
-    return vscode.workspace.getConfiguration('vllm-copilot.dashboard').get<number>('pollIntervalMs', 15000);
+  /** Call when the tree view becomes visible or hidden */
+  setVisible(visible: boolean): void {
+    if (visible) {
+      this.refreshSubscriptions();
+      this.fireTreeUpdate(); // refresh on show
+    } else {
+      this.disposeSubscriptions();
+    }
+  }
+
+  private async refreshSubscriptions(): Promise<void> {
+    this.disposeSubscriptions();
+    try {
+      const config = await getConfig(this.context);
+      // Group models by server URL
+      const serverMap = new Map<string, Record<string, string>>();
+      for (const model of config.models) {
+        if (!model.serverUrl) continue;
+        if (!serverMap.has(model.serverUrl)) {
+          const serverConfig = resolveServerConfig(model);
+          serverMap.set(model.serverUrl, serverConfig.requestHeaders);
+        }
+      }
+
+      for (const [url, headers] of serverMap) {
+        const engine = getMetricsEngine(url, headers);
+        const sub = engine.subscribe((aggregated) => {
+          // Update cached metrics and schedule a single re-render
+          const entry = this.subscriptions.find(s => s.serverUrl === url);
+          if (entry) entry.metrics = aggregated;
+          this.fireTreeUpdate();
+        });
+        this.subscriptions.push({
+          serverUrl: url,
+          metrics: engine.getCachedAggregated() ?? emptyFallbackMetrics(),
+          dispose: sub.dispose,
+        });
+      }
+    } catch (err) {
+      this.outputChannel.appendLine(`[DASHBOARD] refreshSubscriptions failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private disposeSubscriptions(): void {
+    for (const sub of this.subscriptions) {
+      try { sub.dispose(); } catch { /* best-effort */ }
+    }
+    this.subscriptions = [];
   }
 
   private getPollIntervalTreeItem(): PollIntervalTreeItem {
-    const intervalMs = this.getPollInterval();
+    const intervalMs = vscode.workspace.getConfiguration('vllm-copilot.dashboard').get<number>('pollIntervalMs', 15000);
     const label = intervalMs < 60000 ? `${intervalMs / 1000}s` : `${Math.round(intervalMs / 1000)}s`;
     return new PollIntervalTreeItem(label);
   }
@@ -217,42 +265,10 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   async getChildren(element?: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem): Promise<(ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem)[]> {
     if (!element) {
       const items: (ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem)[] = [this.getPollIntervalTreeItem()];
-      try {
-        const config = await getConfig(this.context);
-        // [url] -> { requestHeaders }
-        const serverMap = new Map<string, { requestHeaders: Record<string, string> }>();
-        for (const model of config.models) {
-          if (!model.serverUrl) continue;
-          if (!serverMap.has(model.serverUrl)) {
-            const serverConfig = resolveServerConfig(model);
-            serverMap.set(model.serverUrl, { requestHeaders: serverConfig.requestHeaders });
-          }
-        }
-
-        // Fetch metrics for each server in parallel
-        const results = await Promise.all(
-          Array.from(serverMap.entries()).map(async ([url, entry]) => {
-            try {
-              return await fetchServerMetrics(url, entry.requestHeaders);
-            } catch {
-              return {
-                online: false, error: 'Fetch failed',
-                models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
-                cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
-                avgTTFTMs: null, avgTPOTMs: null, preemptions: null, evictions: null,
-              };
-            }
-          }),
-        );
-
-        const servers = Array.from(serverMap.entries()).map(([url, entry], i) =>
-          new ServerTreeItem(url, results[i]),
-        );
-        return [...items, ...servers, new AddServerTreeItem(), new TestRefreshTreeItem()];
-      } catch (err) {
-        this.outputChannel.appendLine(`[DASHBOARD] getChildren failed: ${err instanceof Error ? err.message : String(err)}`);
-        return [...items, new AddServerTreeItem(), new TestRefreshTreeItem()];
-      }
+      const servers = this.subscriptions.map(sub =>
+        new ServerTreeItem(sub.serverUrl, sub.metrics),
+      );
+      return [...items, ...servers, new AddServerTreeItem(), new TestRefreshTreeItem()];
     }
 
     if (element instanceof ServerTreeItem) {
@@ -503,26 +519,22 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     return items;
   }
 
-  private startPolling(): void {
-    if (this.pollTimer) clearInterval(this.pollTimer);
-    if (!this.isVisible) return;
-    this.pollTimer = setInterval(() => {
-      this._onDidChangeTreeData.fire();
-    }, this.getPollInterval());
-  }
-
-  private stopPolling(): void {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = undefined;
-    }
-  }
-
   async refresh(): Promise<void> {
+    await this.refreshSubscriptions();
     this._onDidChangeTreeData.fire();
   }
 
   dispose(): void {
-    this.stopPolling();
+    this.disposeSubscriptions();
   }
+}
+
+/** Fallback metrics for a server before first data arrives. */
+function emptyFallbackMetrics(): ServerMetrics {
+  return {
+    online: false, error: 'Loading…',
+    models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
+    cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
+    avgTTFTMs: null, avgTPOTMs: null, preemptions: null, evictions: null,
+  };
 }

@@ -207,7 +207,7 @@ describe('mergePresetWithUserConfig', () => {
 
 describe('findPresetForModel', () => {
   const preset = {
-    config: { id: 'zai-org/GLM-5.2', vllmModelId: 'zai-org/GLM-5.2' } as ModelConfig,
+    config: { vllmModelId: 'zai-org/GLM-5.2' } as ModelConfig,
     sourceFile: 'glm-5.2-config.json',
   };
   const presets = [preset];
@@ -234,7 +234,7 @@ describe('findPresetForModel', () => {
     // quantization only changes weight precision, and the serving org is
     // irrelevant to inference parameters.
     const dsPreset = {
-      config: { id: 'deepseek-ai/DeepSeek-V4-Flash', vllmModelId: 'deepseek-ai/DeepSeek-V4-Flash' } as ModelConfig,
+      config: { vllmModelId: 'deepseek-ai/DeepSeek-V4-Flash' } as ModelConfig,
       sourceFile: 'DeepSeek-V4-Flash.json',
     };
     expect(findPresetForModel([dsPreset], 'nvidia/DeepSeek-V4-Flash-NVFP4')).toBe(dsPreset);
@@ -242,7 +242,7 @@ describe('findPresetForModel', () => {
 
   it('does not cross-match a different model that shares a name token', () => {
     const chatPreset = {
-      config: { id: 'deepseek-ai/DeepSeek-V4-Chat', vllmModelId: 'deepseek-ai/DeepSeek-V4-Chat' } as ModelConfig,
+      config: { vllmModelId: 'deepseek-ai/DeepSeek-V4-Chat' } as ModelConfig,
       sourceFile: 'DeepSeek-V4-Chat.json',
     };
     expect(findPresetForModel([chatPreset], 'nvidia/DeepSeek-V4-Flash-NVFP4')).toBeUndefined();

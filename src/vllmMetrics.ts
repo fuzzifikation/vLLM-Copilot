@@ -4,7 +4,19 @@
  * Fetches /health, /version, /v1/models, /metrics from a vLLM server,
  * parses the Prometheus text format, and aggregates into structured metrics.
  * Used by both the sidebar dashboard (dashboard.ts) and the deep-dive webview.
+ *
+ * ## Polling Engine
+ *
+ * {@link ServerMetricsEngine} owns the fetch cycle for one server. It is
+ * reference-counted: starts polling when the first subscriber joins, stops
+ * when the last leaves. Both dashboard and deep-dive subscribe to the same
+ * engine via {@link getMetricsEngine}, so one server is never fetched twice
+ * per interval.
  */
+
+import * as vscode from 'vscode';
+import { buildEndpoint } from './config.js';
+import { buildRequestHeaders } from './fetchRetry.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -240,97 +252,252 @@ export function parseLabels(raw: string | undefined): Record<string, string> {
 // Re-export for testing
 export type { ModelAccumulator };
 
-// ─── Fetch ───────────────────────────────────────────────────────────
+// ─── Polling Engine ─────────────────────────────────────────────────
 
-export async function fetchServerMetrics(
-  serverUrl: string,
-  requestHeaders: Record<string, string>,
-  timeout = 5000,
-): Promise<ServerMetrics> {
-  const baseUrl = serverUrl.replace(/\/+$/, '');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  const headers = { ...requestHeaders };
+/**
+ * Default poll interval for metrics fetching.
+ * Used when reading vllm-copilot.dashboard.pollIntervalMs returns undefined.
+ */
+const DEFAULT_POLL_MS = 15000;
 
-  try {
-    const healthRes = await fetch(`${baseUrl}/health`, { signal: controller.signal, headers });
-    if (!healthRes.ok) {
-      return emptyMetrics(`Health check failed: ${healthRes.status}`);
+/**
+ * Polling engine for a single vLLM server.
+ *
+ * Reference-counted: starts polling on first {@link subscribe}, stops on last
+ * unsubscribe. Produces both aggregated (dashboard) and raw (deep-dive) data
+ * from the same fetch cycle — one server is never fetched twice per interval.
+ *
+ * Uses recursive setTimeout so the interval setting is re-read on every cycle.
+ * Callers get cached data synchronously via {@link getCachedAggregated} and
+ * {@link getCachedRaw}, and receive push notifications on each completed cycle.
+ */
+export class ServerMetricsEngine {
+  private subscriberCount = 0;
+  private pollTimer: ReturnType<typeof setTimeout> | undefined;
+  private _lastAggregated: ServerMetrics | null = null;
+  private _lastRaw: ServerRawData | null = null;
+  private _disposed = false;
+  /** Array of callbacks so subscribers don't need to coordinate. */
+  private callbacks: Array<(aggregated: ServerMetrics, raw: ServerRawData) => void> = [];
+
+  constructor(
+    private serverUrl: string,
+    private requestHeaders: Record<string, string>,
+  ) {}
+
+  /** Latest aggregated metrics (synchronous, may be null before first poll). */
+  getCachedAggregated(): ServerMetrics | null { return this._lastAggregated; }
+
+  /** Latest raw server data (synchronous, may be null before first poll). */
+  getCachedRaw(): ServerRawData | null { return this._lastRaw; }
+
+  /**
+   * Subscribe to poll updates. The callback is invoked after each successful
+   * fetch cycle with both the aggregated and raw data.
+   * Returns a Disposable — dispose to unsubscribe.
+   */
+  subscribe(callback: (aggregated: ServerMetrics, raw: ServerRawData) => void): { dispose: () => void } {
+    this.callbacks.push(callback);
+    this.subscriberCount++;
+    if (this.subscriberCount === 1) {
+      // First subscriber — start polling immediately
+      this.tick();
     }
+    return { dispose: () => this.unsubscribe(callback) };
+  }
 
-    const modelNames: string[] = [];
-    let maxModelLen: number | null = null;
+  /** Update request headers in-place (called by getMetricsEngine on re-use). */
+  setHeaders(headers: Record<string, string>): void {
+    this.requestHeaders = { ...headers };
+  }
+
+  dispose(): void {
+    this._disposed = true;
+    this.subscriberCount = 0;
+    this.callbacks = [];
+    this.stopPolling();
+    // Prevent registry from returning this disposed zombie
+    if (engineRegistry.get(this.serverUrl) === this) {
+      engineRegistry.delete(this.serverUrl);
+    }
+  }
+
+  private unsubscribe(callback: (aggregated: ServerMetrics, raw: ServerRawData) => void): void {
+    const idx = this.callbacks.indexOf(callback);
+    if (idx >= 0) this.callbacks.splice(idx, 1);
+    this.subscriberCount--;
+    if (this.subscriberCount <= 0) {
+      this.subscriberCount = 0;
+      this.stopPolling();
+    }
+  }
+
+  /** One fetch cycle: hit all endpoints, parse once, cache both views, notify. */
+  private async tick(): Promise<void> {
+    if (this._disposed) return;
+
     try {
-      const modelsRes = await fetch(`${baseUrl}/v1/models`, { signal: controller.signal, headers });
-      if (modelsRes.ok) {
-        const modelsData = await modelsRes.json() as { data?: Array<{ id?: string; max_model_len?: number | null }> };
-        for (const m of modelsData.data ?? []) {
-          if (m.id) modelNames.push(m.id);
-          if (m.max_model_len != null && m.max_model_len > 0) maxModelLen = m.max_model_len;
-        }
+      const { aggregated, raw } = await fetchAllEndpoints(this.serverUrl, this.requestHeaders);
+
+      if (this._disposed) return;
+      this._lastAggregated = aggregated;
+      this._lastRaw = raw;
+
+      // Notify all subscribers
+      for (const cb of this.callbacks) {
+        try { cb(aggregated, raw); } catch { /* subscriber error — best-effort */ }
       }
-    } catch { /* non-critical */ }
-
-    let version: string | undefined;
-    try {
-      const verRes = await fetch(`${baseUrl}/version`, { signal: controller.signal, headers });
-      if (verRes.ok) {
-        const data = await verRes.json() as { version?: string };
-        version = data.version;
+    } catch (err) {
+      // fetchAllEndpoints is error-proof via safeFetch, so this only fires on
+      // programming errors (OOM, JSON bomb, etc.). Log and schedule retry.
+      console.error('[vllm-copilot] metrics engine tick failed:', err);
+    } finally {
+      // Always schedule next cycle — even on error we retry
+      if (!this._disposed && this.subscriberCount > 0) {
+        this.pollTimer = setTimeout(() => this.tick(), getPollSettingMs());
       }
-    } catch { /* optional */ }
+    }
+  }
 
-    let rawMetrics = '';
-    try {
-      const metRes = await fetch(`${baseUrl}/metrics`, { signal: controller.signal, headers });
-      if (metRes.ok) {
-        rawMetrics = await metRes.text();
-      }
-    } catch { /* metrics may be disabled */ }
-
-    const parser = new MetricsParser();
-    parser.parse(rawMetrics);
-    const aggregated = parser.aggregate();
-
-    // Only include models actually present on the server (from /v1/models and Prometheus metrics).
-    // Do NOT merge configModelIds — those are user settings and may reference models not loaded on the server.
-    const allModels = [...new Set([...modelNames, ...aggregated.models])];
-    return { online: true, version, ...aggregated, models: allModels, maxModelLen };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return emptyMetrics(`Cannot connect: ${message}`);
-  } finally {
-    clearTimeout(timer);
+  private stopPolling(): void {
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = undefined;
+    }
   }
 }
 
-function emptyMetrics(error: string): ServerMetrics {
-  return {
-    online: false, error,
-    models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
-    cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
-    avgTTFTMs: null, avgTPOTMs: null, preemptions: null, evictions: null,
-  };
+/** Read the configured poll interval (in ms) from VS Code settings. */
+function getPollSettingMs(): number {
+  try {
+    return vscode.workspace.getConfiguration('vllm-copilot.dashboard').get<number>('pollIntervalMs', DEFAULT_POLL_MS);
+  } catch {
+    return DEFAULT_POLL_MS;
+  }
 }
 
-// ─── Fetch Raw Data (for deep-dive webview) ──────────────────────────
+// ─── Engine Registry ────────────────────────────────────────────────
+
+/** Module-level map of server URL → engine. */
+const engineRegistry = new Map<string, ServerMetricsEngine>();
 
 /**
- * Fetch raw, unaggregated data from all vLLM endpoints.
- * Returns structured data suitable for rich rendering (tables, histograms).
+ * Get or create a {@link ServerMetricsEngine} for the given server.
+ * Engines are shared across the dashboard and deep-dive views via this registry.
+ * The engine is disposed-rece when the last subscriber unsubscribes.
+ *
+ * When an engine already exists for the given URL, its request headers are
+ * updated with the provided values (so auth changes propagate without needing
+ * to unsubscribe/resubscribe).
+ *
+ * @param serverUrl - The vLLM server URL
+ * @param requestHeaders - Auth/routing headers for this server
  */
-export async function fetchServerRawData(
+export function getMetricsEngine(
+  serverUrl: string,
+  requestHeaders?: Record<string, string>,
+): ServerMetricsEngine {
+  let engine = engineRegistry.get(serverUrl);
+  if (!engine) {
+    engine = new ServerMetricsEngine(serverUrl, requestHeaders ?? {});
+    engineRegistry.set(serverUrl, engine);
+  } else if (requestHeaders && Object.keys(requestHeaders).length > 0) {
+    // Update headers on re-use so auth changes propagate
+    engine.setHeaders(requestHeaders);
+  }
+  return engine;
+}
+
+// ─── Unified Fetch ──────────────────────────────────────────────────
+
+/**
+ * Fetch all vLLM endpoints and produce both ServerMetrics and ServerRawData.
+ *
+ * This is the single HTTP cycle shared by dashboard and deep-dive. The
+ * Prometheus text is parsed twice (once for aggregates, once for raw buckets)
+ * — the HTTP cost dwarfs the CPU cost, so the unified fetch is the important
+ * optimization.
+ *
+ * Response bodies are read once and cached as text to avoid double-consumption
+ * errors (Response body can only be read once).
+ */
+async function fetchAllEndpoints(
   serverUrl: string,
   requestHeaders: Record<string, string>,
-  timeout = 5000,
-): Promise<ServerRawData> {
+): Promise<{ aggregated: ServerMetrics; raw: ServerRawData }> {
   const baseUrl = serverUrl.replace(/\/+$/, '');
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  const headers = { ...requestHeaders };
+  const timer = setTimeout(() => controller.abort(), 5000);
+  const headers = buildRequestHeaders(undefined, requestHeaders);
 
-  const result: ServerRawData = {
-    models: [],
+  // Fetch all endpoints in parallel. Read all bodies as text immediately
+  // (Response body can only be consumed once).
+  const [
+    healthRes, modelsText, versionText, metricsText, loadText,
+  ] = await Promise.all([
+    safeFetch(buildEndpoint(baseUrl, 'health'), { signal: controller.signal, headers }),
+    safeFetch(buildEndpoint(baseUrl, 'v1/models'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
+    safeFetch(buildEndpoint(baseUrl, 'version'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
+    safeFetch(buildEndpoint(baseUrl, 'metrics'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
+    safeFetch(buildEndpoint(baseUrl, 'load'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
+  ]);
+  clearTimeout(timer);
+
+  // ── Shared parse helpers ──
+  const parseJsonSafe = <T>(text: string): T | undefined => {
+    try { return JSON.parse(text) as T; } catch { return undefined; }
+  };
+
+  // ── Parse Models (used by both aggregated and raw) ──
+  const modelNames: string[] = [];
+  let maxModelLen: number | null = null;
+  let parsedModels: Array<Record<string, unknown>> = [];
+  if (modelsText) {
+    const modelsData = parseJsonSafe<{ data?: Array<Record<string, unknown>> }>(modelsText);
+    if (modelsData?.data) {
+      parsedModels = modelsData.data;
+      for (const m of parsedModels) {
+        if (typeof m.id === 'string') modelNames.push(m.id);
+        if (typeof m.max_model_len === 'number' && m.max_model_len > 0) maxModelLen = m.max_model_len;
+      }
+    }
+  }
+
+  // ── Parse Version (used by both aggregated and raw) ──
+  let version: string | undefined;
+  let parsedVersion: Record<string, unknown> | undefined;
+  if (versionText) {
+    parsedVersion = parseJsonSafe<Record<string, unknown>>(versionText);
+    version = parsedVersion?.version as string | undefined;
+  }
+
+  // ── Parse Server Load (only for deep-dive) ──
+  let serverLoad: number | undefined;
+  if (loadText) {
+    const loadData = parseJsonSafe<{ server_load?: number }>(loadText);
+    serverLoad = loadData?.server_load;
+  }
+
+  // ── Online check ──
+  const online = healthRes.ok;
+  const errorStr = online ? undefined : (healthRes.status === 0 ? 'Cannot connect' : `Health check failed: ${healthRes.status}`);
+
+  // ── Health body (for deep-dive) ──
+  const healthBody = online && healthRes.ok ? await healthRes.text() : undefined;
+
+  // ── Build ServerMetrics (aggregated, for dashboard) ──
+  const parser = new MetricsParser();
+  parser.parse(metricsText);
+  const aggregated = parser.aggregate();
+  const allModels = [...new Set([...modelNames, ...aggregated.models])];
+
+  const serverMetrics: ServerMetrics = online
+    ? { online: true, version, ...aggregated, models: allModels, maxModelLen }
+    : emptyMetrics(errorStr ?? 'Unknown error');
+
+  // ── Build ServerRawData (raw, for deep-dive) ──
+  const raw: ServerRawData = {
+    models: parsedModels,
     metrics: {
       gauges: {},
       counters: {},
@@ -340,58 +507,33 @@ export async function fetchServerRawData(
       http: {},
     },
   };
-
-  // Fetch all endpoints in parallel
-  const [healthRes, versionRes, modelsRes, metricsRes, loadRes] = await Promise.all([
-    safeFetch(`${baseUrl}/health`, { signal: controller.signal, headers }),
-    safeFetch(`${baseUrl}/version`, { signal: controller.signal, headers }),
-    safeFetch(`${baseUrl}/v1/models`, { signal: controller.signal, headers }),
-    safeFetch(`${baseUrl}/metrics`, { signal: controller.signal, headers }),
-    safeFetch(`${baseUrl}/load`, { signal: controller.signal, headers }),
-  ]);
-  clearTimeout(timer);
-
-  // Health — status code is the signal, body is optional detail
-  result.healthStatus = healthRes.status;
-  if (healthRes.ok) {
-    result.healthBody = await healthRes.text();
+  if (online) {
+    raw.healthStatus = healthRes.status;
+    if (healthBody) raw.healthBody = healthBody;
+    if (parsedVersion) raw.version = parsedVersion;
+    if (serverLoad != null) raw.serverLoad = serverLoad;
+    if (metricsText) {
+      try { parseRawMetrics(metricsText, raw.metrics); } catch { /* non-critical */ }
+    }
   }
 
-  // Version
-  if (versionRes.ok) {
-    try { result.version = (await versionRes.json()) as Record<string, unknown>; } catch { /* ignore */ }
-  }
-
-  // Models
-  if (modelsRes.ok) {
-    try {
-      const data = await modelsRes.json() as { data?: Array<Record<string, unknown>> };
-      result.models = data.data ?? [];
-    } catch { /* ignore */ }
-  }
-
-  // Server load
-  if (loadRes.ok) {
-    try {
-      const loadData = await loadRes.json() as { server_load?: number };
-      if (loadData.server_load != null) result.serverLoad = loadData.server_load;
-    } catch { /* ignore */ }
-  }
-
-  // Metrics — parse raw Prometheus text into structured buckets
-  if (metricsRes.ok) {
-    try {
-      const rawText = await metricsRes.text();
-      parseRawMetrics(rawText, result.metrics);
-    } catch { /* ignore */ }
-  }
-
-  return result;
+  return { aggregated: serverMetrics, raw };
 }
 
+/** Fetch wrapper that never throws — returns a Response with status 0 on failure. */
 async function safeFetch(url: string, options: RequestInit): Promise<Response> {
   try { return await fetch(url, options); }
   catch { return new Response(null, { status: 0 }); }
+}
+
+/** Build an empty/error ServerMetrics. */
+function emptyMetrics(error: string): ServerMetrics {
+  return {
+    online: false, error,
+    models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
+    cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
+    avgTTFTMs: null, avgTPOTMs: null, preemptions: null, evictions: null,
+  };
 }
 
 /**
