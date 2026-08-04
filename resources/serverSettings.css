@@ -58,7 +58,39 @@ details[open] > summary::before { content: '\25BC'; }
   background: rgba(0,0,0,0.3); z-index: 100; justify-content: center; align-items: flex-start; padding-top: 40px;
 }
 .modal-overlay.show { display: flex; }
-.modal-box { background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-editorWidget-border); padding: 12px; min-width: 280px; }
+.modal-box { background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-editorWidget-border); padding: 12px; }
 .modal-box label { display: block; font-size: 0.85em; margin-bottom: 6px; }
 .modal-box input { margin-bottom: 8px; }
 .modal-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+/* ── Beautification: sticky header, personality card, hover/focus polish ── */
+
+.selector-row { margin-bottom: 8px; }
+.selector-row label { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.72em; }
+
+/* Personality picker — distinct card, sits right under the model selector */
+.personality-card {
+  display: flex; flex-direction: column; gap: 4px;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-widget-border, var(--vscode-input-border));
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+}
+.personality-card label { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.72em; color: var(--vscode-descriptionForeground); }
+.personality-card select:not(:disabled) { border-color: var(--vscode-focusBorder, var(--vscode-input-border)); }
+
+/* Section accordions */
+summary { transition: background-color 0.1s ease; }
+summary:hover { background: var(--vscode-list-hoverBackground, var(--vscode-sideBarSectionHeader-background)); }
+details { border: 1px solid transparent; }
+details:hover { border-color: var(--vscode-widget-border, var(--vscode-input-border)); }
+
+/* Form controls */
+input:focus, select:focus, textarea:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+select:disabled { opacity: 0.5; cursor: not-allowed; }
+button { transition: background-color 0.1s ease; }
+button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+
+/* Empty / loading states */
+.empty-state { padding: 16px 8px; text-align: center; }
