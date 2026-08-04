@@ -292,9 +292,14 @@ export function resolveServerConfig(
 
 /**
  * Ensure the server URL has a valid scheme. If the user types `localhost:8000`
- * instead of `http://localhost:8000`, prepend `http://` so `fetch()` doesn't
+ * instead of `http://localhost:8000`, prepend a scheme so `fetch()` doesn't
  * throw `TypeError: fetch failed` on an invalid URL.
- * Also strip trailing slashes so endpoint joins don't produce `//v1/...`.
+ * Heuristic: if the host includes an explicit port (e.g. `host:8000`) we
+ * default to `http://` (likely a raw vLLM server); otherwise `https://`
+ * (likely a reverse proxy).
+ * Also strip trailing slashes and trailing `/v1` so endpoint joins don't
+ * produce `//v1/...` or `/v1/v1/models`. The extension adds `/v1` itself
+ * when constructing requests, so a user-provided `/v1` suffix is redundant.
  * Returns a warning string if the URL is invalid (e.g. `http://` with no host).
  */
 export function normalizeServerUrl(url: string): string {
@@ -304,8 +309,11 @@ export function normalizeServerUrl(url: string): string {
 
   // Already has a scheme
   if (!(normalized.startsWith('http://') || normalized.startsWith('https://'))) {
-    // Missing scheme — default to http
-    normalized = `http://${normalized}`;
+    // Missing scheme — detect scheme by whether the host has an explicit port.
+    // Has port (e.g. host:8000) → http:// (raw vLLM). No port → https:// (reverse proxy).
+    const hostPart = normalized.split(/[\/?]/)[0];
+    const scheme = /\:\d+$/.test(hostPart) ? 'http' : 'https';
+    normalized = `${scheme}://${normalized}`;
   }
 
   // Validate that a host is present (http:// and https:// have no host)
@@ -323,6 +331,12 @@ export function normalizeServerUrl(url: string): string {
   // Remove one or more trailing slashes, but keep scheme delimiter intact.
   while (normalized.endsWith('/') && !normalized.endsWith('://')) {
     normalized = normalized.slice(0, -1);
+  }
+
+  // Strip a trailing /v1 path segment. Users commonly copy the OpenAI base URL
+  // (e.g. https://api.openai.com/v1) but the extension appends /v1 itself.
+  if (normalized.endsWith('/v1')) {
+    normalized = normalized.slice(0, -3);
   }
 
   return normalized;
@@ -347,6 +361,12 @@ export function buildEndpoint(baseUrl: string, path: string): string {
  * emit. Other schemes (e.g. a gateway's `x-api-key` or Cloudflare Access headers)
  * are a separate concern — users add those as custom request headers. Returns an
  * empty object when no key is set.
+ *
+ * ⚠️ **Scope: write/migration paths only.** This function is used only by the
+ * Add Server and Update Auth commands (`autoConfig.ts`, `commands.ts`) to
+ * construct headers from user-provided key input. Runtime chat requests do
+ * NOT call this — auth comes from the per-model `requestHeaders` in settings.
+ * Wiring this into runtime code would silently add or omit the wrong headers.
  */
 export function buildAuthHeaders(apiKey?: string): Record<string, string> {
   if (!apiKey) return {};
@@ -488,4 +508,22 @@ function validateRequestParams(params: Record<string, unknown> | undefined, labe
   return warnings;
 }
 
-
+/**
+ * Find the index of a model in the array by its vLLM model ID and server URL.
+ * Uses normalized URL comparison and the canonical {@link resolveVllmModelId} helper.
+ * Returns -1 if no match is found.
+ *
+ * Shared by both {@link saveModelConfig} implementations (autoConfig.ts and
+ * serverSettingsView.ts) so matching logic stays in one place.
+ */
+export function findModelConfigIndex(
+  models: ModelConfig[],
+  vllmModelId: string,
+  serverUrl: string,
+): number {
+  const normalizedUrl = normalizeServerUrl(serverUrl);
+  return models.findIndex(m => {
+    if (!m.serverUrl) return false;
+    return resolveVllmModelId(m) === vllmModelId && normalizeServerUrl(m.serverUrl) === normalizedUrl;
+  });
+}

@@ -1,5 +1,77 @@
 # Changelog
 
+## v1.20.2 — Server Settings UX fixes
+
+- **Fixed: Auto-Configure now works on unconfigured models** — Server Settings lists server-reported models even when they have no settings entry, but clicking **Auto-Configure** on one failed with "No config found". It now borrows the server's auth headers from a sibling configured model and runs the full add flow (preset/HuggingFace discovery), producing a complete new `vllm-copilot.models` entry.
+- **Fixed: "Remove Server" button removed ALL models on a server** — renamed to **Remove Model**: it now deletes only the selected model's settings entry, never its siblings on the same server.
+- **New command** — `vllm-copilot.removeModel` (title "Remove Model"), registered in package.json and wired into the Server Settings webview. `vllm-copilot.removeServer` remains available from the command palette for an explicit, confirmed server-wide removal.
+
+## v1.20.1 — DeepSeek-V4-Flash-0731 model config
+
+- **New model preset** — `DeepSeek-V4-Flash-0731`: dedicated config for the official 0731 release with model-card-recommended sampling parameters (`temperature=1.0`, `top_p=0.95`). Think modes only send `reasoning_effort` (vLLM auto-injects `enable_thinking`); No Think sends all params directly. Updated documentation with links to DeepSeek API thinking mode docs, vLLM reasoning parser behavior, and HuggingFace model card recommendations.
+
+## v1.20.0 — Major Improvement! Bug-squash edition: engine unification, structural cleanup, 9 bugs fixed, and better UX for server adding
+
+- **Unified metrics engine** — created `ServerMetricsEngine` in `vllmMetrics.ts`: reference-counted polling engine shared by dashboard and deep-dive. Starts on first subscriber, stops on last. Single fetch cycle produces both `ServerMetrics` (aggregated) and `ServerRawData` (raw buckets) from one set of HTTP responses. Eliminated duplicate 2x-per-interval fetches when both views were open. Removed standalone `fetchServerMetrics()` and `fetchServerRawData()` (logic subsumed into `fetchAllEndpoints()`).
+- **Dashboard: removed config cache bypass bug** — no longer calls `getConfig(context)` on every 15s poll. Config read once on visibility change and re-read on settings change. Dashboard subscribes to the shared engine; tree re-renders coalesced via `queueMicrotask` gate.
+- **Deep-dive: no longer owns its poll cycle** — subscribes to the shared engine, receives push notifications. Removed independent `fetchServerRawData()` timer.
+- **Consolidated `streamReader.ts` drain loop** — replaced 3 near-identical `eventQueue` drain sites with a single `drainAndCheck()` helper generator. `STOP_ITERATION` sentinel cleanly separates "break" from real errors.
+- **Corrected `streamReader.ts` abort signal comment** — the old comment claimed the abort signal was "inert" after streaming started, which is wrong. Updated to explain `reader.cancel()` is the preferred path for clean teardown.
+- **Fixed: `buildAuthHeaders()` JSDoc didn't document its limited scope** — now clearly marked as "write/migration paths only" (Add Server, Update Auth). Runtime never uses it.
+- **Refactored auth input** — extracted `promptForServerAuth()` shared helper (`autoConfig.ts`) for API key + custom headers input. Used by both Add Server and Update Auth. Single source of truth for the two-step input, validation, and combination.
+- **Eliminated duplicate import** in `commands.ts` — removed `buildAuthHeaders` and `parseHeadersInput` imports (both now accessed via `promptForServerAuth`). `buildAuthHeaders` is only used internally in `autoConfig.ts`.
+- **Added three-way failure dialog** — `handleServerFailure()` in `autoConfig.ts` replaces the old Cancel-only exit when Add Server cannot reach the server. Users now choose:
+  - **Discard** — abandon, try again later
+  - **Run Diagnostic** — runs `runDiagnostics` with the exact in-memory URL + headers (no settings write needed)
+  - **Keep Anyway** — saves a minimal stub (`{ id, vllmModelId, serverUrl, requestHeaders }`) so the user can auto-configure or edit later
+- **Aligned auth input prompts** — both Add Server and Update Auth now use the same wording for API key and custom headers descriptions. Clarified quotation requirements for custom header input.
+- **New model preset** — `Qwen/Qwen3.6-35B-A3B` with Think (General), Think (Coding), and No Think modes.
+- **Updated `model-configs/README.md`** — added Qwen3.6-35B-A3B to the preset table.
+- **Fixed: `promptReplacer.ts` parsed each personality file twice** — both `loadPersonalityMeta()` and `loadPromptReplacements()` independently read+parsed the same file. Extracted shared `readPersonalityFile()` with a module-level `Map` cache so discovery and application share the same I/O+parse. Exported `clearPersonalityCache()` for the Set Personality command to use when it copies a new file.
+- **Fixed: cache poisoning on personality rewrite** — `registerSetModelPersonalityCommand()` now imports and calls `clearPersonalityCache()` after copying a new preset file, so the next request loads fresh rules instead of stale cached ones.
+- **Removed `src/migration.ts` (237 lines), `test/migration.test.ts` (56 lines), and their registration in `extension.ts`.** The repo's initial commit (2e6f710) was a clean public release imported from a private repo — no user of this public release has ever had legacy global settings. Eliminates two globalState flags, a latent write-shadowing bug, and 293 lines of cargo-culted dead code.
+- **Fixed: `fetchServerMetrics` shared `AbortController` swallowed timeout aborts as "online with zero models".** Each inner catch now detects `controller.signal.aborted` and re-throws to the outer handler, producing `{ online: false, error: 'Cannot connect: ...' }` instead of reporting the server as online with no models.
+- **Fixed: `deleteChatKeys` returned `0` on any failure, indistinguishable from "no keys existed."** Now returns `-1` on error; `cleanWorkspace` propagates `dbError: boolean` to `commands.ts`, which shows a warning when database deletion fails.
+- **Removed `RetryLogger` interface** (single implementation, YAGNI). `fetchWithRetry` now takes plain `onRetry`/`onRetrySuccess` callbacks instead of a strategy object.
+- **Fixed: `clearLogFiles()` sync-in-async** — switched from synchronous `readdirSync`/`unlinkSync` to async `fs.promises` calls to match the function's async signature.
+- **Fixed: `buildModelInfo()` inline type redeclaration** — changed `override` parameter from inline type duplicating `ModelConfig` to `Partial<ModelConfig>` so new fields propagate automatically. Same fix applied to `buildConfigurationSchema()` (`Pick<ModelConfig, 'modelModes' | 'defaultMode'>`).
+- **Fixed: session manager logs silently dropped before init** — replaced `outputWarned` flag with pre-init message queue that flushes to the output channel once `setSessionManagerOutput()` is called.
+- **Metrics polling now reuses shared helpers** — `fetchAllEndpoints()` uses `buildEndpoint()` (from `config.ts`) and `buildRequestHeaders()` (from `fetchRetry.ts`) instead of inline URL/header construction, removing the last duplication between the chat and metrics HTTP paths.
+- **Fixed: metrics engine stalls on fetch error** — `tick()` wrapped in `try/catch/finally` so polling continues on transient failures instead of stopping permanently.
+- **Fixed: engine `dispose()` left zombie in registry** — `dispose()` now removes the engine from the registry on cleanup.
+- **Fixed: engine auth headers not propagated on re-use** — `getMetricsEngine()` calls `engine.setHeaders()` when returning an existing engine, so dashboard re-subscribes pick up changed auth.
+- **Fixed: deep-dive stale auth headers on header-only update** — `registerUpdateServerAuthCommand()` now pushes new headers to the metrics engine via `getMetricsEngine(serverUrl)?.setHeaders()`, so an open deep-dive panel uses fresh auth immediately.
+- **Shared model matching helper** — added `findModelConfigIndex()` to `config.ts` using `normalizeServerUrl` + `resolveVllmModelId`. Both `autoConfig.ts` and `serverSettingsView.ts` now call the same function for model identity matching, eliminating the URL-normalization divergence between the two `saveModelConfig` implementations.
+
+### Test & Refresh: server-grouped testing, auto-configure in no-match flow
+
+- **Refactored `testAndRefreshModels`** — models are now grouped by unique server (fingerprinted by URL + auth headers) so each server is queried exactly once. Single consolidated popup replaces N per-model modals. Server-level status: ✓ (ok), ✗ (error), or no-match (reachable but nothing configured).
+- **New no-match flow** — when a server is reachable but no configured model ID matches, the user is offered to **Pick Model** or **Auto-Configure** inline, with the option to update an existing config in-place or add a new entry.
+- **Extracted helpers** — `serverFingerprint()`, `groupModelsByServer()`, `handleNoMatchServers()`, `updateExistingConfig()`, `addNewConfig()`. The closure is no longer a single 5-responsibility function.
+- **Removed `selectMismatchesToPrompt()`** — superseded by the server-grouped no-match flow.
+
+### Server Settings: Auto-Configure and Remove Server buttons
+
+- **Dashboard right-click menu trimmed** — now only shows **Update Auth** and **vLLM Deep-Dive**. The destructive "Remove Server" and "Auto-Configure" are moved to the Server Settings webview.
+- **Server Settings webview** — two new action buttons at the top: **Auto-Configure** (re-runs preset/HuggingFace discovery for the selected model) and **Remove Server** (deletes all models for that server from settings, with a confirm dialog). Both delegate to existing commands.
+- **`registerAutoConfigureModelCommand`** — now accepts optional `{ serverUrl, vllmModelId }` arg to skip the QuickPick when called from the webview.
+- **`registerRemoveServerCommand`** — accepts `skipConfirm` flag. Webview passes it (the webview already shows its own confirm). Dashboard right-click path still shows the modal.
+- **`applyAutoConfigUpdate`** exported for reuse.
+
+### Smart URL normalization
+
+- **`normalizeServerUrl`** — port-based scheme detection: `host:8000` → `http://`, bare `host` → `https://`. Also strips trailing `/v1` path segment (commonly copied from OpenAI base URLs like `https://api.openai.com/v1`).
+- **New tests** — 7 test cases for scheme detection and `/v1` stripping.
+
+### Updated `known-bugs.md`
+
+- Crossed off `registerTestAndRefreshModelsCommand()` as a large module (refactored).
+- Removed stale `selectMismatchesToPrompt` false-positive entry (function no longer exists).
+
+## v1.19.96 — Removed `id` from bundled model presets
+
+- **Removed `"id"` from all 7 model presets.** Preset matching uses `vllmModelId` only — `id` is reserved for the user's own settings identifier.
+
 ## v1.19.95 — Cross-org model matching; auto-continue fix; dashboard fixes
 
 - **Fixed: auto-continue retried after a pure tool-call turn.** Added `&& !outcome.hadToolCalls` guard so the model isn't re-asked after it already issued a tool call with `finish_reason: 'stop'`.

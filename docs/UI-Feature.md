@@ -189,6 +189,7 @@ A third sidebar section called **Utilities** (between Dashboard and Server Setti
 |---|---|
 | Add Server & Model | `vllm-copilot.addServerModel` |
 | Auto-Configure Model | `vllm-copilot.autoConfigureModel` |
+| Remove Model | `vllm-copilot.removeModel` |
 | Test & Refresh Models | `vllm-copilot.testAndRefreshModels` |
 | Diagnose Connection | `vllm-copilot.diagnoseConnection` |
 

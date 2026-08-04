@@ -1,78 +1,106 @@
 import { describe, it, expect } from 'vitest';
-import { selectMismatchesToPrompt } from '../src/commands.js';
-import type { TestResult } from '../src/commands.js';
+import { serverFingerprint, groupModelsByServer } from '../src/commands.js';
 import type { ModelConfig } from '../src/config.js';
 
-function ok(label: string): TestResult {
-  return { label: `✓ ${label}`, description: '', detail: '' };
-}
-
-function missing(label: string, serverUrl: string): TestResult {
-  return {
-    label: `✗ ${label}`,
-    description: 'not found on server',
-    detail: `${serverUrl} — check vllmModelId`,
-    mismatch: {
-      model: { id: label, serverUrl } as ModelConfig,
-      serverModels: [],
-      serverUrl,
-      vllmModelId: label,
-    },
-  };
-}
-
-function models(urls: string[]): ModelConfig[] {
-  return urls.map(u => ({ id: `m-${u}`, serverUrl: u }) as ModelConfig);
-}
-
-describe('selectMismatchesToPrompt', () => {
-  it('skips mismatches on a healthy server (parked-model case)', () => {
-    // Laguna loaded; Qwen on the same server not loaded → Qwen stays parked.
-    const m = models(['http://s:8000', 'http://s:8000']);
-    const results = [ok('Laguna'), missing('Qwen', 'http://s:8000')];
-    expect(selectMismatchesToPrompt(m, results)).toEqual([]);
+describe('serverFingerprint', () => {
+  it('produces same fingerprint for same URL + headers', () => {
+    const a = serverFingerprint('http://host:8000', { Authorization: 'Bearer x', 'X-Custom': 'val' });
+    const b = serverFingerprint('http://host:8000', { 'X-Custom': 'val', Authorization: 'Bearer x' });
+    expect(a).toBe(b);
   });
 
-  it('prompts when no sibling on that server is OK', () => {
-    const m = models(['http://s:8000']);
-    const results = [missing('Laguna', 'http://s:8000')];
-    expect(selectMismatchesToPrompt(m, results)).toHaveLength(1);
+  it('differs when URL changes', () => {
+    const a = serverFingerprint('http://a:8000', {});
+    const b = serverFingerprint('http://b:8000', {});
+    expect(a).not.toBe(b);
   });
 
-  it('prompts only for missing models on unhealthy servers', () => {
-    // A healthy (skip Qwen); B unhealthy (prompt both).
-    const m = models([
-      'http://a:8000', 'http://a:8000',
-      'http://b:8000', 'http://b:8000',
-    ]);
-    const results = [
-      ok('Laguna'),
-      missing('Qwen', 'http://a:8000'),
-      missing('Qwen2', 'http://b:8000'),
-      missing('DeepSeek', 'http://b:8000'),
-    ];
-    const promptable = selectMismatchesToPrompt(m, results);
-    expect(promptable).toEqual([results[2], results[3]]);
+  it('differs when headers change', () => {
+    const a = serverFingerprint('http://host:8000', { Authorization: 'Bearer x' });
+    const b = serverFingerprint('http://host:8000', { Authorization: 'Bearer y' });
+    expect(a).not.toBe(b);
   });
 
-  it('normalizes URL so trailing slash diffs do not defeat grouping', () => {
-    const m: ModelConfig[] = [
-      { id: 'a', serverUrl: 'http://s:8000' } as ModelConfig,
-      { id: 'b', serverUrl: 'http://s:8000/' } as ModelConfig,
+  it('stably serialises empty headers', () => {
+    const a = serverFingerprint('http://host:8000', {});
+    const b = serverFingerprint('http://host:8000', {});
+    expect(a).toBe(b);
+  });
+});
+
+describe('groupModelsByServer', () => {
+  // Mock helpers passed as arguments.
+  const resolveServer = (m: ModelConfig) => ({
+    serverUrl: (m.serverUrl || '').replace(/\/+$/, ''),
+    requestHeaders: (m as any)._headers ?? {},
+  });
+  const resolveId = (m: ModelConfig) => m.id;
+
+  it('groups models sharing the same URL and headers', () => {
+    const models: ModelConfig[] = [
+      { id: 'm1', serverUrl: 'http://s:8000' },
+      { id: 'm2', serverUrl: 'http://s:8000' },
     ];
-    const results = [ok('a'), missing('b', 'http://s:8000/')];
-    expect(selectMismatchesToPrompt(m, results)).toEqual([]);
+    const groups = groupModelsByServer(models, resolveServer, resolveId);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].models).toHaveLength(2);
   });
 
-  it('does not count a "no serverUrl" failure toward server health', () => {
-    const m: ModelConfig[] = [
-      { id: 'no-server' } as ModelConfig,
-      { id: 'qwen', serverUrl: 'http://s:8000' } as ModelConfig,
+  it('separates models with different URLs', () => {
+    const models: ModelConfig[] = [
+      { id: 'm1', serverUrl: 'http://a:8000' },
+      { id: 'm2', serverUrl: 'http://b:8000' },
     ];
-    const results: TestResult[] = [
-      { label: '✗ no-server', description: 'no serverUrl', detail: '' },
-      missing('qwen', 'http://s:8000'),
+    const groups = groupModelsByServer(models, resolveServer, resolveId);
+    expect(groups).toHaveLength(2);
+  });
+
+  it('separates models with same URL but different headers', () => {
+    const models: ModelConfig[] = [
+      { id: 'm1', serverUrl: 'http://s:8000', _headers: { 'X-Key': 'a' } },
+      { id: 'm2', serverUrl: 'http://s:8000', _headers: { 'X-Key': 'b' } },
+    ] as any;
+    const groups = groupModelsByServer(models, resolveServer, resolveId);
+    expect(groups).toHaveLength(2);
+  });
+
+  it('normalises URL differences via the resolver (trailing slash)', () => {
+    const resolveServerStrip = (m: ModelConfig) => ({
+      serverUrl: (m.serverUrl || '').replace(/\/+$/, ''),
+      requestHeaders: {},
+    });
+    const models: ModelConfig[] = [
+      { id: 'a', serverUrl: 'http://s:8000' },
+      { id: 'b', serverUrl: 'http://s:8000/' },
     ];
-    expect(selectMismatchesToPrompt(m, results)).toHaveLength(1);
+    const groups = groupModelsByServer(models, resolveServerStrip, resolveId);
+    expect(groups).toHaveLength(1);
+  });
+
+  it('gives each model without a serverUrl its own group', () => {
+    const models: ModelConfig[] = [
+      { id: 'no-url-1' },
+      { id: 'no-url-2' },
+    ];
+    const groups = groupModelsByServer(models, resolveServer, resolveId);
+    expect(groups).toHaveLength(2);
+    for (const g of groups) {
+      expect(g.serverUrl).toBe('');
+      expect(g.models).toHaveLength(1);
+    }
+  });
+
+  it('mixes serverful and serverless models correctly', () => {
+    const models: ModelConfig[] = [
+      { id: 'm1', serverUrl: 'http://s:8000' },
+      { id: 'no-url' },
+      { id: 'm2', serverUrl: 'http://s:8000' },
+    ];
+    const groups = groupModelsByServer(models, resolveServer, resolveId);
+    // Two groups: one for the server, one for the serverless model
+    const serverGroup = groups.find(g => g.serverUrl !== '');
+    const noUrlGroup = groups.find(g => g.serverUrl === '');
+    expect(serverGroup?.models).toHaveLength(2);
+    expect(noUrlGroup?.models).toHaveLength(1);
   });
 });

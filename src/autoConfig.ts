@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from './config.js';
-import { buildEndpoint, buildAuthHeaders, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildModelId, normalizeModelId, modelMatchKey } from './config.js';
+import { buildEndpoint, buildAuthHeaders, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildModelId, normalizeModelId, modelMatchKey, findModelConfigIndex } from './config.js';
 import { describeError } from './messageConverter.js';
 import { jsonrepair } from 'jsonrepair';
 
@@ -135,14 +135,18 @@ export function parsePresetJson(text: string): ModelConfig | null {
 }
 
 /**
- * Find a preset that matches the given model. Matches a preset's `id`/`vllmModelId`
+ * Find a preset that matches the given model. Matches a preset's `vllmModelId`
  * against the model id, and — when provided — against the server model's `root`
  * (the underlying checkpoint). The `root` match lets any `--served-model-name`
  * alias (e.g. `zai-glm-52`) resolve to the preset authored for its real repo id
  * (e.g. `zai-org/GLM-5.2`).
  *
+ * Presets only set `vllmModelId` (they never set `id` — that's the user's own
+ * identifier in settings). Using `vllmModelId` for matching avoids any risk of
+ * the preset's `id` leaking into the user's model config.
+ *
  * Matching tiers (in order):
- * 1. Exact (case-sensitive) match on id/vllmModelId.
+ * 1. Exact (case-sensitive) match on vllmModelId.
  * 2. Quantization-agnostic (org-aware): strip -FP8/-AWQ/-GGUF/etc., compare
  *    case-insensitively. "Qwen/Qwen3.6-27B" matches "Qwen/Qwen3.6-27B-FP8".
  * 3. Cross-org + quantization-agnostic: additionally drop the company prefix,
@@ -150,8 +154,6 @@ export function parsePresetJson(text: string): ModelConfig | null {
  *    Quantization only affects weight precision, not inference parameters, and
  *    the serving org is irrelevant to sampling config — we match on model name.
  *
- * A preset's `id`/`vllmModelId` are used ONLY for this comparison; applying the
- * preset never overwrites the user's own id/vllmModelId (see mergePresetWithUserConfig).
  * @internal Exported for testing.
  */
 export function findPresetForModel(
@@ -165,16 +167,17 @@ export function findPresetForModel(
   const rootKey = root !== undefined ? modelMatchKey(root) : undefined;
 
   return presets.find(p => {
-    const presetIds = [p.config.id, p.config.vllmModelId].filter((v): v is string => !!v);
+    if (!p.config.vllmModelId) return false;
+    const pid = p.config.vllmModelId;
     // Exact match first (preserves case-sensitive matches)
-    if (presetIds.includes(modelId)) return true;
-    if (root !== undefined && presetIds.includes(root)) return true;
+    if (pid === modelId) return true;
+    if (root !== undefined && pid === root) return true;
     // Fuzzy match: strip quantization suffixes, then case-insensitive comparison
-    if (presetIds.some(pid => normalizeModelId(pid).toLowerCase() === normalizedModel)) return true;
-    if (normalizedRoot !== undefined && presetIds.some(pid => normalizeModelId(pid).toLowerCase() === normalizedRoot)) return true;
+    if (normalizeModelId(pid).toLowerCase() === normalizedModel) return true;
+    if (normalizedRoot !== undefined && normalizeModelId(pid).toLowerCase() === normalizedRoot) return true;
     // Fuzzy match: cross-org + quantization-agnostic (model name only)
-    if (presetIds.some(pid => modelMatchKey(pid) === modelKey)) return true;
-    if (rootKey !== undefined && presetIds.some(pid => modelMatchKey(pid) === rootKey)) return true;
+    if (modelMatchKey(pid) === modelKey) return true;
+    if (rootKey !== undefined && modelMatchKey(pid) === rootKey) return true;
     return false;
   });
 }
@@ -533,23 +536,17 @@ export async function saveModelConfig(newConfig: ModelConfig): Promise<void> {
   const config = vscode.workspace.getConfiguration('vllm-copilot');
   const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
 
-  // Match by the true identity: same server URL AND same vLLM model id. This lets
-  // the same model served from two different servers coexist as separate entries
-  // (manual load balancing) while re-adding the same (server, model) replaces in
-  // place. Fall back to an exact `id` match for hand-written entries that predate
-  // the composite-id scheme.
   const newVllmId = resolveVllmModelId(newConfig);
-  const newServer = newConfig.serverUrl ? normalizeServerUrl(newConfig.serverUrl) : undefined;
-  const idx = existing.findIndex(m => {
-    const sameIdentity =
-      newServer !== undefined &&
-      m.serverUrl !== undefined &&
-      normalizeServerUrl(m.serverUrl) === newServer &&
-      resolveVllmModelId(m) === newVllmId;
-    const sameId = m.id !== undefined && m.id === newConfig.id;
-    return sameIdentity || sameId;
-  });
-  if (idx >= 0) {
+  const newServer = newConfig.serverUrl;
+  const idx = newVllmId && newServer
+    ? findModelConfigIndex(existing, newVllmId, newServer)
+    : -1;
+  // Also try matching by exact `id` for hand-written entries that predate the composite-id scheme
+  const idIdx = idx < 0 && newConfig.id
+    ? existing.findIndex(m => m.id !== undefined && m.id === newConfig.id)
+    : -1;
+  const useIdx = idIdx >= 0 ? idIdx : idx;
+  if (useIdx >= 0) {
     // Preserve ONLY infrastructure/personal fields that the preset cannot know.
     // Everything model-specific (modelModes, family, capabilities, defaultParams,
     // token budgets, transport settings) is overwritten by the preset — that's the
@@ -559,7 +556,7 @@ export async function saveModelConfig(newConfig: ModelConfig): Promise<void> {
     // systemMessageReplacementsFile: undefined preserves the previous value
     // (auto-configure must not wipe a user's personality). Empty string is an
     // explicit clear from Set Model Personality → Default.
-    const prev = existing[idx];
+    const prev = existing[useIdx];
     const replacementsFile =
       newConfig.systemMessageReplacementsFile !== undefined
         ? newConfig.systemMessageReplacementsFile
@@ -574,12 +571,14 @@ export async function saveModelConfig(newConfig: ModelConfig): Promise<void> {
     } else {
       delete merged.systemMessageReplacementsFile;
     }
-    existing[idx] = merged;
+    existing[useIdx] = merged;
   } else {
-    if (!newConfig.systemMessageReplacementsFile) {
-      delete newConfig.systemMessageReplacementsFile;
+    // Copy before mutating so callers' objects are never modified in place.
+    const newEntry: ModelConfig = { ...newConfig };
+    if (!newEntry.systemMessageReplacementsFile) {
+      delete newEntry.systemMessageReplacementsFile;
     }
-    existing.push(newConfig);
+    existing.push(newEntry);
   }
 
   await config.update('models', existing, vscode.ConfigurationTarget.Global);
@@ -768,6 +767,114 @@ function tryRepair(text: string): string | undefined {
 }
 
 /**
+ * Prompt user for server auth credentials (API key + custom headers) via two
+ * sequential input boxes. Handles cancellation, validation, and combines both
+ * into a single headers object. Returns `undefined` if the user cancelled at
+ * either step.
+ */
+export async function promptForServerAuth(options: {
+  apiKeyTitle: string;
+  apiKeyPrompt: string;
+  apiKeyPlaceholder: string;
+  headersTitle: string;
+  headersPrompt: string;
+  headersPlaceholder: string;
+}): Promise<Record<string, string> | undefined> {
+  // API key (optional). Folded into headers as Authorization: Bearer.
+  const apiKeyInput = await vscode.window.showInputBox({
+    title: options.apiKeyTitle,
+    prompt: options.apiKeyPrompt,
+    placeHolder: options.apiKeyPlaceholder,
+    ignoreFocusOut: true,
+    password: true,
+  });
+  if (apiKeyInput === undefined) return undefined; // cancelled
+  const apiKey = apiKeyInput.trim();
+
+  // Custom headers (optional). Accepts JSON or forgiving shorthand.
+  // Merged on top of the key-derived auth headers, so a custom header wins.
+  const headersInput = await vscode.window.showInputBox({
+    title: options.headersTitle,
+    prompt: options.headersPrompt,
+    placeHolder: options.headersPlaceholder,
+    ignoreFocusOut: true,
+    validateInput: (v) => {
+      const r = parseHeadersInput(v);
+      return 'error' in r ? r.error : undefined;
+    },
+  });
+  if (headersInput === undefined) return undefined; // cancelled
+  const parsedHeaders = parseHeadersInput(headersInput);
+  if ('error' in parsedHeaders) {
+    vscode.window.showErrorMessage(parsedHeaders.error);
+    return undefined;
+  }
+
+  // Combine: API-key-derived auth first, then custom headers (custom wins).
+  return { ...buildAuthHeaders(apiKey), ...parsedHeaders.headers };
+}
+
+/**
+ * Prompt user what to do when a server cannot be contacted during Add Server.
+ * Presents three options: Discard, Run Diagnostic, or Keep Anyway.
+ * Always stops the wizard — the caller should `return` after calling this.
+ */
+async function handleServerFailure(
+  serverUrl: string,
+  requestHeaders: Record<string, string>,
+  detail: string,
+  output: vscode.OutputChannel,
+  onSaved: () => void,
+): Promise<boolean> {
+  const action = await vscode.window.showWarningMessage(
+    `Cannot connect to ${serverUrl}: ${detail}`,
+    { modal: true },
+    'Discard',
+    'Run Diagnostic',
+    'Keep Anyway',
+  );
+
+  // Discard or dismissed → stop
+  if (action === 'Discard' || action === undefined) return true;
+
+  // Run Diagnostic — uses in-memory values, no settings write needed
+  if (action === 'Run Diagnostic') {
+    const { runDiagnostics, formatReport } = await import('./diagnostics.js');
+    const report = await runDiagnostics(buildEndpoint(serverUrl, 'v1/models'), requestHeaders);
+    output.show(true);
+    output.appendLine(formatReport(report));
+    output.appendLine('');
+    output.appendLine('Copy this report (right-click → Copy) and share it when reporting issues.');
+    return true;
+  }
+
+  // Keep Anyway — save a minimal stub so the user can fix it later
+  const modelId = await vscode.window.showInputBox({
+    title: 'Keep Anyway — Model ID',
+    prompt: 'Enter a model identifier for this server. You can auto-configure or edit it later.',
+    placeHolder: 'e.g. my-model or the model name from the server',
+    ignoreFocusOut: true,
+    validateInput: (v) => (v.trim() ? undefined : 'Model ID is required'),
+  });
+  if (!modelId) return true; // cancelled → stop
+
+  const finalConfig: ModelConfig = {
+    id: buildModelId(serverUrl, modelId),
+    vllmModelId: modelId,
+    serverUrl,
+    ...(Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {}),
+  };
+
+  await saveModelConfig(finalConfig);
+  onSaved();
+  output.appendLine(`[INFO] Saved stub config for "${modelId}" on ${serverUrl} — server was unreachable.`);
+  vscode.window.showInformationMessage(
+    `Stub saved for "${modelId}" on ${serverUrl}. Right-click → Auto-Configure when the server is reachable.`
+  );
+  return true;
+}
+
+/**
  * Guided command: add a vLLM server (URL + optional headers), discover its models,
  * auto-configure the chosen one, and save it as a per-model entry. This is the
  * end-to-end flow for onboarding a second server without hand-editing settings.json.
@@ -810,37 +917,16 @@ export function registerAddServerModelCommand(
       if (pick !== 'Add Different Model') return; // cancelled
     }
 
-    // 2. API key (optional). Folded into headers as Authorization: Bearer.
-    const apiKeyInput = await vscode.window.showInputBox({
-      title: 'Add vLLM Server & Model (2/4)',
-      prompt: 'API key for this server (optional). Sent as "Authorization: Bearer <key>". For other schemes (e.g. x-api-key), use custom headers next.',
-      placeHolder: 'Leave empty if the server needs no key, or use custom headers next.',
-      ignoreFocusOut: true,
-      password: true,
+    // 2. API key + custom headers (optional). Cancellation aborts the flow.
+    const requestHeaders = await promptForServerAuth({
+      apiKeyTitle: 'Add vLLM Server & Model (2/4)',
+      apiKeyPrompt: '(optional) vLLM API key. Sent as "Authorization: Bearer <key>". Leave empty if not present.',
+      apiKeyPlaceholder: 'abc123... or leave empty',
+      headersTitle: 'Add vLLM Server & Model (3/4)',
+      headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty for none.',
+      headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
     });
-    if (apiKeyInput === undefined) return; // cancelled
-    const apiKey = apiKeyInput.trim();
-
-    // 3. Custom headers (optional). Accepts JSON or forgiving shorthand.
-    //    Merged on top of the key-derived auth headers, so a custom header wins.
-    const headersInput = await vscode.window.showInputBox({
-      title: 'Add vLLM Server & Model (3/4)',
-      prompt: 'Additional request headers for this server. JSON or "Name: value" — leave empty for none.',
-      placeHolder: '{"CF-Access-Client-Id": "..."}  or  X-Tenant: abc123',
-      ignoreFocusOut: true,
-      validateInput: (v) => {
-        const r = parseHeadersInput(v);
-        return 'error' in r ? r.error : undefined;
-      },
-    });
-    if (headersInput === undefined) return; // cancelled
-    const parsedHeaders = parseHeadersInput(headersInput);
-    if ('error' in parsedHeaders) {
-      vscode.window.showErrorMessage(parsedHeaders.error);
-      return;
-    }
-    // Combine: API-key-derived auth first, then custom headers (custom wins).
-    const requestHeaders = { ...buildAuthHeaders(apiKey), ...parsedHeaders.headers };
+    if (requestHeaders === undefined) return;
     const hasHeaders = Object.keys(requestHeaders).length > 0;
 
     // 4. Discover models on that server, using its headers
@@ -849,35 +935,17 @@ export function registerAddServerModelCommand(
       const url = buildEndpoint(serverUrl, 'v1/models');
       const resp = await fetchWithTimeout(url, { timeoutMs: 10000, requestHeaders });
       if (!resp.ok) {
-        vscode.window.showErrorMessage(
-          resp.status === 401 || resp.status === 403
-            ? `Authentication failed (status ${resp.status}). Check the API key or request headers for ${serverUrl}.`
-            : `Cannot reach ${serverUrl} (status ${resp.status}).`
-        );
+        const detail = resp.status === 401 || resp.status === 403
+          ? `Authentication failed (status ${resp.status})`
+          : `Server returned status ${resp.status}`;
+        await handleServerFailure(serverUrl, requestHeaders, detail, output, () => provider.clearCache());
         return;
       }
       const data: any = await resp.json();
       models = data.data || [];
     } catch (err) {
       output.appendLine(`[ERROR] Add server: cannot connect to ${serverUrl}: ${describeError(err)}`);
-      // Offer a deep diagnostic using the in-memory values the user just typed
-      // (not from settings.json — the server isn't saved yet). This tests the
-      // exact request that failed: same URL, same headers.
-      const runDiag = await vscode.window.showWarningMessage(
-        `Cannot connect to ${serverUrl}: ${describeError(err)}`,
-        'Run Diagnostic',
-        'Cancel'
-      );
-      if (runDiag === 'Run Diagnostic') {
-        const { runDiagnostics, formatReport } = await import('./diagnostics.js');
-        const report = await runDiagnostics(buildEndpoint(serverUrl, 'v1/models'), requestHeaders);
-        output.show(true);
-        output.appendLine(formatReport(report));
-        output.appendLine('');
-        output.appendLine(
-          'Copy this report (right-click → Copy) and share it when reporting issues.'
-        );
-      }
+      await handleServerFailure(serverUrl, requestHeaders, describeError(err), output, () => provider.clearCache());
       return;
     }
 
@@ -990,8 +1058,7 @@ export function registerAutoConfigureModelCommand(
   provider: any, // VllmChatModelProvider — avoids circular import
   output: vscode.OutputChannel
 ): vscode.Disposable {
-  return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async () => {
-    // 1. Pick an existing model
+  return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { serverUrl?: string; vllmModelId?: string }) => {
     const config = vscode.workspace.getConfiguration('vllm-copilot');
     const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
     if (existing.length === 0) {
@@ -999,33 +1066,80 @@ export function registerAutoConfigureModelCommand(
       return;
     }
 
-    const items = existing.map((m, idx) => {
-      const label = m.displayName || resolveVllmModelId(m);
-      const server = m.serverUrl ? ` (${normalizeServerUrl(m.serverUrl)})` : '';
-      return {
-        label,
-        description: `#${idx + 1}`,
-        detail: m.serverUrl || '(no server)',
-      } as vscode.QuickPickItem;
-    });
+    let modelConfig: ModelConfig | undefined;
+    let vllmId: string;
+    const argServerUrl = arg?.serverUrl;
+    const argModelId = arg?.vllmModelId;
 
-    const selected = await vscode.window.showQuickPick(items, {
-      placeHolder: 'Select a model to re-configure',
-    });
-    if (!selected) return;
+    if (argServerUrl && argModelId) {
+      const argServerNorm = normalizeServerUrl(argServerUrl);
+      // Called with explicit server+model (e.g. from Server Settings webview).
+      modelConfig = existing.find(
+        m => (resolveVllmModelId(m) === argModelId) && m.serverUrl &&
+             normalizeServerUrl(m.serverUrl) === argServerNorm
+      );
+      vllmId = argModelId;
 
-    // Find the matching config entry
-    const idx = items.indexOf(selected);
-    const modelConfig = existing[idx];
-    if (!modelConfig) return;
+      if (!modelConfig) {
+        // Unconfigured model: the server reports it but settings has no entry
+        // (Server Settings lists server-reported models even when unconfigured).
+        // Auto-configure it as a NEW model — borrow auth from a sibling model on
+        // the same server. That sibling is guaranteed to exist: the server group
+        // only appears in the webview because it has at least one configured model.
+        const sibling = existing.find(
+          m => m.serverUrl && normalizeServerUrl(m.serverUrl) === argServerNorm
+        );
+        const serverUrl = normalizeServerUrl(sibling?.serverUrl ?? argServerUrl);
+        const discoveryResult = await resolveModelConfigForAdd(
+          context, vllmId, serverUrl, sibling?.requestHeaders
+        );
+        if (!discoveryResult) return;
 
-    const vllmId = resolveVllmModelId(modelConfig);
-    if (!vllmId) {
-      vscode.window.showErrorMessage('Selected model has no identifiable vLLM model id.');
-      return;
+        const newConfig: ModelConfig = {
+          ...discoveryResult.modelConfig,
+          id: buildModelId(serverUrl, vllmId),
+          vllmModelId: vllmId,
+          serverUrl,
+          ...(sibling?.requestHeaders ? { requestHeaders: sibling.requestHeaders } : {}),
+        };
+        if (discoveryResult.suggestedMaxOutputTokens !== undefined && newConfig.maxOutputTokens === undefined) {
+          newConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
+        }
+        await confirmAndSaveAddedModel(
+          newConfig, vllmId, serverUrl, discoveryResult.summary.join('\n'), output,
+          () => provider.clearCache()
+        );
+        return;
+      }
+    } else {
+      // No args — show QuickPick to select a model
+      const items = existing.map((m, idx) => {
+        const label = m.displayName || resolveVllmModelId(m);
+        const server = m.serverUrl ? ` (${normalizeServerUrl(m.serverUrl)})` : '';
+        return {
+          label,
+          description: `#${idx + 1}`,
+          detail: m.serverUrl || '(no server)',
+        } as vscode.QuickPickItem;
+      });
+
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select a model to re-configure',
+      });
+      if (!selected) return;
+
+      const idx = items.indexOf(selected);
+      modelConfig = existing[idx];
+      if (!modelConfig) return;
+
+      vllmId = resolveVllmModelId(modelConfig) || '';
+      if (!vllmId) {
+        vscode.window.showErrorMessage('Selected model has no identifiable vLLM model id.');
+        return;
+      }
     }
-    const serverUrl = modelConfig.serverUrl;
 
+    const serverUrl = modelConfig.serverUrl;
     if (!serverUrl) {
       vscode.window.showErrorMessage(`Model "${vllmId}" has no serverUrl configured.`);
       return;
@@ -1064,7 +1178,7 @@ export function registerAutoConfigureModelCommand(
  * or copy its JSON. Shared by the preset and HuggingFace branches so both end
  * the same way.
  */
-async function applyAutoConfigUpdate(
+export async function applyAutoConfigUpdate(
   newConfig: ModelConfig,
   vllmId: string,
   detail: string,

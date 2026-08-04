@@ -52,6 +52,7 @@ details[open] > summary::before { content: '\25BC'; }
 .selector-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .selector-row label { font-size: 0.8em; color: var(--vscode-descriptionForeground); }
 .btn-row { display: flex; gap: 6px; margin-top: 10px; }
+.action-btn-row { display: flex; gap: 6px; margin: 8px 0; }
 .modal-overlay {
   display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0,0,0,0.3); z-index: 100; justify-content: center; align-items: flex-start; padding-top: 40px;

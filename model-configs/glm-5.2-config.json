@@ -14,7 +14,6 @@
   //
   // Serve with: --reasoning-parser glm45 --tool-call-parser glm47 --enable-auto-tool-choice
   // Generation defaults: temperature=1.0, top_p=0.95 (from model card benchmarks).
-  "id": "zai-org/GLM-5.2",
   "vllmModelId": "zai-org/GLM-5.2",
   "displayName": "GLM-5.2",
   "family": "glm_moe_dsa",

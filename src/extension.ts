@@ -3,7 +3,6 @@ import { VllmChatModelProvider } from './provider.js';
 import { getConfig, validateConfig, resolveServerConfig } from './config.js';
 import { FileLogger } from './logger.js';
 import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault } from './autoConfig.js';
-import { migrateToPerModelServer, migrateToCompositeIds } from './migration.js';
 import { setSessionManagerOutput } from './sessionManager.js';
 import {
   registerTestAndRefreshModelsCommand,
@@ -14,6 +13,7 @@ import {
   registerSetModelPersonalityCommand,
   registerUpdateServerAuthCommand,
   registerRemoveServerCommand,
+  registerRemoveModelCommand,
 } from './commands.js';
 import { setExtensionVersion } from './diagnostics.js';
 import { DashboardTreeProvider } from './dashboard.js';
@@ -70,16 +70,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Wire output channel to sessionManager for logging
     setSessionManagerOutput(outputChannel);
-
-    // One-time migration: move legacy global server/sampling settings into per-model config.
-    try {
-      await migrateToPerModelServer(context, outputChannel);
-      // Then rewrite ids to the composite "<model> on <host>" form (runs after the
-      // per-model migration so every model already has its serverUrl).
-      await migrateToCompositeIds(context, outputChannel);
-    } catch (err) {
-      outputChannel.appendLine(`[WARN] Per-model migration failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
 
     // Initialize file logger
     fileLogger = new FileLogger(context, outputChannel);
@@ -154,6 +144,7 @@ export async function activate(context: vscode.ExtensionContext) {
       registerSetModelPersonalityCommand(context, activeProvider, outputChannel),
       registerUpdateServerAuthCommand(context, activeProvider, outputChannel),
       registerRemoveServerCommand(context, activeProvider, outputChannel),
+      registerRemoveModelCommand(context, activeProvider, outputChannel),
     );
 
     // Deep-Dive: open editor-area webview for a single server
