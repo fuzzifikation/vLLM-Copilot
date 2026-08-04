@@ -323,7 +323,8 @@ The extension ships with four pre-built replacement files that transform Copilot
 | **Sarcastic Robot** | `prompt-replacements/prompt-replacements-sarcastic-robot.json` | Brilliant, condescending, politically incorrect. Finds human code amusingly primitive — but fixes it anyway. |
 | **Spartan** | `prompt-replacements/prompt-replacements-spartan.json` | Absolute minimalism. Zero fluff. Short answers. Code first, words only when necessary. |
 
-**Usage:**
+**Usage:** `Ctrl+Shift+P` → **Set Model Personality** → pick a model → pick a preset (or **Default (no personality)** to clear). Or set the path manually:
+
 ```json
 {
   "vllm-copilot.models": [

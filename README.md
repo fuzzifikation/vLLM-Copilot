@@ -86,7 +86,7 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 1. **Install** from the VS Code Marketplace
 2. **Add a model:** `Ctrl+Shift+P` → **Add vLLM Server & Model** → enter your server URL → pick a model → done. The extension auto-configures everything (model family, thinking modes, context window) from bundled presets or HuggingFace.
 3. **Edit settings:** Open the **Server Settings** sidebar to adjust displayName, params, model modes, and more — no `settings.json` editing required.
-4. **Change the personality (optional):** `Ctrl+Shift+P` → **Set Model Personality** → pick your model → pick a personality → done. Four bundled presets replace Copilot's boilerplate with something actually useful.
+4. **Change the personality (optional):** `Ctrl+Shift+P` → **Set Model Personality** → pick your model → pick a personality → done. Four bundled presets replace Copilot's boilerplate with something actually useful. Pick **Default (no personality)** later to clear it.
 5. **Chat:** Open Copilot Chat, pick your model from the dropdown. Switch modes from the same picker.
 
 > **Remote (SSH/WSL/Containers):** This extension runs on the remote host automatically when installed from the Marketplace. VS Code will install it on the remote extension host.
@@ -134,9 +134,11 @@ Four bundled personalities that replace Copilot's 21KB system prompt boilerplate
 something actually useful. One command, no JSON editing:
 
 1. **Set Model Personality:** `Ctrl+Shift+P` → pick your model → pick a personality → done
+2. **Clear it:** same command → pick **Default (no personality)** to remove replacements and restore Copilot's original system prompt. The active choice is marked with a check and shown in the placeholder.
 
 | Preset | What it does |
 |--------|--------------|
+| **Default (no personality)** | No replacements — Copilot's original system prompt |
 | **Tough Love** | Direct tutor. Brutally honest feedback to help you grow. Calls out bad patterns, demands better. |
 | **Critical Senior Dev** | Sharp collaborator who challenges assumptions and surfaces trade-offs. Helps push the project forward. |
 | **Sarcastic Robot** | Brilliant, condescending, politically incorrect. Finds human code amusingly primitive — but fixes it anyway. |
@@ -258,7 +260,7 @@ a fresh start. Access via `Ctrl+Shift+P` → **Clean Copilot Sessions** (under U
 |---------|--------------|
 | **Add vLLM Server & Model** | Guided flow: enter server URL → discover models → auto-configure → save |
 | **Test & Refresh Models** | Verify servers, list models, correct ID mismatches, check network settings |
-| **Set Model Personality** | Pick a model, pick a personality preset, apply instantly |
+| **Set Model Personality** | Pick a model, pick a personality preset (or **Default** to clear), apply instantly |
 | **Configure Utility Model** | Switch utility model for MCP servers (`mainAgent` / `copilot` / `none`) |
 | **Update Auth** | Rotate API key or change auth headers for a server (right-click on server node) |
 | **vLLM Deep-Dive** | Open per-server webview with full metrics and histograms (right-click on server node) |
