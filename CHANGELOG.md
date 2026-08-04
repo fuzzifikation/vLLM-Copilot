@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.20.3 — Clear personality & show active personality
+
+- **New: "Default (no personality)"** in **Set Model Personality** — pick it to remove the model's system message replacements and restore Copilot's original system prompt.
+- **Active personality shown** — the current choice is marked with a check in the picker and shown in the placeholder (`Current: …`).
+- **Portable config path** — `.vllm/` preset paths are now stored with forward slashes in `settings.json`, so the setting is OS-portable.
+
 ## v1.20.2 — Server Settings UX fixes
 
 - **Fixed: Auto-Configure now works on unconfigured models** — Server Settings lists server-reported models even when they have no settings entry, but clicking **Auto-Configure** on one failed with "No config found". It now borrows the server's auth headers from a sibling configured model and runs the full add flow (preset/HuggingFace discovery), producing a complete new `vllm-copilot.models` entry.
