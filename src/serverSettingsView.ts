@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getConfig, buildEndpoint, findModelConfigIndex, type ModelConfig } from './config.js';
+import { getConfig, buildEndpoint, findModelConfigIndex, buildModelId, type ModelConfig } from './config.js';
 import {
   discoverPersonalities,
   ensureGlobalPersonality,
@@ -118,24 +118,35 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     // `refreshWebview` against a disposed (or stale) view.
     const msgDisposable = webviewView.webview.onDidReceiveMessage(
       async (msg: FromWebviewMessage) => {
-        if (msg.type === 'ready') {
-          this.isWebviewReady = true;
-          await this.refreshWebview();
-        } else if (msg.type === 'save' && msg.config) {
-          await this.saveModelConfig(msg.config);
-        } else if (msg.type === 'applyPersonality') {
-          await this.applyPersonality(msg);
-        } else if (msg.type === 'autoConfigure') {
-          await vscode.commands.executeCommand('vllm-copilot.autoConfigureModel', {
-            serverUrl: msg.serverUrl,
-            id: msg.id,
-          });
-        } else if (msg.type === 'removeModel') {
-          await vscode.commands.executeCommand('vllm-copilot.removeModel', {
-            serverUrl: msg.serverUrl,
-            id: msg.id,
-            skipConfirm: true,
-          });
+        try {
+          if (msg.type === 'ready') {
+            this.isWebviewReady = true;
+            await this.refreshWebview();
+          } else if (msg.type === 'save' && msg.config) {
+            await this.saveModelConfig(msg.config);
+          } else if (msg.type === 'applyPersonality') {
+            await this.applyPersonality(msg);
+          } else if (msg.type === 'autoConfigure') {
+            await vscode.commands.executeCommand('vllm-copilot.autoConfigureModel', {
+              serverUrl: msg.serverUrl,
+              id: msg.id,
+            });
+          } else if (msg.type === 'removeModel') {
+            await vscode.commands.executeCommand('vllm-copilot.removeModel', {
+              serverUrl: msg.serverUrl,
+              id: msg.id,
+              skipConfirm: true,
+            });
+          }
+        } catch (err) {
+          // Error boundary — a failing handler must never become an unhandled
+          // rejection (VS Code would only log it invisibly).
+          this.outputChannel.appendLine(
+            `[ERROR] Server Settings message "${msg.type}" failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+          vscode.window.showErrorMessage(
+            `Server Settings: ${err instanceof Error ? err.message : String(err)}`
+          );
         }
       },
     );
@@ -282,11 +293,15 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       ? findModelConfigIndex(models, targetId, targetServer)
       : -1;
     if (idx < 0) {
-      // New model entry - add to config
+      // New model entry - add to config. The webview stub carries the raw server
+      // id as both id and vllmModelId; every other creation path derives the
+      // composite id via buildModelId so the same model on two servers stays
+      // distinct. Follow that convention here too — a raw id would collide.
+      const vllmModelId = updates.vllmModelId || targetId;
       const newEntry: ModelConfig = {
         ...(updates as ModelConfig),
-        vllmModelId: updates.vllmModelId || targetId,
-        id: updates.id || targetId,
+        vllmModelId,
+        id: buildModelId(targetServer, vllmModelId),
         serverUrl: targetServer,
       };
       // Empty string is the explicit clear signal — store as an absent key

@@ -78,7 +78,7 @@ describe('ServerSettingsViewProvider', () => {
       );
     });
 
-    it('should create a new model entry when not found', async () => {
+    it('should create a new model entry when not found (composite id like other creation paths)', async () => {
       const existingConfig: ModelConfig[] = [];
 
       vscode.workspace._mockConfig = {
@@ -86,6 +86,7 @@ describe('ServerSettingsViewProvider', () => {
         update: vi.fn().mockResolvedValue(undefined),
       };
 
+      // The webview stub sends the raw server id as both id and vllmModelId.
       const updates: Partial<ModelConfig> = {
         id: 'new-model',
         vllmModelId: 'new-model',
@@ -99,7 +100,7 @@ describe('ServerSettingsViewProvider', () => {
         'models',
         expect.arrayContaining([
           expect.objectContaining({
-            id: 'new-model',
+            id: 'new-model on localhost:8000',
             vllmModelId: 'new-model',
             serverUrl: 'http://localhost:8000',
             displayName: 'New Model',
@@ -111,6 +112,35 @@ describe('ServerSettingsViewProvider', () => {
       expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
         'Settings saved for "New Model"',
       );
+    });
+
+    it('P1: same model saved via webview on two servers gets distinct ids (no duplicate id)', async () => {
+      const existingConfig: ModelConfig[] = [];
+
+      vscode.workspace._mockConfig = {
+        get: (key: string) => (key === 'models' ? existingConfig : undefined),
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await (provider as any).saveModelConfig({
+        id: 'qwen-7b',
+        vllmModelId: 'qwen-7b',
+        serverUrl: 'http://a:8000',
+      });
+      const afterFirst = vscode.workspace._mockConfig.update.mock.calls[0][1];
+
+      vscode.workspace._mockConfig.get = (key: string) => (key === 'models' ? afterFirst : undefined);
+      await (provider as any).saveModelConfig({
+        id: 'qwen-7b',
+        vllmModelId: 'qwen-7b',
+        serverUrl: 'http://b:8000',
+      });
+      const afterSecond = vscode.workspace._mockConfig.update.mock.calls[1][1];
+
+      expect(afterSecond).toHaveLength(2);
+      expect(new Set(afterSecond.map((m: any) => m.id)).size).toBe(2);
+      expect(afterSecond[0].id).toBe('qwen-7b on a:8000');
+      expect(afterSecond[1].id).toBe('qwen-7b on b:8000');
     });
 
     it('should preserve existing properties when updating', async () => {
