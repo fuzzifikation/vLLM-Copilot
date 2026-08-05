@@ -16,24 +16,18 @@ Dashboard tree items, deep-dive webview, and formatting helpers lack tests. `Met
 
 ## Personalities And System Messages
 
-### P1 - Multiple presets of the same server model share personality state
-The configuration supports several presets (distinct `id`s) that point at the same server + `vllmModelId`. Both personality-management entry points break with this setup:
-- **Server Settings webview** collapses them into a single selector entry and keys active-personality state by `vllmModelId`, so the second preset is unreachable in the UI.
-- **`setModelPersonality` command** lists every preset, but `saveModelConfig` locates the entry via `findModelConfigIndex(vllmModelId, serverUrl)` and updates the FIRST match, so applying to a later preset overwrites the first one's personality.
-Enumerate presets by their unique config `id` in webview state/messages, and prefer an exact-`id` match in `saveModelConfig` before falling back to `(vllmModelId, serverUrl)`.
-
 ### P3 - Custom replacement path resolution is untested
 There are no focused tests for Windows/POSIX handling of absolute and workspace-relative `systemMessageReplacementsFile` paths in `loadReplacements` and `resolveActivePersonality`. The implementation uses platform path helpers, but these cases remain unverified.
 
-### P3 - Server Settings personality message flow lacks focused tests
-The replacement engine (`promptReplacer.ts`) and the capture write path (`enqueueWrite`) now have focused tests, and discovery/config-merge semantics are covered. The Server Settings `applyPersonality`/`saveModelConfig` message flow and the webview picker wiring remain untested (tied to the P1 webview identity work above).
+### P3 - Server Settings webview picker wiring is untested
+The host-side flow is now covered: `applyPersonality` and `saveModelConfig` have focused tests (including the id-keyed multi-preset case), and the replacement engine (`promptReplacer.ts`) plus the capture write path (`enqueueWrite`) have focused tests. What remains untested is the `serverSettings.js` picker wiring itself (selector keying, apply/clear message payloads, `save()` id/vllmModelId assignment) — it's plain webview JS with no test harness.
 
 ---
 
 ## False Positives (keep AI from re-filing)
 
 - **Global writes** — `saveModelConfig` writes to Global only. Intentional: design is "always write to user settings."
-- **`saveModelConfig` matches by `vllmModelId + serverUrl`** — correct (now shared via `findModelConfigIndex` in config.ts).
+- **Config entries match by extension `id` + `serverUrl`, not `vllmModelId`** — correct (shared via `findModelConfigIndex` in config.ts, using `resolveConfigId`). `vllmModelId` is the wire id only and may repeat across presets/servers; the extension key is `id` (with a `vllmModelId` fallback for legacy hand-written entries). Do not "fix" this back to wire-id matching.
 - **Dashboard uses first model's `requestHeaders` per server** — correct. `--api-key` is global per vLLM process; two presets on one server can't have different auth.
 - **`serverSettings.js` `d.ontoggle`** — `secState` is the only source of truth on every render; config values use `[data-f]`/`[data-k]`/`.mode-card` paths, not `secState`.
 - **`provideTokenCount` blocks event loop** — `getConfiguration()` is in-memory, not disk. Cold-cache cost is negligible.

@@ -9,7 +9,7 @@
 
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildModelId } from './config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId } from './config.js';
 import type { ModelConfig } from './config.js';
 import type { VllmModel } from './types.js';
 import { pickModelFromServer, saveModelConfig, promptForServerAuth, autoConfigureModel } from './autoConfig.js';
@@ -482,8 +482,12 @@ async function addNewConfig(
 ): Promise<void> {
   if (autoConfigure) {
     const acResult = await autoConfigureModel(chosen, serverUrl, requestHeaders);
+    // `autoConfigureModel` seeds id = wire model id; override with the composite
+    // id so the same model on two servers stays distinct (id must be unique).
     const merged: ModelConfig = {
       ...acResult.modelConfig,
+      id: buildModelId(serverUrl, chosen),
+      vllmModelId: chosen,
       serverUrl,
       ...(Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {}),
     };
@@ -909,18 +913,19 @@ export function registerRemoveServerCommand(
 }
 
 /**
- * Filter out the single model matching (serverUrl, vllmModelId) from a config
- * array. Never touches sibling models on the same server. Pure helper, exported
- * for testing.
+ * Filter out the single model matching (serverUrl, configId) from a config
+ * array, where `configId` is the extension `id` (falling back to the vLLM wire
+ * id for legacy entries). Never touches sibling models on the same server.
+ * Pure helper, exported for testing.
  */
 export function removeModelFromConfig(
   existing: ModelConfig[],
   serverUrl: string,
-  vllmModelId: string,
+  configId: string,
 ): { filtered: ModelConfig[]; removed: number } {
   const normalizedUrl = normalizeServerUrl(serverUrl);
   const filtered = existing.filter(
-    m => !(m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl && resolveVllmModelId(m) === vllmModelId)
+    m => !(m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl && resolveConfigId(m) === configId)
   );
   return { filtered, removed: existing.length - filtered.length };
 }
@@ -928,8 +933,9 @@ export function removeModelFromConfig(
 /**
  * Remove a single model entry from a server.
  * Triggered from the Server Settings webview "Remove Model" button.
- * Removes only the selected (serverUrl, vllmModelId) entry — never sibling
- * models on the same server.
+ * Removes only the selected (serverUrl, id) entry — never sibling models on the
+ * same server. Accepts the extension `id` (preferred) or the vLLM wire id for
+ * legacy callers.
  */
 export function registerRemoveModelCommand(
   _context: vscode.ExtensionContext,
@@ -938,25 +944,25 @@ export function registerRemoveModelCommand(
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.removeModel', async (arg?: any) => {
     const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
-    const vllmModelId = typeof arg === 'object' ? arg?.vllmModelId : undefined;
+    const configId = typeof arg === 'object' ? (arg?.id ?? arg?.vllmModelId) : undefined;
     const skipConfirm = typeof arg === 'object' && arg?.skipConfirm === true;
-    if (!serverUrl || !vllmModelId) {
+    if (!serverUrl || !configId) {
       vscode.window.showErrorMessage('Server URL and model ID are required.');
       return;
     }
 
     const config = vscode.workspace.getConfiguration('vllm-copilot');
     const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
-    const { filtered, removed } = removeModelFromConfig(existing, serverUrl, vllmModelId);
+    const { filtered, removed } = removeModelFromConfig(existing, serverUrl, configId);
 
     if (removed === 0) {
-      vscode.window.showWarningMessage(`No configured model "${vllmModelId}" found on ${serverUrl}.`);
+      vscode.window.showWarningMessage(`No configured model "${configId}" found on ${serverUrl}.`);
       return;
     }
 
     if (!skipConfirm) {
       const confirm = await vscode.window.showWarningMessage(
-        `Remove model "${vllmModelId}" from ${serverUrl}?`,
+        `Remove model "${configId}" from ${serverUrl}?`,
         { modal: true },
         'Remove',
         'Cancel',
@@ -966,8 +972,8 @@ export function registerRemoveModelCommand(
 
     await config.update('models', filtered, vscode.ConfigurationTarget.Global);
     _provider.clearCache();
-    outputChannel.appendLine(`[INFO] Removed model "${vllmModelId}" from ${serverUrl}.`);
-    vscode.window.showInformationMessage(`Removed model "${vllmModelId}" from ${serverUrl}.`);
+    outputChannel.appendLine(`[INFO] Removed model "${configId}" from ${serverUrl}.`);
+    vscode.window.showInformationMessage(`Removed model "${configId}" from ${serverUrl}.`);
   });
 }
 

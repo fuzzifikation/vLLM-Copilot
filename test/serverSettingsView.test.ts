@@ -202,4 +202,50 @@ describe('ServerSettingsViewProvider', () => {
       );
     });
   });
+
+  describe('applyPersonality', () => {
+    it('P1: keys the target preset by extension id when two presets share a vllmModelId', async () => {
+      const existingConfig: ModelConfig[] = [
+        { id: 'preset-a', vllmModelId: 'shared-model', serverUrl: 'http://localhost:8000', displayName: 'A' },
+        { id: 'preset-b', vllmModelId: 'shared-model', serverUrl: 'http://localhost:8000', displayName: 'B' },
+      ];
+
+      vscode.workspace._mockConfig = {
+        get: (key: string) => (key === 'models' ? existingConfig : undefined),
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      // clear: true avoids ensureGlobalPersonality (no fs access).
+      await (provider as any).applyPersonality({
+        type: 'applyPersonality',
+        serverUrl: 'http://localhost:8000',
+        id: 'preset-b',
+        clear: true,
+      });
+
+      const updatedModels = vscode.workspace._mockConfig.update.mock.calls[0][1];
+      expect(updatedModels).toHaveLength(2);
+      // preset-a must be untouched — only preset-b gets the clear.
+      expect(updatedModels.find((m: any) => m.id === 'preset-a')).toEqual(
+        expect.objectContaining({ displayName: 'A' }),
+      );
+      expect(updatedModels.find((m: any) => m.id === 'preset-b')?.systemMessageReplacementsFile).toBe('');
+    });
+
+    it('does nothing for an unknown id (unconfigured server model)', async () => {
+      vscode.workspace._mockConfig = {
+        get: () => [],
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await (provider as any).applyPersonality({
+        type: 'applyPersonality',
+        serverUrl: 'http://localhost:8000',
+        id: 'server-reported-only-model',
+        clear: true,
+      });
+
+      expect(vscode.workspace._mockConfig.update).not.toHaveBeenCalled();
+    });
+  });
 });

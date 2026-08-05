@@ -132,5 +132,33 @@ describe('validateConfig', () => {
     const warnings = validateConfig(withModel({ modelModes: { Think: { temperature: 5 } } }));
     expect(warnings.some(w => w.includes('mode "Think"') && w.includes('temperature'))).toBe(true);
   });
+
+  it('warns when a model entry has no id', () => {
+    const warnings = validateConfig({ ...makeValidConfig(), models: [{ vllmModelId: 'no-id', serverUrl: 'http://localhost:8000' }] });
+    expect(warnings.some(w => w.includes('missing id'))).toBe(true);
+  });
+
+  it('warns on duplicate ids', () => {
+    const warnings = validateConfig({
+      ...makeValidConfig(),
+      models: [
+        { id: 'dup', serverUrl: 'http://localhost:8000' },
+        { id: 'dup', vllmModelId: 'other-model', serverUrl: 'http://localhost:9000' },
+      ],
+    });
+    expect(warnings.some(w => w.includes('duplicate id'))).toBe(true);
+  });
+
+  it('does not warn when two models share a vllmModelId but have distinct ids', () => {
+    const warnings = validateConfig({
+      ...makeValidConfig(),
+      models: [
+        { id: 'm1', vllmModelId: 'shared', serverUrl: 'http://a:8000' },
+        { id: 'm2', vllmModelId: 'shared', serverUrl: 'http://b:8000' },
+      ],
+    });
+    expect(warnings.some(w => w.includes('duplicate id'))).toBe(false);
+    expect(warnings.some(w => w.includes('missing id'))).toBe(false);
+  });
 });
 
