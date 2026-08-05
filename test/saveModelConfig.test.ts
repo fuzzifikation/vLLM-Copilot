@@ -130,4 +130,50 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
       '.vllm/prompt-replacements-spartan.json',
     );
   });
+
+  it('P1: updates the correct preset when two share the same vllmModelId + server (keyed by id)', async () => {
+    // Two distinct presets pointing at the same wire model on the same server —
+    // this is the multi-preset scenario that previously collapsed to the first match.
+    existingConfig = [
+      { id: 'preset-a', vllmModelId: 'shared-model', serverUrl: 'http://localhost:8000', displayName: 'Preset A' },
+      { id: 'preset-b', vllmModelId: 'shared-model', serverUrl: 'http://localhost:8000', displayName: 'Preset B' },
+    ];
+
+    await saveModelConfig({
+      id: 'preset-b',
+      vllmModelId: 'shared-model',
+      serverUrl: 'http://localhost:8000',
+      displayName: 'Preset B (renamed)',
+      systemMessageReplacementsFile: '.vllm/prompt-replacements-sarcastic-robot.json',
+    });
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(2); // not duplicated
+    expect(stored.find(m => m.id === 'preset-a')).toEqual(
+      expect.objectContaining({ displayName: 'Preset A' }),
+    );
+    expect(stored.find(m => m.id === 'preset-b')).toEqual(
+      expect.objectContaining({
+        displayName: 'Preset B (renamed)',
+        systemMessageReplacementsFile: '.vllm/prompt-replacements-sarcastic-robot.json',
+      }),
+    );
+  });
+
+  it('P1: adding a preset whose id collides with nothing creates a new entry even if the wire id exists', async () => {
+    existingConfig = [
+      { id: 'preset-a', vllmModelId: 'shared-model', serverUrl: 'http://localhost:8000', displayName: 'Preset A' },
+    ];
+
+    await saveModelConfig({
+      id: 'preset-b',
+      vllmModelId: 'shared-model',
+      serverUrl: 'http://localhost:8000',
+      displayName: 'Preset B',
+    });
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(2); // distinct id → new entry, not a merge into preset-a
+    expect(stored.map(m => m.id)).toEqual(['preset-a', 'preset-b']);
+  });
 });

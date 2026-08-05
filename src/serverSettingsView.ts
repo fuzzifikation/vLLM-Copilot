@@ -70,7 +70,8 @@ interface SaveMessage {
 interface ApplyPersonalityMessage {
   type: 'applyPersonality';
   serverUrl: string;
-  vllmModelId?: string;
+  /** Extension `id` of the target model config (or the server model id when unconfigured). */
+  id?: string;
   /** Source personality to apply. Omit (or set `clear`) to remove the personality. */
   sourcePath?: string;
   clear?: boolean;
@@ -79,7 +80,8 @@ interface ApplyPersonalityMessage {
 interface WebviewAction {
   type: 'autoConfigure' | 'removeModel';
   serverUrl: string;
-  vllmModelId?: string;
+  /** Extension `id` of the target model config (or the server model id when unconfigured). */
+  id?: string;
 }
 
 type FromWebviewMessage = ReadyMessage | SaveMessage | ApplyPersonalityMessage | WebviewAction;
@@ -126,12 +128,12 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
         } else if (msg.type === 'autoConfigure') {
           await vscode.commands.executeCommand('vllm-copilot.autoConfigureModel', {
             serverUrl: msg.serverUrl,
-            vllmModelId: msg.vllmModelId,
+            id: msg.id,
           });
         } else if (msg.type === 'removeModel') {
           await vscode.commands.executeCommand('vllm-copilot.removeModel', {
             serverUrl: msg.serverUrl,
-            vllmModelId: msg.vllmModelId,
+            id: msg.id,
             skipConfirm: true,
           });
         }
@@ -196,9 +198,10 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       }),
     );
     const firstServer = servers[0];
-    const firstModel = firstServer?.models[0]?.vllmModelId || firstServer?.models[0]?.id || '';
+    const firstModel = firstServer?.models[0]?.id || firstServer?.models[0]?.vllmModelId || '';
 
-    // Personality list + the active personality per configured model (by vllmModelId||id).
+    // Personality list + the active personality per configured model (keyed by the
+    // extension `id` — never the vLLM wire id, since several presets may share one).
     // A custom replacements file that isn't a known personality falls back to its raw path.
     // `targetPath` is where applying this personality will materialize it in global
     // storage (deterministic per basename) — the webview uses it so a "Save All
@@ -214,7 +217,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     const activePersonalities: Record<string, string | null> = {};
     for (const sv of servers) {
       for (const m of sv.models) {
-        const key = m.vllmModelId || m.id || '';
+        const key = m.id || m.vllmModelId || '';
         if (!key) continue;
         const file = (m.systemMessageReplacementsFile || '').trim();
         activePersonalities[key] = file
@@ -227,7 +230,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       type: 'data',
       servers,
       selectedServerUrl: firstServer?.url || '',
-      selectedModelVllmId: firstModel,
+      selectedModelId: firstModel,
       knownParams: KNOWN_PARAMS,
       personalities,
       activePersonalities,
@@ -240,12 +243,12 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
    * Applying materializes the personality as a user-owned copy in global storage.
    */
   private async applyPersonality(msg: ApplyPersonalityMessage): Promise<void> {
-    const targetVllmId = msg.vllmModelId || '';
-    if (!targetVllmId || !msg.serverUrl) return;
+    const targetId = msg.id || '';
+    if (!targetId || !msg.serverUrl) return;
 
     const cfg = vscode.workspace.getConfiguration('vllm-copilot');
     const models: ModelConfig[] = cfg.get<ModelConfig[]>('models') || [];
-    const idx = findModelConfigIndex(models, targetVllmId, msg.serverUrl);
+    const idx = findModelConfigIndex(models, targetId, msg.serverUrl);
     if (idx < 0) return;
     const model = models[idx];
 
@@ -263,8 +266,8 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
 
     await this.saveModelConfig({
       ...model,
-      vllmModelId: model.vllmModelId || targetVllmId,
-      id: model.id || targetVllmId,
+      vllmModelId: model.vllmModelId || targetId,
+      id: model.id || targetId,
       serverUrl: model.serverUrl,
       systemMessageReplacementsFile: replacementsFile,
     });
@@ -273,17 +276,17 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   private async saveModelConfig(updates: Partial<ModelConfig>): Promise<void> {
     const cfg = vscode.workspace.getConfiguration('vllm-copilot');
     const models: ModelConfig[] = cfg.get<ModelConfig[]>('models') || [];
-    const targetVllmId = updates.vllmModelId || updates.id || '';
+    const targetId = updates.id || updates.vllmModelId || '';
     const targetServer = updates.serverUrl || '';
-    const idx = targetVllmId && targetServer
-      ? findModelConfigIndex(models, targetVllmId, targetServer)
+    const idx = targetId && targetServer
+      ? findModelConfigIndex(models, targetId, targetServer)
       : -1;
     if (idx < 0) {
       // New model entry - add to config
       const newEntry: ModelConfig = {
         ...(updates as ModelConfig),
-        vllmModelId: targetVllmId,
-        id: targetVllmId,
+        vllmModelId: updates.vllmModelId || targetId,
+        id: updates.id || targetId,
         serverUrl: targetServer,
       };
       models.push(newEntry);
@@ -292,8 +295,8 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       models[idx] = { ...existing, ...updates };
     }
     await cfg.update('models', models, vscode.ConfigurationTarget.Global);
-    vscode.window.showInformationMessage(`Settings saved for "${updates.displayName || targetVllmId}"`);
-    this.outputChannel.appendLine(`[SETTINGS] Saved config for ${targetVllmId}`);
+    vscode.window.showInformationMessage(`Settings saved for "${updates.displayName || targetId}"`);
+    this.outputChannel.appendLine(`[SETTINGS] Saved config for ${targetId}`);
     this.clearCache?.();
     this.refreshWebview();
   }

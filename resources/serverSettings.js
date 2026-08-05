@@ -20,8 +20,8 @@
       S.servers = e.data.servers;
       S.selServer = S.servers.some(s => s.url === prevServer) ? prevServer : e.data.selectedServerUrl;
       const sv = S.servers.find(s => s.url === S.selServer);
-      const modelExists = !!sv && [...(sv.models || []).map(m => m.vllmModelId || m.id), ...(sv.serverModelIds || [])].includes(prevModel);
-      S.selModel = modelExists ? prevModel : e.data.selectedModelVllmId;
+      const modelExists = !!sv && [...(sv.models || []).map(m => m.id || m.vllmModelId), ...(sv.serverModelIds || [])].includes(prevModel);
+      S.selModel = modelExists ? prevModel : e.data.selectedModelId;
       S.knownParams = e.data.knownParams || {};
       S.personalities = e.data.personalities || [];
       S.activePersonalities = e.data.activePersonalities || {};
@@ -71,17 +71,27 @@
     const sv = S.servers.find(s => s.url === S.selServer) || S.servers[0];
     if (sv.url !== S.selServer) S.selServer = sv.url;
 
-    // Build combined model list: configured models + all server models
-    const configuredIds = new Set(sv.models.map(m => m.vllmModelId || m.id));
-    const allModelIds = [...new Set([...configuredIds, ...(sv.serverModelIds || [])])];
+    // Combined model list: configured models (keyed by the extension `id`) plus
+    // server-reported models that have no configured entry (keyed by the server
+    // model id). A server model already covered by a configured entry — either by
+    // its `id` or its wire `vllmModelId` — is not listed a second time.
+    const configKey = (m) => m.id || m.vllmModelId || '';
+    const configKeys = new Set(sv.models.map(configKey));
+    const coveredWire = new Set(sv.models.map(m => m.vllmModelId || m.id || ''));
+    const allOptions = [
+      ...sv.models.map(m => ({ value: configKey(m), configured: true, mc: m })),
+      ...(sv.serverModelIds || [])
+        .filter(serverId => !configKeys.has(serverId) && !coveredWire.has(serverId))
+        .map(serverId => ({ value: serverId, configured: false, mc: { vllmModelId: serverId, id: serverId, serverUrl: sv.url } })),
+    ];
 
-    // Find currently selected model config or create stub for unconfigured
-    let mc = sv.models.find(m => (m.vllmModelId || m.id) === S.selModel);
-    if (!mc && allModelIds.includes(S.selModel)) {
-      // Unconfigured model - create stub
-      mc = { vllmModelId: S.selModel, id: S.selModel, serverUrl: sv.url };
+    // Find the currently selected model config, or the matching option (unconfigured stub).
+    let mc = sv.models.find(m => configKey(m) === S.selModel);
+    if (!mc) {
+      const opt = allOptions.find(o => o.value === S.selModel);
+      if (opt) mc = opt.mc;
     }
-    if (!mc) { mc = sv.models[0] || { vllmModelId: allModelIds[0], id: allModelIds[0], serverUrl: sv.url }; S.selModel = mc.vllmModelId || mc.id || ''; }
+    if (!mc) { mc = (allOptions[0] && allOptions[0].mc) || null; if (mc) S.selModel = configKey(mc); }
     S.mc = mc;
 
     let h = '<div class="selector-row">';
@@ -89,10 +99,20 @@
     S.servers.forEach(s => { h += '<option' + (s.url === S.selServer ? ' selected' : '') + '>' + E(s.url) + '</option>'; });
     h += '</select>';
     h += '<label>Model (vllmModelId)</label><select id="mSel">';
-    allModelIds.forEach(id => {
-      const configured = sv.models.find(m => (m.vllmModelId || m.id) === id);
-      const hint = configured ? '' : ' (not configured)';
-      h += '<option value="' + E(id) + '"' + (id === S.selModel ? ' selected' : '') + '>' + E(id + hint) + '</option>';
+    // Option VALUE is the extension `id` (the key for personalities/settings);
+    // the LABEL shows the real vllmModelId. When several presets share a wire id
+    // the label is disambiguated with the composite id.
+    const wireCounts = {};
+    sv.models.forEach(m => { const w = m.vllmModelId || m.id || ''; wireCounts[w] = (wireCounts[w] || 0) + 1; });
+    allOptions.forEach(opt => {
+      let label;
+      if (opt.configured) {
+        const wire = opt.mc.vllmModelId || opt.mc.id;
+        label = wireCounts[wire] > 1 ? wire + ' (' + opt.value + ')' : wire;
+      } else {
+        label = opt.value + ' (not configured)';
+      }
+      h += '<option value="' + E(opt.value) + '"' + (opt.value === S.selModel ? ' selected' : '') + '>' + E(label) + '</option>';
     });
     h += '</select></div>';
 
@@ -111,7 +131,7 @@
       const m = S.mc;
       // Personality picker lives in General, alongside the model's identity fields —
       // the Auto-Configure/Remove buttons above address the model, not the personality.
-      const isConfigured = configuredIds.has(S.selModel);
+      const isConfigured = configKeys.has(S.selModel);
       const activeName = S.activePersonalities[S.selModel] || '';
       h += sec('Personality', personalityCard(isConfigured, activeName));
       h += sec('System Prompt',
@@ -154,8 +174,8 @@
         const pathInput = document.querySelector('[data-f="systemMessageReplacementsFile"]');
         if (pathInput) pathInput.value = targetPath;
         vscode.postMessage(targetPath === ''
-          ? { type: 'applyPersonality', serverUrl: S.selServer, vllmModelId: S.selModel, clear: true }
-          : { type: 'applyPersonality', serverUrl: S.selServer, vllmModelId: S.selModel, sourcePath: sourcePath });
+          ? { type: 'applyPersonality', serverUrl: S.selServer, id: S.selModel, clear: true }
+          : { type: 'applyPersonality', serverUrl: S.selServer, id: S.selModel, sourcePath: sourcePath });
       };
     }
     const saveButton = document.getElementById('saveBtn');
@@ -163,11 +183,11 @@
     const revertButton = document.getElementById('revertBtn');
     if (revertButton) revertButton.onclick = render;
     const autoCfgBtn = document.getElementById('autoConfigureBtn');
-    if (autoCfgBtn) autoCfgBtn.onclick = () => vscode.postMessage({ type: 'autoConfigure', serverUrl: S.selServer, vllmModelId: S.selModel });
+    if (autoCfgBtn) autoCfgBtn.onclick = () => vscode.postMessage({ type: 'autoConfigure', serverUrl: S.selServer, id: S.selModel });
     const rmBtn = document.getElementById('removeModelBtn');
     if (rmBtn) rmBtn.onclick = async () => {
       if (await webviewConfirm('Remove model "' + S.selModel + '" from ' + S.selServer + '?')) {
-        vscode.postMessage({ type: 'removeModel', serverUrl: S.selServer, vllmModelId: S.selModel });
+        vscode.postMessage({ type: 'removeModel', serverUrl: S.selServer, id: S.selModel });
       }
     };
   }
@@ -313,7 +333,7 @@
     u.defaultParams = Object.keys(dp).length ? dp : undefined;
     u.serverUrl = S.selServer;
     u.vllmModelId = mc.vllmModelId || mc.id;
-    u.id = mc.id;
+    u.id = mc.id || mc.vllmModelId;
     vscode.postMessage({ type: 'save', config: u });
   }
 

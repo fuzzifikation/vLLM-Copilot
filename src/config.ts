@@ -152,9 +152,22 @@ export function resolveModelSettings(override: ModelConfig | undefined): Resolve
 /**
  * Resolve the vLLM server model ID from a ModelConfig override.
  * Returns `vllmModelId` if set, otherwise falls back to `id`.
+ * This is the WIRE identity — it is only used for requests to vLLM (and for
+ * informational display). Everything else keys on {@link resolveConfigId}.
  */
 export function resolveVllmModelId(override: ModelConfig | undefined): string | undefined {
   return override?.vllmModelId || override?.id;
+}
+
+/**
+ * Resolve the extension-side identity of a model config: its unique `id`, falling
+ * back to the vLLM wire id for legacy hand-written entries that predate the id
+ * scheme. This is the key used for personalities, the webview, and config
+ * updates. It is deliberately NOT the vLLM request id — use
+ * {@link resolveVllmModelId} for that.
+ */
+export function resolveConfigId(override: ModelConfig | undefined): string | undefined {
+  return override?.id || resolveVllmModelId(override);
 }
 
 /**
@@ -422,58 +435,68 @@ export async function getConfig(_context: vscode.ExtensionContext): Promise<Vllm
 export function validateConfig(config: VllmConfig): string[] {
   const warnings: string[] = [];
 
-  // Check for duplicate ids across the model array. Duplicate ids cause VS Code
-  // to behave unpredictably (one entry silently shadows the other).
+  // The extension's unique model key is `id` — it is what personalities, the
+  // webview, and config updates all use. It must be present and unique. Two
+  // presets may legitimately share a `vllmModelId` (same model on different
+  // servers or as separate presets), so uniqueness is enforced on `id`, not the
+  // wire id.
   const seenIds = new Set<string>();
   for (const model of config.models) {
-    const id = model.id || model.vllmModelId || '(unnamed model)';
-    if (seenIds.has(id)) {
-      warnings.push(`Model "${id}": duplicate id — each model entry must have a unique id.`);
+    const display = model.id || model.vllmModelId || '(unnamed model)';
+    const id = model.id?.trim();
+    if (!id) {
+      warnings.push(
+        `Model "${display}": missing id — each model entry must have a unique id (the extension key for personalities and settings).`
+      );
+    } else {
+      if (seenIds.has(id)) {
+        warnings.push(`Model "${display}": duplicate id — each model entry must have a unique id.`);
+      }
+      seenIds.add(id);
     }
-    seenIds.add(id);
 
     if (!model.serverUrl) {
-      warnings.push(`Model "${id}" has no serverUrl and cannot be reached. Add a serverUrl or run "Add vLLM Server & Model".`);
+      warnings.push(`Model "${display}" has no serverUrl and cannot be reached. Add a serverUrl or run "Add vLLM Server & Model".`);
     } else {
       // Warn if normalizeServerUrl silently fell back to localhost (empty host after scheme).
       const trimmed = model.serverUrl.trim();
       const afterScheme = trimmed.replace(/^https?:\/\//, '');
       if ((trimmed.startsWith('http://') || trimmed.startsWith('https://')) &&
           (!afterScheme || afterScheme.startsWith('/') || afterScheme.startsWith('?'))) {
-        warnings.push(`Model "${id}": serverUrl "${model.serverUrl}" is invalid (no host) — falling back to http://localhost:8000.`);
+        warnings.push(`Model "${display}": serverUrl "${model.serverUrl}" is invalid (no host) — falling back to http://localhost:8000.`);
       }
     }
 
     const settings = resolveModelSettings(model);
     if (settings.maxOutputTokens <= 0) {
-      warnings.push(`Model "${id}": maxOutputTokens is ${settings.maxOutputTokens}; should be > 0.`);
+      warnings.push(`Model "${display}": maxOutputTokens is ${settings.maxOutputTokens}; should be > 0.`);
     }
     if (settings.estimateCharsPerToken <= 0) {
-      warnings.push(`Model "${id}": estimateCharsPerToken is ${settings.estimateCharsPerToken}; should be > 0.`);
+      warnings.push(`Model "${display}": estimateCharsPerToken is ${settings.estimateCharsPerToken}; should be > 0.`);
     }
     if (settings.streamInactivityTimeout < 0) {
-      warnings.push(`Model "${id}": streamInactivityTimeout is ${settings.streamInactivityTimeout}ms; should be >= 0 (0 = disabled).`);
+      warnings.push(`Model "${display}": streamInactivityTimeout is ${settings.streamInactivityTimeout}ms; should be >= 0 (0 = disabled).`);
     }
     if (settings.autoContinueRetries < 0) {
-      warnings.push(`Model "${id}": autoContinueRetries is ${settings.autoContinueRetries}; should be >= 0.`);
+      warnings.push(`Model "${display}": autoContinueRetries is ${settings.autoContinueRetries}; should be >= 0.`);
     }
 
     // Validate request params at model scope and each mode scope.
-    warnings.push(...validateRequestParams(model.defaultParams, `Model "${id}" defaultParams`));
+    warnings.push(...validateRequestParams(model.defaultParams, `Model "${display}" defaultParams`));
 
     // Warn if defaultMode doesn't match any key in modelModes.
     if (model.defaultMode && model.modelModes) {
       const modeKeys = Object.keys(model.modelModes);
       if (!modeKeys.includes(model.defaultMode)) {
         warnings.push(
-          `Model "${id}": defaultMode "${model.defaultMode}" is not a valid mode — ` +
+          `Model "${display}": defaultMode "${model.defaultMode}" is not a valid mode — ` +
           `available modes are: ${modeKeys.map(k => `"${k}"`).join(', ')}.`
         );
       }
     }
 
     for (const [modeName, modeParams] of Object.entries(model.modelModes ?? {})) {
-      warnings.push(...validateRequestParams(modeParams, `Model "${id}" mode "${modeName}"`));
+      warnings.push(...validateRequestParams(modeParams, `Model "${display}" mode "${modeName}"`));
     }
   }
 
@@ -511,21 +534,22 @@ function validateRequestParams(params: Record<string, unknown> | undefined, labe
 }
 
 /**
- * Find the index of a model in the array by its vLLM model ID and server URL.
- * Uses normalized URL comparison and the canonical {@link resolveVllmModelId} helper.
- * Returns -1 if no match is found.
+ * Find the index of a model in the array by its extension `id` and server URL.
+ * Matching is on the unique config key ({@link resolveConfigId}) — NOT the vLLM
+ * wire id, since several presets may share a `vllmModelId`. Uses normalized URL
+ * comparison. Returns -1 if no match is found.
  *
  * Shared by both {@link saveModelConfig} implementations (autoConfig.ts and
  * serverSettingsView.ts) so matching logic stays in one place.
  */
 export function findModelConfigIndex(
   models: ModelConfig[],
-  vllmModelId: string,
+  configId: string,
   serverUrl: string,
 ): number {
   const normalizedUrl = normalizeServerUrl(serverUrl);
   return models.findIndex(m => {
     if (!m.serverUrl) return false;
-    return resolveVllmModelId(m) === vllmModelId && normalizeServerUrl(m.serverUrl) === normalizedUrl;
+    return resolveConfigId(m) === configId && normalizeServerUrl(m.serverUrl) === normalizedUrl;
   });
 }

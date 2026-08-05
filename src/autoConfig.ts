@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from './config.js';
-import { buildEndpoint, buildAuthHeaders, resolveServerConfig, resolveVllmModelId, normalizeServerUrl, buildModelId, normalizeModelId, modelMatchKey, findModelConfigIndex } from './config.js';
+import { buildEndpoint, buildAuthHeaders, resolveServerConfig, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, normalizeModelId, modelMatchKey, findModelConfigIndex } from './config.js';
 import { describeError } from './messageConverter.js';
 import { jsonrepair } from 'jsonrepair';
 
@@ -536,16 +536,15 @@ export async function saveModelConfig(newConfig: ModelConfig): Promise<void> {
   const config = vscode.workspace.getConfiguration('vllm-copilot');
   const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
 
-  const newVllmId = resolveVllmModelId(newConfig);
+  // The extension key is `id` (see resolveConfigId). Matching by id means two
+  // presets that share a `vllmModelId` (same model on different servers, or
+  // distinct presets) are updated independently. The vllmModelId fallback only
+  // covers legacy hand-written entries without an `id`.
+  const configId = resolveConfigId(newConfig);
   const newServer = newConfig.serverUrl;
-  const idx = newVllmId && newServer
-    ? findModelConfigIndex(existing, newVllmId, newServer)
+  const useIdx = configId && newServer
+    ? findModelConfigIndex(existing, configId, newServer)
     : -1;
-  // Also try matching by exact `id` for hand-written entries that predate the composite-id scheme
-  const idIdx = idx < 0 && newConfig.id
-    ? existing.findIndex(m => m.id !== undefined && m.id === newConfig.id)
-    : -1;
-  const useIdx = idIdx >= 0 ? idIdx : idx;
   if (useIdx >= 0) {
     // Preserve ONLY infrastructure/personal fields that the preset cannot know.
     // Everything model-specific (modelModes, family, capabilities, defaultParams,
@@ -1058,7 +1057,7 @@ export function registerAutoConfigureModelCommand(
   provider: any, // VllmChatModelProvider — avoids circular import
   output: vscode.OutputChannel
 ): vscode.Disposable {
-  return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { serverUrl?: string; vllmModelId?: string }) => {
+  return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { serverUrl?: string; id?: string }) => {
     const config = vscode.workspace.getConfiguration('vllm-copilot');
     const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
     if (existing.length === 0) {
@@ -1069,16 +1068,18 @@ export function registerAutoConfigureModelCommand(
     let modelConfig: ModelConfig | undefined;
     let vllmId: string;
     const argServerUrl = arg?.serverUrl;
-    const argModelId = arg?.vllmModelId;
+    const argModelId = arg?.id;
 
     if (argServerUrl && argModelId) {
       const argServerNorm = normalizeServerUrl(argServerUrl);
-      // Called with explicit server+model (e.g. from Server Settings webview).
+      // Called with explicit server + model identity (e.g. from Server Settings
+      // webview). The webview keys everything by the extension `id`; for an
+      // unconfigured server-reported model that id is just the server model id.
       modelConfig = existing.find(
-        m => (resolveVllmModelId(m) === argModelId) && m.serverUrl &&
+        m => resolveConfigId(m) === argModelId && m.serverUrl &&
              normalizeServerUrl(m.serverUrl) === argServerNorm
       );
-      vllmId = argModelId;
+      vllmId = resolveVllmModelId(modelConfig) || argModelId;
 
       if (!modelConfig) {
         // Unconfigured model: the server reports it but settings has no entry
