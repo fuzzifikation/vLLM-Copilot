@@ -1,16 +1,19 @@
 /**
  * Global personality store.
  *
- * Personalities live in one of three places:
- * - **bundled**   — extension install dir `prompt-replacements/*.json` (immutable, shipped with the VSIX)
- * - **global**    — `context.globalStorageUri/personalities/*.json` (user-owned, follows the user across workspaces)
- * - **workspace** — `<workspace>/.vllm/*.json` (legacy copies created by older versions)
+ * Personalities live in one of two places:
+ * - **bundled** — extension install dir `prompt-replacements/*.json` (immutable, shipped with the VSIX)
+ * - **global**  — `context.globalStorageUri/personalities/*.json` (user-owned, follows the user across workspaces)
  *
- * This module owns discovery (merging the three sources, deduped by name) and the
+ * This module owns discovery (merging the two sources, deduped by name) and the
  * copy-to-global operation that the Set Personality command and the Server Settings
  * webview use. Every applied personality ends up as a user-owned file in global
  * storage, so it survives extension upgrades and workspace switches, and is
  * editable later.
+ *
+ * Note: legacy workspace copies (`.vllm/prompt-replacements-*.json`) are deliberately
+ * NOT discovered as personalities. They still function as custom replacement files at
+ * request time (see provider.ts), but the picker only knows bundled and global ones.
  */
 
 import * as fs from 'fs/promises';
@@ -18,7 +21,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { loadPersonalityMeta, clearPersonalityCache } from './promptReplacer.js';
 
-export type PersonalitySource = 'bundled' | 'global' | 'workspace';
+export type PersonalitySource = 'bundled' | 'global';
 
 export interface PersonalityEntry {
   name: string;
@@ -37,12 +40,12 @@ export function getGlobalPersonalitiesDir(context: vscode.ExtensionContext): str
 }
 
 /**
- * Discover all personalities from the three sources, deduped by name.
+ * Discover all personalities from the two sources, deduped by name.
  *
- * Precedence on name collision: **global > bundled > workspace**. A user-owned
- * copy (global) wins over the shipped preset — it is the one that is actually
- * referenced by a stored `systemMessageReplacementsFile`, so showing the bundled
- * twin would offer a phantom second "Tough Love" that resolves to the same file.
+ * Precedence on name collision: **global > bundled**. A user-owned copy (global)
+ * wins over the shipped preset — it is the one that is actually referenced by a
+ * stored `systemMessageReplacementsFile`, so showing the bundled twin would offer
+ * a phantom second "Tough Love" that resolves to the same file.
  */
 export async function discoverPersonalities(
   context: vscode.ExtensionContext
@@ -51,8 +54,6 @@ export async function discoverPersonalities(
     { dir: path.join(context.extensionUri.fsPath, 'prompt-replacements'), source: 'bundled' },
     { dir: getGlobalPersonalitiesDir(context), source: 'global' },
   ];
-  const ws = vscode.workspace.workspaceFolders?.[0];
-  if (ws) sources.push({ dir: path.join(ws.uri.fsPath, '.vllm'), source: 'workspace' });
 
   const entries: PersonalityEntry[] = [];
   for (const { dir, source } of sources) {
@@ -60,7 +61,7 @@ export async function discoverPersonalities(
   }
 
   // Dedupe by name, highest-priority source wins.
-  const order: Record<PersonalitySource, number> = { global: 0, bundled: 1, workspace: 2 };
+  const order: Record<PersonalitySource, number> = { global: 0, bundled: 1 };
   const seen = new Map<string, PersonalityEntry>();
   for (const e of entries) {
     const prev = seen.get(e.name);
@@ -96,13 +97,11 @@ async function scanPersonalityDir(dir: string, source: PersonalitySource): Promi
 /**
  * Resolve which personality a model's `systemMessageReplacementsFile` refers to.
  * Relative paths are resolved against the workspace root (matches provider.ts).
- * Returns null for empty/clear values and for files that aren't a known personality.
+ * Returns null for empty/clear values and for files that aren't a known personality
+ * (e.g. a custom `.vllm/` replacement file — those are not personalities).
  *
  * `known` optionally supplies an already-discovered list (from
  * {@link discoverPersonalities}) to avoid re-scanning the personality dirs.
- *
- * Fallback: a legacy `.vllm/` reference whose workspace copy was deduped out by a
- * same-named bundled/global personality matches by basename, so it still resolves.
  */
 export async function resolveActivePersonality(
   context: vscode.ExtensionContext,
@@ -114,10 +113,7 @@ export async function resolveActivePersonality(
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
   const abs = path.isAbsolute(value) ? path.resolve(value) : path.resolve(root, value);
   const all = known ?? (await discoverPersonalities(context));
-  const exact = all.find(e => path.resolve(e.sourcePath) === abs);
-  if (exact) return exact;
-  const base = path.basename(abs);
-  return all.find(e => path.basename(e.sourcePath) === base) ?? null;
+  return all.find(e => path.resolve(e.sourcePath) === abs) ?? null;
 }
 
 /**
@@ -135,15 +131,43 @@ export async function ensureGlobalPersonality(
   const dir = getGlobalPersonalitiesDir(context);
   const dest = path.join(dir, path.basename(sourcePath));
   await fs.mkdir(dir, { recursive: true });
-  if (dest !== path.resolve(sourcePath)) {
-    try {
-      await fs.access(dest);
-    } catch {
-      const content = await fs.readFile(sourcePath, 'utf-8');
-      await fs.writeFile(dest, content, 'utf-8');
-      // Content changed — force re-read on next load.
-      clearPersonalityCache();
-    }
+
+  if (dest === path.resolve(sourcePath)) return dest; // already in global storage
+
+  let destExists = true;
+  try {
+    await fs.access(dest);
+  } catch {
+    destExists = false;
+  }
+
+  if (!destExists) {
+    const content = await fs.readFile(sourcePath, 'utf-8');
+    // Write atomically (temp + rename) so a crash mid-write can't leave a
+    // truncated JSON file that would then be treated as the user's copy.
+    const tmpPath = `${dest}.tmp`;
+    await fs.writeFile(tmpPath, content, 'utf-8');
+    await fs.rename(tmpPath, dest);
+    // Content changed — force re-read on next load.
+    clearPersonalityCache();
+    return dest;
+  }
+
+  // The destination already exists. If it's a DIFFERENT personality that happens
+  // to share the basename, that's a collision — surface it instead of silently
+  // binding this personality to the wrong file. If it's the same personality
+  // (possibly user-edited), keep the existing global copy (edits are never
+  // clobbered).
+  const sourceMeta = await loadPersonalityMeta(sourcePath);
+  const destMeta = await loadPersonalityMeta(dest);
+  // Note: if either file has no `meta` block (legacy array format), the check is
+  // skipped and the existing file is kept. Legacy-array files aren't selectable
+  // personalities, so this only matters for hand-placed files in `personalities/`.
+  if (sourceMeta?.name && destMeta && destMeta.name !== sourceMeta.name) {
+    throw new Error(
+      `Personality "${sourceMeta.name}" collides with an existing global file "${dest}" ` +
+      `(personality "${destMeta.name}"). Rename or remove that file first.`
+    );
   }
   return dest;
 }

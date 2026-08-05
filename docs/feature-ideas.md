@@ -118,7 +118,7 @@ Store the personality file in the extension's global storage directory (`context
 
 ### Status
 
-Implemented as suggested: personalities are materialized in global storage and referenced by absolute path. Legacy `.vllm/` copies are still discovered and migrated on next selection.
+Implemented as suggested: personalities are materialized in global storage and referenced by absolute path. Legacy workspace copies (`.vllm/prompt-replacements-*.json`) are no longer discovered as personalities — the picker only lists bundled and global ones. Such `.vllm/` files still work as custom replacement files when pointed at by `systemMessageReplacementsFile`, but they are not offered in the personality picker.
 
 | Param                           | Category           | Notes                                                                                                                         |
 | ------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
