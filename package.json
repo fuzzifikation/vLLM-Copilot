@@ -310,12 +310,15 @@
     "test:coverage": "vitest run --coverage",
     "test:integration": "VLLM_INTEGRATION=1 vitest run test/integration",
     "validate-webview-js": "node -e \"const fs=require('fs');const path=require('path');const files=fs.readdirSync('resources').filter(f=>f.endsWith('.js'));files.forEach(f=>{try{const code=fs.readFileSync(path.join('resources',f),'utf8');require('vm').createScript(code);console.log('OK: '+f)}catch(e){console.error('FAIL: '+f+': '+e.message);process.exitCode=1}})\"",
-    "build": "npm run compile && npm test && npx @vscode/vsce package --allow-missing-repository --baseContentUrl \"https://example.com\""
+    "license:check": "license-checker-rseidelsohn --production --excludePrivatePackages --onlyAllow \"MIT;ISC;Apache-2.0;BSD-2-Clause;BSD-3-Clause;CC0-1.0;CC-BY-3.0;BlueOak-1.0.0\"",
+    "license:notices": "node scripts/generate-notices.mjs",
+    "build": "npm run license:check && npm run compile && npm test && npx @vscode/vsce package --allow-missing-repository --baseContentUrl \"https://example.com\""
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
     "@types/vscode": "^1.125.0",
     "@vitest/coverage-v8": "^4.1.10",
+    "license-checker-rseidelsohn": "^5.0.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   },

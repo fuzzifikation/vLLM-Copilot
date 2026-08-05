@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.20.4 — Global personalities & Server Settings polish
+
+- **New: personalities are global.** Selecting one (Server Settings sidebar or `Set Model Personality`) copies it into the extension's global storage (`personalities/`), so it follows you across workspaces and survives extension upgrades. No longer requires an open workspace. Legacy `.vllm/` copies are still discovered.
+- **New: personality picker in Server Settings** — a dropdown in each model's section, with the active personality marked and applied immediately. Model, display name, and system prompt controls moved up for a cleaner per-model flow.
+- **Fixed:** Server Settings no longer resets the selected model to the first entry after a change.
+- **New: `THIRD-PARTY-NOTICES.txt`** — generated via `npm run license:notices` from the licenses of shipped runtime dependencies, required for Marketplace distribution.
+
 ## v1.20.3 — Clear personality & show active personality
 
 - **New: "Default (no personality)"** in **Set Model Personality** — pick it to remove the model's system message replacements and restore Copilot's original system prompt.
