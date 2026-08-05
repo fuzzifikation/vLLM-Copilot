@@ -91,11 +91,15 @@
     h += '<label>Model (vllmModelId)</label><select id="mSel">';
     allModelIds.forEach(id => {
       const configured = sv.models.find(m => (m.vllmModelId || m.id) === id);
-      const lbl = configured ? (configured.displayName || id) : id;
       const hint = configured ? '' : ' (not configured)';
-      h += '<option value="' + E(id) + '"' + (id === S.selModel ? ' selected' : '') + '>' + E(lbl + hint) + '</option>';
+      h += '<option value="' + E(id) + '"' + (id === S.selModel ? ' selected' : '') + '>' + E(id + hint) + '</option>';
     });
     h += '</select></div>';
+
+    // Display name sits right after the model selector — it's the user-facing label.
+    h += '<div class="field"><label>displayName</label>' +
+      '<input type="text" data-f="displayName" value="' + E(String(mc.displayName || '')) + '">' +
+      '<div class="field-hint">Name shown in model picker</div></div>';
 
     // Action buttons row — these address the model, not the personality.
     h += '<div class="action-btn-row">';
@@ -109,7 +113,11 @@
       // the Auto-Configure/Remove buttons above address the model, not the personality.
       const isConfigured = configuredIds.has(S.selModel);
       const activeName = S.activePersonalities[S.selModel] || '';
-      h += sec('General', fields([{ k: 'displayName', t: 'text', v: m.displayName || '', h: 'Name shown in model picker' }]) + personalityCard(isConfigured, activeName));
+      h += sec('Personality', personalityCard(isConfigured, activeName));
+      h += sec('System Prompt',
+        '<div class="field"><label>systemMessageReplacementsFile</label>' +
+        '<input type="text" data-f="systemMessageReplacementsFile" value="' + E(String(m.systemMessageReplacementsFile || '')) + '">' +
+        '<div class="field-hint">Path to JSON find/replace rules file</div></div>');
       h += sec('Token Budget', fields([{ k: 'maxOutputTokens', t: 'number', v: m.maxOutputTokens ?? 4096, h: 'Max output tokens (default: 4096)' },
         { k: 'maxInputTokens', t: 'number', v: m.maxInputTokens ?? '', h: 'Auto-computed; set to reserve headroom' },
         { k: 'estimateCharsPerToken', t: 'number', v: m.estimateCharsPerToken ?? 3.5, h: 'Avg chars/token (default: 3.5)' }]));
@@ -120,10 +128,6 @@
       h += sec('Transport', fields([{ k: 'streamInactivityTimeout', t: 'number', v: m.streamInactivityTimeout ?? 0, h: 'SSE timeout in ms (0 = infinite)' },
         { k: 'autoContinueRetries', t: 'number', v: m.autoContinueRetries ?? 1, h: 'Auto-retry count (default: 1)' }]));
       h += sec('Model Modes', modesSection(m));
-      h += sec('System Prompt',
-        '<div class="field"><label>systemMessageReplacementsFile</label>' +
-        '<input type="text" data-f="systemMessageReplacementsFile" value="' + E(String(m.systemMessageReplacementsFile || '')) + '">' +
-        '<div class="field-hint">Path to JSON find/replace rules file</div></div>');
       h += '<div class="btn-row"><button id="saveBtn">Save All Changes</button><button class="secondary" id="revertBtn" style="margin-left:8px">Revert</button></div>';
     }
     r.innerHTML = h;

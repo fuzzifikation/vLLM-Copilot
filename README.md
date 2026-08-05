@@ -312,6 +312,23 @@ See [Configuration Reference](docs/configuration-reference.md) for the complete 
 
 ---
 
+## Development
+
+### License compliance
+
+All production (shipped) dependencies are permissive open-source licenses
+(MIT, ISC, BSD-2/3-Clause, Apache-2.0). Compliance is enforced in CI/build:
+
+- `npm run license:check` — fails the build if any *runtime* dependency has a
+  license outside the approved allowlist (copyleft like GPL/AGPL/LGPL and
+  unknown licenses are rejected). Runs automatically as part of `npm run build`.
+- `npm run license:notices` — regenerates `THIRD-PARTY-NOTICES.txt` (required by
+  the VS Code Marketplace for redistributed OSS). Run it whenever dependencies
+  change and commit the result.
+- `THIRD-PARTY-NOTICES.txt` is included in the packaged VSIX.
+
+---
+
 ## License
 
 MIT License
