@@ -69,7 +69,9 @@ export interface ModelConfig {
    * Each pair: { "find": "exact substring", "replace": "replacement text" }
    * Applied to every system message before sending to vLLM.
    * Empty replace string removes the matched text.
-   * Recommended: .vllm/prompt-replacements.json
+   * The personality picker stores an absolute path into global storage
+   * (`personalities/`); relative paths (e.g. `.vllm/prompt-replacements.json`)
+   * are resolved against the workspace root and remain valid for custom files.
    */
   systemMessageReplacementsFile?: string;
 }

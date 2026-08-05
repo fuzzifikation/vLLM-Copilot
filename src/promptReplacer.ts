@@ -17,19 +17,36 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 // ── Module-level cache ───────────────────────────────────────────────
-// Keyed by resolved absolute path. Populated on first read; lifetime is the
-// extension session. Personality files are either bundled extension assets
-// (immutable) or user copies in .vllm/ (only changeable via the Set Personality
-// command which clears the cache when it copies a new file).
-const personalityCache = new Map<string, { meta: PersonalityMeta | null; rules: PromptReplacement[] }>();
+// Keyed by resolved absolute path, revalidated by mtime+size so edits to global
+// personality files are picked up without a restart. Bundled extension assets
+// never change; global copies (in `personalities/`) do when the user edits them,
+// and this lets those edits apply on the next load. A cheap `stat` replaces a
+// full read+parse on every unchanged file.
+const personalityCache = new Map<string, {
+  meta: PersonalityMeta | null;
+  rules: PromptReplacement[];
+  mtimeMs: number;
+  size: number;
+}>();
 
 /**
- * Internal: read, parse, and cache a personality file once.
+ * Internal: read, parse, and cache a personality file.
  * Returns both meta (null for legacy/array format files) and rules.
  */
 async function readPersonalityFile(absPath: string): Promise<{ meta: PersonalityMeta | null; rules: PromptReplacement[] }> {
+  let stat;
+  try {
+    stat = await fs.stat(absPath);
+  } catch (err) {
+    // File gone — don't serve a stale copy; callers treat ENOENT as "no file".
+    personalityCache.delete(absPath);
+    throw err;
+  }
+
   const cached = personalityCache.get(absPath);
-  if (cached) return cached;
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached;
+  }
 
   const content = await fs.readFile(absPath, 'utf-8');
   const trimmed = content.trim();
@@ -40,7 +57,7 @@ async function readPersonalityFile(absPath: string): Promise<{ meta: Personality
   };
 
   if (!trimmed) {
-    personalityCache.set(absPath, result);
+    personalityCache.set(absPath, { ...result, mtimeMs: stat.mtimeMs, size: stat.size });
     return result;
   }
 
@@ -76,7 +93,7 @@ async function readPersonalityFile(absPath: string): Promise<{ meta: Personality
     throw new Error('Prompt replacements file must contain a JSON array or a { meta, rules } object');
   }
 
-  personalityCache.set(absPath, result);
+  personalityCache.set(absPath, { ...result, mtimeMs: stat.mtimeMs, size: stat.size });
   return result;
 }
 
@@ -193,9 +210,12 @@ export function applyPromptReplacements(
 
   for (const { find, replace, ruleName } of replacements) {
     if (!find) continue;
-    const count = result.split(find).length - 1;
-    if (count > 0) {
-      result = result.split(find).join(replace);
+    // Single pass: split once to detect + replace all occurrences. `split`/`join`
+    // (not `replaceAll`) keeps replacement literal — `$&`/`$1` in `replace` must
+    // not be interpreted as pattern references.
+    const parts = result.split(find);
+    if (parts.length > 1) {
+      result = parts.join(replace);
       if (ruleName) matchedRuleNames.push(ruleName);
     }
   }

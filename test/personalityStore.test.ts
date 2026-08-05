@@ -1,6 +1,6 @@
 /**
  * Tests for the global personality store (personalityStore.ts).
- * Covers discovery (bundled + global + legacy workspace, deduped by name),
+ * Covers discovery (bundled + global, deduped by name),
  * materialization into global storage, and active-personality resolution.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -30,6 +30,13 @@ const fsMock = vi.hoisted(() => {
     }),
     mkdir: vi.fn(async () => {}),
     writeFile: vi.fn(async (p: string, c: string) => { files.set(p, c); }),
+    rename: vi.fn(async (from: string, to: string) => {
+      const content = files.get(from);
+      if (content !== undefined) {
+        files.delete(from);
+        files.set(to, content);
+      }
+    }),
   };
 });
 vi.mock('fs/promises', () => fsMock);
@@ -55,7 +62,7 @@ describe('personalityStore', () => {
   });
 
   describe('discoverPersonalities', () => {
-    it('merges bundled, global, and legacy workspace personalities', async () => {
+    it('merges bundled and global personalities', async () => {
       const bundled = path.join(EXT, 'prompt-replacements');
       const globalDir = getGlobalPersonalitiesDir(context);
       const wsDir = path.join(WS, '.vllm');
@@ -66,12 +73,13 @@ describe('personalityStore', () => {
       fsMock.dirContents[globalDir] = ['my-personality.json'];
       fsMock.files.set(path.join(globalDir, 'my-personality.json'), personality('Mine', 'user-made'));
 
+      // Workspace `.vllm` copies are no longer discovered as personalities.
       fsMock.dirContents[wsDir] = ['prompt-replacements-spartan.json'];
       fsMock.files.set(path.join(wsDir, 'prompt-replacements-spartan.json'), personality('Spartan', 'legacy'));
 
       const found = await discoverPersonalities(context);
-      expect(found.map(p => p.name).sort()).toEqual(['Mine', 'Spartan', 'Tough Love']);
-      expect(found.find(p => p.name === 'Spartan')?.source).toBe('workspace');
+      expect(found.map(p => p.name).sort()).toEqual(['Mine', 'Tough Love']);
+      expect(found.find(p => p.name === 'Tough Love')?.source).toBe('bundled');
       expect(found.find(p => p.name === 'Mine')?.source).toBe('global');
     });
 
@@ -101,14 +109,19 @@ describe('personalityStore', () => {
   });
 
   describe('ensureGlobalPersonality', () => {
-    it('copies a bundled preset into global storage', async () => {
+    it('copies a bundled preset into global storage (atomically)', async () => {
       const bundled = path.join(EXT, 'prompt-replacements');
       const src = path.join(bundled, 'prompt-replacements-tough-love.json');
       fsMock.files.set(src, personality('Tough Love', 'bundled'));
 
       const dest = await ensureGlobalPersonality(context, src);
+      const tmp = `${dest}.tmp`;
       expect(dest).toBe(path.join(GLOBAL, 'personalities', 'prompt-replacements-tough-love.json'));
-      expect(fsMock.writeFile).toHaveBeenCalledWith(dest, personality('Tough Love', 'bundled'), 'utf-8');
+      // Written to a temp file, then renamed over the destination.
+      expect(fsMock.writeFile).toHaveBeenCalledWith(tmp, personality('Tough Love', 'bundled'), 'utf-8');
+      expect(fsMock.rename).toHaveBeenCalledWith(tmp, dest);
+      expect(fsMock.files.get(dest)).toBe(personality('Tough Love', 'bundled'));
+      expect(fsMock.files.has(tmp)).toBe(false);
     });
 
     it('does not clobber an existing global copy', async () => {
@@ -118,6 +131,16 @@ describe('personalityStore', () => {
       fsMock.files.set(dest, personality('X', 'user-edited'));
 
       await ensureGlobalPersonality(context, src);
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('throws when the existing global file is a different personality sharing the basename', async () => {
+      const src = path.join(EXT, 'prompt-replacements', 'a.json');
+      fsMock.files.set(src, personality('Alpha', 'bundled'));
+      const dest = path.join(GLOBAL, 'personalities', 'a.json');
+      fsMock.files.set(dest, personality('Beta', 'unrelated'));
+
+      await expect(ensureGlobalPersonality(context, src)).rejects.toThrow(/collides/);
       expect(fsMock.writeFile).not.toHaveBeenCalled();
     });
 
@@ -142,29 +165,27 @@ describe('personalityStore', () => {
       expect(active?.name).toBe('Mine');
     });
 
-    it('resolves a legacy relative .vllm path against the workspace root', async () => {
+    it('does not resolve a workspace .vllm path as a personality', async () => {
+      // Workspace personalities are removed — a custom `.vllm` replacement file is
+      // not a known personality, so it must NOT resolve (no basename fallback).
       const wsDir = path.join(WS, '.vllm');
       fsMock.dirContents[wsDir] = ['prompt-replacements-spartan.json'];
-      const file = path.join(wsDir, 'prompt-replacements-spartan.json');
-      fsMock.files.set(file, personality('Spartan', 'legacy'));
+      fsMock.files.set(path.join(wsDir, 'prompt-replacements-spartan.json'), personality('Spartan', 'legacy'));
 
       const active = await resolveActivePersonality(context, '.vllm/prompt-replacements-spartan.json');
-      expect(active?.name).toBe('Spartan');
+      expect(active).toBeNull();
     });
 
-    it('resolves a legacy .vllm path even when a same-named bundled preset dedupes it out', async () => {
-      // The bundled preset wins the name dedup, hiding the workspace copy — the
-      // basename fallback must still resolve the model's stored .vllm reference.
+    it('does not fall back to a same-named personality when the configured file is not discovered', async () => {
+      // A model pointing at a file that is not a known personality (e.g. a deleted
+      // or custom path) must resolve to null even if a bundled personality shares
+      // its basename — exact path matching only.
       const bundled = path.join(EXT, 'prompt-replacements');
       fsMock.dirContents[path.join(bundled)] = ['prompt-replacements-tough-love.json'];
       fsMock.files.set(path.join(bundled, 'prompt-replacements-tough-love.json'), personality('Tough Love', 'bundled'));
 
-      const wsDir = path.join(WS, '.vllm');
-      fsMock.dirContents[wsDir] = ['prompt-replacements-tough-love.json'];
-      fsMock.files.set(path.join(wsDir, 'prompt-replacements-tough-love.json'), personality('Tough Love', 'legacy'));
-
       const active = await resolveActivePersonality(context, '.vllm/prompt-replacements-tough-love.json');
-      expect(active?.name).toBe('Tough Love');
+      expect(active).toBeNull();
     });
 
     it('returns null for an empty/clear value', async () => {

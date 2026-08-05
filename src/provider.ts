@@ -810,7 +810,9 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       const override = resolveOverrideForModel(config.models || [], model.id);
       const replacements = await this.loadReplacements(override);
 
-      if (!replacements.length) return [...originalMessages];
+      const cfg = vscode.workspace.getConfiguration('vllm-copilot');
+      const captureEnabled = cfg.get<boolean>('systemMessageCapture', false);
+      if (!replacements.length && !captureEnabled) return [...originalMessages];
 
       // Build new message array. Replaced system messages get NEW objects;
       // non-system messages pass through by reference (they're never mutated).
@@ -827,6 +829,16 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         const receivedContent = messageToText(msg);
         if (!receivedContent) {
           replacedMessages.push(msg);
+          continue;
+        }
+
+        if (!replacements.length) {
+          replacedMessages.push(msg);
+          captureEntries.push({
+            receivedContent,
+            deliveredContent: receivedContent,
+            rulesApplied: [],
+          });
           continue;
         }
 
@@ -847,13 +859,10 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       }
 
       // Capture to disk (opt-in, fire-and-forget)
-      if (captureEntries.length > 0) {
-        const cfg = vscode.workspace.getConfiguration('vllm-copilot');
-        if (cfg.get<boolean>('systemMessageCapture', false)) {
-          this.captureToDisk(originalMessages, captureEntries).catch(err => {
-            this.output.appendLine(`[WARN] System message capture failed: ${err instanceof Error ? err.message : String(err)}`);
-          });
-        }
+      if (captureEnabled && captureEntries.length > 0) {
+        this.captureToDisk(captureEntries).catch(err => {
+          this.output.appendLine(`[WARN] System message capture failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
       }
 
       return replacedMessages;
@@ -899,62 +908,34 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
   /**
    * Capture system messages to .vllm/system-messages.json (fire-and-forget, serialized).
    *
-   * `originalMessages` are VS Code's pristine objects (never mutated by this module).
-   * `captureEntries` contain replaced messages with both original and transformed content.
-   * Any system messages NOT in captureEntries are passthroughs (no replacements matched).
+   * `captureEntries` already contains every system message from the turn — the
+   * processor records all of them, both replaced and passthrough — so there is no
+   * separate passthrough pass here. Deduplication is by `receivedContent`.
    */
-  private async captureToDisk(
-    originalMessages: readonly vscode.LanguageModelChatRequestMessage[],
-    captureEntries: CaptureEntry[]
-  ): Promise<void> {
+  private async captureToDisk(captureEntries: CaptureEntry[]): Promise<void> {
     const folders = vscode.workspace.workspaceFolders;
-    if (!folders?.length) return;
+    if (!folders?.length || captureEntries.length === 0) return;
 
     const targetPath = path.join(folders[0].uri.fsPath, '.vllm', 'system-messages.json');
 
-    // Entries from replacements — these have correct receivedContent (original text)
-    // and deliveredContent (transformed text).
-    const entriesToCapture: CaptureEntry[] = [...captureEntries];
-
-    // Build a set of receivedContent keys we've already captured (from replacements)
-    // so we don't double-capture those messages.
-    const alreadyCaptured = new Set(captureEntries.map(e => e.receivedContent));
-
-    // Passthrough: capture any system messages in originalMessages that had no replacements
-    // applied. These were NOT mutated, so messageToText returns the original text.
-    for (const msg of originalMessages) {
-      if (msg.role === vscode.LanguageModelChatMessageRole.User ||
-          msg.role === vscode.LanguageModelChatMessageRole.Assistant) continue;
-
-      const receivedContent = messageToText(msg);
-      if (!receivedContent || alreadyCaptured.has(receivedContent)) continue;
-
-      entriesToCapture.push({
-        receivedContent,
-        deliveredContent: receivedContent,
-        rulesApplied: [],
-      });
-    }
-
-    if (entriesToCapture.length === 0) return;
-
     // Deduplicate within this request (shouldn't happen, but guard against it)
     const uniqueEntries = Array.from(
-      new Map(entriesToCapture.map(e => [e.receivedContent, e])).values()
+      new Map(captureEntries.map(e => [e.receivedContent, e])).values()
     );
 
-    await this.#enqueueWrite(targetPath, uniqueEntries);
+    await this.enqueueWrite(targetPath, uniqueEntries);
   }
 
   /**
    * Read existing capture file, merge new entries, write back.
    * Serialized via the promise queue so concurrent writes never race.
    */
-  async #enqueueWrite(
+  private async enqueueWrite(
     targetPath: string,
     newEntries: CaptureEntry[]
   ): Promise<void> {
-    // Chain this write after the previous one
+    // Chain this write after the previous one, then await it so the caller (and
+    // tests) observe completion. The queue always resolves — errors are logged.
     const previous = this.#systemMessageWriteQueue;
     this.#systemMessageWriteQueue = previous.then(async () => {
       await fs.mkdir(path.dirname(targetPath), { recursive: true });
@@ -992,15 +973,19 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         }
       }
 
-      await fs.writeFile(targetPath, JSON.stringify(allEntries, null, 2), 'utf-8');
+      // Write atomically: write to a temp file, then rename over the target so a
+      // crash or disk failure mid-write can't leave truncated JSON in place. The
+      // previous file survives until the rename completes.
+      const tmpPath = `${targetPath}.tmp`;
+      await fs.writeFile(tmpPath, JSON.stringify(allEntries, null, 2), 'utf-8');
+      await fs.rename(tmpPath, targetPath);
       this.output.appendLine(`[DIAG] Captured ${newCount} new, updated ${updatedCount} existing system message(s) → ${targetPath}`);
     }).catch(err => {
       // Swallow errors so the queue always resolves — a write failure shouldn't block future writes
       this.output.appendLine(`[WARN] Failed to write capture file: ${err instanceof Error ? err.message : String(err)}`);
     });
+    await this.#systemMessageWriteQueue;
   }
-
-  
 
   // ==================== Error Handling ====================
 

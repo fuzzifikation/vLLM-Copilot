@@ -709,7 +709,7 @@ export function registerSetModelPersonalityCommand(
       });
       if (!modelPick) return;
 
-      // Step 2: discover and pick the personality (bundled + global + legacy .vllm)
+      // Step 2: discover and pick the personality (bundled + global)
       const presets = await discoverPersonalities(context);
 
       type PersonalityPick = {
