@@ -201,6 +201,34 @@ describe('ServerSettingsViewProvider', () => {
         'Settings saved for "no-display-name"',
       );
     });
+
+    it('P1 clear: deletes an empty systemMessageReplacementsFile instead of storing ""', async () => {
+      const existingConfig: ModelConfig[] = [
+        {
+          id: 'test-model',
+          vllmModelId: 'test-model',
+          serverUrl: 'http://localhost:8000',
+          systemMessageReplacementsFile: 'C:/some/personalities/tough-love.json',
+        },
+      ];
+
+      vscode.workspace._mockConfig = {
+        get: (key: string) => (key === 'models' ? existingConfig : undefined),
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      // The webview posts an empty string when "Default (no personality)" is chosen.
+      await (provider as any).saveModelConfig({
+        id: 'test-model',
+        vllmModelId: 'test-model',
+        serverUrl: 'http://localhost:8000',
+        systemMessageReplacementsFile: '',
+      });
+
+      const stored = vscode.workspace._mockConfig.update.mock.calls[0][1];
+      expect(stored).toHaveLength(1);
+      expect('systemMessageReplacementsFile' in stored[0]).toBe(false);
+    });
   });
 
   describe('applyPersonality', () => {
@@ -229,7 +257,8 @@ describe('ServerSettingsViewProvider', () => {
       expect(updatedModels.find((m: any) => m.id === 'preset-a')).toEqual(
         expect.objectContaining({ displayName: 'A' }),
       );
-      expect(updatedModels.find((m: any) => m.id === 'preset-b')?.systemMessageReplacementsFile).toBe('');
+      // Clear removes the key entirely (not a lingering "").
+      expect('systemMessageReplacementsFile' in updatedModels.find((m: any) => m.id === 'preset-b')).toBe(false);
     });
 
     it('does nothing for an unknown id (unconfigured server model)', async () => {
@@ -246,6 +275,36 @@ describe('ServerSettingsViewProvider', () => {
       });
 
       expect(vscode.workspace._mockConfig.update).not.toHaveBeenCalled();
+    });
+
+    it('clear removes an existing personality instead of resurrecting the old value', async () => {
+      const existingConfig: ModelConfig[] = [
+        {
+          id: 'test-model',
+          vllmModelId: 'test-model',
+          serverUrl: 'http://localhost:8000',
+          displayName: 'Test',
+          systemMessageReplacementsFile: 'C:/personalities/tough-love.json',
+        },
+      ];
+
+      vscode.workspace._mockConfig = {
+        get: (key: string) => (key === 'models' ? existingConfig : undefined),
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await (provider as any).applyPersonality({
+        type: 'applyPersonality',
+        serverUrl: 'http://localhost:8000',
+        id: 'test-model',
+        clear: true,
+      });
+
+      const stored = vscode.workspace._mockConfig.update.mock.calls[0][1];
+      expect(stored).toHaveLength(1);
+      // The old personality must be gone — a naive `{...existing, ...updates}`
+      // merge would have resurrected it because the clear passes `''`.
+      expect('systemMessageReplacementsFile' in stored[0]).toBe(false);
     });
   });
 });

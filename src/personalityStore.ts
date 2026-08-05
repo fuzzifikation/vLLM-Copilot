@@ -160,13 +160,18 @@ export async function ensureGlobalPersonality(
   // clobbered).
   const sourceMeta = await loadPersonalityMeta(sourcePath);
   const destMeta = await loadPersonalityMeta(dest);
-  // Note: if either file has no `meta` block (legacy array format), the check is
-  // skipped and the existing file is kept. Legacy-array files aren't selectable
-  // personalities, so this only matters for hand-placed files in `personalities/`.
-  if (sourceMeta?.name && destMeta && destMeta.name !== sourceMeta.name) {
+  // Collision rules: an existing global file may not silently stand in for the
+  // personality being applied. If it's a DIFFERENT personality sharing the
+  // basename, or it isn't a recognizable personality at all (legacy-array or
+  // otherwise unreadable format — we can't confirm it's the same personality),
+  // surface the conflict instead of binding the selected personality to the
+  // wrong file. Only a global file with the same personality name (possibly
+  // user-edited) is kept, so edits are never clobbered.
+  if (sourceMeta?.name && (!destMeta || destMeta.name !== sourceMeta.name)) {
     throw new Error(
-      `Personality "${sourceMeta.name}" collides with an existing global file "${dest}" ` +
-      `(personality "${destMeta.name}"). Rename or remove that file first.`
+      `Personality "${sourceMeta.name}" collides with an existing global file "${dest}"` +
+      (destMeta?.name ? ` (personality "${destMeta.name}")` : ` (not a recognized personality)`) +
+      `. Rename or remove that file first.`
     );
   }
   return dest;

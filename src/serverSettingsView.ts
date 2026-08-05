@@ -289,10 +289,22 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
         id: updates.id || targetId,
         serverUrl: targetServer,
       };
+      // Empty string is the explicit clear signal — store as an absent key
+      // (matches autoConfig.saveModelConfig), not a lingering `""`.
+      if (!newEntry.systemMessageReplacementsFile) {
+        delete newEntry.systemMessageReplacementsFile;
+      }
       models.push(newEntry);
     } else {
-      const existing = models[idx];
-      models[idx] = { ...existing, ...updates };
+      const existingEntry = models[idx];
+      // An explicit `''` must remove the key even if the existing entry had a
+      // value (merge would otherwise resurrect it via `...existingEntry`); an
+      // absent key preserves the existing value.
+      const merged = { ...existingEntry, ...updates } as ModelConfig;
+      if (!merged.systemMessageReplacementsFile) {
+        delete merged.systemMessageReplacementsFile;
+      }
+      models[idx] = merged;
     }
     await cfg.update('models', models, vscode.ConfigurationTarget.Global);
     vscode.window.showInformationMessage(`Settings saved for "${updates.displayName || targetId}"`);

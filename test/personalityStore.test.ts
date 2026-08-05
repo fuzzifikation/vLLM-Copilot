@@ -144,6 +144,19 @@ describe('personalityStore', () => {
       expect(fsMock.writeFile).not.toHaveBeenCalled();
     });
 
+    it('throws when the existing global file is not a recognized personality (legacy array) sharing the basename', async () => {
+      const src = path.join(EXT, 'prompt-replacements', 'a.json');
+      fsMock.files.set(src, personality('Alpha', 'bundled'));
+      const dest = path.join(GLOBAL, 'personalities', 'a.json');
+      // Legacy-array format — no meta block, so we cannot confirm it is "Alpha".
+      fsMock.files.set(dest, JSON.stringify([{ find: 'x', replace: 'y' }]));
+
+      await expect(ensureGlobalPersonality(context, src)).rejects.toThrow(/collides/);
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+      // The user's legacy file must not be clobbered.
+      expect(fsMock.files.get(dest)).toBe(JSON.stringify([{ find: 'x', replace: 'y' }]));
+    });
+
     it('is a no-op when the source is already in global storage', async () => {
       const src = path.join(GLOBAL, 'personalities', 'x.json');
       fsMock.files.set(src, personality('X', 'global'));
