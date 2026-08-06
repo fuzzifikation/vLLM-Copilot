@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from './config.js';
-import { buildEndpoint, buildAuthHeaders, resolveServerConfig, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, normalizeModelId, modelMatchKey, findModelConfigIndex } from './config.js';
+import { buildEndpoint, buildAuthHeaders, resolveServerConfig, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, normalizeModelId, modelMatchKey, findModelConfigIndex, normalizeModelEntry } from './config.js';
 import { describeError } from './messageConverter.js';
 import { jsonrepair } from 'jsonrepair';
 
@@ -564,20 +564,12 @@ export async function saveModelConfig(newConfig: ModelConfig): Promise<void> {
       ...newConfig,
       serverUrl: newConfig.serverUrl ?? prev.serverUrl,
       requestHeaders: newConfig.requestHeaders ?? prev.requestHeaders,
+      systemMessageReplacementsFile: replacementsFile,
     };
-    if (replacementsFile) {
-      merged.systemMessageReplacementsFile = replacementsFile;
-    } else {
-      delete merged.systemMessageReplacementsFile;
-    }
-    existing[useIdx] = merged;
+    existing[useIdx] = normalizeModelEntry(merged);
   } else {
     // Copy before mutating so callers' objects are never modified in place.
-    const newEntry: ModelConfig = { ...newConfig };
-    if (!newEntry.systemMessageReplacementsFile) {
-      delete newEntry.systemMessageReplacementsFile;
-    }
-    existing.push(newEntry);
+    existing.push(normalizeModelEntry({ ...newConfig }));
   }
 
   await config.update('models', existing, vscode.ConfigurationTarget.Global);

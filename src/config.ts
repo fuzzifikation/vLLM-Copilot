@@ -553,3 +553,20 @@ export function findModelConfigIndex(
     return resolveConfigId(m) === configId && normalizeServerUrl(m.serverUrl) === normalizedUrl;
   });
 }
+
+/**
+ * Normalize a model config entry for storage: an empty/clear `systemMessageReplacementsFile`
+ * (`''`, the explicit "no personality" signal) is removed rather than persisted as `""`.
+ * An absent key is left alone — on merge that preserves the previous value, which is what
+ * makes "undefined preserves, '' clears" work in both save paths.
+ *
+ * Shared by both {@link saveModelConfig} implementations (autoConfig.ts and
+ * serverSettingsView.ts) so the clear semantics live in one place. Mutates and returns
+ * the entry (callers always pass a freshly-built object).
+ */
+export function normalizeModelEntry(entry: ModelConfig): ModelConfig {
+  if (!entry.systemMessageReplacementsFile) {
+    delete entry.systemMessageReplacementsFile;
+  }
+  return entry;
+}

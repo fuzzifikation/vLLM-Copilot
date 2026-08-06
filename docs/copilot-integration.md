@@ -200,6 +200,17 @@ Two distinct triggers, each with its **own** request shape:
 
 The retry check uses the full content buffer (not the last chunk) so a trailing whitespace-only chunk can't hide the colon. `finish_reason: length` (token-limit truncation) and `content_filter` are deliberately excluded — those need different handling, not a continuation nudge.
 
+### Empty Response: Distinguishing a Model Decision from a Dropped Stream
+
+**Problem:** The Output channel logs `[WARN] <model>: empty response (only reasoning/thinking tokens were produced (no finish_reason received)) after 240.2s`. The old hint told the user to adjust the model mode — pointing at the model when the real cause is often transport.
+
+**Root cause:** Two very different failures share one symptom (reasoning tokens, no text):
+
+1. **Server-reported stop after thinking** (`finish_reason: stop`) — the model genuinely decided it was done. A model/configuration issue; adjust `maxOutputTokens`, `reasoning_effort`, or the model mode.
+2. **No `finish_reason` at all** — the stream was cut *before* vLLM's final summary chunk arrived. This is a transport-layer kill (corporate gateway, reverse proxy, or the serving stack dropping the generation mid-stream), not a model decision. vLLM always sends a terminal chunk with `finish_reason` when a generation completes; its absence means the connection died first.
+
+**Fix:** `provider.ts` `reportPostStreamDiagnostics` now distinguishes the two. The no-finish-reason case gets a hint pointing at gateway/reverse-proxy response timeouts and at the duration correlation ("if this recurs at a similar duration") — the tell-tale signature of a fixed proxy timeout. The genuine `finish_reason: stop` case keeps the model-configuration hint.
+
 ### Token Usage Display: The `isApiUsage()` Snake-Case Trap
 
 **Problem:** Token usage (context window bar) never appeared in Copilot Chat despite correctly reporting `LanguageModelDataPart`.

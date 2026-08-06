@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getConfig, buildEndpoint, findModelConfigIndex, buildModelId, type ModelConfig } from './config.js';
+import { getConfig, buildEndpoint, findModelConfigIndex, buildModelId, normalizeModelEntry, type ModelConfig } from './config.js';
 import {
   discoverPersonalities,
   ensureGlobalPersonality,
@@ -298,28 +298,21 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       // composite id via buildModelId so the same model on two servers stays
       // distinct. Follow that convention here too — a raw id would collide.
       const vllmModelId = updates.vllmModelId || targetId;
-      const newEntry: ModelConfig = {
+      // Empty string is the explicit clear signal — store as an absent key
+      // (matches autoConfig.saveModelConfig via normalizeModelEntry), not a
+      // lingering `""`.
+      models.push(normalizeModelEntry({
         ...(updates as ModelConfig),
         vllmModelId,
         id: buildModelId(targetServer, vllmModelId),
         serverUrl: targetServer,
-      };
-      // Empty string is the explicit clear signal — store as an absent key
-      // (matches autoConfig.saveModelConfig), not a lingering `""`.
-      if (!newEntry.systemMessageReplacementsFile) {
-        delete newEntry.systemMessageReplacementsFile;
-      }
-      models.push(newEntry);
+      }));
     } else {
       const existingEntry = models[idx];
       // An explicit `''` must remove the key even if the existing entry had a
       // value (merge would otherwise resurrect it via `...existingEntry`); an
       // absent key preserves the existing value.
-      const merged = { ...existingEntry, ...updates } as ModelConfig;
-      if (!merged.systemMessageReplacementsFile) {
-        delete merged.systemMessageReplacementsFile;
-      }
-      models[idx] = merged;
+      models[idx] = normalizeModelEntry({ ...existingEntry, ...updates } as ModelConfig);
     }
     await cfg.update('models', models, vscode.ConfigurationTarget.Global);
     vscode.window.showInformationMessage(`Settings saved for "${updates.displayName || targetId}"`);

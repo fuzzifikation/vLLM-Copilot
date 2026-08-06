@@ -269,6 +269,35 @@ The extension recommends a `.vllm/` directory at the workspace root for project-
 
 ---
 
+## Detecting Prompt Drift (Canary)
+
+The personality presets (`prompt-replacements/`) apply **exact-substring** `find` rules against Copilot's *hidden* system-prompt boilerplate. Microsoft edits that boilerplate without notice, and when a `find` stops matching, the rule silently no-ops — the personality still "works" (other rules still hit) but the boilerplate the user believes is stripped stays in.
+
+**`npm run check:prompt-drift`** compares every shipped preset `find` against the current VS Code prompt source on GitHub (`microsoft/vscode`) and reports two signals:
+
+1. **Rule match** — does each `find` still exist in the current source? Prose is extracted from the `.tsx` source (JSX text nodes, whitespace-insensitive) or `.ts` source (string-literal values), then matched with whitespace collapsed. A `✗ NOT FOUND` rule is dead — it will no longer apply in production.
+2. **SHA canary** — the script pins the GitHub blob SHA of each watched source file. Any change fires a warning even if individual `find` strings survive (e.g. a wording change elsewhere in the same file, or a rename).
+
+Watched files (OpenAI-family agent prompt + shared base components, matching what the extension's OpenAI-compatible endpoint receives):
+
+- `base/safetyRules.tsx` — `<SafetyRules />`, `<LegacySafetyRules />`, `<Gpt5SafetyRule />`
+- `base/copilotIdentity.tsx` — identity rules + "Follow the user's requirements carefully"
+- `agent/agentPrompt.tsx` — main agent first line
+- `agent/defaultAgentInstructions.tsx`, `agent/openai/defaultOpenAIPrompt.tsx` — core agent instructions
+- `prompt/vscode-node/promptVariablesService.ts` — the runtime-generated template-variable tail
+
+**Workflow (the "regularly check" loop):**
+
+1. Run `npm run check:prompt-drift`.
+2. If it reports all good → nothing to do.
+3. If a rule is dead or a file changed → **re-verify against a fresh capture** (`vllm-copilot.systemMessageCapture: true`, run a chat, inspect `.vllm/system-messages.json`) — the capture is the rendered ground truth the canary can only approximate from source.
+4. Update the preset `find` rules for the new wording.
+5. After manual verification, run `node scripts/check-prompt-drift.mjs --update-baseline` to pin the current SHAs.
+
+**Caveat:** this is a **canary**, not proof. Source prose is not always a perfect reflection of the rendered prompt (model-family variants differ — e.g. `zaiPrompts.tsx` uses different wording for the project-type line; runtime composition can reorder text). When it fires, the capture-based check is authoritative.
+
+---
+
 ## Implementation Status
 
 ### ✅ Done (v0.17.0)
