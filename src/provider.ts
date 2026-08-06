@@ -684,10 +684,17 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
           hint = actualAttempts > 1
             ? `Model stopped on its own after ${actualAttempts} attempt(s), producing only reasoning. Try increasing maxOutputTokens, lowering reasoning_effort, or adjusting the model mode.`
             : 'Model stopped on its own after producing only reasoning tokens. Try increasing maxOutputTokens, lowering reasoning_effort, or adjusting the model mode.';
-        } else {
+        } else if (finishReason) {
+          // Other server-reported terminal reasons (unusual finish values).
           hint = actualAttempts > 1
-            ? `The model produced only reasoning/thinking tokens after ${actualAttempts} attempt(s) — try again or adjust the model mode.`
-            : 'The model produced only reasoning/thinking tokens and no answer — try again or adjust the model mode.';
+            ? `The model produced only reasoning/thinking tokens after ${actualAttempts} attempt(s) (finish_reason: ${finishReason}) — try again or adjust the model mode.`
+            : `The model produced only reasoning/thinking tokens and no answer (finish_reason: ${finishReason}) — try again or adjust the model mode.`;
+        } else {
+          // No finish_reason at all: the stream was cut before the server's final
+          // summary chunk. That's a transport-layer kill, not a model decision.
+          hint = 'The stream ended before the server reported a finish reason — the connection was likely ' +
+            'dropped mid-generation by a gateway, reverse proxy, or the server itself. ' +
+            'If this recurs at a similar duration, check for a proxy/gateway response timeout.';
         }
       } else {
         hint = actualAttempts > 1

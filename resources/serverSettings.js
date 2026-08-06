@@ -213,7 +213,8 @@
     h += '<option value="" data-name="">Default (no personality)</option>';
     S.personalities.forEach(p => {
       // value = the global target path (what gets stored); data-src = source to copy from.
-      h += '<option value="' + E(p.targetPath) + '" data-name="' + E(p.name) + '" data-src="' + E(p.sourcePath) + '">' + E(p.name) + '</option>';
+      // title surfaces the description as a hover tooltip (matches the Set Personality command).
+      h += '<option value="' + E(p.targetPath) + '" data-name="' + E(p.name) + '" data-src="' + E(p.sourcePath) + '" title="' + E(p.description || '') + '">' + E(p.name) + '</option>';
     });
     h += '</select>';
     h += '<div class="field-hint">' + (isConfigured
