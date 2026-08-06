@@ -16,11 +16,11 @@ Dashboard tree items, deep-dive webview, and formatting helpers lack tests. `Met
 
 ## Personalities And System Messages
 
-### P3 - Custom replacement path resolution is untested
-There are no focused tests for Windows/POSIX handling of absolute and workspace-relative `systemMessageReplacementsFile` paths in `loadReplacements` and `resolveActivePersonality`. The implementation uses platform path helpers, but these cases remain unverified.
-
 ### P3 - Server Settings webview picker wiring is untested
-The host-side flow is now covered: `applyPersonality` and `saveModelConfig` have focused tests (including the id-keyed multi-preset case), and the replacement engine (`promptReplacer.ts`) plus the capture write path (`enqueueWrite`) have focused tests. What remains untested is the `serverSettings.js` picker wiring itself (selector keying, apply/clear message payloads, `save()` id/vllmModelId assignment) — it's plain webview JS with no test harness.
+The host-side flow is covered: `applyPersonality`/`saveModelConfig` have focused tests (id-keyed multi-preset, clear semantics, composite-id new entries), the replacement engine (`promptReplacer.ts`), the capture write path (`enqueueWrite`), and `loadReplacements` path resolution (absolute + workspace-relative) are tested. What remains untested is the `serverSettings.js` picker wiring itself (selector keying, apply/clear message payloads, `save()` id/vllmModelId assignment) — it's plain webview JS with no test harness.
+
+### P4 - Webview personality dropdown omits descriptions
+The **Set Model Personality** command shows each personality's `description`; the Server Settings dropdown shows only the name. Adding a `title` tooltip (or subtitle) from `p.description` would surface them there too.
 
 ---
 
@@ -44,3 +44,4 @@ The host-side flow is now covered: `applyPersonality` and `saveModelConfig` have
 - **Clean Copilot Sessions won't run on remote host** — `os.homedir()` points at remote; run from local extension host instead.
 - **`system-messages.json` dedupes by `receivedContent`** — documented "write once per unique message" behavior. The same original system prompt sent through different models or personalities overwrites `deliveredContent`/`rulesApplied` with the latest write.
 - **Legacy `.vllm/` personality references still apply but aren't listed** — a model whose `systemMessageReplacementsFile` points at a `.vllm/...` path still gets those rules applied at request time (custom replacement-file path), but the picker no longer lists it as a named personality. The webview dropdown shows "Default" while the hint shows the raw path. Re-apply via the picker to move it to global storage.
+- **Applied personality path is machine-specific (breaks Settings Sync)** — applying a personality stores an **absolute** `systemMessageReplacementsFile` path into global storage (`.../globalStorage/vllm-copilot/personalities/...`). Settings Sync pushes `vllm-copilot.models` between machines, but the global-storage file does not sync, so on a second machine the path won't exist and the personality silently stops applying (a `[WARN] Replacements file not found` in the Output channel). Not portable across machines by design; a portable reference scheme (e.g. `personalities:<name>`) would be required to fix.
