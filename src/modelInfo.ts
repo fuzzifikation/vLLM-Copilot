@@ -7,7 +7,7 @@
 import * as vscode from 'vscode';
 import { extractFamilyWithSource } from './modelUtils.js';
 import { deriveTokenBudget } from './tokenBudget.js';
-import type { ModelConfig } from './config.js';
+import { buildModelId, type ModelConfig } from './config.js';
 
 /**
  * Build the `configurationSchema` for a model's picker settings.
@@ -44,11 +44,21 @@ export function buildConfigurationSchema(
 /**
  * Build LanguageModelChatInformation from a server model and an optional user override.
  * When `override` is undefined, defaults are used for all fields.
+ *
+ * @param serverModel - The vLLM wire model (`id` is the vLLM model id, not the picker id).
+ * @param override - Per-model override from `vllm-copilot.models`.
+ * @param config - Resolved token/transport settings.
+ * @param serverUrl - The model's server URL. Used to derive a unique picker id when
+ *   `override.id` is absent (so the same vLLM model on two servers yields two distinct
+ *   picker entries instead of colliding on the wire id).
+ * @param onFamilyFallback - Called once with `(family, modelId)` when the family had to
+ *   be estimated from the model id via the org-name fallback (no preset/HF family).
  */
 export function buildModelInfo(
   serverModel: { id: string; max_model_len?: number },
   override: Partial<ModelConfig> | undefined,
   config: { maxOutputTokens: number },
+  serverUrl: string,
   /**
    * Invoked once with `(family, modelId)` when no preset/HuggingFace family was
    * available and the family had to be estimated from the model id via the
@@ -74,7 +84,11 @@ export function buildModelInfo(
     }
   }
 
-  const presetId = override?.id || serverModel.id;
+  // Picker id: an explicit `id` is the unique extension key; otherwise derive a
+  // unique id from (serverUrl, vllmModelId) so the same model on two servers
+  // shows as two picker entries instead of colliding on the wire id.
+  // `resolveOverrideForModel` round-trips this derived id back to its config.
+  const presetId = override?.id || buildModelId(serverUrl, serverModel.id);
   const info: any = {
     id: presetId,
     name: override?.displayName || presetId,
