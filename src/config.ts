@@ -256,15 +256,23 @@ export function modelMatchKey(modelId: string): string {
 /**
  * Find the user override that produced a given VS Code model id.
  *
- * `buildModelInfo` sets a model's id to `override.id || serverModel.id`, so an
- * override that only sets `vllmModelId` (no `id`) yields a model id equal to the
- * server id. Matching on `o.id` alone would miss those and silently drop the
- * model's `modelModes`, so we resolve via the vLLM model id too.
+ * `buildModelInfo` sets a model's id to `override.id`, or — for id-less configs —
+ * to a composite derived from `(serverUrl, vllmModelId)` via `buildModelId`
+ * (`"<model> on <host>"`). The composite is what makes the same vLLM model on two
+ * servers show as two distinct picker entries; this matcher round-trips it back
+ * to the id-less config that produced it. An override that only sets `vllmModelId`
+ * (no `id`) also yields a model id equal to the server id, so we resolve via the
+ * vLLM model id too — matching on `o.id` alone would silently drop the model's
+ * `modelModes`.
  *
- * Matching is fuzzy in two tiers:
- * 1. Quantization-agnostic (org-aware): strips -FP8/-AWQ/-GGUF/etc. suffixes,
+ * Matching is in tiers:
+ * 1. Exact: config key equals the model id.
+ * 2. Composite round-trip: an id-less config whose derived `buildModelId` equals
+ *    the model id. Only id-less configs participate, so an id'd config that shares
+ *    the same wire id + server is never matched by another config's composite.
+ * 3. Quantization-agnostic (org-aware): strips -FP8/-AWQ/-GGUF/etc. suffixes,
  *    so a config for "Qwen/Qwen3.6-27B" matches "Qwen/Qwen3.6-27B-FP8".
- * 2. Cross-org + quantization-agnostic: additionally strips the company prefix,
+ * 4. Cross-org + quantization-agnostic: additionally strips the company prefix,
  *    so a config for "deepseek-ai/DeepSeek-V4-Flash" matches a server running
  *    "nvidia/DeepSeek-V4-Flash-NVFP4". Quantization only affects weight
  *    precision, not inference parameters, and the org that served the checkpoint
@@ -281,6 +289,9 @@ export function resolveOverrideForModel(
     if (!oId) return false;
     // Exact match first
     if (oId === modelId) return true;
+    // Composite round-trip: match a derived "<model> on <host>" id back to the
+    // id-less config that discovery assigned it to.
+    if (!o.id && o.serverUrl && buildModelId(o.serverUrl, oId) === modelId) return true;
     // Fuzzy match: quantization-agnostic (org-aware)
     if (normalizeModelId(oId) === normalized) return true;
     // Fuzzy match: cross-org + quantization-agnostic (model name only)

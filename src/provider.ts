@@ -151,7 +151,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
 
         const serverModel = { id: vllmModelId, max_model_len: maxModelLen };
         return {
-          model: buildModelInfo(serverModel, override, settings, (family, modelId) => {
+          model: buildModelInfo(serverModel, override, settings, serverConfig.serverUrl, (family, modelId) => {
             // Fires only when no preset-declared family was available AND
             // HuggingFace auto-discovery did not provide one — the heuristic
             // fell through to the org-name guess. The family is just a sort key
@@ -191,6 +191,22 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     }
 
     this.cachedModels = models;
+
+    // Picker ids are unique per (server, model) by construction (composite ids
+    // for id-less configs). The only remaining collision source is an explicit
+    // duplicate `id` in settings — surface it so a silent collapse in the picker
+    // is never a mystery (all working models must stay visible).
+    const seenIds = new Set<string>();
+    const duplicateIds = new Set<string>();
+    for (const m of models) {
+      if (seenIds.has(m.id)) duplicateIds.add(m.id);
+      seenIds.add(m.id);
+    }
+    for (const dup of duplicateIds) {
+      this.output.appendLine(
+        `[WARN] Duplicate model id "${dup}" — multiple configs share this id and collapse to one picker entry. Give each model a unique "id".`
+      );
+    }
 
     if (models.length > 0) {
       const summary = models.map(m => {

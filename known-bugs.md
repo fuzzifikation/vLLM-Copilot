@@ -14,6 +14,21 @@ Do not bump version without asking.
 ### P2 - Untested data layer
 Dashboard tree items, deep-dive webview, and formatting helpers lack tests. `MetricsParser`, `parseRawMetrics`, `parseLabels`, `fmtPct`, `fmtMs` are covered.
 
+### P? - Two `saveModelConfig` implementations still diverge
+`autoConfig.saveModelConfig` (explicit `serverUrl`/`requestHeaders`/`systemMessageReplacementsFile` preservation, entry replace) and `serverSettingsView.saveModelConfig` (plain `{...existing, ...updates}` merge) now share `normalizeModelEntry` for the `''`-clears / undefined-preserves semantics, but keep **different merge strategies**. Both behave correctly today; the duplication is a drift risk when one side changes. PR #5 flagged "unify during redesign" — still open.
+
+## Over-engineering
+
+- **Discovery re-fetches `/v1/models` per model config, not per server** — `provideLanguageModelChatInformation` runs `getModelContextWindow` per config, so N configs pointing at one server produce N identical `/v1/models` fetches. `testAndRefresh` already groups by server (`groupModelsByServer`); discovery doesn't reuse that. Non-functional today (just redundant network I/O during refresh), but a natural consolidation target if discovery is ever touched.
+- **`deriveTokenBudget` throws on missing `max_model_len`, but discovery always guards first** — `provideLanguageModelChatInformation` checks `if (!maxModelLen)` before calling `buildModelInfo`, so the throw in `deriveTokenBudget` is unreachable from the provider. It's a reasonable contract for the pure function (callers must guarantee a value), just defensive-only in practice.
+
+## Code Smells
+
+- **`type PersonalityPick` declared inside the command body** — flagged in the PR #5 review; harmless, but should be hoisted to module scope the next time `commands.ts` is touched.
+- **Duplicated verbose comment in `ensureGlobalPersonality`** — the collision-handling comment block is written twice saying the same thing; the logic is correct, the comment should be trimmed to one copy.
+- **Duplicated workspace-root path resolution** — `provider.loadReplacements` and `personalityStore.resolveActivePersonality` both reimplement "resolve a relative `systemMessageReplacementsFile` against the first workspace folder". They must stay in sync; extract a shared helper.
+- **Two divergent `saveModelConfig` implementations** — see the P? entry under Maintainability; the merge-strategy difference is the smell, `normalizeModelEntry` already de-duplicates the clear semantics.
+
 ## Personalities And System Messages
 
 ### P3 - Server Settings webview picker wiring is untested
@@ -22,12 +37,24 @@ The host-side flow is covered: `applyPersonality`/`saveModelConfig` have focused
 ### P4 - Bundled presets duplicate the boilerplate-removal rules
 All five presets in `prompt-replacements/` repeat the same ~9 removal rules verbatim (3 safety variants, 3 identity variants, generic-agent, short/impersonal). When Copilot's prompt changes, every file must be edited in lockstep — a copy-paste drift risk. Open to ideas (shared base layer / composition / build-time generation), but not pressing.
 
+### P? - Stale duplicate presets in `docs/`
+`docs/prompt-replacements-{critical-senior,sarcastic-robot,spartan,tough-love}.json` and `docs/default-prompt-replacements.json` are byte-identical to the shipped `prompt-replacements/` presets — leftovers from the redesign move. They are not shipped (`.vscodeignore` excludes `docs/`) and not read at runtime (discovery scans only `prompt-replacements/` + global `personalities/`). `docs/custom-system-prompt.md` still references `docs/prompt-replacements-*.json` as the preset location. Delete the docs copies (or keep them as intentional reference copies) and fix the doc reference.
+
+---
+
+## Model Picker & Discovery
+
+### P? - Test & Refresh popup overflow
+`registerTestAndRefreshModelsCommand` emits one toast per unique server, plus one per no-`serverUrl` config, plus one per no-match server, plus up to two more (network-gating warning + "Run Diagnostic?"). VS Code caps visible toasts (~3); with more than 3 servers the rest collapse into the Notification Center and are easily missed (gripe 1). Not a code bug (platform behavior) but a UX gap — consolidate into one summary toast with per-server detail in the Output channel.
+
 ---
 
 ## False Positives (keep AI from re-filing)
 
 - **Global writes** — `saveModelConfig` writes to Global only. Intentional: design is "always write to user settings."
 - **Config entries match by extension `id` + `serverUrl`, not `vllmModelId`** — correct (shared via `findModelConfigIndex` in config.ts, using `resolveConfigId`). `vllmModelId` is the wire id only and may repeat across presets/servers; the extension key is `id` (with a `vllmModelId` fallback for legacy hand-written entries). Do not "fix" this back to wire-id matching.
+- **Unreachable models are removed from the picker after refresh** — `provideLanguageModelChatInformation` skips any model whose server doesn't report `max_model_len` (offline/error/not-loaded) and never adds it to `cachedModels`, so after `clearCache()` + the change event the Copilot picker no longer lists it. By design (gripe 2). A stale entry visible after refresh is VS Code's own picker cache, not a discovery bug.
+- **Id-less configs get a composite picker id (`"<model> on <host>"`)** — discovery derives it via `buildModelId` so the same `vllmModelId` on two servers stays distinct; `resolveOverrideForModel` round-trips the composite back to the id-less config that produced it. Fixed the picker-collision bug (gripes 3 & 4). By design, not a bug. A duplicate explicit `id` in settings is the only remaining collision source and is warned about during discovery.
 - **Dashboard uses first model's `requestHeaders` per server** — correct. `--api-key` is global per vLLM process; two presets on one server can't have different auth.
 - **`serverSettings.js` `d.ontoggle`** — `secState` is the only source of truth on every render; config values use `[data-f]`/`[data-k]`/`.mode-card` paths, not `secState`.
 - **`provideTokenCount` blocks event loop** — `getConfiguration()` is in-memory, not disk. Cold-cache cost is negligible.

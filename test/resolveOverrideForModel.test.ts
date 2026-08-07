@@ -11,12 +11,40 @@ describe('resolveOverrideForModel', () => {
   });
 
   it('matches an id-less override (vllmModelId only) by the server model id', () => {
-    // buildModelInfo gives this model the server id, so the request-time lookup
-    // must resolve via vllmModelId. Regression test for the dropped-modelModes bug.
+    // A config with no serverUrl never reaches the picker (discovery skips it),
+    // but the matcher must still resolve bare wire ids defensively.
     const overrides: ModelConfig[] = [
       { vllmModelId: 'Qwen/Qwen3-8B', modelModes: { Think: {} } },
     ];
     expect(resolveOverrideForModel(overrides, 'Qwen/Qwen3-8B')).toBe(overrides[0]);
+  });
+
+  it('round-trips a derived composite id back to an id-less config', () => {
+    // Discovery assigns id-less configs the composite id "<model> on <host>"
+    // (buildModelId). The request-time lookup must resolve it back to the config.
+    const overrides: ModelConfig[] = [
+      { vllmModelId: 'Qwen/Qwen3-8B', serverUrl: 'http://h:8000', modelModes: { Think: {} } },
+    ];
+    expect(resolveOverrideForModel(overrides, 'Qwen/Qwen3-8B on h:8000')).toBe(overrides[0]);
+  });
+
+  it('keeps the same vllmModelId on two servers distinct via composite ids', () => {
+    const overrides: ModelConfig[] = [
+      { vllmModelId: 'Qwen/Qwen3-8B', serverUrl: 'http://a:8000', maxOutputTokens: 1024 },
+      { vllmModelId: 'Qwen/Qwen3-8B', serverUrl: 'http://b:8000', maxOutputTokens: 2048 },
+    ];
+    expect(resolveOverrideForModel(overrides, 'Qwen/Qwen3-8B on a:8000')).toBe(overrides[0]);
+    expect(resolveOverrideForModel(overrides, 'Qwen/Qwen3-8B on b:8000')).toBe(overrides[1]);
+  });
+
+  it('does not match a composite id to an id\'d config sharing the wire id and server', () => {
+    // The composite id belongs to the id-less config only — an id'd config that
+    // shares the same wire id + server must not be matched by the other's id.
+    const overrides: ModelConfig[] = [
+      { id: 'my-custom', vllmModelId: 'X', serverUrl: 'http://h:8000' },
+      { vllmModelId: 'X', serverUrl: 'http://h:8000' },
+    ];
+    expect(resolveOverrideForModel(overrides, 'X on h:8000')).toBe(overrides[1]);
   });
 
   it('prefers id over vllmModelId when both are set', () => {
