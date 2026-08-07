@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.20.5 — Personality hardening & model picker fixes
+
+### Fixed
+
+- **Same model on multiple servers now shows as separate picker entries.** Discovery gives id-less configs a unique composite id (`"<model> on <host>"`), so the same vLLM model hosted on two servers no longer collapses to a single entry — and one server going offline no longer hides the other. Request-time config lookup round-trips the composite id back to the right model.
+  - ⚠️ **Migration note (id-less configs only):** the picker label changes from `<model>` to `<model> on <host>`. Re-select the model once in the picker. Your `vllm-copilot.models` settings are **not** rewritten — the id is derived at discovery, not persisted.
+- **Personality collision detection** — applying a personality whose filename collides with an existing, different (or unrecognized) global file now raises an error instead of silently binding to the wrong file.
+- **Consistent clear semantics** — Server Settings "Save All Changes" now deletes an empty `systemMessageReplacementsFile` (matching **Set Model Personality → Default**) instead of storing a lingering `""`, and no longer resurrects the old value on clear.
+- **Webview-created model entries get composite ids** — saving an unconfigured model in Server Settings uses `buildModelId`, so the same model saved on two servers can no longer produce duplicate ids.
+- **Webview message-handler error boundary** — a failing apply-personality/save no longer becomes an unhandled rejection.
+- **Clearer empty-response diagnostics** — distinguishes a transport-level stream cut (no finish reason) from unusual server-reported finish values.
+- **Duplicate explicit `id` warning** — discovery warns when two configs share the same explicit `id` (the only remaining picker-collision source).
+
+### New
+
+- **Prompt-drift canary** — `npm run check:prompt-drift` compares every personality preset `find` rule against the current VS Code prompt source on GitHub and fires on dead rules or changed source SHAs. See `docs/custom-system-prompt.md`.
+- **Personality hover tooltips** — the Server Settings personality dropdown shows each preset's description as a hover tooltip.
+
+### Internal
+
+- Shared `normalizeModelEntry` for the clear semantics across both `saveModelConfig` paths; added tests for the system-message pipeline, webview save paths, personality store, composite-id derivation, and preset integrity.
+
 ## v1.20.4 — Global personalities & Server Settings polish
 
 - **New: personalities are global.** Selecting one (Server Settings sidebar or `Set Model Personality`) copies it into the extension's global storage (`personalities/`), so it follows you across workspaces and survives extension upgrades. No longer requires an open workspace. Legacy `.vllm/` copies are still discovered.
