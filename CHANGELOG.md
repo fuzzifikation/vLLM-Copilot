@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.20.6 — Raw personality, picker descriptions & polarized presets
+
+### New
+
+- **Raw (Model Natural) personality** — strips Microsoft's safety, identity, and behavioral boilerplate with **no persona injected**, leaving the model's own trained behavior untouched. Also removes the standalone "Keep your answers short and impersonal" instruction. The legacy `default-prompt-replacements.json` (bundled + docs copy) was promoted into this preset and deleted.
+- **Personality picker shows live descriptions** — the Server Settings dropdown now renders the selected personality's description under the select, so you know what you're getting before you commit.
+- **Critical Senior Dev and Tough Love are now distinct** — Critical Senior is cold, code-architecture judgment (the code, not the coder); Tough Love is a mentor building better engineers (explains the why, celebrates progress).
+
 ## v1.20.5 — Personality hardening & model picker fixes
 
 ### Fixed

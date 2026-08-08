@@ -304,8 +304,8 @@ Watched files (OpenAI-family agent prompt + shared base components, matching wha
 - `src/promptReplacer.ts` — load + apply replacements, exact substring match, `ApplyResult` with `matchedRuleNames`
 - `src/config.ts` — `systemMessageReplacementsFile` on `ModelConfig`
 - `package.json` — schema for `systemMessageReplacementsFile`
-- `docs/default-prompt-replacements.json` — example file with SafetyRules + identity rules
-- `docs/prompt-replacements-*.json` — personality presets (Tough Love, Critical Partner, Sarcastic Genius, Senior Dev, Spartan)
+- `prompt-replacements/prompt-replacements-raw.json` — Raw (Model Natural): strips SafetyRules + identity rules, no injected persona
+- `docs/prompt-replacements-*.json` — personality presets (Tough Love, Critical Partner, Sarcastic Genius, Senior Dev, Spartan, Raw)
 - `src/provider.ts` — `captureAndReplaceSystemMessages()` unified pipeline (capture + replace in one pass)
 - `src/messageConverter.ts` — simplified, no replacement logic (pure conversion only)
 - In-place mutation of role-3 message content so `convertMessages()` sees processed text naturally

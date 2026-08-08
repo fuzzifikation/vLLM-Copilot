@@ -79,6 +79,14 @@ details[open] > summary::before { content: '\25BC'; }
 }
 .personality-card label { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.72em; color: var(--vscode-descriptionForeground); }
 .personality-card select:not(:disabled) { border-color: var(--vscode-focusBorder, var(--vscode-input-border)); }
+/* Live description of the selected personality, under the dropdown */
+.personality-desc {
+  font-size: 0.75em;
+  line-height: 1.35;
+  color: var(--vscode-descriptionForeground);
+  padding: 2px 0 0;
+  font-style: italic;
+}
 
 /* Section accordions */
 summary { transition: background-color 0.1s ease; }
