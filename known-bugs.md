@@ -33,9 +33,6 @@ Dashboard tree items, deep-dive webview, and formatting helpers lack tests. `Met
 ### P3 - Server Settings webview picker wiring is untested
 The host-side flow is covered: `applyPersonality`/`saveModelConfig` have focused tests (id-keyed multi-preset, clear semantics, composite-id new entries), the replacement engine (`promptReplacer.ts`), the capture write path (`enqueueWrite`), and `loadReplacements` path resolution (absolute + workspace-relative) are tested. What remains untested is the `serverSettings.js` picker wiring itself (selector keying, apply/clear message payloads, `save()` id/vllmModelId assignment) — it's plain webview JS with no test harness.
 
-### P? - Stale duplicate presets in `docs/`
-`docs/prompt-replacements-{critical-senior,sarcastic-robot,spartan,tough-love}.json` are **stale snapshots** of the shipped `prompt-replacements/` presets — leftovers from the redesign move that have since drifted (e.g. the shipped Sarcastic Robot was de-Bendered and Spartan's description sharpened, but the docs copies still carry the old content). They are not shipped (`.vscodeignore` excludes `docs/`) and not read at runtime (discovery scans only `prompt-replacements/` + global `personalities/`). `docs/custom-system-prompt.md` still references `docs/prompt-replacements-*.json` as the preset location. Delete the docs copies entirely — they are not reliable reference copies anymore — and fix the doc reference. (The old `default-prompt-replacements.json` shipped + docs copies were removed when it was promoted to the `Raw (Model Natural)` preset in `prompt-replacements/prompt-replacements-raw.json`.)
-
 ---
 
 ## Model Picker & Discovery

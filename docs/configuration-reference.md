@@ -318,7 +318,7 @@ The extension ships with four pre-built replacement files that transform Copilot
 
 | Preset | File | Personality |
 |--------|------|-------------|
-| **Tough Love** | `prompt-replacements/prompt-replacements-tough-love.json` | Direct tutor. Brutally honest feedback to help you grow. Calls out bad patterns, demands better. |
+| **Supportive Mentor** | `prompt-replacements/prompt-replacements-supportive-mentor.json` | Patient mentor who builds better engineers. High standards, honest feedback, explains the why, celebrates progress. Invested in you, not just your code. |
 | **Critical Senior Dev** | `prompt-replacements/prompt-replacements-critical-senior.json` | Sharp collaborator who challenges assumptions and surfaces trade-offs. Helps push the project forward. |
 | **Sarcastic Robot** | `prompt-replacements/prompt-replacements-sarcastic-robot.json` | Brilliant, condescending, politically incorrect. Finds human code amusingly primitive — but fixes it anyway. |
 | **Spartan** | `prompt-replacements/prompt-replacements-spartan.json` | Absolute minimalism. Zero fluff. Short answers. Code first, words only when necessary. |
@@ -333,7 +333,7 @@ Or set the path manually on the model entry:
     {
       "id": "my-model",
       "serverUrl": "http://localhost:8000",
-      "systemMessageReplacementsFile": "C:/.../globalStorage/vllm-copilot/personalities/prompt-replacements-tough-love.json"
+      "systemMessageReplacementsFile": "C:/.../globalStorage/vllm-copilot/personalities/prompt-replacements-supportive-mentor.json"
     }
   ]
 }

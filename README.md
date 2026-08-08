@@ -154,7 +154,7 @@ you across workspaces and survives extension upgrades.
 |--------|--------------|
 | **Default (no personality)** | No replacements; Copilot's original system prompt |
 | **Raw (Model Natural)** | Strips Microsoft's safety, identity, and behavioral boilerplate. No persona injected; the model behaves as it was trained. |
-| **Tough Love** | Mentor who builds better engineers. High standards, honest feedback, explains the why, celebrates progress. Invested in you, not just your code. |
+| **Supportive Mentor** | Patient mentor who builds better engineers. High standards, honest feedback, explains the why, celebrates progress. Invested in you, not just your code. |
 | **Critical Senior Dev** | Cold architectural judgment. Evaluates code, technical debt, and trade-offs with zero sentiment. The code, not the coder. |
 | **Sarcastic Robot** | Brilliant, condescending, politically incorrect. Finds human code amusingly primitive, but fixes it anyway. |
 | **Spartan** | Minimalist responses: short, little to read, to the point. Saves tokens. The economy is in how it talks, not what it builds; code stays complete. |

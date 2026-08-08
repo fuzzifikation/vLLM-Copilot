@@ -102,7 +102,7 @@ All are niche or debugging-focused. No P1 (high-impact, general-purpose) feature
 
 ### Problem (original)
 
-The **Set Model Personality** command copies the chosen preset file to `.vllm/` in the current workspace root and sets `systemMessageReplacementsFile` to a workspace-relative path (e.g. `.vllm/prompt-replacements-tough-love.json`). This means:
+The **Set Model Personality** command copies the chosen preset file to `.vllm/` in the current workspace root and sets `systemMessageReplacementsFile` to a workspace-relative path (e.g. `.vllm/prompt-replacements-supportive-mentor.json`). This means:
 
 - The personality is tied to one workspace — opening a different folder loses it. Users who work across multiple repos must re-run the command for each.
 - The `.vllm/` directory is workspace-scoped state that doesn't belong in version control (it's user preference, not project config), yet it lives inside the workspace tree.

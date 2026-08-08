@@ -4,6 +4,7 @@ import { getConfig, validateConfig, resolveServerConfig } from './config.js';
 import { FileLogger } from './logger.js';
 import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault } from './autoConfig.js';
 import { setSessionManagerOutput } from './sessionManager.js';
+import { migrateLegacyPersonalities } from './personalityStore.js';
 import {
   registerTestAndRefreshModelsCommand,
   registerDiagnoseConnectionCommand,
@@ -112,6 +113,21 @@ export async function activate(context: vscode.ExtensionContext) {
     const warnings = validateConfig(fullConfig);
     for (const w of warnings) {
       outputChannel.appendLine(`[WARN] Config: ${w}`);
+    }
+
+    // One-time migration: "Tough Love" → "Supportive Mentor" personality rename.
+    // Replaces any stale global copy and rewrites model configs that referenced it.
+    try {
+      const { migrated, configsUpdated } = await migrateLegacyPersonalities(context);
+      if (migrated) {
+        outputChannel.appendLine(
+          `[INFO] Migrated legacy "Tough Love" personality to "Supportive Mentor" (${configsUpdated} model config(s) updated)`
+        );
+      }
+    } catch (err) {
+      outputChannel.appendLine(
+        `[WARN] Personality migration failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`
+      );
     }
 
     // Ensure BYOK utility model default is set so MCP servers + agent mode work
