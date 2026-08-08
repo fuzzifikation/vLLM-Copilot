@@ -5,28 +5,35 @@
 </a>
 
 # vLLM-Copilot
+[![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot) [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
 
 **Run any vLLM model natively inside GitHub Copilot — no workarounds, no missing features.**
-
-For anyone running a local vLLM server — from a single gaming GPU to a production H100
-cluster — who wants GitHub Copilot to use *their* models instead of a cloud API.
-
-- **Native Copilot integration** — your models show up in the Copilot model picker with chat, tools, vision, and context-window stats, fully supported.
-- **Live server dashboard** — at-a-glance metrics for every vLLM server right in the sidebar: queue status, KV-cache usage, TTFT, throughput, and per-request token details.
-- **Personality presets** — strip Microsoft's 21KB of system-prompt boilerplate, or give a model a character. Per model, no JSON editing.
-- **Per-model control** — each model carries its own endpoint, auth, sampling, token budget, and switchable model modes (Think / No Think / Precise…).
-
-[![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot)
-[![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
-
 </div>
+
+
+For anyone using ai models served vLLM servers (supporting multiple servers and models), whether self-hosted or hosted professionally within your company.. this get's you 
+
+- **Native Copilot integration**: your models show up in the Copilot model picker with chat, tools, vision, subagent capabilities and context-window stats, fully supported.
+- **Live server dashboard**: at-a-glance metrics for every vLLM server right in the sidebar: queue status, KV-cache usage, TTFT, throughput, and per-request token details.
+- **Personality presets**: strip Microsoft's 21KB of system-prompt boilerplate, or give a model a character. Per model, no JSON editing.
+- **Per-server control**: each server carries its own endpoint, auth, sampling, token budget.
+- **Fully configurable model-modes**: Copilot gives you thinking effort. This gives you full control with configurable request parameters, not only thinking, but *any* vLLM parameter. Fully supported in the sidebar-UI.
+
 
 <div align="center">
-<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/full-copilot-support.png" width="500" alt="vLLM model shown in Copilot model picker with full context window stats">
+For full view expand the details-arrow:
+<details>
+<summary><img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/overview.jpg" width="500" alt="Overview of all vLLM-Copilot features"></summary>
 
-*Fully integrated into the Copilot model picker, chat, and context window — no workarounds, no missing features.*
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/overview.jpg" alt="Overview of all vLLM-Copilot features (full size)">
+
+</details>
+
+*Every vLLM-Copilot feature at a glance — click to zoom.*
+
 </div>
+
+If you want to support this work: [![Sponsor via PayPal](https://img.shields.io/badge/Sponsor-PayPal-00457C?logo=paypal&logoColor=white)](https://paypal.me/DieterSchwarzmann) [![Support on Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/fuzzifikation) [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github&logoColor=white)](https://github.com/sponsors/fuzzifikation)
 
 ---
 
@@ -100,16 +107,6 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 ---
 
 ## Features
-
-<div align="center">
-
-<a href="https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/images/overview.jpg">
-<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/overview.jpg" width="500" alt="Overview of all vLLM-Copilot features">
-</a>
-
-*Every vLLM-Copilot feature at a glance — click to zoom.*
-
-</div>
 
 ### Model Modes — switchable configurations per model
 
@@ -345,6 +342,18 @@ All production (shipped) dependencies are permissive open-source licenses
   the VS Code Marketplace for redistributed OSS). Run it whenever dependencies
   change and commit the result.
 - `THIRD-PARTY-NOTICES.txt` is included in the packaged VSIX.
+
+---
+
+## Support
+
+If vLLM-Copilot saves you time, money, or your sanity, consider fueling the caffeine habit behind it:
+
+- **PayPal** — [paypal.me/DieterSchwarzmann](https://paypal.me/DieterSchwarzmann)
+- **Ko-fi** — [ko-fi.com/fuzzifikation](https://ko-fi.com/fuzzifikation)
+- **GitHub Sponsors** — [github.com/sponsors/fuzzifikation](https://github.com/sponsors/fuzzifikation)
+
+Every donation is appreciated — even a coffee. It keeps local AI development free and open source.
 
 ---
 
