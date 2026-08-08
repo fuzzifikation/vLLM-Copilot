@@ -15,6 +15,7 @@
 
 ### New
 
+- **Server Settings: "Personality and System Prompt" section** — the Personality and System Prompt collapsibles are merged into one; the dropdown is labeled **"Personality (global)"**; and a **"Record system messages"** toggle exposes the `systemMessageCapture` setting right in the sidebar (previously only in Settings UI).
 - **Prompt-drift canary** — `npm run check:prompt-drift` compares every personality preset `find` rule against the current VS Code prompt source on GitHub and fires on dead rules or changed source SHAs. See `docs/custom-system-prompt.md`.
 - **Personality hover tooltips** — the Server Settings personality dropdown shows each preset's description as a hover tooltip.
 
