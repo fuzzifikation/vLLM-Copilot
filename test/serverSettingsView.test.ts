@@ -337,4 +337,36 @@ describe('ServerSettingsViewProvider', () => {
       expect('systemMessageReplacementsFile' in stored[0]).toBe(false);
     });
   });
+
+  describe('setSystemMessageCapture', () => {
+    it('updates the global systemMessageCapture setting', async () => {
+      vscode.workspace._mockConfig = {
+        get: () => undefined,
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await (provider as any).setSystemMessageCapture(true);
+
+      expect(vscode.workspace._mockConfig.update).toHaveBeenCalledWith(
+        'systemMessageCapture',
+        true,
+        vscode.ConfigurationTarget.Global,
+      );
+    });
+
+    it('persists disabling recording', async () => {
+      vscode.workspace._mockConfig = {
+        get: () => undefined,
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await (provider as any).setSystemMessageCapture(false);
+
+      expect(vscode.workspace._mockConfig.update).toHaveBeenCalledWith(
+        'systemMessageCapture',
+        false,
+        vscode.ConfigurationTarget.Global,
+      );
+    });
+  });
 });

@@ -77,6 +77,11 @@ interface ApplyPersonalityMessage {
   clear?: boolean;
 }
 
+interface SetSystemMessageCaptureMessage {
+  type: 'setSystemMessageCapture';
+  enabled: boolean;
+}
+
 interface WebviewAction {
   type: 'autoConfigure' | 'removeModel';
   serverUrl: string;
@@ -84,7 +89,7 @@ interface WebviewAction {
   id?: string;
 }
 
-type FromWebviewMessage = ReadyMessage | SaveMessage | ApplyPersonalityMessage | WebviewAction;
+type FromWebviewMessage = ReadyMessage | SaveMessage | ApplyPersonalityMessage | SetSystemMessageCaptureMessage | WebviewAction;
 
 export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
@@ -126,6 +131,8 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
             await this.saveModelConfig(msg.config);
           } else if (msg.type === 'applyPersonality') {
             await this.applyPersonality(msg);
+          } else if (msg.type === 'setSystemMessageCapture') {
+            await this.setSystemMessageCapture(msg.enabled);
           } else if (msg.type === 'autoConfigure') {
             await vscode.commands.executeCommand('vllm-copilot.autoConfigureModel', {
               serverUrl: msg.serverUrl,
@@ -225,6 +232,11 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       source: p.source,
       targetPath: path.join(globalDir, path.basename(p.sourcePath)),
     }));
+    // Global Diagnostics toggle surfaced in the webview so recording can be
+    // triggered without hand-editing settings.json.
+    const systemMessageCapture = vscode.workspace
+      .getConfiguration('vllm-copilot')
+      .get<boolean>('systemMessageCapture', false);
     const activePersonalities: Record<string, string | null> = {};
     for (const sv of servers) {
       for (const m of sv.models) {
@@ -245,6 +257,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       knownParams: KNOWN_PARAMS,
       personalities,
       activePersonalities,
+      systemMessageCapture,
     });
     this.outputChannel.appendLine(`[SETTINGS] Data sent via postMessage, ${servers.length} servers`);
   }
@@ -282,6 +295,16 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       serverUrl: model.serverUrl,
       systemMessageReplacementsFile: replacementsFile,
     });
+  }
+
+  /**
+   * Toggle the global `systemMessageCapture` setting (system prompt recording).
+   * Global — independent of any model — and read live by the provider at request
+   * time, so no cache invalidation is needed.
+   */
+  private async setSystemMessageCapture(enabled: boolean): Promise<void> {
+    await vscode.workspace.getConfiguration('vllm-copilot')
+      .update('systemMessageCapture', enabled, vscode.ConfigurationTarget.Global);
   }
 
   private async saveModelConfig(updates: Partial<ModelConfig>): Promise<void> {
