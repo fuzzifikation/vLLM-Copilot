@@ -141,8 +141,9 @@ you across workspaces and survives extension upgrades.
 | Preset | What it does |
 |--------|--------------|
 | **Default (no personality)** | No replacements — Copilot's original system prompt |
-| **Tough Love** | Direct tutor. Brutally honest feedback to help you grow. Calls out bad patterns, demands better. |
-| **Critical Senior Dev** | Sharp collaborator who challenges assumptions and surfaces trade-offs. Helps push the project forward. |
+| **Raw (Model Natural)** | Strips Microsoft's safety, identity, and behavioral boilerplate. No persona injected — the model behaves as it was trained. |
+| **Tough Love** | Mentor who builds better engineers. High standards, honest feedback, explains the why, celebrates progress — invested in you, not just your code. |
+| **Critical Senior Dev** | Cold architectural judgment. Evaluates code, technical debt, and trade-offs with zero sentiment — the code, not the coder. |
 | **Sarcastic Robot** | Brilliant, condescending, politically incorrect. Finds human code amusingly primitive — but fixes it anyway. |
 | **Spartan** | Absolute minimalism. Zero fluff. Short answers. Code first, words only when necessary. |
 
@@ -290,7 +291,7 @@ See [Configuration Reference](docs/configuration-reference.md) for the complete 
 - Full JSON syntax reference (every supported field)
 - Multiple servers with isolated auth
 - System message replacements (detailed guide)
-- Personality presets (all 4 presets with descriptions)
+- Personality presets (all 5 presets with descriptions)
 - Diagnostics settings
 - Troubleshooting (commands table, TLS, corporate networks, Diagnose Connection)
 - Known limitations

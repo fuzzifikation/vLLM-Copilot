@@ -171,7 +171,9 @@
       for (let i = 0; i < pSel.options.length; i++) {
         if (pSel.options[i].dataset.name === activeName) { pSel.selectedIndex = i; break; }
       }
+      updatePersonalityDesc(pSel);
       pSel.onchange = () => {
+        updatePersonalityDesc(pSel);
         const opt = pSel.options[pSel.selectedIndex];
         const targetPath = opt.value; // '' for Default
         const sourcePath = opt.dataset.src || '';
@@ -216,6 +218,20 @@
       '</div>').join('');
   }
 
+  function updatePersonalityDesc(pSel) {
+    const descEl = document.getElementById('personalityDesc');
+    if (!descEl) return;
+    const opt = pSel ? pSel.options[pSel.selectedIndex] : null;
+    if (opt && opt.dataset.desc) {
+      descEl.textContent = opt.dataset.desc;
+      descEl.style.display = '';
+    } else {
+      // Default (no personality) — nothing selected, nothing to describe.
+      descEl.textContent = '';
+      descEl.style.display = 'none';
+    }
+  }
+
   function personalityCard(isConfigured, activeName) {
     let h = '<div class="personality-card">';
     h += '<label>Personality (global)</label>';
@@ -223,10 +239,14 @@
     h += '<option value="" data-name="">Default (no personality)</option>';
     S.personalities.forEach(p => {
       // value = the global target path (what gets stored); data-src = source to copy from.
-      // title surfaces the description as a hover tooltip (matches the Set Personality command).
-      h += '<option value="' + E(p.targetPath) + '" data-name="' + E(p.name) + '" data-src="' + E(p.sourcePath) + '" title="' + E(p.description || '') + '">' + E(p.name) + '</option>';
+      // data-desc feeds the live description line under the dropdown; title keeps the
+      // hover tooltip for parity with the Set Personality command.
+      h += '<option value="' + E(p.targetPath) + '" data-name="' + E(p.name) + '" data-src="' + E(p.sourcePath) + '" data-desc="' + E(p.description || '') + '" title="' + E(p.description || '') + '">' + E(p.name) + '</option>';
     });
     h += '</select>';
+    // Live description of the selected personality — so users know what they're
+    // getting into before they commit. Updated on change and on render.
+    h += '<div id="personalityDesc" class="personality-desc"></div>';
     h += '<div class="field-hint">' + (isConfigured
       ? (activeName ? 'Active: ' + E(activeName) : 'Copilot\'s original system prompt')
       : 'Configure this model first to set a personality.') + '</div>';

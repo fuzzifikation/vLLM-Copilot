@@ -31,18 +31,12 @@ describe('shipped prompt-replacements files', () => {
       expect(rules.length, `${file} has no usable rules`).toBeGreaterThan(0);
     });
 
-    it(`${file} is a valid personality or the legacy default`, async () => {
+    it(`${file} is a valid personality`, async () => {
       const absPath = replDir + file;
       const meta = await loadPersonalityMeta(absPath);
-      if (file === 'default-prompt-replacements.json') {
-        // Legacy-array file — intentionally not a personality, but must still
-        // parse (guarded by the non-empty-rules test above).
-        expect(meta).toBeNull();
-      } else {
-        // Every other shipped file is a personality: name + description required.
-        expect(meta?.name?.length ?? 0).toBeGreaterThan(0);
-        expect(meta?.description?.length ?? 0).toBeGreaterThan(0);
-      }
+      // Every shipped file is a personality: name + description required.
+      expect(meta?.name?.length ?? 0).toBeGreaterThan(0);
+      expect(meta?.description?.length ?? 0).toBeGreaterThan(0);
     });
   }
 });
