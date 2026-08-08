@@ -6,16 +6,19 @@
 
 # vLLM-Copilot
 
-**Run any vLLM model inside GitHub Copilot — with features BYOK can't match.**
+**Run any vLLM model natively inside GitHub Copilot — no workarounds, no missing features.**
 
-Model modes, thinking toggles, structured output, bad words, repetition detection,
-personality presets, and system message control. All switchable from the model picker.
+For anyone running a local vLLM server — from a single gaming GPU to a production H100
+cluster — who wants GitHub Copilot to use *their* models instead of a cloud API.
+
+- **Native Copilot integration** — your models show up in the Copilot model picker with chat, tools, vision, and context-window stats, fully supported.
+- **Live server dashboard** — at-a-glance metrics for every vLLM server right in the sidebar: queue status, KV-cache usage, TTFT, throughput, and per-request token details.
+- **Personality presets** — strip Microsoft's 21KB of system-prompt boilerplate, or give a model a character. Per model, no JSON editing.
+- **Per-model control** — each model carries its own endpoint, auth, sampling, token budget, and switchable model modes (Think / No Think / Precise…).
 
 [![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot)
 [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
-
-> **💡 Tip:** Enable `extensions.autoUpdate` in VS Code settings to get automatic updates. (Auto-updates are disabled by default for extensions using proposed APIs like `chatProvider`.)
 
 </div>
 
@@ -82,6 +85,8 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 
 **Prerequisites:** A running vLLM server (any OpenAI-compatible endpoint) + GitHub Copilot.
 
+> **💡 Tip:** Enable `extensions.autoUpdate` in VS Code settings to get automatic updates. (Auto-updates are disabled by default for extensions using proposed APIs like `chatProvider`.)
+
 1. **Install** from the VS Code Marketplace
 2. **Add a model:** `Ctrl+Shift+P` → **Add vLLM Server & Model** → enter your server URL → pick a model → done. The extension auto-configures everything (model family, thinking modes, context window) from bundled presets or HuggingFace.
 3. **Edit settings:** Open the **Server Settings** sidebar to adjust displayName, params, model modes, and more — no `settings.json` editing required.
@@ -95,6 +100,16 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 ---
 
 ## Features
+
+<div align="center">
+
+<a href="https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/images/overview.jpg">
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/overview.jpg" width="500" alt="Overview of all vLLM-Copilot features">
+</a>
+
+*Every vLLM-Copilot feature at a glance — click to zoom.*
+
+</div>
 
 ### Model Modes — switchable configurations per model
 
@@ -145,10 +160,13 @@ you across workspaces and survives extension upgrades.
 | **Tough Love** | Mentor who builds better engineers. High standards, honest feedback, explains the why, celebrates progress — invested in you, not just your code. |
 | **Critical Senior Dev** | Cold architectural judgment. Evaluates code, technical debt, and trade-offs with zero sentiment — the code, not the coder. |
 | **Sarcastic Robot** | Brilliant, condescending, politically incorrect. Finds human code amusingly primitive — but fixes it anyway. |
-| **Spartan** | Absolute minimalism. Zero fluff. Short answers. Code first, words only when necessary. |
+| **Spartan** | Minimalist responses — short, little to read, to the point. Saves tokens. The economy is in how it talks, not what it builds; code stays complete. |
 
-Want to customize? Apply a preset once, then edit the file in the extension's global
-storage `personalities/` directory (your edits apply everywhere).
+Want to customize? **Bundled presets are extension-owned and re-synced on every apply** —
+editing the global copy of a bundled preset gets clobbered the next time you re-apply it.
+Custom behavior belongs in your own replacement file via `systemMessageReplacementsFile`
+(see [Hidden System Instructions](#hidden-system-instructions-capture--replace)) or a
+user-created personality in global storage.
 
 ### Hidden System Instructions (Capture & Replace)
 
@@ -245,7 +263,7 @@ partial content instead of silently dropping it to empty `{}`.
 The extension merges `.github/copilot-instructions.md`, `AGENTS.md`, and `CLAUDE.md` into
 the system message — the same way VS Code handles workspace-level custom instructions.
 
-### Legacy Configuration Migration
+### One-Click Migration from Older Versions
 
 Upgrading from an older version? The extension auto-migrates legacy global server/sampling
 settings into per-model entries on first launch. One-time, idempotent, no data loss.

@@ -34,6 +34,21 @@ export interface PersonalityEntry {
 /** Subdirectory of global storage that holds user personalities. */
 const PERSONALITIES_DIR = 'personalities';
 
+/**
+ * Curated display order for the bundled presets, by personality name.
+ * Anything not in this list (e.g. user-created global personalities, or a
+ * future preset) sorts after the shipped lineup, alphabetically — so the
+ * bundled presets are always first and predictable, and custom ones never
+ * disturb the curated order.
+ */
+const BUNDLED_PRESET_ORDER = [
+  'Critical Senior Dev',
+  'Sarcastic Robot',
+  'Tough Love',
+  'Spartan',
+  'Raw (Model Natural)',
+];
+
 /** Absolute path to the user personality directory inside global storage. */
 export function getGlobalPersonalitiesDir(context: vscode.ExtensionContext): string {
   return path.join(context.globalStorageUri.fsPath, PERSONALITIES_DIR);
@@ -69,7 +84,16 @@ export async function discoverPersonalities(
       seen.set(e.name, e);
     }
   }
-  return [...seen.values()];
+  // Curated display order: bundled presets follow BUNDLED_PRESET_ORDER (rank 0..n),
+  // anything else (user-created or unknown) sorts after, alphabetically.
+  return [...seen.values()].sort((a, b) => {
+    const ai = BUNDLED_PRESET_ORDER.indexOf(a.name);
+    const bi = BUNDLED_PRESET_ORDER.indexOf(b.name);
+    const ar = ai === -1 ? BUNDLED_PRESET_ORDER.length : ai;
+    const br = bi === -1 ? BUNDLED_PRESET_ORDER.length : bi;
+    if (ar !== br) return ar - br;
+    return a.name.localeCompare(b.name);
+  });
 }
 
 /** Scan a directory for valid personality files (`{ meta: { name, description } }` format). */
@@ -119,10 +143,21 @@ export async function resolveActivePersonality(
 /**
  * Ensure a personality file exists in global storage, returning its absolute path.
  *
- * Copies `sourcePath` into `globalStorage/personalities/` under the same basename
- * unless a file with that name already exists there (user edits are never
- * clobbered). Safe to call with a path already inside global storage — it is a
- * no-op then. Clears the promptReplacer cache when a new copy is written.
+ * **Extension-defined (bundled) presets are authoritative.** If the requested
+ * source corresponds to a bundled preset (matching basename in the extension's
+ * `prompt-replacements/` dir), the bundled file is the source of truth and is
+ * ALWAYS copied over the global copy — the extension owns those personalities,
+ * so user edits to a bundled preset's global copy are deliberately clobbered on
+ * re-apply. This also heals stale global copies left by older extension versions
+ * (e.g. a pre-de-Bender Sarcastic Robot) even when discovery resolved the source
+ * to the global file (dedup: global wins).
+ *
+ * **User-created personalities** (no bundled twin, stored directly in global
+ * storage) keep the legacy contract: created on first apply, never clobbered
+ * afterwards, collision-checked by name.
+ *
+ * Safe to call with a path already inside global storage. Clears the promptReplacer
+ * cache when a copy is written.
  */
 export async function ensureGlobalPersonality(
   context: vscode.ExtensionContext,
@@ -132,6 +167,29 @@ export async function ensureGlobalPersonality(
   const dest = path.join(dir, path.basename(sourcePath));
   await fs.mkdir(dir, { recursive: true });
 
+  // Bundled presets always win — resolve the authoritative content from the
+  // extension dir and overwrite the global copy unconditionally.
+  const bundledSource = path.join(
+    context.extensionUri.fsPath,
+    'prompt-replacements',
+    path.basename(sourcePath)
+  );
+  let isBundled = false;
+  try {
+    await fs.access(bundledSource);
+    isBundled = true;
+  } catch {
+    isBundled = false;
+  }
+
+  if (isBundled) {
+    const content = await fs.readFile(bundledSource, 'utf-8');
+    await writePersonalityAtomically(dest, content);
+    return dest;
+  }
+
+  // User-created personality: no bundled twin, so the file the user points at is
+  // the source of truth.
   if (dest === path.resolve(sourcePath)) return dest; // already in global storage
 
   let destExists = true;
@@ -143,13 +201,7 @@ export async function ensureGlobalPersonality(
 
   if (!destExists) {
     const content = await fs.readFile(sourcePath, 'utf-8');
-    // Write atomically (temp + rename) so a crash mid-write can't leave a
-    // truncated JSON file that would then be treated as the user's copy.
-    const tmpPath = `${dest}.tmp`;
-    await fs.writeFile(tmpPath, content, 'utf-8');
-    await fs.rename(tmpPath, dest);
-    // Content changed — force re-read on next load.
-    clearPersonalityCache();
+    await writePersonalityAtomically(dest, content);
     return dest;
   }
 
@@ -160,13 +212,6 @@ export async function ensureGlobalPersonality(
   // clobbered).
   const sourceMeta = await loadPersonalityMeta(sourcePath);
   const destMeta = await loadPersonalityMeta(dest);
-  // Collision rules: an existing global file may not silently stand in for the
-  // personality being applied. If it's a DIFFERENT personality sharing the
-  // basename, or it isn't a recognizable personality at all (legacy-array or
-  // otherwise unreadable format — we can't confirm it's the same personality),
-  // surface the conflict instead of binding the selected personality to the
-  // wrong file. Only a global file with the same personality name (possibly
-  // user-edited) is kept, so edits are never clobbered.
   if (sourceMeta?.name && (!destMeta || destMeta.name !== sourceMeta.name)) {
     throw new Error(
       `Personality "${sourceMeta.name}" collides with an existing global file "${dest}"` +
@@ -175,4 +220,16 @@ export async function ensureGlobalPersonality(
     );
   }
   return dest;
+}
+
+/**
+ * Write a personality file atomically (temp + rename) so a crash mid-write can't
+ * leave a truncated JSON file that would then be treated as the user's copy.
+ * Clears the promptReplacer cache so the new content is re-read on next load.
+ */
+async function writePersonalityAtomically(dest: string, content: string): Promise<void> {
+  const tmpPath = `${dest}.tmp`;
+  await fs.writeFile(tmpPath, content, 'utf-8');
+  await fs.rename(tmpPath, dest);
+  clearPersonalityCache();
 }

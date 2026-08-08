@@ -1,12 +1,21 @@
 # Changelog
 
-## v1.20.6 — Raw personality, picker descriptions & polarized presets
+## v1.20.6 — Personality overhaul, command cleanup & README refresh
 
 ### New
 
 - **Raw (Model Natural) personality** — strips Microsoft's safety, identity, and behavioral boilerplate with **no persona injected**, leaving the model's own trained behavior untouched. Also removes the standalone "Keep your answers short and impersonal" instruction. The legacy `default-prompt-replacements.json` (bundled + docs copy) was promoted into this preset and deleted.
 - **Personality picker shows live descriptions** — the Server Settings dropdown now renders the selected personality's description under the select, so you know what you're getting before you commit.
 - **Critical Senior Dev and Tough Love are now distinct** — Critical Senior is cold, code-architecture judgment (the code, not the coder); Tough Love is a mentor building better engineers (explains the why, celebrates progress).
+- **Bundled personalities are extension-owned** — applying a bundled preset now always re-syncs its global copy from the shipped file, so stale or hand-edited copies are replaced on re-apply. User-created personalities keep the never-clobber contract.
+- **Curated personality dropdown order** — bundled presets appear in a defined order; user-created personalities sort after, alphabetically.
+
+### Changed
+
+- **Sarcastic Robot is de-Bendered** — the preset no longer names the copyrighted character or its catchphrases; it now channels the generic "golden-age sarcastic sci-fi robot" archetype. Same voice, zero IP exposure.
+- **Spartan description clarifies the value** — explicitly notes it saves tokens and that the economy is in how it talks, not what it builds; code stays complete.
+- **Command palette cleanup** — the dead `refreshDashboard` command was removed and the raw-ID `setPollInterval` entry is hidden from the palette (still reachable via the dashboard's Refresh Interval row).
+- **README overhaul** — outcome-first hero, audience framing, dashboard bullet, and a new `overview.jpg` so visitors can see the whole extension at a glance.
 
 ## v1.20.5 — Personality hardening & model picker fixes
 

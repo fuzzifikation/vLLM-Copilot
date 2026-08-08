@@ -143,6 +143,12 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "vllm-copilot.setPollInterval",
+          "when": "false"
+        }
+      ],
       "view/item/context": [
         {
           "command": "vllm-copilot.updateServerAuth",

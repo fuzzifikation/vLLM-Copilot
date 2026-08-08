@@ -211,13 +211,6 @@ export async function activate(context: vscode.ExtensionContext) {
         await vscode.workspace.getConfiguration('vllm-copilot.dashboard').update('pollIntervalMs', ms, vscode.ConfigurationTarget.Global);
       }),
     );
-
-    // Refresh dashboard command
-    context.subscriptions.push(
-      vscode.commands.registerCommand('vllm-copilot.refreshDashboard', async () => {
-        await dashboardTree.refresh();
-      })
-    );
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     const reason = err instanceof Error && err.stack ? err.stack : detail;

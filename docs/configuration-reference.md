@@ -341,7 +341,7 @@ Or set the path manually on the model entry:
 
 Relative paths resolve against the **workspace root**; absolute paths (like the global storage path the picker writes) work from any workspace.
 
-**Want to customize a preset?** Apply it once, then edit the file in the extension's global storage `personalities/` directory — your edits apply in every workspace. (Workspace `.vllm/` copies are no longer treated as personalities; use the global copy to customize a preset.) For custom find/replace rules that aren't personalities, see [System Message Replacements](#system-message-replacements) — relative `.vllm/` paths still work there.
+**Want to customize a preset?** Bundled presets are **extension-owned and re-synced on every apply** — editing the global copy of a bundled preset gets clobbered the next time you re-apply it. Put custom behavior in your own replacement file via `systemMessageReplacementsFile` (relative `.vllm/` paths still work) or a user-created personality in global storage. See [System Message Replacements](#system-message-replacements).
 
 ---
 
