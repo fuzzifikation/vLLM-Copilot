@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **"Tough Love" renamed to "Supportive Mentor"** — the name now matches the actual warm, patient mentor persona (the old name implied a harshness the content never had). The bundled preset was renamed to `prompt-replacements-supportive-mentor.json`. A one-time migration replaces any stale global copy and rewrites model configs that referenced the old path.
+- **Stale `docs/prompt-replacements-*.json` snapshots deleted** — they were drifted copies of the shipped presets, not read at runtime. `docs/custom-system-prompt.md` now points at the real `prompt-replacements/` location.
+
 ## v1.20.6 — Personality overhaul, command cleanup & README refresh
 
 ### New

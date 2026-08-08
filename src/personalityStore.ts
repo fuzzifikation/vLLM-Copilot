@@ -20,6 +20,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { loadPersonalityMeta, clearPersonalityCache } from './promptReplacer.js';
+import type { ModelConfig } from './config.js';
 
 export type PersonalitySource = 'bundled' | 'global';
 
@@ -35,6 +36,16 @@ export interface PersonalityEntry {
 const PERSONALITIES_DIR = 'personalities';
 
 /**
+ * Legacy bundled preset file name before the "Tough Love" → "Supportive Mentor"
+ * rename. A stale global copy of this file is migrated on activation.
+ */
+const LEGACY_TOUGH_LOVE_FILE = 'prompt-replacements-tough-love.json';
+/** Legacy bundled preset display name (matches its `meta.name`). */
+const LEGACY_TOUGH_LOVE_NAME = 'Tough Love';
+/** New bundled preset file name. */
+const SUPPORTIVE_MENTOR_FILE = 'prompt-replacements-supportive-mentor.json';
+
+/**
  * Curated display order for the bundled presets, by personality name.
  * Anything not in this list (e.g. user-created global personalities, or a
  * future preset) sorts after the shipped lineup, alphabetically — so the
@@ -44,7 +55,7 @@ const PERSONALITIES_DIR = 'personalities';
 const BUNDLED_PRESET_ORDER = [
   'Critical Senior Dev',
   'Sarcastic Robot',
-  'Tough Love',
+  'Supportive Mentor',
   'Spartan',
   'Raw (Model Natural)',
 ];
@@ -232,4 +243,87 @@ async function writePersonalityAtomically(dest: string, content: string): Promis
   await fs.writeFile(tmpPath, content, 'utf-8');
   await fs.rename(tmpPath, dest);
   clearPersonalityCache();
+}
+
+/**
+ * One-time migration for the "Tough Love" → "Supportive Mentor" rename.
+ *
+ * Users who applied the old bundled preset have a global copy at
+ * `personalities/prompt-replacements-tough-love.json` whose `meta.name` still
+ * says "Tough Love". Once the bundled file was renamed, that stale global copy
+ * would otherwise surface as a phantom *user-created* personality (no bundled
+ * twin → never clobbered, never re-synced) next to the new bundled
+ * "Supportive Mentor" in the picker.
+ *
+ * Migration (idempotent — a no-op when the legacy copy is absent):
+ *   1. Confirm the legacy file is genuinely the stale bundled copy (meta.name
+ *      is "Tough Love") — never delete a user file that happens to share the
+ *      name (e.g. a legacy-array replacement file, which has no meta block).
+ *   2. Materialize the new bundled "Supportive Mentor" file into global storage
+ *      (bundled content is authoritative, matching {@link ensureGlobalPersonality}).
+ *   3. Rewrite any model config whose `systemMessageReplacementsFile` resolves
+ *      to the legacy global path so it points at the new file — otherwise the
+ *      model would silently lose its personality on the next request. This runs
+ *      BEFORE the legacy file is deleted: if the rewrite fails, the legacy file
+ *      is still present and the migration self-heals on the next activation.
+ *   4. Delete the stale legacy global copy.
+ *
+ * Returns counts so the caller can log what happened. Never throws on config
+ * rewrite failure (best-effort); the file migration is the critical part.
+ */
+export async function migrateLegacyPersonalities(
+  context: vscode.ExtensionContext
+): Promise<{ migrated: boolean; configsUpdated: number }> {
+  const dir = getGlobalPersonalitiesDir(context);
+  const legacyPath = path.join(dir, LEGACY_TOUGH_LOVE_FILE);
+  const newPath = path.join(dir, SUPPORTIVE_MENTOR_FILE);
+
+  // Only migrate if the legacy file is the genuine stale bundled copy. A
+  // legacy-array-format file (no meta) or a differently-named personality at
+  // this path is user data — leave it untouched.
+  const legacyMeta = await loadPersonalityMeta(legacyPath);
+  if (!legacyMeta || legacyMeta.name !== LEGACY_TOUGH_LOVE_NAME) {
+    return { migrated: false, configsUpdated: 0 };
+  }
+
+  // Bundled content is authoritative (extension owns bundled presets).
+  const bundledSource = path.join(
+    context.extensionUri.fsPath,
+    'prompt-replacements',
+    SUPPORTIVE_MENTOR_FILE
+  );
+  const content = await fs.readFile(bundledSource, 'utf-8');
+  await fs.mkdir(dir, { recursive: true });
+  await writePersonalityAtomically(newPath, content);
+
+  // Rewrite model configs that pointed at the legacy global path. Runs before
+  // the legacy file is deleted so a failed rewrite retries next activation.
+  let configsUpdated = 0;
+  try {
+    const config = vscode.workspace.getConfiguration('vllm-copilot');
+    const models = config.get<ModelConfig[]>('models') || [];
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+    let changed = false;
+    for (const m of models) {
+      const ref = (m.systemMessageReplacementsFile || '').trim();
+      if (!ref) continue;
+      const abs = path.isAbsolute(ref) ? path.resolve(ref) : path.resolve(root, ref);
+      if (abs === path.resolve(legacyPath)) {
+        m.systemMessageReplacementsFile = newPath;
+        changed = true;
+        configsUpdated++;
+      }
+    }
+    if (changed) {
+      await config.update('models', models, vscode.ConfigurationTarget.Global);
+    }
+  } catch {
+    // Best-effort: the file migration already succeeded; a config rewrite
+    // failure must not fail activation.
+  }
+
+  // Delete the stale legacy copy last.
+  await fs.unlink(legacyPath);
+
+  return { migrated: true, configsUpdated };
 }
