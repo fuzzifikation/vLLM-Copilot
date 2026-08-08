@@ -62,6 +62,40 @@ describe('personalityStore', () => {
   });
 
   describe('discoverPersonalities', () => {
+    it('sorts bundled presets in the curated order, user presets after', async () => {
+      const bundled = path.join(EXT, 'prompt-replacements');
+      const globalDir = getGlobalPersonalitiesDir(context);
+
+      // Filesystem order is arbitrary — the curated BUNDLED_PRESET_ORDER must win.
+      fsMock.dirContents[path.join(bundled)] = [
+        'prompt-replacements-raw.json',
+        'prompt-replacements-tough-love.json',
+        'prompt-replacements-spartan.json',
+        'prompt-replacements-critical-senior.json',
+        'prompt-replacements-sarcastic-robot.json',
+      ];
+      fsMock.files.set(path.join(bundled, 'prompt-replacements-raw.json'), personality('Raw (Model Natural)', 'bundled'));
+      fsMock.files.set(path.join(bundled, 'prompt-replacements-tough-love.json'), personality('Tough Love', 'bundled'));
+      fsMock.files.set(path.join(bundled, 'prompt-replacements-spartan.json'), personality('Spartan', 'bundled'));
+      fsMock.files.set(path.join(bundled, 'prompt-replacements-critical-senior.json'), personality('Critical Senior Dev', 'bundled'));
+      fsMock.files.set(path.join(bundled, 'prompt-replacements-sarcastic-robot.json'), personality('Sarcastic Robot', 'bundled'));
+
+      fsMock.dirContents[globalDir] = ['zeta.json', 'alpha.json'];
+      fsMock.files.set(path.join(globalDir, 'zeta.json'), personality('Zeta', 'user-made'));
+      fsMock.files.set(path.join(globalDir, 'alpha.json'), personality('Alpha', 'user-made'));
+
+      const found = await discoverPersonalities(context);
+      expect(found.map(p => p.name)).toEqual([
+        'Critical Senior Dev',
+        'Sarcastic Robot',
+        'Tough Love',
+        'Spartan',
+        'Raw (Model Natural)',
+        'Alpha',
+        'Zeta',
+      ]);
+    });
+
     it('merges bundled and global personalities', async () => {
       const bundled = path.join(EXT, 'prompt-replacements');
       const globalDir = getGlobalPersonalitiesDir(context);
@@ -124,19 +158,54 @@ describe('personalityStore', () => {
       expect(fsMock.files.has(tmp)).toBe(false);
     });
 
-    it('does not clobber an existing global copy', async () => {
+    it('does not clobber an existing global copy of a USER-created personality (no bundled twin)', async () => {
+      const src = path.join(WS, 'my-personality.json');
+      fsMock.files.set(src, personality('Mine', 'custom'));
+      const dest = path.join(GLOBAL, 'personalities', 'my-personality.json');
+      fsMock.files.set(dest, personality('Mine', 'user-edited'));
+
+      await ensureGlobalPersonality(context, src);
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('bundled preset overwrites its stale global copy (extension owns presets)', async () => {
+      // A stale global copy (e.g. old pre-de-Bender Sarcastic Robot) must be
+      // replaced by the current bundled file on re-apply.
       const src = path.join(EXT, 'prompt-replacements', 'x.json');
       fsMock.files.set(src, personality('X', 'bundled'));
       const dest = path.join(GLOBAL, 'personalities', 'x.json');
       fsMock.files.set(dest, personality('X', 'user-edited'));
 
       await ensureGlobalPersonality(context, src);
-      expect(fsMock.writeFile).not.toHaveBeenCalled();
+      expect(fsMock.writeFile).toHaveBeenCalled();
+      expect(fsMock.files.get(dest)).toBe(personality('X', 'bundled'));
     });
 
-    it('throws when the existing global file is a different personality sharing the basename', async () => {
+    it('bundled preset overwrites a global file with a DIFFERENT name (no collision throw)', async () => {
       const src = path.join(EXT, 'prompt-replacements', 'a.json');
       fsMock.files.set(src, personality('Alpha', 'bundled'));
+      const dest = path.join(GLOBAL, 'personalities', 'a.json');
+      fsMock.files.set(dest, personality('Beta', 'unrelated'));
+
+      await ensureGlobalPersonality(context, src);
+      expect(fsMock.files.get(dest)).toBe(personality('Alpha', 'bundled'));
+    });
+
+    it('bundled preset overwrites a legacy-array global file sharing the basename', async () => {
+      const src = path.join(EXT, 'prompt-replacements', 'a.json');
+      fsMock.files.set(src, personality('Alpha', 'bundled'));
+      const dest = path.join(GLOBAL, 'personalities', 'a.json');
+      // Legacy-array format — no meta block.
+      fsMock.files.set(dest, JSON.stringify([{ find: 'x', replace: 'y' }]));
+
+      await ensureGlobalPersonality(context, src);
+      // The bundled preset wins over the legacy file.
+      expect(fsMock.files.get(dest)).toBe(personality('Alpha', 'bundled'));
+    });
+
+    it('user-created personality (no bundled twin) colliding by name still throws', async () => {
+      const src = path.join(WS, 'a.json');
+      fsMock.files.set(src, personality('Alpha', 'custom'));
       const dest = path.join(GLOBAL, 'personalities', 'a.json');
       fsMock.files.set(dest, personality('Beta', 'unrelated'));
 
@@ -144,9 +213,9 @@ describe('personalityStore', () => {
       expect(fsMock.writeFile).not.toHaveBeenCalled();
     });
 
-    it('throws when the existing global file is not a recognized personality (legacy array) sharing the basename', async () => {
-      const src = path.join(EXT, 'prompt-replacements', 'a.json');
-      fsMock.files.set(src, personality('Alpha', 'bundled'));
+    it('user-created personality (no bundled twin) colliding with legacy array still throws', async () => {
+      const src = path.join(WS, 'a.json');
+      fsMock.files.set(src, personality('Alpha', 'custom'));
       const dest = path.join(GLOBAL, 'personalities', 'a.json');
       // Legacy-array format — no meta block, so we cannot confirm it is "Alpha".
       fsMock.files.set(dest, JSON.stringify([{ find: 'x', replace: 'y' }]));

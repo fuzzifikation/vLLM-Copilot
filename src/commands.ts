@@ -777,8 +777,10 @@ export function registerSetModelPersonalityCommand(
       }
 
       try {
-        // Applying always materializes the personality as a user-owned copy in
-        // global storage — portable across workspaces and immune to extension upgrades.
+        // Applying materializes the personality in global storage. Bundled
+        // presets are extension-owned and re-synced from the shipped file on
+        // every apply (see ensureGlobalPersonality); user-created personalities
+        // are stored once and never clobbered.
         const replacementsFile = clear
           ? ''
           : await ensureGlobalPersonality(context, sourcePath!);
