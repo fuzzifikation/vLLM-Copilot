@@ -25,6 +25,7 @@
       S.knownParams = e.data.knownParams || {};
       S.personalities = e.data.personalities || [];
       S.activePersonalities = e.data.activePersonalities || {};
+      S.systemMessageCapture = e.data.systemMessageCapture === true;
       try { render(); } catch(err) {
         document.getElementById('root').innerHTML = '<p style="color:var(--vscode-errorForeground)">Render error: ' + E(err.message) + '</p>';
       }
@@ -133,11 +134,16 @@
       // the Auto-Configure/Remove buttons above address the model, not the personality.
       const isConfigured = configKeys.has(S.selModel);
       const activeName = S.activePersonalities[S.selModel] || '';
-      h += sec('Personality', personalityCard(isConfigured, activeName));
-      h += sec('System Prompt',
+      // Personality dropdown (global) + raw replacements-file path + the system
+      // prompt recording toggle — one section for everything that shapes the
+      // system prompt a model receives.
+      h += sec('Personality and System Prompt',
+        personalityCard(isConfigured, activeName) +
         '<div class="field"><label>systemMessageReplacementsFile</label>' +
         '<input type="text" data-f="systemMessageReplacementsFile" value="' + E(String(m.systemMessageReplacementsFile || '')) + '">' +
-        '<div class="field-hint">Path to JSON find/replace rules file</div></div>');
+        '<div class="field-hint">Path to JSON find/replace rules file (relative paths resolve against the workspace root)</div></div>' +
+        '<div class="checkbox-row"><input type="checkbox" id="captureCb" ' + (S.systemMessageCapture ? 'checked' : '') + '><label>Record system messages</label></div>' +
+        '<div class="field-hint">Capture incoming Copilot system messages to .vllm/system-messages.json — used to build replacement rules</div>');
       h += sec('Token Budget', fields([{ k: 'maxOutputTokens', t: 'number', v: m.maxOutputTokens ?? 4096, h: 'Max output tokens (default: 4096)' },
         { k: 'maxInputTokens', t: 'number', v: m.maxInputTokens ?? '', h: 'Auto-computed; set to reserve headroom' },
         { k: 'estimateCharsPerToken', t: 'number', v: m.estimateCharsPerToken ?? 3.5, h: 'Avg chars/token (default: 3.5)' }]));
@@ -178,6 +184,10 @@
           : { type: 'applyPersonality', serverUrl: S.selServer, id: S.selModel, sourcePath: sourcePath });
       };
     }
+    const captureCb = document.getElementById('captureCb');
+    if (captureCb) captureCb.onchange = () => {
+      vscode.postMessage({ type: 'setSystemMessageCapture', enabled: captureCb.checked });
+    };
     const saveButton = document.getElementById('saveBtn');
     if (saveButton) saveButton.onclick = save;
     const revertButton = document.getElementById('revertBtn');
@@ -208,7 +218,7 @@
 
   function personalityCard(isConfigured, activeName) {
     let h = '<div class="personality-card">';
-    h += '<label>Personality</label>';
+    h += '<label>Personality (global)</label>';
     h += '<select id="personalitySel"' + (isConfigured ? '' : ' disabled') + '>';
     h += '<option value="" data-name="">Default (no personality)</option>';
     S.personalities.forEach(p => {

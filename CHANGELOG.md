@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Server Settings
+
+- **"Personality and System Prompt" section** — the old `Personality` and `System Prompt` collapsibles are merged into one section that groups everything shaping the system prompt a model receives: the personality dropdown, the raw `systemMessageReplacementsFile` field, and the **Record system messages** toggle.
+- **Dropdown relabeled "Personality (global)"** — makes clear the dropdown manages global-storage personalities (the legacy `.vllm/` case is covered by the raw path field beneath it).
+- **System prompt recording toggle** — `systemMessageCapture` was previously only configurable via the Settings UI; it can now be enabled/disabled directly in Server Settings. Writes the global setting (applies immediately, no reload).
+
 ## v1.20.5 — Personality hardening & model picker fixes
 
 ### Fixed
