@@ -142,8 +142,8 @@
         '<div class="field"><label>systemMessageReplacementsFile</label>' +
         '<input type="text" data-f="systemMessageReplacementsFile" value="' + E(String(m.systemMessageReplacementsFile || '')) + '">' +
         '<div class="field-hint">Path to JSON find/replace rules file (relative paths resolve against the workspace root)</div></div>' +
-        '<div class="checkbox-row"><input type="checkbox" id="captureCb" ' + (S.systemMessageCapture ? 'checked' : '') + '><label>Record system messages</label></div>' +
-        '<div class="field-hint">Capture incoming Copilot system messages to .vllm/system-messages.json — used to build replacement rules</div>');
+        '<div class="checkbox-row"><input type="checkbox" id="captureCb" ' + (S.systemMessageCapture ? 'checked' : '') + '><label>Record system prompts</label></div>' +
+        '<div class="field-hint">Capture Copilot system prompts to the workspace\'s .vllm/system-messages.json — used to build replacement rules</div>');
       h += sec('Token Budget', fields([{ k: 'maxOutputTokens', t: 'number', v: m.maxOutputTokens ?? 4096, h: 'Max output tokens (default: 4096)' },
         { k: 'maxInputTokens', t: 'number', v: m.maxInputTokens ?? '', h: 'Auto-computed; set to reserve headroom' },
         { k: 'estimateCharsPerToken', t: 'number', v: m.estimateCharsPerToken ?? 3.5, h: 'Avg chars/token (default: 3.5)' }]));
