@@ -24,7 +24,6 @@ Dashboard tree items, deep-dive webview, and formatting helpers lack tests. `Met
 
 ## Code Smells
 
-- **Duplicated workspace-root path resolution** — `provider.loadReplacements` and `personalityStore.resolveActivePersonality` both reimplement "resolve a relative `systemMessageReplacementsFile` against the first workspace folder". They must stay in sync; extract a shared helper.
 - **Two divergent `saveModelConfig` implementations** — see the P? entry under Maintainability; the merge-strategy difference is the smell, `normalizeModelEntry` already de-duplicates the clear semantics.
 
 ## Personalities And System Messages
@@ -35,9 +34,6 @@ The host-side flow is covered: `applyPersonality`/`saveModelConfig` have focused
 ---
 
 ## Model Picker & Discovery
-
-### P? - Test & Refresh popup overflow
-`registerTestAndRefreshModelsCommand` emits one toast per unique server, plus one per no-`serverUrl` config, plus one per no-match server, plus up to two more (network-gating warning + "Run Diagnostic?"). VS Code caps visible toasts (~3); with more than 3 servers the rest collapse into the Notification Center and are easily missed (gripe 1). Not a code bug (platform behavior) but a UX gap — consolidate into one summary toast with per-server detail in the Output channel.
 
 ---
 

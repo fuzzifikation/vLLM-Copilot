@@ -1,5 +1,32 @@
-import { describe, it, expect } from 'vitest';
-import { buildAuthHeaders, validateConfig, buildModelId, type VllmConfig } from '../src/config.js';
+import { describe, it, expect, afterEach } from 'vitest';
+import * as path from 'path';
+import * as vscode from 'vscode';
+import { buildAuthHeaders, validateConfig, buildModelId, resolveWorkspaceRelativePath, type VllmConfig } from '../src/config.js';
+
+// ── resolveWorkspaceRelativePath ──────────────────────────────────────────
+
+describe('resolveWorkspaceRelativePath', () => {
+  const originalFolders = (vscode.workspace as any).workspaceFolders;
+
+  afterEach(() => {
+    (vscode.workspace as any).workspaceFolders = originalFolders;
+  });
+
+  it('returns an absolute path normalized unchanged', () => {
+    (vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: '/ws' } }];
+    expect(resolveWorkspaceRelativePath('/a/b.json')).toBe(path.resolve('/a/b.json'));
+  });
+
+  it('resolves a relative path against the first workspace folder', () => {
+    (vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: '/ws' } }];
+    expect(resolveWorkspaceRelativePath('.vllm/repl.json')).toBe(path.resolve('/ws', '.vllm/repl.json'));
+  });
+
+  it('resolves against the process cwd when no workspace folder is open', () => {
+    (vscode.workspace as any).workspaceFolders = undefined;
+    expect(resolveWorkspaceRelativePath('.vllm/repl.json')).toBe(path.resolve('.vllm/repl.json'));
+  });
+});
 
 // ── buildAuthHeaders ──────────────────────────────────────────────────────
 

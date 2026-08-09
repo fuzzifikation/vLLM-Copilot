@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.20.8 — Test & Refresh consolidation & path-resolution dedup
+
+### Fixed
+
+- **Test & Refresh popup overflow** — instead of one toast per server (which collapsed into the Notification Center with 3+ servers), the command now shows a single consolidated popup for all reachable servers and a single one for all failures. Reachable servers hosting models not configured in `settings.json` get one hint directing to Server Settings. The old per-server "configure now" wizard was removed in favor of that single hint.
+
+### Changed
+
+- **Deduplicated workspace-root path resolution** — `provider.loadReplacements` and `personalityStore.resolveActivePersonality` both hand-rolled "resolve a relative `systemMessageReplacementsFile` against the first workspace folder." Extracted a single shared `resolveWorkspaceRelativePath` helper in `config.ts` so the two call sites can never drift. No behavior change.
+
 ## v1.20.7 — Supportive Mentor rename & preset cleanup
 
 ### Changed
