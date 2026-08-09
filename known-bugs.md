@@ -14,8 +14,11 @@ Do not bump version without asking.
 ### P2 - Untested data layer
 Dashboard tree items, deep-dive webview, and formatting helpers lack tests. `MetricsParser`, `parseRawMetrics`, `parseLabels`, `fmtPct`, `fmtMs` are covered.
 
+### P1 - Coverage command fails its configured global thresholds
+`npm run test:coverage` currently exits non-zero before the refactor. Verified 2026-08-09: 43.75% statements, 41.64% branches, 41.58% functions, and 43.73% lines versus configured thresholds of 50/43/50/50. The `vitest.config.ts` comment saying thresholds match current coverage is stale. Its exact-path excludes also do not follow code extracted from excluded root files into subfolders. Repair the baseline before structural work; extracted testable logic should be measured rather than hidden behind folder-wide exclusions. See `refactor-plan.md` §4.0.
+
 ### P? - Two `saveModelConfig` implementations still diverge
-`autoConfig.saveModelConfig` (explicit `serverUrl`/`requestHeaders`/`systemMessageReplacementsFile` preservation, entry replace) and `serverSettingsView.saveModelConfig` (plain `{...existing, ...updates}` merge) now share `normalizeModelEntry` for the `''`-clears / undefined-preserves semantics, but keep **different merge strategies**. Both behave correctly today; the duplication is a drift risk when one side changes. PR #5 flagged "unify during redesign" — still open.
+`autoConfig.saveModelConfig` (explicit `serverUrl`/`requestHeaders`/`systemMessageReplacementsFile` preservation, entry replace) and `serverSettingsView.saveModelConfig` (plain `{...existing, ...updates}` merge) now share `normalizeModelEntry` for the `''`-clears / undefined-preserves semantics, but keep **different merge strategies**. Those merge strategies are intentional; the duplication is a drift risk when one side changes. The separate server-less personality caller bug is listed below. PR #5 flagged "unify during redesign" — still open.
 
 ## Over-engineering
 
@@ -24,7 +27,12 @@ Dashboard tree items, deep-dive webview, and formatting helpers lack tests. `Met
 
 ## Code Smells
 
-- **Two divergent `saveModelConfig` implementations** — see the P? entry under Maintainability; the merge-strategy difference is the smell, `normalizeModelEntry` already de-duplicates the clear semantics.
+- **Two divergent `saveModelConfig` implementations** — see the P? entry under Maintainability; the merge-strategy difference is the smell, `normalizeModelEntry` already de-duplicates the clear semantics. Target: unify in `configStore.ts` behind named `replaceModelConfig` and `patchModelConfig` operations, see `refactor-plan.md`.
+- **Un-awaited `ensureByokUtilityDefault()`** — `autoConfig.ts:578` calls it inside `saveModelConfig` without `await`. Self-catching (idempotent, never rejects) so it can't crash, but model-save completion does not establish BYOK-write completion. Move it to the add/onboarding caller and await it after model persistence; BYOK is not a config-store responsibility. (Verified 2026-08-09.)
+- **Stale "Python" comments** — `sessionManager.ts:112,134` say "batch-query in a single Python process", but `discoverWorkspaces`/`countSessionsBatch` use `node:sqlite` `DatabaseSync` (`sessionManager.ts:96-220`). Pure doc rot that would misdirect a maintainer. (Verified 2026-08-09.)
+- **Dead defensive guard with misleading message** — `commands.ts:664` `if (!clear && !sourcePath) { showWarningMessage('No personality presets found.'); }` is unreachable (every non-separator pick item is either `clear: true` or carries a `sourcePath`); it exists only for TS narrowing. Leave the guard, but the message is wrong if ever hit — reword to something accurate or mark as unreachable. (Verified 2026-08-09.)
+- **Value-import used only as a type** — `commands.ts:11` imports `VllmChatModelProvider` as a value but it's only used in type positions (`provider: VllmChatModelProvider` etc.). Should be `import type`. tsc elides it today (`verbatimModuleSyntax` off); cosmetic. (Verified 2026-08-09.)
+- **Latent duplicate-append via personality apply on server-less models** — `commands.ts:675` `saveModelConfig({ ...modelPick.model, systemMessageReplacementsFile })`; if the model has no `serverUrl`, `findModelConfigIndex` gets no match (`useIdx = -1` → `existing.push(...)`), so a duplicate entry is appended. The provider skips/warns about server-less models, so Copilot's model picker never shows them, but the Set Model Personality command builds its own picker from every configured entry and can still target one. Fix before structural refactoring: add a focused regression test, then make the personality command skip + warn. The planned `replaceModelConfig(entry: ModelConfig & { serverUrl: string })` (`refactor-plan.md` §3.3) provides an additional compile-time guard. (Verified 2026-08-09.)
 
 ## Personalities And System Messages
 
