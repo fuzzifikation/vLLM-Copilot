@@ -1,7 +1,7 @@
 # Feature Ideas: vLLM Capabilities → Better VS Code Experience
 
 **Generated:** 2026-06-06
-**Updated:** 2026-07-21 (consolidated; shipped items removed or marked done)
+**Updated:** 2026-08-09 (consolidated; shipped items removed or marked done)
 **Source:** [vLLM SamplingParams API Reference](https://docs.vllm.ai/en/latest/api/vllm/sampling_params.html)
 
 **Context:** vLLM supports many per-request sampling parameters that the extension doesn't expose yet. These represent opportunities to build features that VS Code's built-in Copilot doesn't have — making vLLM-Copilot the superior local model integration.

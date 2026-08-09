@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.20.7 — Supportive Mentor rename & preset cleanup
 
 ### Changed
 
