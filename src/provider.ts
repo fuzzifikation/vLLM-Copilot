@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { VllmClient } from './vllmClient.js';
-import { resolveVllmModelId, resolveOverrideForModel, resolveServerConfig, resolveModelSettings, resolveRequestParams, type VllmConfig } from './config.js';
+import { resolveVllmModelId, resolveOverrideForModel, resolveServerConfig, resolveModelSettings, resolveRequestParams, resolveWorkspaceRelativePath, type VllmConfig } from './config.js';
 import { FileLogger } from './logger.js';
 import { buildModelInfo } from './modelInfo.js';
 import { reportTokenUsage, logTokenUsage } from './usageReporting.js';
@@ -902,13 +902,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     if (!override?.systemMessageReplacementsFile) return [];
 
     try {
-      let replacementsFile = override.systemMessageReplacementsFile;
-      if (!path.isAbsolute(replacementsFile)) {
-        const folders = vscode.workspace.workspaceFolders;
-        if (folders?.length) {
-          replacementsFile = path.join(folders[0].uri.fsPath, replacementsFile);
-        }
-      }
+      const replacementsFile = resolveWorkspaceRelativePath(override.systemMessageReplacementsFile);
 
       try {
         await fs.access(replacementsFile);

@@ -20,7 +20,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { loadPersonalityMeta, clearPersonalityCache } from './promptReplacer.js';
-import type { ModelConfig } from './config.js';
+import { resolveWorkspaceRelativePath, type ModelConfig } from './config.js';
 
 export type PersonalitySource = 'bundled' | 'global';
 
@@ -145,8 +145,7 @@ export async function resolveActivePersonality(
 ): Promise<PersonalityEntry | null> {
   const value = (replacementsFile || '').trim();
   if (!value) return null;
-  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
-  const abs = path.isAbsolute(value) ? path.resolve(value) : path.resolve(root, value);
+  const abs = resolveWorkspaceRelativePath(value);
   const all = known ?? (await discoverPersonalities(context));
   return all.find(e => path.resolve(e.sourcePath) === abs) ?? null;
 }

@@ -9,10 +9,10 @@
 
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId } from './config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveConfigId, normalizeServerUrl } from './config.js';
 import type { ModelConfig } from './config.js';
 import type { VllmModel } from './types.js';
-import { pickModelFromServer, saveModelConfig, promptForServerAuth, autoConfigureModel } from './autoConfig.js';
+import { saveModelConfig, promptForServerAuth } from './autoConfig.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
 import { runDiagnostics, formatReport } from './diagnostics.js';
@@ -287,59 +287,76 @@ export function registerTestAndRefreshModelsCommand(
 
     const serverResults = await Promise.all(serverTasks);
 
-    // ── 3. Show one popup per unique server ──
-    // Each deduped server gets its own individual info/warning message.
-    const anyFailure = serverResults.some(r => r.status === 'error');
+    // ── 3. Consolidated popups: ONE for working servers, ONE for failures ──
+    // Server-focused: a server is "OK" if it's reachable and at least one
+    // configured model matches a served model. Ten models on one reachable
+    // server = one line, not ten popups. Unreachable/auth-failed servers are
+    // grouped into a single failure popup instead of one toast per server.
+    const okResults = serverResults.filter(r => r.status === 'ok');
+    const errResults = serverResults.filter(r => r.status === 'error');
+    const noMatchResults = serverResults.filter(
+      r => r.status === 'no-match' && r.serverModelList && r.serverModelList.length > 0
+    );
+    const anyFailure = errResults.length > 0;
 
-    for (const result of serverResults) {
-      const { serverUrl, status, matched, errorMessage } = result;
-
-      if (status === 'ok') {
-        // One ✓ per server with a working model. Parked models on the same
-        // server are silent — kept in settings, not in the model picker,
-        // no popup noise.
-        const matchNames = matched.map(m => m.vllmModelId).join(', ');
-        const ctx = matched[0]?.maxModelLen
-          ? ` (${matched[0].maxModelLen.toLocaleString()} ctx)`
+    // 3a. ONE success popup — every working server in a single message.
+    if (okResults.length > 0) {
+      const lines = okResults.map(r => {
+        const names = r.matched.map(m => m.vllmModelId).join(', ');
+        const ctx = r.matched[0]?.maxModelLen
+          ? ` (${r.matched[0].maxModelLen.toLocaleString()} ctx)`
           : '';
-        vscode.window.showInformationMessage(`✓ ${serverUrl} — ${matchNames}${ctx}`);
-      } else if (status === 'no-match') {
-        let msg = `✗ ${serverUrl} — reachable but no configured model is hosted there`;
-        if (result.serverModelList && result.serverModelList.length > 0) {
-          const serverNames = result.serverModelList.map(m => m.id).join(', ');
-          msg += `\n  Server hosts: ${serverNames}`;
+        return `✓ ${r.serverUrl} — ${names}${ctx}`;
+      });
+      vscode.window.showInformationMessage(
+        lines.length === 1 ? lines[0] : `Reachable servers:\n${lines.join('\n')}`
+      );
+    }
+
+    // 3b. ONE failure popup — every unreachable/auth-failed server together.
+    if (errResults.length > 0) {
+      const lines = errResults.map(r => {
+        if (!r.serverUrl) {
+          // No-serverUrl configs — one line each, since each is its own "server".
+          return r.modelConfigs
+            .map(c => `✗ ${c.displayName || c.id || resolveVllmModelId(c) || '(unnamed)'} — no serverUrl configured`)
+            .join('\n');
         }
-        vscode.window.showWarningMessage(msg);
-      } else {
-        // error (includes no-serverUrl)
-        if (serverUrl) {
-          let msg = `✗ ${serverUrl} — ${errorMessage}`;
-          if (result.modelConfigs.length > 1) {
-            const modelNames = result.modelConfigs
-              .map(m => m.displayName || m.id || resolveVllmModelId(m) || '(unnamed)')
-              .join(', ');
-            msg += `\n  Models: ${modelNames}`;
-          }
-          vscode.window.showWarningMessage(msg);
-        } else {
-          // No-serverUrl case: one popup per config (each is its own "server")
-          for (const cfg of result.modelConfigs) {
-            const id = cfg.displayName || cfg.id || resolveVllmModelId(cfg) || '(unnamed)';
-            vscode.window.showWarningMessage(`✗ ${id} — no serverUrl configured`);
-          }
+        let line = `✗ ${r.serverUrl} — ${r.errorMessage}`;
+        if (r.modelConfigs.length > 1) {
+          const modelNames = r.modelConfigs
+            .map(m => m.displayName || m.id || resolveVllmModelId(m) || '(unnamed)')
+            .join(', ');
+          line += `\n  Models: ${modelNames}`;
         }
+        return line;
+      });
+      vscode.window.showWarningMessage(
+        lines.length === 1 ? lines[0] : `Unreachable servers:\n${lines.join('\n')}`
+      );
+    }
+
+    // 3c. ONE hint for reachable servers that host models nobody configured.
+    //    The server is fine; the user just has unconfigured models to adopt.
+    if (noMatchResults.length > 0) {
+      const unconfiguredCount = noMatchResults.reduce(
+        (sum, r) => sum + (r.serverModelList?.length ?? 0),
+        0
+      );
+      const configurePick = await vscode.window.showWarningMessage(
+        `${noMatchResults.length} reachable server(s) host ${unconfiguredCount} model(s) not configured in settings.json. Configure them in Server Settings to use them in Copilot.`,
+        'Open Server Settings'
+      );
+      if (configurePick) {
+        await vscode.commands.executeCommand('vllm-copilot.serverSettings.focus');
       }
     }
 
     // ── 4. Post-check corrective actions ──
 
-    // 4a. For 'no-match' servers: offer corrective action per server.
-    const noMatchResults = serverResults.filter(
-      r => r.status === 'no-match' && r.serverModelList && r.serverModelList.length > 0
-    );
-    for (const result of noMatchResults) {
-      await handleNoMatchServer(result);
-    }
+    // 4a. Unreachable servers: network check + diagnostic offer (see 4b).
+    // No per-server "configure now" wizard here — the consolidated 3c hint
+    // (Open Server Settings) is the single place users adopt unconfigured models.
 
     // 4b. For errored servers: network check + diagnostic offer.
     if (anyFailure) {
@@ -384,139 +401,6 @@ export function registerTestAndRefreshModelsCommand(
     // Clear cached models so the provider re-fetches on next use.
     provider.clearCache();
   });
-}
-
-/**
- * Handle a no-match server: offer to pick a model (or auto-configure)
- * and update an existing config or add a new one.
- */
-async function handleNoMatchServer(result: ServerTestResult): Promise<void> {
-  // Offer Pick Model or Auto-Configure.
-  const method = await vscode.window.showWarningMessage(
-    `✗ ${result.serverUrl} — configure a model now?`,
-    'Pick Model',
-    'Auto-Configure',
-    'Skip'
-  );
-  if (method === 'Skip' || !method) return;
-
-  const serverModels = result.serverModelList!;
-  let chosen: string | undefined;
-  if (serverModels.length === 1) {
-    chosen = serverModels[0].id;
-  } else {
-    chosen = await pickModelFromServer(
-      serverModels,
-      result.serverUrl,
-      method === 'Auto-Configure' ? 'Select model to auto-configure' : 'Select a model to add'
-    );
-  }
-  if (!chosen) return;
-
-  try {
-    const firstCfg = result.modelConfigs[0];
-    const { requestHeaders } = firstCfg ? resolveServerConfig(firstCfg) : { requestHeaders: {} };
-
-    const parkedConfigs = result.parked.map(p => p.config);
-    let configToUpdate: ModelConfig | undefined;
-    if (parkedConfigs.length === 1) {
-      configToUpdate = parkedConfigs[0];
-    } else if (parkedConfigs.length > 1) {
-      const whichConfig = await vscode.window.showQuickPick(
-        parkedConfigs.map(c => ({
-          label: c.displayName || c.id || resolveVllmModelId(c) || '(unnamed)',
-          description: resolveVllmModelId(c) || '(no model ID)',
-          config: c,
-        })),
-        { placeHolder: 'Which existing config should point to the new model?' }
-      );
-      configToUpdate = whichConfig?.config;
-    }
-
-    if (configToUpdate) {
-      await updateExistingConfig(
-        configToUpdate, chosen, result.serverUrl, requestHeaders, method === 'Auto-Configure'
-      );
-    } else {
-      await addNewConfig(chosen, result.serverUrl, requestHeaders, method === 'Auto-Configure');
-    }
-  } catch (saveErr) {
-    vscode.window.showErrorMessage(
-      `Failed to save model config: ${describeError(saveErr)}`
-    );
-  }
-}
-
-/**
- * Update an existing model config's vllmModelId in place.
- * Optionally runs auto-configure (HF metadata) first.
- */
-async function updateExistingConfig(
-  config: ModelConfig,
-  chosen: string,
-  serverUrl: string,
-  requestHeaders: Record<string, string>,
-  autoConfigure: boolean,
-): Promise<void> {
-  if (autoConfigure) {
-    const acResult = await autoConfigureModel(chosen, serverUrl, requestHeaders);
-    const merged: ModelConfig = {
-      ...acResult.modelConfig,
-      id: config.id,
-      vllmModelId: chosen,
-      serverUrl,
-      displayName: config.displayName,
-      requestHeaders: Object.keys(requestHeaders).length > 0 ? requestHeaders : config.requestHeaders,
-      systemMessageReplacementsFile: config.systemMessageReplacementsFile,
-    };
-    await saveModelConfig(merged);
-    vscode.window.showInformationMessage(
-      `Configured "${chosen}" with HF metadata and saved to existing config.`
-    );
-  } else {
-    const updated: ModelConfig = { ...config, vllmModelId: chosen };
-    await saveModelConfig(updated);
-    vscode.window.showInformationMessage(
-      `Updated "${config.displayName || config.id || chosen}" → "${chosen}".`
-    );
-  }
-}
-
-/**
- * Add a new model config from a server (no existing config to update).
- * Optionally runs auto-configure (HF metadata) first.
- */
-async function addNewConfig(
-  chosen: string,
-  serverUrl: string,
-  requestHeaders: Record<string, string>,
-  autoConfigure: boolean,
-): Promise<void> {
-  if (autoConfigure) {
-    const acResult = await autoConfigureModel(chosen, serverUrl, requestHeaders);
-    // `autoConfigureModel` seeds id = wire model id; override with the composite
-    // id so the same model on two servers stays distinct (id must be unique).
-    const merged: ModelConfig = {
-      ...acResult.modelConfig,
-      id: buildModelId(serverUrl, chosen),
-      vllmModelId: chosen,
-      serverUrl,
-      ...(Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {}),
-    };
-    await saveModelConfig(merged);
-    vscode.window.showInformationMessage(
-      `Configured "${chosen}" with HF metadata and saved as new entry.`
-    );
-  } else {
-    const newConfig: ModelConfig = {
-      id: buildModelId(serverUrl, chosen),
-      vllmModelId: chosen,
-      serverUrl,
-      ...(Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {}),
-    };
-    await saveModelConfig(newConfig);
-    vscode.window.showInformationMessage(`Added "${chosen}" on ${serverUrl}.`);
-  }
 }
 
 /**

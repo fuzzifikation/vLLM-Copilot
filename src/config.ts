@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import type { WireStructuredOutputConfig } from './types.js';
 
@@ -157,6 +158,24 @@ export function resolveModelSettings(override: ModelConfig | undefined): Resolve
  */
 export function resolveVllmModelId(override: ModelConfig | undefined): string | undefined {
   return override?.vllmModelId || override?.id;
+}
+
+/**
+ * Resolve a (possibly relative) file path against the first workspace folder.
+ *
+ * Single shared implementation for `systemMessageReplacementsFile` resolution
+ * (used by {@link provider} `loadReplacements` and
+ * `personalityStore.resolveActivePersonality`). `path.resolve` handles every
+ * case in one call:
+ * - absolute path → returned normalized
+ * - relative path + open workspace → joined against the first workspace root
+ * - relative path + no workspace → resolved against the process cwd (Node default)
+ *
+ * Keeping this in one place means the two call sites can never drift.
+ */
+export function resolveWorkspaceRelativePath(value: string): string {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+  return path.resolve(root, value);
 }
 
 /**
