@@ -24,7 +24,6 @@ Dashboard tree items, deep-dive webview, and formatting helpers lack tests. `Met
 
 ## Code Smells
 
-- **`type PersonalityPick` declared inside the command body** — flagged in the PR #5 review; harmless, but should be hoisted to module scope the next time `commands.ts` is touched.
 - **Duplicated workspace-root path resolution** — `provider.loadReplacements` and `personalityStore.resolveActivePersonality` both reimplement "resolve a relative `systemMessageReplacementsFile` against the first workspace folder". They must stay in sync; extract a shared helper.
 - **Two divergent `saveModelConfig` implementations** — see the P? entry under Maintainability; the merge-strategy difference is the smell, `normalizeModelEntry` already de-duplicates the clear semantics.
 

@@ -54,6 +54,18 @@ interface ServerGroup {
 }
 
 /**
+ * A personality option in the Set Model Personality quick pick (step 2/2).
+ * Hoisted to module scope so the picker builder and the apply path share one type.
+ */
+interface PersonalityPick {
+  label: string;
+  description?: string;
+  clear?: boolean;
+  sourcePath?: string;
+  kind?: vscode.QuickPickItemKind;
+}
+
+/**
  * Build a deterministic fingerprint for a server from its URL and auth headers.
  * Two model configs that point to the same server (same URL + same headers)
  * produce the same fingerprint and are tested together.
@@ -715,14 +727,6 @@ export function registerSetModelPersonalityCommand(
 
       // Step 2: discover and pick the personality (bundled + global)
       const presets = await discoverPersonalities(context);
-
-      type PersonalityPick = {
-        label: string;
-        description?: string;
-        clear?: boolean;
-        sourcePath?: string;
-        kind?: vscode.QuickPickItemKind;
-      };
 
       // Resolve which option is currently active from the model's replacements file.
       // A custom file that isn't a known personality still counts as "not default".
