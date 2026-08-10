@@ -47,27 +47,33 @@ function assertValidIdentity(configId: string | undefined, serverUrl: string | u
  * previous value; `''` clears it via `normalizeModelEntry`).
  *
  * On no match the entry is appended with `id` verbatim — deriving a composite
- * id is the caller's job. Callers' objects are never mutated.
+ * id is the caller's job. Callers' objects are never mutated. Undefined-valued
+ * fields are stripped before the write, so undefined is never persisted — an
+ * explicit `{ displayName: undefined }` replacement stores no `displayName`
+ * key at all (the value is not preserved, unlike patch: replace replaces the
+ * field; the invariant is that `undefined` is never written to config, matching
+ * 3c's treatment of patch mode. JSON callers never send undefined today).
  *
  * This is a pure store operation: it performs no toasts, no cache invalidation,
  * and no BYOK setup. Side effects belong to the callers.
  */
 export async function replaceModelConfig(entry: IdentifiedModelConfig): Promise<SaveModelResult> {
-  const configId = assertValidIdentity(resolveConfigId(entry), entry.serverUrl);
+  const clean = stripUndefined(entry as unknown as Record<string, unknown>) as unknown as IdentifiedModelConfig;
+  const configId = assertValidIdentity(resolveConfigId(clean), clean.serverUrl);
 
   const config = vscode.workspace.getConfiguration('vllm-copilot');
   const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
-  const useIdx = findModelConfigIndex(existing, configId, entry.serverUrl);
+  const useIdx = findModelConfigIndex(existing, configId, clean.serverUrl);
 
   if (useIdx >= 0) {
     const prev = existing[useIdx];
     const replacementsFile =
-      entry.systemMessageReplacementsFile !== undefined
-        ? entry.systemMessageReplacementsFile
+      clean.systemMessageReplacementsFile !== undefined
+        ? clean.systemMessageReplacementsFile
         : prev.systemMessageReplacementsFile;
     const merged: ModelConfig = {
-      ...entry,
-      requestHeaders: entry.requestHeaders ?? prev.requestHeaders,
+      ...clean,
+      requestHeaders: clean.requestHeaders ?? prev.requestHeaders,
       systemMessageReplacementsFile: replacementsFile,
     };
     const next = existing.slice();
@@ -76,7 +82,7 @@ export async function replaceModelConfig(entry: IdentifiedModelConfig): Promise<
     return { model: next[useIdx], created: false };
   }
 
-  const next = existing.concat(normalizeModelEntry({ ...entry }));
+  const next = existing.concat(normalizeModelEntry({ ...clean }));
   await config.update('models', next, vscode.ConfigurationTarget.Global);
   return { model: next[next.length - 1], created: true };
 }
@@ -91,10 +97,10 @@ export interface ModelIdentity {
 }
 
 /**
- * Remove keys whose value is `undefined`. Used by patch mode so an explicit
- * `{ key: undefined }` cannot overwrite a stored value (JSON has no undefined;
- * a future caller could still pass one). Identity keys are already excluded by
- * the `Omit` type boundary.
+ * Remove keys whose value is `undefined`. Used by patch and replace modes so an
+ * explicit `{ key: undefined }` cannot overwrite a stored value (JSON has no
+ * undefined; a future caller could still pass one). Identity keys are excluded
+ * by the type boundaries (`Omit` in patch, required identity in replace).
  */
 function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

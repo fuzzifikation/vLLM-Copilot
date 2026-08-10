@@ -295,6 +295,30 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     ).rejects.toThrow(/identity/);
     expect(updateSpy).not.toHaveBeenCalled();
   });
+
+  it('3d: never persists undefined-valued fields on the replace path (no undefined displayName key)', async () => {
+    existingConfig = [baseConfig({ displayName: 'Stored Name' })];
+
+    // Replace mode replaces displayName wholesale — unlike patch it does NOT
+    // preserve the previous value. The invariant under test is the narrower,
+    // correct one: undefined is never written to config. The key must be
+    // absent, not present-with-undefined.
+    await replaceModelConfig(baseConfig({ displayName: undefined }));
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    expect('displayName' in stored[0]).toBe(false);
+  });
+
+  it('3d: strips undefined-valued fields on the append path too (brand-new entry)', async () => {
+    await replaceModelConfig(
+      baseConfig({ id: 'brand-new', vllmModelId: 'brand-new', displayName: undefined }),
+    );
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    expect('displayName' in stored[0]).toBe(false);
+  });
 });
 
 describe('patchModelConfig (configStore) — patch semantics', () => {
