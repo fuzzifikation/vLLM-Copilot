@@ -97,8 +97,10 @@ export interface ModelIdentity {
  * present in `updates` overwrite the existing entry; fields absent are
  * preserved (headers, family, defaults, transport settings all survive — the
  * reverse of replace-mode). `''` clears `systemMessageReplacementsFile` via
- * `normalizeModelEntry`; `undefined`-valued keys are stripped structurally
- * because `id`/`serverUrl` cannot appear in `updates`.
+ * `normalizeModelEntry`. Undefined-valued keys in `updates` spread through
+ * unchanged (a `{ displayName: undefined }` patch would overwrite the stored
+ * value) — the webview never sends them today, and explicit undefined-stripping
+ * is deferred hardening (step 3c).
  *
  * On no match a new entry is created with a composite id derived from the wire
  * id: `wireId = updates.vllmModelId || identity.id`, stored id =

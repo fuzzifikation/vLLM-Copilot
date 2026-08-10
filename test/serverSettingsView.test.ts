@@ -384,6 +384,32 @@ describe('ServerSettingsViewProvider', () => {
       expect(clearCache).toHaveBeenCalled();
       expect(refreshSpy).toHaveBeenCalled();
     });
+
+    it('P2: a rejected persistence suppresses clearCache, refresh, and the success toast', async () => {
+      const clearCache = vi.fn();
+      const providerWithCache = new ServerSettingsViewProvider(mockContext, mockOutputChannel, clearCache);
+      const refreshSpy = vi.spyOn(providerWithCache as any, 'refreshWebview').mockResolvedValue(undefined);
+
+      vscode.workspace._mockConfig = {
+        get: () => [],
+        update: vi.fn().mockRejectedValue(new Error('write failed')),
+      };
+
+      await expect(
+        (providerWithCache as any).saveModelConfig({
+          id: 'new-model',
+          vllmModelId: 'new-model',
+          serverUrl: 'http://localhost:8000',
+          displayName: 'New Model',
+        }),
+      ).rejects.toThrow('write failed');
+
+      // The handler awaits persistence first, so a failed write must not fire
+      // cache invalidation, a webview refresh, or a "saved" success toast.
+      expect(clearCache).not.toHaveBeenCalled();
+      expect(refreshSpy).not.toHaveBeenCalled();
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+    });
   });
 
   describe('applyPersonality', () => {
