@@ -28,9 +28,14 @@ export default defineConfig({
         'src/diagnostics.ts',     // Subprocess exec (PowerShell/curl/openssl), network orchestration
         'src/dashboard.ts',       // Webview/tree UI, known-bugs P2, deferred
         'src/deepDiveView.ts',    // Webview view provider, known-bugs P2, deferred
-        // Public command-registration facade (sibling of commands.ts). Its
-        // children (presets/hfDiscovery/serverAuth/addServerFlow/byok) are
-        // extracted and measured individually during the refactor.
+        // src/autoConfig.ts — NOT yet a thin facade: grab-bag of 17 exports
+        // (presets, header parsing, BYOK, Add flow, ~1070 lines). Excluded
+        // temporarily so the step-0 gate is truthful, but this hides testable
+        // logic (stripJsonComments/parseHeadersInput/mergePresetWithUserConfig/
+        // findPresetForModel already have direct tests that are NOT counted).
+        // Step 4 extracts each responsibility into a measured module and
+        // narrows this exclusion to the true command-registration facade.
+        // See refactor-plan §4.0 (tracked).
         'src/autoConfig.ts',
       ],
       thresholds: {
