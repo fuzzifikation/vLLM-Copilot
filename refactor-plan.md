@@ -278,6 +278,7 @@ Coverage inclusion is ownership-based, not path-preservation-based:
 - In the same commit that creates an extracted module, run `npm run test:coverage`. Add focused tests until the module and aggregate gate are healthy.
 - Exclude a new module only when it remains a genuinely VS Code/Extension Host-bound surface, document the reason beside the exclusion, and review the aggregate thresholds in the same commit. A folder-wide exclusion is not allowed merely because the code originated in an excluded facade.
 - Keep thin root facades excluded only while they remain integration surfaces; extracted pure/orchestration units are measured.
+- **Tracked (step 4): `src/autoConfig.ts` is excluded wholesale though it is NOT yet a thin facade** — 17 exports / ~1070 lines of presets, header parsing, BYOK, and Add-flow logic. The exclusion hides testable logic (e.g. `stripJsonComments`/`parseHeadersInput`/`mergePresetWithUserConfig`/`findPresetForModel`, which already have direct tests in `test/autoConfig.test.ts` that are not counted), so the baseline looks healthier than the ownership boundaries justify. The `vitest.config.ts` comment overstates its "facade" status. Corrected naturally during step 4: extract each responsibility into a measured module, then reclassify only the true command-registration facade. Do NOT exclude extracted modules (see bullets above).
 
 ### 4.1 Coverage gap analysis (what's pinned vs not)
 
@@ -314,7 +315,7 @@ Coverage inclusion is ownership-based, not path-preservation-based:
 | 3a | ✅ Create `configStore.ts`; migrate replace callers; move BYOK setup to both Add-model success paths and await it after persistence | focused store/save + Add/BYOK ordering tests; compile + full suite green — `configStore.ts` + `persistAddedModel` (`test/configStore.test.ts`, `test/persistAddedModel.test.ts`); 452 suite green |
 | 3b | Migrate the webview to `patchModelConfig`; move toast/cache/refresh to the handler | focused store/view tests + full suite green |
 | 3c | Add store hardening tests (undefined stripping, side-effect boundary, immutability, identity validation) | each new test red before its implementation, then green; full suite green |
-| 4 | Extract presets, model discovery, auth, BYOK, add-server, and auto-configure flows one responsibility at a time; retain root facade | focused tests + compile + coverage after each extraction; full suite at phase end |
+| 4 | Extract presets, model discovery, auth, BYOK, add-server, and auto-configure flows one responsibility at a time; retain root facade | focused tests + compile + coverage after each extraction; full suite at phase end; **narrow the `src/autoConfig.ts` coverage exclusion to the true facade as logic moves out (see §4.0 tracked)** |
 | 5 | Extract instance-owned system-message pipeline; migrate capture/replacement tests off private methods | focused pipeline/provider tests + compile + coverage |
 | 6 | Extract request builder and stream consumer; remove corresponding private test access in the same commits | focused unit/provider tests + compile + coverage |
 | 7 | Extract discovery, post-stream diagnostics, and orchestration last | all provider tests + compile + full suite + coverage; no provider private-member access in tests |
