@@ -569,8 +569,8 @@ function validateRequestParams(params: Record<string, unknown> | undefined, labe
  * wire id, since several presets may share a `vllmModelId`. Uses normalized URL
  * comparison. Returns -1 if no match is found.
  *
- * Shared by both {@link saveModelConfig} implementations (autoConfig.ts and
- * serverSettingsView.ts) so matching logic stays in one place.
+ * Shared by {@link replaceModelConfig} (configStore.ts) and the webview's patch
+ * path (serverSettingsView.ts) so matching logic stays in one place.
  */
 export function findModelConfigIndex(
   models: ModelConfig[],
@@ -590,9 +590,9 @@ export function findModelConfigIndex(
  * An absent key is left alone — on merge that preserves the previous value, which is what
  * makes "undefined preserves, '' clears" work in both save paths.
  *
- * Shared by both {@link saveModelConfig} implementations (autoConfig.ts and
- * serverSettingsView.ts) so the clear semantics live in one place. Mutates and returns
- * the entry (callers always pass a freshly-built object).
+ * Shared by {@link replaceModelConfig} (configStore.ts) and the webview's patch
+ * path (serverSettingsView.ts) so the clear semantics live in one place. Mutates
+ * and returns the entry (callers always pass a freshly-built object).
  */
 export function normalizeModelEntry(entry: ModelConfig): ModelConfig {
   if (!entry.systemMessageReplacementsFile) {

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from './config.js';
-import { buildEndpoint, buildAuthHeaders, resolveServerConfig, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, normalizeModelId, modelMatchKey, findModelConfigIndex, normalizeModelEntry } from './config.js';
+import { buildEndpoint, buildAuthHeaders, resolveServerConfig, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, normalizeModelId, modelMatchKey } from './config.js';
+import { replaceModelConfig, type IdentifiedModelConfig } from './configStore.js';
 import { describeError } from './messageConverter.js';
 import { jsonrepair } from 'jsonrepair';
 
@@ -527,55 +528,22 @@ export async function pickModelFromServer(
 }
 
 /**
- * Save the auto-configured model config into the user's vllm-copilot.models setting.
- * Replaces the entire entry for this model (user is prompted before overwriting).
- * Exported so `testAndRefreshModels` can reuse the same dedup + persistence
- * path when correcting a mismatched `vllmModelId` in place.
+ * Persist a newly added model and ensure the BYOK utility-model default so agent
+ * mode works once the model becomes selectable. Only the Add paths call this
+ * (discovered/preset and Keep-Anyway stub) — auto-configure and personality
+ * updates must NOT re-run the BYOK write.
+ *
+ * The BYOK write is awaited AFTER the model write resolves: a failed save never
+ * starts the BYOK bootstrap, and the write cannot race the model persistence
+ * (the previous fire-and-forget call did both).
  */
-export async function saveModelConfig(newConfig: ModelConfig): Promise<void> {
-  const config = vscode.workspace.getConfiguration('vllm-copilot');
-  const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
-
-  // The extension key is `id` (see resolveConfigId). Matching by id means two
-  // presets that share a `vllmModelId` (same model on different servers, or
-  // distinct presets) are updated independently. The vllmModelId fallback only
-  // covers legacy hand-written entries without an `id`.
-  const configId = resolveConfigId(newConfig);
-  const newServer = newConfig.serverUrl;
-  const useIdx = configId && newServer
-    ? findModelConfigIndex(existing, configId, newServer)
-    : -1;
-  if (useIdx >= 0) {
-    // Preserve ONLY infrastructure/personal fields that the preset cannot know.
-    // Everything model-specific (modelModes, family, capabilities, defaultParams,
-    // token budgets, transport settings) is overwritten by the preset — that's the
-    // whole point: the preset configures the model as an "expert" would, and the
-    // user keeps their server URL, auth headers, and personal replacements file.
-    //
-    // systemMessageReplacementsFile: undefined preserves the previous value
-    // (auto-configure must not wipe a user's personality). Empty string is an
-    // explicit clear from Set Model Personality → Default.
-    const prev = existing[useIdx];
-    const replacementsFile =
-      newConfig.systemMessageReplacementsFile !== undefined
-        ? newConfig.systemMessageReplacementsFile
-        : prev.systemMessageReplacementsFile;
-    const merged: ModelConfig = {
-      ...newConfig,
-      serverUrl: newConfig.serverUrl ?? prev.serverUrl,
-      requestHeaders: newConfig.requestHeaders ?? prev.requestHeaders,
-      systemMessageReplacementsFile: replacementsFile,
-    };
-    existing[useIdx] = normalizeModelEntry(merged);
-  } else {
-    // Copy before mutating so callers' objects are never modified in place.
-    existing.push(normalizeModelEntry({ ...newConfig }));
-  }
-
-  await config.update('models', existing, vscode.ConfigurationTarget.Global);
-
-  // Ensure BYOK utility model default is set — idempotent, safe to call on every save.
-  ensureByokUtilityDefault();
+export async function persistAddedModel(
+  finalConfig: IdentifiedModelConfig,
+  onSaved?: () => void
+): Promise<void> {
+  await replaceModelConfig(finalConfig);
+  await ensureByokUtilityDefault();
+  onSaved?.();
 }
 
 /**
@@ -666,7 +634,7 @@ export async function configureByokUtilityModel(output: vscode.OutputChannel): P
  * branches of the Add flow so both end the same way.
  */
 async function confirmAndSaveAddedModel(
-  finalConfig: ModelConfig,
+  finalConfig: IdentifiedModelConfig,
   modelId: string,
   serverUrl: string,
   detail: string,
@@ -685,8 +653,7 @@ async function confirmAndSaveAddedModel(
   );
 
   if (action === 'Save to Settings') {
-    await saveModelConfig(finalConfig);
-    onSaved?.();
+    await persistAddedModel(finalConfig, onSaved);
     vscode.window.showInformationMessage(`Model "${modelId}" added.`);
     return true;
   } else if (action === 'Copy JSON') {
@@ -849,15 +816,14 @@ async function handleServerFailure(
   });
   if (!modelId) return true; // cancelled → stop
 
-  const finalConfig: ModelConfig = {
+  const finalConfig: IdentifiedModelConfig = {
     id: buildModelId(serverUrl, modelId),
     vllmModelId: modelId,
     serverUrl,
     ...(Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {}),
   };
 
-  await saveModelConfig(finalConfig);
-  onSaved();
+  await persistAddedModel(finalConfig, onSaved);
   output.appendLine(`[INFO] Saved stub config for "${modelId}" on ${serverUrl} — server was unreachable.`);
   vscode.window.showInformationMessage(
     `Stub saved for "${modelId}" on ${serverUrl}. Right-click → Auto-Configure when the server is reachable.`
@@ -974,7 +940,7 @@ export function registerAddServerModelCommand(
 
     // Attach the server + headers. `id` is composite ("<model> on <host>") so the
     // same model on two servers stays distinct; `vllmModelId` remains the raw wire identity.
-    const finalConfig: ModelConfig = {
+    const finalConfig: IdentifiedModelConfig = {
       ...discoveryResult.modelConfig,
       id: buildModelId(serverUrl, modelId),
       vllmModelId: modelId,
@@ -1088,7 +1054,7 @@ export function registerAutoConfigureModelCommand(
         );
         if (!discoveryResult) return;
 
-        const newConfig: ModelConfig = {
+        const newConfig: IdentifiedModelConfig = {
           ...discoveryResult.modelConfig,
           id: buildModelId(serverUrl, vllmId),
           vllmModelId: vllmId,
@@ -1189,7 +1155,11 @@ export async function applyAutoConfigUpdate(
   );
 
   if (action === 'Save') {
-    await saveModelConfig(newConfig);
+    // The auto-configure path guards identity (vllmId via resolveVllmModelId,
+    // non-blank serverUrl) before building newConfig; the store's runtime check
+    // is the backstop against a malformed write. No BYOK write here — the model
+    // already exists.
+    await replaceModelConfig(newConfig as IdentifiedModelConfig);
     onSaved?.();
     vscode.window.showInformationMessage(`Model "${vllmId}" updated.`);
   } else if (action === 'Copy JSON') {
