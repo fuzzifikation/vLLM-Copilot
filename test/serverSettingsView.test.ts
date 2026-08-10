@@ -259,6 +259,131 @@ describe('ServerSettingsViewProvider', () => {
       expect(stored).toHaveLength(1);
       expect('systemMessageReplacementsFile' in stored[0]).toBe(false);
     });
+
+    // ── Step 2: patch-mode characterization (refactor-plan §4.1 #3/#5 + side effects) ──
+    // Pins the CURRENT patch contract of serverSettingsView.saveModelConfig so the
+    // configStore unification (step 3b) cannot silently change behavior.
+
+    it('P2: preserves headers, family, defaults, and transport settings when the patch omits them', async () => {
+      const existingConfig: ModelConfig[] = [
+        {
+          id: 'test-model',
+          vllmModelId: 'test-model',
+          serverUrl: 'http://localhost:8000',
+          displayName: 'Test Model',
+          requestHeaders: { 'X-Auth': 'secret' },
+          family: 'qwen3_5',
+          defaultParams: { temperature: 0.7 },
+          defaultMode: 'balanced',
+          streamInactivityTimeout: 60000,
+          autoContinueRetries: 2,
+          maxOutputTokens: 4096,
+          modelModes: { balanced: { temperature: 0.5 } },
+        },
+      ];
+
+      vscode.workspace._mockConfig = {
+        get: (key: string) => (key === 'models' ? existingConfig : undefined),
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await (provider as any).saveModelConfig({
+        id: 'test-model',
+        vllmModelId: 'test-model',
+        serverUrl: 'http://localhost:8000',
+        displayName: 'Renamed',
+      });
+
+      const stored = vscode.workspace._mockConfig.update.mock.calls[0][1];
+      expect(stored).toHaveLength(1);
+      // Patch is a shallow merge — fields absent from the patch survive.
+      expect(stored[0]).toEqual(
+        expect.objectContaining({
+          displayName: 'Renamed',
+          requestHeaders: { 'X-Auth': 'secret' },
+          family: 'qwen3_5',
+          defaultParams: { temperature: 0.7 },
+          defaultMode: 'balanced',
+          streamInactivityTimeout: 60000,
+          autoContinueRetries: 2,
+          maxOutputTokens: 4096,
+          modelModes: { balanced: { temperature: 0.5 } },
+        }),
+      );
+    });
+
+    it('P2: replaces (not merges) requestHeaders when the patch supplies them', async () => {
+      const existingConfig: ModelConfig[] = [
+        {
+          id: 'test-model',
+          vllmModelId: 'test-model',
+          serverUrl: 'http://localhost:8000',
+          displayName: 'Test Model',
+          requestHeaders: { 'X-Old': 'value', 'X-Share': 'both' },
+        },
+      ];
+
+      vscode.workspace._mockConfig = {
+        get: (key: string) => (key === 'models' ? existingConfig : undefined),
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await (provider as any).saveModelConfig({
+        id: 'test-model',
+        vllmModelId: 'test-model',
+        serverUrl: 'http://localhost:8000',
+        requestHeaders: { 'X-New': 'value', 'X-Share': 'updated' },
+      });
+
+      const stored = vscode.workspace._mockConfig.update.mock.calls[0][1];
+      expect(stored[0].requestHeaders).toEqual({ 'X-New': 'value', 'X-Share': 'updated' });
+      expect('X-Old' in (stored[0].requestHeaders ?? {})).toBe(false);
+    });
+
+    it('P2: derives the composite id from vllmModelId when id and wire id differ (new entry)', async () => {
+      const existingConfig: ModelConfig[] = [];
+
+      vscode.workspace._mockConfig = {
+        get: (key: string) => (key === 'models' ? existingConfig : undefined),
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      // Config identity is the preset id; the wire id is the server model.
+      await (provider as any).saveModelConfig({
+        id: 'preset-a',
+        vllmModelId: 'wire-model',
+        serverUrl: 'http://a:8000',
+        displayName: 'Preset A',
+      });
+
+      const stored = vscode.workspace._mockConfig.update.mock.calls[0][1];
+      expect(stored).toHaveLength(1);
+      // buildModelId(serverUrl, vllmModelId) — the wire id wins, not updates.id.
+      expect(stored[0].id).toBe('wire-model on a:8000');
+      expect(stored[0].vllmModelId).toBe('wire-model');
+    });
+
+    it('P2: fires toast, clearCache, and refreshWebview after persistence (side-effect boundary)', async () => {
+      const clearCache = vi.fn();
+      const providerWithCache = new ServerSettingsViewProvider(mockContext, mockOutputChannel, clearCache);
+      const refreshSpy = vi.spyOn(providerWithCache as any, 'refreshWebview').mockResolvedValue(undefined);
+
+      vscode.workspace._mockConfig = {
+        get: () => [],
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await (providerWithCache as any).saveModelConfig({
+        id: 'new-model',
+        vllmModelId: 'new-model',
+        serverUrl: 'http://localhost:8000',
+        displayName: 'New Model',
+      });
+
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Settings saved for "New Model"');
+      expect(clearCache).toHaveBeenCalled();
+      expect(refreshSpy).toHaveBeenCalled();
+    });
   });
 
   describe('applyPersonality', () => {
