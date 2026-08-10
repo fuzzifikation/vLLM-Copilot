@@ -81,7 +81,7 @@ Do not batch all extractions into one squashed commit. Each responsibility moves
 **No — keep `test/` flat.** Reasons:
 - `vitest.config.ts` already includes `test/**/*.test.ts` (glob matches subfolders) — no config change needed either way.
 - Moving test files adds import edits with zero behavioral gain.
-- Several tests will span modules after the split (e.g. `saveModelConfig.test.ts` will test `configStore.ts`; `autoConfig.test.ts` will test `commands/presets.ts` + `commands/hfDiscovery.ts`). A mirrored layout would force awkward renames.
+- Several tests span modules after the split (e.g. `configStore.test.ts` tests `configStore.ts`; `autoConfig.test.ts` will test `commands/presets.ts` + `commands/hfDiscovery.ts`). A mirrored layout would force awkward renames.
 - Update imports only when a test is deliberately retargeted from a facade/private method to an extracted public unit.
 
 ---
