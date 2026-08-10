@@ -21,14 +21,27 @@ export default defineConfig({
         // Hard-to-unit-test modules: depend on VS Code APIs, subprocess, or file system.
         'src/commands.ts',        // User-facing VS Code commands (showInformationMessage, QuickPick)
         'src/sessionManager.ts',  // Subprocess (Python/SQLite), file system manipulation
+        // VS Code/subprocess orchestration surfaces (refactor-plan §2.4/§2.5:
+        // diagnostics and views are deferred, NOT split in the P1 refactor).
+        // Unit tests on these buy no behavioral protection; their logic is
+        // either deferred or surfaced as extracted, measured modules later.
+        'src/diagnostics.ts',     // Subprocess exec (PowerShell/curl/openssl), network orchestration
+        'src/dashboard.ts',       // Webview/tree UI, known-bugs P2, deferred
+        'src/deepDiveView.ts',    // Webview view provider, known-bugs P2, deferred
+        // Public command-registration facade (sibling of commands.ts). Its
+        // children (presets/hfDiscovery/serverAuth/addServerFlow/byok) are
+        // extracted and measured individually during the refactor.
+        'src/autoConfig.ts',
       ],
       thresholds: {
-        // Thresholds match current coverage of the testable files.
-        // Raise these as test coverage improves — see known-bugs.md for tracking.
-        lines: 50,
-        functions: 50,
-        branches: 43,
-        statements: 50,
+        // Truthful floors below measured coverage (see Step 0 of refactor-plan.md).
+        // Set ~10pp under the reclassified baseline so the gate catches real
+        // regressions (new untested modules) without tripping on noise. Enforced
+        // via `npm run build` so it cannot rot silently again.
+        lines: 60,
+        functions: 60,
+        branches: 50,
+        statements: 60,
       },
     },
   },

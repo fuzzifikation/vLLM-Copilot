@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Set Model Personality no longer appends a duplicate entry for server-less models** — a model without a `serverUrl` can't be matched by the config store (`findModelConfigIndex` needs both id and serverUrl) and fell through to the append branch, writing a duplicate into `settings.json`. The command now skips such models with a warning. Guarded by `personalityApplicableTo` with a regression test.
+
 ## v1.20.8 — Test & Refresh consolidation & path-resolution dedup
 
 ### Fixed

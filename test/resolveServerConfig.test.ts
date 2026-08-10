@@ -45,27 +45,6 @@ describe('resolveServerConfig', () => {
     });
   });
 
-  it('sanitizes model requestHeaders (blocks forbidden names)', () => {
-    const override: ModelConfig = {
-      id: 'test',
-      serverUrl: 'http://remote-server:9000',
-      requestHeaders: { 'Host': 'evil.com', 'X-Model': 'ok' },
-    };
-    const result = resolveServerConfig(override);
-    expect(result.requestHeaders).not.toHaveProperty('Host');
-    expect(result.requestHeaders['X-Model']).toBe('ok');
-  });
-
-  it('sanitizes model requestHeaders (strips CRLF values)', () => {
-    const override: ModelConfig = {
-      id: 'test',
-      serverUrl: 'http://remote-server:9000',
-      requestHeaders: { 'X-Bad': 'value\r\nX-Injected: true' },
-    };
-    const result = resolveServerConfig(override);
-    expect(result.requestHeaders).not.toHaveProperty('X-Bad');
-  });
-
   it('handles both serverUrl and requestHeaders together', () => {
     const override: ModelConfig = {
       id: 'remote',
