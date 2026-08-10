@@ -5,7 +5,8 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getConfig, buildEndpoint, findModelConfigIndex, buildModelId, normalizeModelEntry, type ModelConfig } from './config.js';
+import { getConfig, buildEndpoint, findModelConfigIndex, type ModelConfig } from './config.js';
+import { patchModelConfig, type ModelIdentity } from './configStore.js';
 import {
   discoverPersonalities,
   ensureGlobalPersonality,
@@ -307,40 +308,26 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       .update('systemMessageCapture', enabled, vscode.ConfigurationTarget.Global);
   }
 
+  /**
+   * Persist a model edit from the webview. Identity is extracted here — `id` and
+   * `serverUrl` are lookup keys, never patchable properties — and delegated to
+   * `configStore.patchModelConfig`, which owns the field-merge / composite-id
+   * logic. All side effects (log, cache clear, webview refresh, toast) run in
+   * this handler AFTER the store write succeeds, so the store stays pure.
+   */
   private async saveModelConfig(updates: Partial<ModelConfig>): Promise<void> {
-    const cfg = vscode.workspace.getConfiguration('vllm-copilot');
-    const models: ModelConfig[] = cfg.get<ModelConfig[]>('models') || [];
-    const targetId = updates.id || updates.vllmModelId || '';
-    const targetServer = updates.serverUrl || '';
-    const idx = targetId && targetServer
-      ? findModelConfigIndex(models, targetId, targetServer)
-      : -1;
-    if (idx < 0) {
-      // New model entry - add to config. The webview stub carries the raw server
-      // id as both id and vllmModelId; every other creation path derives the
-      // composite id via buildModelId so the same model on two servers stays
-      // distinct. Follow that convention here too — a raw id would collide.
-      const vllmModelId = updates.vllmModelId || targetId;
-      // Empty string is the explicit clear signal — store as an absent key
-      // (matches configStore.replaceModelConfig via normalizeModelEntry), not a
-      // lingering `""`.
-      models.push(normalizeModelEntry({
-        ...(updates as ModelConfig),
-        vllmModelId,
-        id: buildModelId(targetServer, vllmModelId),
-        serverUrl: targetServer,
-      }));
-    } else {
-      const existingEntry = models[idx];
-      // An explicit `''` must remove the key even if the existing entry had a
-      // value (merge would otherwise resurrect it via `...existingEntry`); an
-      // absent key preserves the existing value.
-      models[idx] = normalizeModelEntry({ ...existingEntry, ...updates } as ModelConfig);
-    }
-    await cfg.update('models', models, vscode.ConfigurationTarget.Global);
-    vscode.window.showInformationMessage(`Settings saved for "${updates.displayName || targetId}"`);
-    this.outputChannel.appendLine(`[SETTINGS] Saved config for ${targetId}`);
+    const { id, serverUrl, ...rest } = updates;
+    const identity: ModelIdentity = {
+      id: id || updates.vllmModelId || '',
+      serverUrl: serverUrl || '',
+    };
+
+    const result = await patchModelConfig(identity, rest);
+    this.outputChannel.appendLine(`[SETTINGS] Saved config for ${identity.id}`);
     this.clearCache?.();
     this.refreshWebview();
+    vscode.window.showInformationMessage(
+      `Settings saved for "${result.model.displayName || identity.id}"`
+    );
   }
 }
