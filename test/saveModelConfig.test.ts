@@ -176,4 +176,97 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
     expect(stored).toHaveLength(2); // distinct id → new entry, not a merge into preset-a
     expect(stored.map(m => m.id)).toEqual(['preset-a', 'preset-b']);
   });
+
+  // ── Step 1: replace-mode characterization (refactor-plan §4.1 #1/#2/#4) ──
+  // These pin the CURRENT replace contract of autoConfig.saveModelConfig so the
+  // configStore unification (step 3a) cannot silently change behavior.
+
+  it('preserves requestHeaders when the new config omits them', async () => {
+    existingConfig = [
+      baseConfig({ requestHeaders: { 'X-Existing': 'keep-me' } }),
+    ];
+
+    await saveModelConfig(baseConfig({ displayName: 'Renamed' }));
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].requestHeaders).toEqual({ 'X-Existing': 'keep-me' });
+  });
+
+  it('replaces (not merges) requestHeaders when the new config supplies them', async () => {
+    existingConfig = [
+      baseConfig({ requestHeaders: { 'X-Old': 'value', 'X-Share': 'both' } }),
+    ];
+
+    await saveModelConfig(
+      baseConfig({ requestHeaders: { 'X-New': 'value', 'X-Share': 'updated' } }),
+    );
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    // Supplied headers replace the previous object wholesale — no key merging.
+    expect(stored[0].requestHeaders).toEqual({ 'X-New': 'value', 'X-Share': 'updated' });
+    expect('X-Old' in (stored[0].requestHeaders ?? {})).toBe(false);
+  });
+
+  it('drops stale model-specific fields absent from the replacement config', async () => {
+    existingConfig = [
+      baseConfig({
+        modelModes: [{ id: 'balanced', reasoningEffort: 'medium' }],
+        family: 'qwen',
+        maxOutputTokens: 8192,
+      }),
+    ];
+
+    // Replacement carries only infra/personal fields — no modelModes/family.
+    await saveModelConfig(baseConfig({ displayName: 'Reconfigured' }));
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].displayName).toBe('Reconfigured');
+    expect('modelModes' in stored[0]).toBe(false);
+    expect('family' in stored[0]).toBe(false);
+    expect('maxOutputTokens' in stored[0]).toBe(false);
+  });
+
+  it('preserves infra/personal fields (serverUrl, requestHeaders, replacements) while dropping stale model fields', async () => {
+    existingConfig = [
+      baseConfig({
+        serverUrl: 'http://localhost:8000',
+        requestHeaders: { 'X-Auth': 'secret' },
+        systemMessageReplacementsFile: '.vllm/prompt-replacements-spartan.json',
+        family: 'llama',
+        modelModes: [{ id: 'fast', reasoningEffort: 'low' }],
+      }),
+    ];
+
+    // Replacement is the preset path: infra/personal survive, model fields drop.
+    await saveModelConfig(baseConfig({ displayName: 'Preset Applied' }));
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].serverUrl).toBe('http://localhost:8000');
+    expect(stored[0].requestHeaders).toEqual({ 'X-Auth': 'secret' });
+    expect(stored[0].systemMessageReplacementsFile).toBe(
+      '.vllm/prompt-replacements-spartan.json',
+    );
+    expect('family' in stored[0]).toBe(false);
+    expect('modelModes' in stored[0]).toBe(false);
+  });
+
+  it('uses the id as passed when creating a new entry (no composite-id derivation)', async () => {
+    const newModel = baseConfig({
+      id: 'caller-supplied-id',
+      vllmModelId: 'wire-model',
+      serverUrl: 'http://localhost:8000',
+    });
+
+    await saveModelConfig(newModel);
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    // The caller's explicit id is preserved verbatim; the store must not
+    // derive a composite "<model> on <host>" id on the replace path.
+    expect(stored[0].id).toBe('caller-supplied-id');
+  });
 });
