@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from './config.js';
-import { findModelConfigIndex, normalizeModelEntry, resolveConfigId } from './config.js';
+import { buildModelId, findModelConfigIndex, normalizeModelEntry, resolveConfigId } from './config.js';
 
 /**
  * Result of a store write. `model` is the entry exactly as persisted.
@@ -79,4 +79,61 @@ export async function replaceModelConfig(entry: IdentifiedModelConfig): Promise<
   const next = existing.concat(normalizeModelEntry({ ...entry }));
   await config.update('models', next, vscode.ConfigurationTarget.Global);
   return { model: next[next.length - 1], created: true };
+}
+
+/**
+ * Immutable identity used by the patch operation. `id` and `serverUrl` are the
+ * lookup keys the webview keys everything by; they are NOT patchable properties.
+ */
+export interface ModelIdentity {
+  id: string;
+  serverUrl: string;
+}
+
+/**
+ * Patch-mode persistence — a shallow field-level merge, the webview's contract.
+ *
+ * `identity.id`/`identity.serverUrl` are the immutable lookup keys. Fields
+ * present in `updates` overwrite the existing entry; fields absent are
+ * preserved (headers, family, defaults, transport settings all survive — the
+ * reverse of replace-mode). `''` clears `systemMessageReplacementsFile` via
+ * `normalizeModelEntry`; `undefined`-valued keys are stripped structurally
+ * because `id`/`serverUrl` cannot appear in `updates`.
+ *
+ * On no match a new entry is created with a composite id derived from the wire
+ * id: `wireId = updates.vllmModelId || identity.id`, stored id =
+ * `buildModelId(identity.serverUrl, wireId)` — so the same model on two servers
+ * stays distinct, and when config identity and `updates.vllmModelId` differ the
+ * wire id wins. Callers' objects are never mutated.
+ *
+ * Pure store operation: no toasts, no cache invalidation, no refresh — the
+ * handler owns those side effects.
+ */
+export async function patchModelConfig(
+  identity: ModelIdentity,
+  updates: Omit<Partial<ModelConfig>, 'id' | 'serverUrl'>
+): Promise<SaveModelResult> {
+  const configId = assertValidIdentity(identity.id, identity.serverUrl);
+
+  const config = vscode.workspace.getConfiguration('vllm-copilot');
+  const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+  const useIdx = findModelConfigIndex(existing, configId, identity.serverUrl);
+
+  if (useIdx >= 0) {
+    const next = existing.slice();
+    next[useIdx] = normalizeModelEntry({ ...existing[useIdx], ...updates } as ModelConfig);
+    await config.update('models', next, vscode.ConfigurationTarget.Global);
+    return { model: next[useIdx], created: false };
+  }
+
+  const wireId = updates.vllmModelId || configId;
+  const entry = normalizeModelEntry({
+    ...(updates as ModelConfig),
+    vllmModelId: wireId,
+    id: buildModelId(identity.serverUrl, wireId),
+    serverUrl: identity.serverUrl,
+  });
+  const next = existing.concat(entry);
+  await config.update('models', next, vscode.ConfigurationTarget.Global);
+  return { model: entry, created: true };
 }

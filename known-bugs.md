@@ -14,9 +14,6 @@ Do not bump version without asking.
 ### P2 - Untested data layer
 Dashboard tree items and deep-dive webview lack tests. `MetricsParser`, `parseRawMetrics`, `parseLabels`, and the formatting helpers (`fmtPct`, `fmtMs`, `fmtN`, `fmtTokens`, `fmtThroughput`, `shortUrl`) are covered.
 
-### P? - `serverSettingsView.saveModelConfig` (patch) not yet unified into `configStore`
-`configStore.replaceModelConfig` (step 3a) is the unified replace operation. `serverSettingsView.saveModelConfig` (plain `{...existing, ...updates}` merge, composite new-entry id, toast/`clearCache`/`refreshWebview` side effects) is the remaining divergent implementation. The merge strategies are intentional (replace vs patch); the duplication is a drift risk when one side changes. Step 3b migrates the webview to `patchModelConfig` and deletes the private copy.
-
 ## Over-engineering
 
 - **Discovery re-fetches `/v1/models` per model config, not per server** — `provideLanguageModelChatInformation` runs `getModelContextWindow` per config, so N configs pointing at one server produce N identical `/v1/models` fetches. `testAndRefresh` already groups by server (`groupModelsByServer`); discovery doesn't reuse that. Non-functional today (just redundant network I/O during refresh), but a natural consolidation target if discovery is ever touched.
@@ -24,7 +21,6 @@ Dashboard tree items and deep-dive webview lack tests. `MetricsParser`, `parseRa
 
 ## Code Smells
 
-- **Webview patch path not yet unified into `configStore`** — see the P? entry under Maintainability; `serverSettingsView.saveModelConfig` (patch) is the remaining divergence after step 3a moved replace into `configStore.replaceModelConfig`. Step 3b migrates it to `patchModelConfig` and deletes the private copy.
 - **Stale "Python" comments** — `sessionManager.ts:112,134` say "batch-query in a single Python process", but `discoverWorkspaces`/`countSessionsBatch` use `node:sqlite` `DatabaseSync` (`sessionManager.ts:96-220`). Pure doc rot that would misdirect a maintainer. (Verified 2026-08-09.)
 - **Dead defensive guard with misleading message** — `commands.ts:691` `if (!clear && !sourcePath) { showWarningMessage('No personality presets found.'); }` is unreachable (every non-separator pick item is either `clear: true` or carries a `sourcePath`); it exists only for TS narrowing. Leave the guard, but the message is wrong if ever hit — reword to something accurate or mark as unreachable. (Verified 2026-08-09.)
 - **Value-import used only as a type** — `commands.ts:11` imports `VllmChatModelProvider` as a value but it's only used in type positions (`provider: VllmChatModelProvider` etc.). Should be `import type`. tsc elides it today (`verbatimModuleSyntax` off); cosmetic. (Verified 2026-08-09.)
@@ -32,7 +28,7 @@ Dashboard tree items and deep-dive webview lack tests. `MetricsParser`, `parseRa
 ## Personalities And System Messages
 
 ### P3 - Server Settings webview picker wiring is untested
-The host-side flow is covered: `applyPersonality`/`saveModelConfig` have focused tests (id-keyed multi-preset, clear semantics, composite-id new entries), the replacement engine (`promptReplacer.ts`), the capture write path (`enqueueWrite`), and `loadReplacements` path resolution (absolute + workspace-relative) are tested. What remains untested is the `serverSettings.js` picker wiring itself (selector keying, apply/clear message payloads, `save()` id/vllmModelId assignment) — it's plain webview JS with no test harness.
+The host-side flow is covered: `applyPersonality` and the webview save path (via `configStore.replaceModelConfig`/`patchModelConfig`, tested in `test/configStore.test.ts`) have focused tests (id-keyed multi-preset, clear semantics, composite-id new entries), the replacement engine (`promptReplacer.ts`), the capture write path (`enqueueWrite`), and `loadReplacements` path resolution (absolute + workspace-relative) are tested. What remains untested is the `serverSettings.js` picker wiring itself (selector keying, apply/clear message payloads, `save()` id/vllmModelId assignment) — it's plain webview JS with no test harness.
 
 ---
 

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { replaceModelConfig, type IdentifiedModelConfig } from '../src/configStore.js';
+import { replaceModelConfig, patchModelConfig, type IdentifiedModelConfig, type ModelIdentity } from '../src/configStore.js';
 import { ModelConfig } from '../src/config.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -292,6 +292,153 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     const { id: _id, vllmModelId: _vllmId, ...noIdentity } = baseConfig();
     await expect(
       replaceModelConfig({ ...noIdentity, serverUrl: 'http://localhost:8000' } as any),
+    ).rejects.toThrow(/identity/);
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('patchModelConfig (configStore) — patch semantics', () => {
+  let existingConfig: ModelConfig[];
+  let updateSpy: ReturnType<typeof vi.fn>;
+
+  const identity = (overrides: Partial<ModelIdentity> = {}): ModelIdentity => ({
+    id: 'test-model',
+    serverUrl: 'http://localhost:8000',
+    ...overrides,
+  });
+
+  const patch = (model: ModelConfig) => {
+    const { id, serverUrl, ...updates } = model;
+    return patchModelConfig(identity({ id: id || 'test-model', serverUrl }), updates);
+  };
+
+  beforeEach(() => {
+    existingConfig = [];
+    updateSpy = vi.fn().mockResolvedValue(undefined);
+    vscode.workspace._mockConfig = {
+      get: (key: string) => (key === 'models' ? existingConfig : undefined),
+      update: updateSpy,
+    };
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vscode.workspace._mockConfig = {};
+  });
+
+  const storedModels = (): ModelConfig[] => updateSpy.mock.calls[0][1] as ModelConfig[];
+
+  it('preserves headers, family, defaults, and transport settings when the patch omits them', async () => {
+    existingConfig = [
+      {
+        id: 'test-model',
+        vllmModelId: 'test-model',
+        serverUrl: 'http://localhost:8000',
+        displayName: 'Test Model',
+        requestHeaders: { 'X-Auth': 'secret' },
+        family: 'qwen3_5',
+        defaultParams: { temperature: 0.7 },
+        defaultMode: 'balanced',
+        streamInactivityTimeout: 60000,
+        autoContinueRetries: 2,
+        maxOutputTokens: 4096,
+        modelModes: { balanced: { temperature: 0.5 } },
+      },
+    ];
+
+    await patch({ id: 'test-model', serverUrl: 'http://localhost:8000', displayName: 'Renamed' });
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toEqual(
+      expect.objectContaining({
+        displayName: 'Renamed',
+        requestHeaders: { 'X-Auth': 'secret' },
+        family: 'qwen3_5',
+        defaultParams: { temperature: 0.7 },
+        defaultMode: 'balanced',
+        streamInactivityTimeout: 60000,
+        autoContinueRetries: 2,
+        maxOutputTokens: 4096,
+        modelModes: { balanced: { temperature: 0.5 } },
+      }),
+    );
+  });
+
+  it('replaces (not merges) requestHeaders when the patch supplies them', async () => {
+    existingConfig = [
+      {
+        id: 'test-model',
+        vllmModelId: 'test-model',
+        serverUrl: 'http://localhost:8000',
+        requestHeaders: { 'X-Old': 'value', 'X-Share': 'both' },
+      },
+    ];
+
+    await patch({
+      id: 'test-model',
+      serverUrl: 'http://localhost:8000',
+      requestHeaders: { 'X-New': 'value', 'X-Share': 'updated' },
+    });
+
+    const stored = storedModels();
+    expect(stored[0].requestHeaders).toEqual({ 'X-New': 'value', 'X-Share': 'updated' });
+    expect('X-Old' in (stored[0].requestHeaders ?? {})).toBe(false);
+  });
+
+  it('derives the composite id from vllmModelId when id and wire id differ (new entry)', async () => {
+    await patch({
+      id: 'preset-a',
+      vllmModelId: 'wire-model',
+      serverUrl: 'http://a:8000',
+      displayName: 'Preset A',
+    });
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    // buildModelId(serverUrl, wireId) — the wire id wins, not updates.id.
+    expect(stored[0].id).toBe('wire-model on a:8000');
+    expect(stored[0].vllmModelId).toBe('wire-model');
+  });
+
+  it('falls back to identity.id as the wire id when the patch has no vllmModelId (new entry)', async () => {
+    await patch({ id: 'legacy-model', serverUrl: 'http://b:8000', displayName: 'Legacy' });
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].vllmModelId).toBe('legacy-model');
+    expect(stored[0].id).toBe('legacy-model on b:8000');
+  });
+
+  it('reports created:true for a new entry and created:false for an update', async () => {
+    const first = await patch({ id: 'new-model', serverUrl: 'http://localhost:8000' });
+    expect(first.created).toBe(true);
+    // The webview keys by the composite id; a follow-up patch on that id updates.
+    const storedId = first.model.id;
+
+    existingConfig = [first.model];
+    const second = await patch({ id: storedId, serverUrl: 'http://localhost:8000', displayName: 'Renamed' });
+    expect(second.created).toBe(false);
+    expect(second.model.displayName).toBe('Renamed');
+  });
+
+  it('does not mutate the caller updates object', async () => {
+    const updates = { id: 'new-model', serverUrl: 'http://localhost:8000', displayName: 'New' };
+    const snapshot = { ...updates };
+    await patch(updates);
+    expect(updates).toEqual(snapshot);
+  });
+
+  it('rejects a blank/whitespace serverUrl without writing', async () => {
+    await expect(
+      patchModelConfig(identity({ serverUrl: '   ' }), { displayName: 'X' }),
+    ).rejects.toThrow(/serverUrl/);
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a blank identity id without writing', async () => {
+    await expect(
+      patchModelConfig(identity({ id: '   ' }), { displayName: 'X' }),
     ).rejects.toThrow(/identity/);
     expect(updateSpy).not.toHaveBeenCalled();
   });
