@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
-import { saveModelConfig } from '../src/autoConfig.js';
+import { replaceModelConfig } from '../src/configStore.js';
 import { ModelConfig } from '../src/config.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 /**
- * Tests for the `saveModelConfig` personality merge semantics:
+ * Tests for the `replaceModelConfig` (configStore) personality merge semantics:
  * - `systemMessageReplacementsFile: undefined` preserves the previous value
  *   (auto-configure must not wipe a user's personality).
  * - empty string is an explicit clear (Set Model Personality → Default),
@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
  * - a brand-new entry drops empty-string replacements WITHOUT mutating the
  *   caller's object in place.
  */
-describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
+describe('replaceModelConfig (configStore) — replace semantics', () => {
   let existingConfig: ModelConfig[];
   let updateSpy: ReturnType<typeof vi.fn>;
 
@@ -50,7 +50,7 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
     ];
 
     // No systemMessageReplacementsFile key → undefined → preserve.
-    await saveModelConfig(baseConfig({ displayName: 'Renamed' }));
+    await replaceModelConfig(baseConfig({ displayName: 'Renamed' }));
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
@@ -65,7 +65,7 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
       baseConfig({ systemMessageReplacementsFile: '.vllm/prompt-replacements-tough-love.json' }),
     ];
 
-    await saveModelConfig(baseConfig({ systemMessageReplacementsFile: '' }));
+    await replaceModelConfig(baseConfig({ systemMessageReplacementsFile: '' }));
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
@@ -77,7 +77,7 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
       baseConfig({ systemMessageReplacementsFile: '.vllm/prompt-replacements-tough-love.json' }),
     ];
 
-    await saveModelConfig(
+    await replaceModelConfig(
       baseConfig({ systemMessageReplacementsFile: '.vllm/prompt-replacements-sarcastic-robot.json' }),
     );
 
@@ -96,7 +96,7 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
     });
     const snapshot = { ...newModel };
 
-    await saveModelConfig(newModel);
+    await replaceModelConfig(newModel);
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
@@ -117,7 +117,7 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
       },
     ];
 
-    await saveModelConfig({
+    await replaceModelConfig({
       id: 'legacy-model',
       serverUrl: 'http://localhost:8000',
       displayName: 'Legacy Updated',
@@ -139,7 +139,7 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
       { id: 'preset-b', vllmModelId: 'shared-model', serverUrl: 'http://localhost:8000', displayName: 'Preset B' },
     ];
 
-    await saveModelConfig({
+    await replaceModelConfig({
       id: 'preset-b',
       vllmModelId: 'shared-model',
       serverUrl: 'http://localhost:8000',
@@ -165,7 +165,7 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
       { id: 'preset-a', vllmModelId: 'shared-model', serverUrl: 'http://localhost:8000', displayName: 'Preset A' },
     ];
 
-    await saveModelConfig({
+    await replaceModelConfig({
       id: 'preset-b',
       vllmModelId: 'shared-model',
       serverUrl: 'http://localhost:8000',
@@ -178,15 +178,15 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
   });
 
   // ── Step 1: replace-mode characterization (refactor-plan §4.1 #1/#2/#4) ──
-  // These pin the CURRENT replace contract of autoConfig.saveModelConfig so the
-  // configStore unification (step 3a) cannot silently change behavior.
+  // These pin the CURRENT replace contract of replaceModelConfig (configStore) so the
+  // configStore unification (step 3b) cannot silently change behavior.
 
   it('preserves requestHeaders when the new config omits them', async () => {
     existingConfig = [
       baseConfig({ requestHeaders: { 'X-Existing': 'keep-me' } }),
     ];
 
-    await saveModelConfig(baseConfig({ displayName: 'Renamed' }));
+    await replaceModelConfig(baseConfig({ displayName: 'Renamed' }));
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
@@ -198,7 +198,7 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
       baseConfig({ requestHeaders: { 'X-Old': 'value', 'X-Share': 'both' } }),
     ];
 
-    await saveModelConfig(
+    await replaceModelConfig(
       baseConfig({ requestHeaders: { 'X-New': 'value', 'X-Share': 'updated' } }),
     );
 
@@ -219,7 +219,7 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
     ];
 
     // Replacement carries only infra/personal fields — no modelModes/family.
-    await saveModelConfig(baseConfig({ displayName: 'Reconfigured' }));
+    await replaceModelConfig(baseConfig({ displayName: 'Reconfigured' }));
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
@@ -241,7 +241,7 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
     ];
 
     // Replacement is the preset path: infra/personal survive, model fields drop.
-    await saveModelConfig(baseConfig({ displayName: 'Preset Applied' }));
+    await replaceModelConfig(baseConfig({ displayName: 'Preset Applied' }));
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
@@ -261,12 +261,29 @@ describe('saveModelConfig (autoConfig) — personality merge semantics', () => {
       serverUrl: 'http://localhost:8000',
     });
 
-    await saveModelConfig(newModel);
+    await replaceModelConfig(newModel);
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
     // The caller's explicit id is preserved verbatim; the store must not
     // derive a composite "<model> on <host>" id on the replace path.
     expect(stored[0].id).toBe('caller-supplied-id');
+  });
+
+  it('rejects a blank/whitespace serverUrl instead of writing a malformed entry', async () => {
+    await expect(
+      replaceModelConfig(baseConfig({ serverUrl: '   ' })),
+    ).rejects.toThrow(/serverUrl/);
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects an entry with no id and no vllmModelId', async () => {
+    // Destructure out both identity fields — what remains cannot satisfy
+    // IdentifiedModelConfig, so the runtime guard (not the type) is under test.
+    const { id: _id, vllmModelId: _vllmId, ...noIdentity } = baseConfig();
+    await expect(
+      replaceModelConfig({ ...noIdentity, serverUrl: 'http://localhost:8000' } as any),
+    ).rejects.toThrow(/identity/);
+    expect(updateSpy).not.toHaveBeenCalled();
   });
 });

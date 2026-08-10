@@ -12,7 +12,8 @@ import { VllmChatModelProvider } from './provider.js';
 import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveConfigId, normalizeServerUrl } from './config.js';
 import type { ModelConfig } from './config.js';
 import type { VllmModel } from './types.js';
-import { saveModelConfig, promptForServerAuth } from './autoConfig.js';
+import { promptForServerAuth } from './autoConfig.js';
+import { replaceModelConfig, type IdentifiedModelConfig } from './configStore.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
 import { runDiagnostics, formatReport } from './diagnostics.js';
@@ -580,9 +581,9 @@ export function registerCleanSessionsCommand(
 /**
  * A personality can only be persisted on a model with a `serverUrl`: the config
  * matcher (`findModelConfigIndex`) requires both config id and serverUrl, so a
- * server-less model falls through to `saveModelConfig`'s append branch and writes
- * a duplicate entry. This guard lets the caller skip such models with a clear
- * warning instead of corrupting settings.json.
+ * server-less model falls through to `replaceModelConfig`'s append branch and
+ * writes a duplicate entry. This guard lets the caller skip such models with a
+ * clear warning instead of corrupting settings.json.
  * @returns `{ ok: true }` or `{ ok: false, reason }` with a user-facing message.
  */
 export function personalityApplicableTo(model: ModelConfig): { ok: true } | { ok: false; reason: string } {
@@ -628,7 +629,7 @@ export function registerSetModelPersonalityCommand(
       });
       if (!modelPick) return;
 
-      // A server-less model cannot be matched by saveModelConfig (findModelConfigIndex
+      // A server-less model cannot be matched by replaceModelConfig (findModelConfigIndex
       // needs both id and serverUrl) and would otherwise append a duplicate entry.
       const applicability = personalityApplicableTo(modelPick.model);
       if (!applicability.ok) {
@@ -699,11 +700,14 @@ export function registerSetModelPersonalityCommand(
         const replacementsFile = clear
           ? ''
           : await ensureGlobalPersonality(context, sourcePath!);
-        await saveModelConfig({
+        // serverUrl is verified non-blank by personalityApplicableTo above; id or
+        // vllmModelId is present for any matched entry. The store re-validates
+        // identity at runtime rather than writing a malformed entry.
+        await replaceModelConfig({
           ...modelPick.model,
           // Empty string is the explicit clear signal (undefined would preserve the previous value).
           systemMessageReplacementsFile: replacementsFile,
-        });
+        } as IdentifiedModelConfig);
         outputChannel.appendLine(
           `[INFO] Personality presets: ${clear ? 'cleared' : `applied ${sourcePath}`} for ${modelPick.label}`
         );

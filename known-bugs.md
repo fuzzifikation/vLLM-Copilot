@@ -8,14 +8,14 @@ Do not bump version without asking.
 ## Maintainability
 
 ### P1 - Large modules
-- `autoConfig.ts` (~15 exported functions) — `autoConfigureModel()`, `loadModelPresets()`, `findPresetForModel()`, `saveModelConfig()`, `registerAddServerModelCommand()`, `resolveModelConfigForAdd()`, and more. Grab-bag of presets, HF fetch, config gen, BYOK, progress UI.
+- `autoConfig.ts` (~15 exported functions) — `autoConfigureModel()`, `loadModelPresets()`, `findPresetForModel()`, `persistAddedModel()`, `registerAddServerModelCommand()`, `resolveModelConfigForAdd()`, and more. Grab-bag of presets, HF fetch, config gen, BYOK, progress UI.
 - `provider.ts` — `provideLanguageModelChatResponse()` (~550 lines), `consumeStream()` (~290 lines), `provideLanguageModelChatInformation()` (~124 lines). Stream, auto-continue, diagnostics, error classification.
 
 ### P2 - Untested data layer
 Dashboard tree items and deep-dive webview lack tests. `MetricsParser`, `parseRawMetrics`, `parseLabels`, and the formatting helpers (`fmtPct`, `fmtMs`, `fmtN`, `fmtTokens`, `fmtThroughput`, `shortUrl`) are covered.
 
-### P? - Two `saveModelConfig` implementations still diverge
-`autoConfig.saveModelConfig` (explicit `serverUrl`/`requestHeaders`/`systemMessageReplacementsFile` preservation, entry replace) and `serverSettingsView.saveModelConfig` (plain `{...existing, ...updates}` merge) now share `normalizeModelEntry` for the `''`-clears / undefined-preserves semantics, but keep **different merge strategies**. Those merge strategies are intentional; the duplication is a drift risk when one side changes. PR #5 flagged "unify during redesign" — still open.
+### P? - `serverSettingsView.saveModelConfig` (patch) not yet unified into `configStore`
+`configStore.replaceModelConfig` (step 3a) is the unified replace operation. `serverSettingsView.saveModelConfig` (plain `{...existing, ...updates}` merge, composite new-entry id, toast/`clearCache`/`refreshWebview` side effects) is the remaining divergent implementation. The merge strategies are intentional (replace vs patch); the duplication is a drift risk when one side changes. Step 3b migrates the webview to `patchModelConfig` and deletes the private copy.
 
 ## Over-engineering
 
@@ -24,8 +24,7 @@ Dashboard tree items and deep-dive webview lack tests. `MetricsParser`, `parseRa
 
 ## Code Smells
 
-- **Two divergent `saveModelConfig` implementations** — see the P? entry under Maintainability; the merge-strategy difference is the smell, `normalizeModelEntry` already de-duplicates the clear semantics. Target: unify in `configStore.ts` behind named `replaceModelConfig` and `patchModelConfig` operations, see `refactor-plan.md`.
-- **Un-awaited `ensureByokUtilityDefault()`** — `autoConfig.ts:578` calls it inside `saveModelConfig` without `await`. Self-catching (idempotent, never rejects) so it can't crash, but model-save completion does not establish BYOK-write completion. Move it to the add/onboarding caller and await it after model persistence; BYOK is not a config-store responsibility. (Verified 2026-08-09.)
+- **Webview patch path not yet unified into `configStore`** — see the P? entry under Maintainability; `serverSettingsView.saveModelConfig` (patch) is the remaining divergence after step 3a moved replace into `configStore.replaceModelConfig`. Step 3b migrates it to `patchModelConfig` and deletes the private copy.
 - **Stale "Python" comments** — `sessionManager.ts:112,134` say "batch-query in a single Python process", but `discoverWorkspaces`/`countSessionsBatch` use `node:sqlite` `DatabaseSync` (`sessionManager.ts:96-220`). Pure doc rot that would misdirect a maintainer. (Verified 2026-08-09.)
 - **Dead defensive guard with misleading message** — `commands.ts:689` `if (!clear && !sourcePath) { showWarningMessage('No personality presets found.'); }` is unreachable (every non-separator pick item is either `clear: true` or carries a `sourcePath`); it exists only for TS narrowing. Leave the guard, but the message is wrong if ever hit — reword to something accurate or mark as unreachable. (Verified 2026-08-09.)
 - **Value-import used only as a type** — `commands.ts:11` imports `VllmChatModelProvider` as a value but it's only used in type positions (`provider: VllmChatModelProvider` etc.). Should be `import type`. tsc elides it today (`verbatimModuleSyntax` off); cosmetic. (Verified 2026-08-09.)
