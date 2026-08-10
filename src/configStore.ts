@@ -47,12 +47,14 @@ function assertValidIdentity(configId: string | undefined, serverUrl: string | u
  * previous value; `''` clears it via `normalizeModelEntry`).
  *
  * On no match the entry is appended with `id` verbatim — deriving a composite
- * id is the caller's job. Callers' objects are never mutated. Undefined-valued
- * fields are stripped before the write, so undefined is never persisted — an
- * explicit `{ displayName: undefined }` replacement stores no `displayName`
- * key at all (the value is not preserved, unlike patch: replace replaces the
- * field; the invariant is that `undefined` is never written to config, matching
- * 3c's treatment of patch mode. JSON callers never send undefined today).
+ * id is the caller's job. Callers' objects are never mutated. Top-level
+ * undefined-valued fields are stripped before the write, so an explicit
+ * `{ displayName: undefined }` replacement stores no `displayName` key at all
+ * (the value is not preserved, unlike patch: replace replaces the field).
+ * Nested undefined values (inside defaultParams, modelModes, capabilities,
+ * requestHeaders) are left untouched — they are inert: reads and JSON
+ * serialization treat absent and undefined identically. JSON callers never
+ * send undefined today.
  *
  * This is a pure store operation: it performs no toasts, no cache invalidation,
  * and no BYOK setup. Side effects belong to the callers.
@@ -97,10 +99,14 @@ export interface ModelIdentity {
 }
 
 /**
- * Remove keys whose value is `undefined`. Used by patch and replace modes so an
- * explicit `{ key: undefined }` cannot overwrite a stored value (JSON has no
- * undefined; a future caller could still pass one). Identity keys are excluded
- * by the type boundaries (`Omit` in patch, required identity in replace).
+ * Remove TOP-LEVEL keys whose value is `undefined`. Used by patch and replace
+ * modes so an explicit `{ key: undefined }` cannot overwrite a stored value
+ * (JSON has no undefined; a future caller could still pass one). Nested
+ * undefined values are left untouched deliberately — they are inert (reads and
+ * JSON serialization treat absent and undefined identically), and there is no
+ * caller-facing rule for what a nested undefined should mean (e.g. a header
+ * value). Identity keys are excluded by the type boundaries (`Omit` in patch,
+ * required identity in replace).
  */
 function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -117,9 +123,10 @@ function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
  * present in `updates` overwrite the existing entry; fields absent are
  * preserved (headers, family, defaults, transport settings all survive — the
  * reverse of replace-mode). `''` clears `systemMessageReplacementsFile` via
- * `normalizeModelEntry`. Undefined-valued keys in `updates` are stripped before
- * the merge, so a `{ displayName: undefined }` patch cannot wipe the stored
- * value (hardening — the webview never sends undefined today).
+ * `normalizeModelEntry`. Top-level undefined-valued keys in `updates` are
+ * stripped before the merge, so a `{ displayName: undefined }` patch cannot
+ * wipe the stored value; nested undefined values are left untouched (inert —
+ * see `stripUndefined`) (hardening — the webview never sends undefined today).
  *
  * On no match a new entry is created with a composite id derived from the wire
  * id: `wireId = updates.vllmModelId || identity.id`, stored id =

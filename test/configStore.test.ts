@@ -319,6 +319,24 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     expect(stored).toHaveLength(1);
     expect('displayName' in stored[0]).toBe(false);
   });
+
+  it('3d: leaves nested undefined values inside nested objects untouched (top-level strip only)', async () => {
+    await replaceModelConfig(
+      baseConfig({
+        id: 'nested',
+        vllmModelId: 'nested',
+        defaultParams: { temperature: undefined, top_p: 0.9 },
+      }),
+    );
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    // The narrowed contract: stripUndefined removes only top-level keys. A
+    // nested undefined is left as-is; it is inert (reads and JSON serialization
+    // treat absent and undefined identically). If this is ever made recursive,
+    // the change must be deliberate and the doc updated to match.
+    expect(stored[0].defaultParams).toEqual({ temperature: undefined, top_p: 0.9 });
+  });
 });
 
 describe('patchModelConfig (configStore) — patch semantics', () => {
