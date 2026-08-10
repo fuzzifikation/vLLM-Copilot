@@ -91,16 +91,29 @@ export interface ModelIdentity {
 }
 
 /**
+ * Remove keys whose value is `undefined`. Used by patch mode so an explicit
+ * `{ key: undefined }` cannot overwrite a stored value (JSON has no undefined;
+ * a future caller could still pass one). Identity keys are already excluded by
+ * the `Omit` type boundary.
+ */
+function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+/**
  * Patch-mode persistence — a shallow field-level merge, the webview's contract.
  *
  * `identity.id`/`identity.serverUrl` are the immutable lookup keys. Fields
  * present in `updates` overwrite the existing entry; fields absent are
  * preserved (headers, family, defaults, transport settings all survive — the
  * reverse of replace-mode). `''` clears `systemMessageReplacementsFile` via
- * `normalizeModelEntry`. Undefined-valued keys in `updates` spread through
- * unchanged (a `{ displayName: undefined }` patch would overwrite the stored
- * value) — the webview never sends them today, and explicit undefined-stripping
- * is deferred hardening (step 3c).
+ * `normalizeModelEntry`. Undefined-valued keys in `updates` are stripped before
+ * the merge, so a `{ displayName: undefined }` patch cannot wipe the stored
+ * value (hardening — the webview never sends undefined today).
  *
  * On no match a new entry is created with a composite id derived from the wire
  * id: `wireId = updates.vllmModelId || identity.id`, stored id =
@@ -116,6 +129,12 @@ export async function patchModelConfig(
   updates: Omit<Partial<ModelConfig>, 'id' | 'serverUrl'>
 ): Promise<SaveModelResult> {
   const configId = assertValidIdentity(identity.id, identity.serverUrl);
+  const clean = stripUndefined(updates as Record<string, unknown>);
+  // Runtime backstop for the Omit type boundary: identity is immutable, so even
+  // a caller that smuggles id/serverUrl into updates must not move them. The
+  // matcher already keyed on identity; the merge must not then overwrite it.
+  delete clean.id;
+  delete clean.serverUrl;
 
   const config = vscode.workspace.getConfiguration('vllm-copilot');
   const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
@@ -123,14 +142,14 @@ export async function patchModelConfig(
 
   if (useIdx >= 0) {
     const next = existing.slice();
-    next[useIdx] = normalizeModelEntry({ ...existing[useIdx], ...updates } as ModelConfig);
+    next[useIdx] = normalizeModelEntry({ ...existing[useIdx], ...clean } as ModelConfig);
     await config.update('models', next, vscode.ConfigurationTarget.Global);
     return { model: next[useIdx], created: false };
   }
 
   const wireId = updates.vllmModelId || configId;
   const entry = normalizeModelEntry({
-    ...(updates as ModelConfig),
+    ...(clean as ModelConfig),
     vllmModelId: wireId,
     id: buildModelId(identity.serverUrl, wireId),
     serverUrl: identity.serverUrl,
