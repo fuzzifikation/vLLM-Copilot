@@ -30,6 +30,7 @@ docs/
 !prompt-replacements/
 known-bugs.md
 publication-plan.md
+refactor-plan.md
 
 # User-kept reference files — never ship, never delete (see keep_this/info.md)
 keep_this/

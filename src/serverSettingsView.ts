@@ -322,7 +322,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       // distinct. Follow that convention here too — a raw id would collide.
       const vllmModelId = updates.vllmModelId || targetId;
       // Empty string is the explicit clear signal — store as an absent key
-      // (matches autoConfig.saveModelConfig via normalizeModelEntry), not a
+      // (matches configStore.replaceModelConfig via normalizeModelEntry), not a
       // lingering `""`.
       models.push(normalizeModelEntry({
         ...(updates as ModelConfig),
