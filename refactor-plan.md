@@ -282,17 +282,17 @@ Coverage inclusion is ownership-based, not path-preservation-based:
 ### 4.1 Coverage gap analysis (what's pinned vs not)
 
 **Already pinned:**
-- `test/saveModelConfig.test.ts` (179) — replace-mode `systemMessageReplacementsFile` semantics: preserve-on-undefined, clear-on-`''`, replace-on-value, new-entry no-mutation, legacy id fallback (update-not-duplicate), multi-preset keyed by id, distinct-id-creates-new-entry.
-- `test/serverSettingsView.test.ts` (372) — patch-mode update preserves existing `maxOutputTokens`/`modelModes`, create-new-with-composite-id, same-model-two-servers distinct ids, clear semantics, plus the showInformationMessage toast assertion.
+- `test/configStore.test.ts` (253) — replace-mode `systemMessageReplacementsFile` semantics: preserve-on-undefined, clear-on-`''`, replace-on-value, new-entry no-mutation, legacy id fallback (update-not-duplicate), multi-preset keyed by id, distinct-id-creates-new-entry.
+- `test/serverSettingsView.test.ts` (420) — patch-mode update preserves existing `maxOutputTokens`/`modelModes`, create-new-with-composite-id, same-model-two-servers distinct ids, clear semantics, plus the showInformationMessage toast assertion.
 - `test/autoConfig.test.ts` (301) — presets/parse/headers/merge (pins `commands/presets.ts` + `serverAuth.ts`).
 - `test/testAndRefresh.test.ts` (106) — `serverFingerprint`/`groupModelsByServer` (pins the `testAndRefresh.ts` helpers).
 - `test/providerAutoContinue/Capture/SystemMessages` (606) — pin the provider's request-handling behavior via `as any` stubs; these are rewritten to target the extracted free functions in §2.1 Phase B, so they act as the behavior tripwire during the move.
 
 **Green characterization tests required BEFORE structural changes:**
-1. **Replace-mode header preservation/replacement** — omitted `requestHeaders` preserves the previous object; supplied headers replace it rather than merge it. `serverUrl` is required identity, not an omitted-field preservation case. → extend `test/saveModelConfig.test.ts`.
-2. **Replace-mode drops stale model-specific fields** — new config without `modelModes`/`family` removes the existing entry's `modelModes`/`family` (this is what distinguishes `replace` from `patch`; if lost, the preset path silently turns into a merge). → extend `test/saveModelConfig.test.ts`.
+1. **Replace-mode header preservation/replacement** — omitted `requestHeaders` preserves the previous object; supplied headers replace it rather than merge it. `serverUrl` is required identity, not an omitted-field preservation case. → extend `test/configStore.test.ts`.
+2. **Replace-mode drops stale model-specific fields** — new config without `modelModes`/`family` removes the existing entry's `modelModes`/`family` (this is what distinguishes `replace` from `patch`; if lost, the preset path silently turns into a merge). → extend `test/configStore.test.ts`.
 3. **Patch-mode broader preservation** — the existing test covers modes and output tokens; extend it to headers, family, defaults, and transport settings. (Reverse of #2.) → extend `test/serverSettingsView.test.ts`.
-4. **New-entry replace does not build composite ids** — replace-mode new entry uses the id as passed (the composite is caller's job). → extend `test/saveModelConfig.test.ts`.
+4. **New-entry replace does not build composite ids** — replace-mode new entry uses the id as passed (the composite is caller's job). → extend `test/configStore.test.ts`.
 5. **Patch new-entry wire-id precedence** — when config identity and `vllmModelId` differ, derive the composite id from `vllmModelId`. → extend `test/serverSettingsView.test.ts`.
 
 **Red-to-green changes with explicit implementation steps:**
@@ -309,7 +309,7 @@ Coverage inclusion is ownership-based, not path-preservation-based:
 |---|---|---|
 | 0 | ✅ Record compile/test baseline; repair the already-failing coverage gate per §4.0 | compile, test, and coverage green; counts/percentages recorded (§4.0) |
 | 0a | ✅ Fix server-less personality duplicate append (standalone commit) | `personalityApplicableTo` guard + regression test; compile + full suite green |
-| 1 | ✅ Pin reachable replace behavior (characterization #1, #2, #4) against current `autoConfig.saveModelConfig` | green — 5 tests in `test/saveModelConfig.test.ts` (`6aae832`), 444 suite green |
+| 1 | ✅ Pin reachable replace behavior (characterization #1, #2, #4) against current `autoConfig.saveModelConfig` | green — 5 tests in `test/configStore.test.ts` (`6aae832`), 444 suite green |
 | 2 | ✅ Extend reachable patch behavior (characterization #3, #5 and current side effects) against `serverSettingsView.saveModelConfig` | green — 4 tests in `test/serverSettingsView.test.ts` (`fc0f0c6`), 448 suite green |
 | 3a | ✅ Create `configStore.ts`; migrate replace callers; move BYOK setup to both Add-model success paths and await it after persistence | focused store/save + Add/BYOK ordering tests; compile + full suite green — `configStore.ts` + `persistAddedModel` (`test/configStore.test.ts`, `test/persistAddedModel.test.ts`); 452 suite green |
 | 3b | Migrate the webview to `patchModelConfig`; move toast/cache/refresh to the handler | focused store/view tests + full suite green |

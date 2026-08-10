@@ -26,7 +26,7 @@ Dashboard tree items and deep-dive webview lack tests. `MetricsParser`, `parseRa
 
 - **Webview patch path not yet unified into `configStore`** — see the P? entry under Maintainability; `serverSettingsView.saveModelConfig` (patch) is the remaining divergence after step 3a moved replace into `configStore.replaceModelConfig`. Step 3b migrates it to `patchModelConfig` and deletes the private copy.
 - **Stale "Python" comments** — `sessionManager.ts:112,134` say "batch-query in a single Python process", but `discoverWorkspaces`/`countSessionsBatch` use `node:sqlite` `DatabaseSync` (`sessionManager.ts:96-220`). Pure doc rot that would misdirect a maintainer. (Verified 2026-08-09.)
-- **Dead defensive guard with misleading message** — `commands.ts:689` `if (!clear && !sourcePath) { showWarningMessage('No personality presets found.'); }` is unreachable (every non-separator pick item is either `clear: true` or carries a `sourcePath`); it exists only for TS narrowing. Leave the guard, but the message is wrong if ever hit — reword to something accurate or mark as unreachable. (Verified 2026-08-09.)
+- **Dead defensive guard with misleading message** — `commands.ts:691` `if (!clear && !sourcePath) { showWarningMessage('No personality presets found.'); }` is unreachable (every non-separator pick item is either `clear: true` or carries a `sourcePath`); it exists only for TS narrowing. Leave the guard, but the message is wrong if ever hit — reword to something accurate or mark as unreachable. (Verified 2026-08-09.)
 - **Value-import used only as a type** — `commands.ts:11` imports `VllmChatModelProvider` as a value but it's only used in type positions (`provider: VllmChatModelProvider` etc.). Should be `import type`. tsc elides it today (`verbatimModuleSyntax` off); cosmetic. (Verified 2026-08-09.)
 
 ## Personalities And System Messages
@@ -42,7 +42,7 @@ The host-side flow is covered: `applyPersonality`/`saveModelConfig` have focused
 
 ## False Positives (keep AI from re-filing)
 
-- **Global writes** — `saveModelConfig` writes to Global only. Intentional: design is "always write to user settings."
+- **Global writes** — the config store (`replaceModelConfig`/`patchModelConfig` in configStore.ts) writes to Global only. Intentional: design is "always write to user settings."
 - **Config entries match by extension `id` + `serverUrl`, not `vllmModelId`** — correct (shared via `findModelConfigIndex` in config.ts, using `resolveConfigId`). `vllmModelId` is the wire id only and may repeat across presets/servers; the extension key is `id` (with a `vllmModelId` fallback for legacy hand-written entries). Do not "fix" this back to wire-id matching.
 - **Unreachable models are removed from the picker after refresh** — `provideLanguageModelChatInformation` skips any model whose server doesn't report `max_model_len` (offline/error/not-loaded) and never adds it to `cachedModels`, so after `clearCache()` + the change event the Copilot picker no longer lists it. By design (gripe 2). A stale entry visible after refresh is VS Code's own picker cache, not a discovery bug.
 - **Id-less configs get a composite picker id (`"<model> on <host>"`)** — discovery derives it via `buildModelId` so the same `vllmModelId` on two servers stays distinct; `resolveOverrideForModel` round-trips the composite back to the id-less config that produced it. Fixed the picker-collision bug (gripes 3 & 4). By design, not a bug. A duplicate explicit `id` in settings is the only remaining collision source and is warned about during discovery.
