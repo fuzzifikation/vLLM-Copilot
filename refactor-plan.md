@@ -343,6 +343,7 @@ Confirmed against source. Findings are explicitly classified as correctness bugs
 10. **`serverSettingsView.refreshWebview` refetches `/v1/models` on every config change and every save** — `serverSettingsView.ts:169-187`. Already filed in `docs/feature-ideas.md:203`. Not new, but re-confirmed; a server-model cache would fix it.
 11. **Test-induced design damage in the provider tests** — `providerAutoContinue/Capture/SystemMessages` reach into private methods via `(provider as any).buildRequest`, `.processSystemMessages`, `.loadReplacements`, `.enqueueWrite`, `.client.chatCompletionStream`. This is what tempts a facade-method workaround; the correct end state is no `as any` and no private-method stubbing — tests target the extracted free functions with explicit collaborators. (Verified 2026-08-09.) Resolved by the §2.1 phased approach.
 12. **Server-less personality apply appends a duplicate entry** — the command picker includes every configured model, while `saveModelConfig` cannot match without `serverUrl` and takes its append branch. This is a verified low-risk correctness bug, filed in `known-bugs.md` and fixed with a regression test in pre-refactor step 0a.
+13. **Test suite is never type-checked as a gate** — the root `tsconfig.json` includes only `src/**`; `npm run compile` skips tests and vitest runs via esbuild (no type-check). Step 3a's linter errors exposed this: real contract mismatches (`ModelConfig` → `IdentifiedModelConfig`) and the mock-only `workspace._mockConfig` surface passed green because no gate checks tests. A real gate (`test:typecheck`) surfaces **~46 pre-existing test bugs** — proposed-API usage (`LanguageModelThinkingPart`), `LanguageModelChatMessageRole.System` vs real types, strict-null, mis-typed fixtures. Also: `tsc` (both `-p` and `-b`) does **not** honor `paths` for ambient module names like `vscode`, so an editor-only `test/tsconfig.json` (mapping `vscode` → the mock, added 2026-08-10 with the step-3a linter fix) quiets the editor but cannot be a CLI gate. Deferred — see §7 AFTER schedule.
 
 ---
 
@@ -401,6 +402,7 @@ New tests and enhancements that benefit from the post-refactor structure; doing 
 |---|---|---|
 | Remaining P2 dashboard/deep-dive/formatting tests not needed for Step 0 | Test coverage | Continue additive coverage after the baseline gate is repaired; establish boundaries before separate metrics/view decomposition |
 | P3: webview picker wiring tests | Test coverage | Needs a JS test harness; independent of TS refactor |
+| Test type-check gate (`test:typecheck`) | Test infrastructure | Enabling it surfaces ~46 pre-existing test bugs (§5 #13) that span test files steps 5–7 rewrite (proposed APIs, strict-null, fixtures). Do it once those files are migrated; `test/tsconfig.json` is editor-only today and cannot gate (`tsc` ignores `paths` for ambient `vscode`) |
 | Server-model cache for `refreshWebview` | Enhancement | feature-ideas.md; build on stable `serverSettingsView.ts` |
 | `test:coverage` gate / `npm run build` | Verify | Final validation of the whole pass (§4.2 step 9) |
 
