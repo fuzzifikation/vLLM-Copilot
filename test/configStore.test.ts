@@ -429,6 +429,70 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
     expect(updates).toEqual(snapshot);
   });
 
+  it('3c: strips undefined-valued keys so a { displayName: undefined } patch cannot wipe the stored value', async () => {
+    existingConfig = [
+      {
+        id: 'test-model',
+        vllmModelId: 'test-model',
+        serverUrl: 'http://localhost:8000',
+        displayName: 'Test Model',
+      },
+    ];
+
+    // Type-legal (Partial allows undefined); a caller passing an explicit
+    // undefined key must not overwrite the stored value with undefined.
+    await patchModelConfig(identity(), { displayName: undefined });
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].displayName).toBe('Test Model');
+  });
+
+  it('3c: performs no user-visible side effects — the handler owns the toast', async () => {
+    existingConfig = [
+      { id: 'test-model', vllmModelId: 'test-model', serverUrl: 'http://localhost:8000', displayName: 'Test Model' },
+    ];
+    const toastSpy = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(undefined);
+
+    await patch({ id: 'test-model', serverUrl: 'http://localhost:8000', displayName: 'Renamed' });
+
+    expect(toastSpy).not.toHaveBeenCalled();
+    expect(updateSpy).toHaveBeenCalledTimes(1); // the only write
+  });
+
+  it('3c: does not mutate the configured array or the existing entry', async () => {
+    const original: ModelConfig[] = [
+      { id: 'test-model', vllmModelId: 'test-model', serverUrl: 'http://localhost:8000', displayName: 'Test Model', family: 'qwen' },
+    ];
+    const snapshot = JSON.parse(JSON.stringify(original));
+    vscode.workspace._mockConfig = {
+      get: () => original,
+      update: updateSpy,
+    };
+
+    await patch({ id: 'test-model', serverUrl: 'http://localhost:8000', displayName: 'Renamed' });
+
+    expect(original).toEqual(snapshot); // array reference and entry both unchanged
+  });
+
+  it('3c: ignores id/serverUrl smuggled into updates — identity is immutable at runtime', async () => {
+    existingConfig = [
+      { id: 'real-id', vllmModelId: 'real-model', serverUrl: 'http://localhost:8000', displayName: 'Original' },
+    ];
+
+    // The Omit type boundary forbids this; the runtime must ignore it too.
+    await patchModelConfig(
+      identity({ id: 'real-id' }),
+      { id: 'hijack', serverUrl: 'http://evil:8000', displayName: 'Hijacked' } as any,
+    );
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].id).toBe('real-id');
+    expect(stored[0].serverUrl).toBe('http://localhost:8000');
+    expect(stored[0].displayName).toBe('Hijacked'); // legit update still applied
+  });
+
   it('rejects a blank/whitespace serverUrl without writing', async () => {
     await expect(
       patchModelConfig(identity({ serverUrl: '   ' }), { displayName: 'X' }),
