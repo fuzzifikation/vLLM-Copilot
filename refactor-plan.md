@@ -310,7 +310,7 @@ Coverage inclusion is ownership-based, not path-preservation-based:
 | 0 | ✅ Record compile/test baseline; repair the already-failing coverage gate per §4.0 | compile, test, and coverage green; counts/percentages recorded (§4.0) |
 | 0a | ✅ Fix server-less personality duplicate append (standalone commit) | `personalityApplicableTo` guard + regression test; compile + full suite green |
 | 1 | ✅ Pin reachable replace behavior (characterization #1, #2, #4) against current `autoConfig.saveModelConfig` | green — 5 tests in `test/saveModelConfig.test.ts` (`6aae832`), 444 suite green |
-| 2 | **Extend reachable patch behavior** (characterization #3, #5 and current side effects) against `serverSettingsView.saveModelConfig` | green |
+| 2 | ✅ Extend reachable patch behavior (characterization #3, #5 and current side effects) against `serverSettingsView.saveModelConfig` | green — 4 tests in `test/serverSettingsView.test.ts` (`fc0f0c6`), 448 suite green |
 | 3a | Create `configStore.ts`; migrate replace callers; move BYOK setup to both Add-model success paths and await it after persistence | focused store/save + Add/BYOK ordering tests; compile + full suite green |
 | 3b | Migrate the webview to `patchModelConfig`; move toast/cache/refresh to the handler | focused store/view tests + full suite green |
 | 3c | Add store hardening tests (undefined stripping, side-effect boundary, immutability, identity validation) | each new test red before its implementation, then green; full suite green |
