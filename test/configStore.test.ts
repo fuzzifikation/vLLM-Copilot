@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { replaceModelConfig } from '../src/configStore.js';
+import { replaceModelConfig, type IdentifiedModelConfig } from '../src/configStore.js';
 import { ModelConfig } from '../src/config.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -17,18 +17,27 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
   let existingConfig: ModelConfig[];
   let updateSpy: ReturnType<typeof vi.fn>;
 
-  const baseConfig = (overrides: Partial<ModelConfig> = {}): ModelConfig => ({
-    id: 'test-model',
-    vllmModelId: 'test-model',
-    serverUrl: 'http://localhost:8000',
-    displayName: 'Test Model',
-    ...overrides,
-  });
+  // Always yields an identified config (id + vllmModelId + serverUrl). The cast is
+  // the helper's contract: identity tests deliberately construct invalid objects.
+  const baseConfig = (overrides: Partial<ModelConfig> = {}): IdentifiedModelConfig =>
+    ({
+      id: 'test-model',
+      vllmModelId: 'test-model',
+      serverUrl: 'http://localhost:8000',
+      displayName: 'Test Model',
+      ...overrides,
+    } as IdentifiedModelConfig);
+
+  // Vitest aliases `vscode` to the unit-test mock (test/__mocks__/vscode.ts),
+  // whose `workspace` exposes `_mockConfig`. The editor may resolve `vscode` to
+  // either the mock or the real @types/vscode (which lacks it), so access the
+  // hook through a cast valid under both.
+  const mockWorkspace = () => (vscode as any).workspace as { _mockConfig: any };
 
   beforeEach(() => {
     existingConfig = [];
     updateSpy = vi.fn().mockResolvedValue(undefined);
-    vscode.workspace._mockConfig = {
+    mockWorkspace()._mockConfig = {
       // get('models') reads the live `existingConfig` variable; other keys undefined.
       get: (key: string) => (key === 'models' ? existingConfig : undefined),
       update: updateSpy,
@@ -39,7 +48,7 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    vscode.workspace._mockConfig = {};
+    mockWorkspace()._mockConfig = {};
   });
 
   const storedModels = (): ModelConfig[] => updateSpy.mock.calls[0][1] as ModelConfig[];
@@ -212,7 +221,7 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
   it('drops stale model-specific fields absent from the replacement config', async () => {
     existingConfig = [
       baseConfig({
-        modelModes: [{ id: 'balanced', reasoningEffort: 'medium' }],
+        modelModes: { balanced: { reasoningEffort: 'medium' } },
         family: 'qwen',
         maxOutputTokens: 8192,
       }),
@@ -236,7 +245,7 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
         requestHeaders: { 'X-Auth': 'secret' },
         systemMessageReplacementsFile: '.vllm/prompt-replacements-spartan.json',
         family: 'llama',
-        modelModes: [{ id: 'fast', reasoningEffort: 'low' }],
+        modelModes: { fast: { reasoningEffort: 'low' } },
       }),
     ];
 
