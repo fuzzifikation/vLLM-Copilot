@@ -268,9 +268,7 @@ The store must not know about `chat.byokUtilityModelDefault`. Moving that write 
 
 ### 4.0 Coverage policy and broken baseline
 
-Verified 2026-08-09: `npm run test:coverage` currently exits non-zero before the refactor. Aggregate coverage is 43.75% statements, 41.64% branches, 41.58% functions, and 43.73% lines, below the configured 50/43/50/50 thresholds. The comment in `vitest.config.ts` claiming the thresholds match current coverage is stale.
-
-This must be resolved as a pre-refactor gate; otherwise coverage failures during extraction are uninterpretable. Do not lower thresholds merely to make the baseline green.
+**Step 0 resolved (2026-08-09).** The gate was red before the refactor — 43.75% statements, 41.64% branches, 41.58% functions, 43.73% lines vs the configured 50/43/50/50 — with a stale threshold comment in `vitest.config.ts`. It was repaired by **reclassifying genuinely VS Code/subprocess-bound orchestration surfaces** out of measurement (`diagnostics.ts`, `dashboard.ts`, `deepDiveView.ts`) and the `autoConfig.ts` command facade, each with written justification beside the exclusion. The reclassified baseline is **statements 70.82%, branches 66.28%, functions 65.66%, lines 71.64%**; thresholds are set at 60/60/50/60 (~10pp headroom) and **enforced via `npm run build`** so the gate cannot rot silently again. These green percentages are the extraction baseline.
 
 Coverage inclusion is ownership-based, not path-preservation-based:
 
@@ -280,8 +278,6 @@ Coverage inclusion is ownership-based, not path-preservation-based:
 - In the same commit that creates an extracted module, run `npm run test:coverage`. Add focused tests until the module and aggregate gate are healthy.
 - Exclude a new module only when it remains a genuinely VS Code/Extension Host-bound surface, document the reason beside the exclusion, and review the aggregate thresholds in the same commit. A folder-wide exclusion is not allowed merely because the code originated in an excluded facade.
 - Keep thin root facades excluded only while they remain integration surfaces; extracted pure/orchestration units are measured.
-
-The pre-refactor coverage repair should add the missing tests already identified in `known-bugs.md` (formatting/data-layer first) or narrowly correct stale inclusion/exclusion classification with written justification. Record the resulting green percentages as the extraction baseline.
 
 ### 4.1 Coverage gap analysis (what's pinned vs not)
 
@@ -301,7 +297,7 @@ The pre-refactor coverage repair should add the missing tests already identified
 
 **Red-to-green changes with explicit implementation steps:**
 
-1. **Server-less personality apply** — reproduce the duplicate append, then add the skip + warning. This is a verified bug fix and should land before structural extraction.
+1. **Server-less personality apply** — ✅ **done (step 0a):** `personalityApplicableTo` guard + `test/personalityCommand.test.ts`.
 2. **Patch-mode explicit-`undefined` hardening** — `{ displayName: undefined }` must not wipe the stored value. JSON never sends undefined, so add this against `configStore`, not as current-behavior characterization.
 3. **Side-effect boundary** — the store must not call `showInformationMessage`/`refreshWebview`/`clearCache`; a separate handler test proves those effects still occur after persistence succeeds.
 4. **Input immutability** — freeze/snapshot the configured array, entries, and update object. Current implementations mutate the configured array, so add this against `configStore` during extraction.
@@ -311,8 +307,8 @@ The pre-refactor coverage repair should add the missing tests already identified
 
 | Step | Action | Gate |
 |---|---|---|
-| 0 | Record compile/test baseline; repair the already-failing coverage gate per §4.0 | `npm run compile`, `npm test`, and `npm run test:coverage` green; record actual counts and percentages |
-| 0a | Reproduce and fix server-less personality duplicate append in a standalone pre-refactor commit | focused command test fails before fix, then passes; compile + full suite green |
+| 0 | ✅ Record compile/test baseline; repair the already-failing coverage gate per §4.0 | compile, test, and coverage green; counts/percentages recorded (§4.0) |
+| 0a | ✅ Fix server-less personality duplicate append (standalone commit) | `personalityApplicableTo` guard + regression test; compile + full suite green |
 | 1 | **Pin reachable replace behavior** (characterization #1, #2, #4) against current `autoConfig.saveModelConfig` | green |
 | 2 | **Extend reachable patch behavior** (characterization #3, #5 and current side effects) against `serverSettingsView.saveModelConfig` | green |
 | 3a | Create `configStore.ts`; migrate replace callers; move BYOK setup to both Add-model success paths and await it after persistence | focused store/save + Add/BYOK ordering tests; compile + full suite green |
@@ -353,7 +349,7 @@ Confirmed against source. Findings are explicitly classified as correctness bugs
 ## 6. Risks & sequencing
 
 **Order of operations (why this order):**
-1. **Fix the isolated personality duplicate first (step 0a), then pin merge semantics (steps 1–2).** The duplicate append is a verified caller bug; the underlying replace/patch merge contracts are otherwise intentional and must be characterized before consolidation.
+1. **Server-less personality duplicate fixed (step 0a, committed); pin merge semantics next (steps 1–2).** The duplicate append was a verified caller bug, now guarded by `personalityApplicableTo`. The underlying replace/patch merge contracts are otherwise intentional and must be characterized before consolidation.
 2. **Migrate replace, then patch, then harden (steps 3a–3c).** This is the smallest, highest-risk behavior boundary. Step 3a moves BYOK ownership in the same releasable commit as replace migration, preventing an intermediate first-model regression. Each caller migration is independently reviewable; input cloning and undefined stripping remain explicit hardening changes.
 3. **Split autoConfig, then provider internals** (steps 4–7). Provider extraction starts with its instance-owned system-message pipeline, continues through request/stream units, and leaves orchestration until last.
 4. **Create directories only as extracted files land.** Root facades and stable shared modules do not move, so unrelated importers remain untouched.
@@ -370,7 +366,7 @@ Confirmed against source. Findings are explicitly classified as correctness bugs
 
 ## 7. Finding triage — before / during / after the refactor
 
-There is one verified low-risk correctness bug, the server-less personality duplicate append. Step 0a fixes it before structural work begins. After that gate, no known correctness issue blocks the refactor. The triage below is by *coupling to the refactor*, not by severity.
+There was one verified low-risk correctness bug, the server-less personality duplicate append; it is fixed in step 0a (`personalityApplicableTo` guard + regression test) and committed. After that gate, no known correctness issue blocks the refactor. The triage below is by *coupling to the refactor*, not by severity.
 
 ### Land BEFORE the refactor (independent, low-risk cleanup)
 
@@ -378,10 +374,11 @@ Trivial, isolated, zero-structural-dependency fixes. Land first on their own com
 
 | Item | Location | Fix | Risk |
 |---|---|---|---|
-| Server-less personality duplicate append | `commands.ts` personality command | Add a focused failing test, then skip + warn before materializing/saving a personality | Low — isolated verified bug |
 | Stale "Python" comments | `sessionManager.ts:112,134` | Reword to `node:sqlite` / `DatabaseSync` | None — doc rot |
-| Dead guard, misleading message | `commands.ts:664` | Reword message or mark unreachable | None — dead code comment |
+| Dead guard, misleading message | `commands.ts:689` | Reword message or mark unreachable | None — dead code comment |
 | Value-import used only as type | `commands.ts:11` | `import type { VllmChatModelProvider }` | None — cosmetic |
+
+(Server-less personality duplicate append — **done**, step 0a: `personalityApplicableTo` guard + regression test in `test/personalityCommand.test.ts`.)
 
 ### Address DURING the refactor (coupled to restructured code)
 

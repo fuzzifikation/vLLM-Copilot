@@ -577,6 +577,25 @@ export function registerCleanSessionsCommand(
   });
 }
 
+/**
+ * A personality can only be persisted on a model with a `serverUrl`: the config
+ * matcher (`findModelConfigIndex`) requires both config id and serverUrl, so a
+ * server-less model falls through to `saveModelConfig`'s append branch and writes
+ * a duplicate entry. This guard lets the caller skip such models with a clear
+ * warning instead of corrupting settings.json.
+ * @returns `{ ok: true }` or `{ ok: false, reason }` with a user-facing message.
+ */
+export function personalityApplicableTo(model: ModelConfig): { ok: true } | { ok: false; reason: string } {
+  if (!model.serverUrl?.trim()) {
+    const label = model.displayName || model.id || '(unnamed)';
+    return {
+      ok: false,
+      reason: `Model "${label}" has no serverUrl configured. Add a server before setting a personality.`,
+    };
+  }
+  return { ok: true };
+}
+
 /** Apply a bundled personality preset to a model's system message replacements. */
 export function registerSetModelPersonalityCommand(
   context: vscode.ExtensionContext,
@@ -608,6 +627,14 @@ export function registerSetModelPersonalityCommand(
         placeHolder: 'Select a model',
       });
       if (!modelPick) return;
+
+      // A server-less model cannot be matched by saveModelConfig (findModelConfigIndex
+      // needs both id and serverUrl) and would otherwise append a duplicate entry.
+      const applicability = personalityApplicableTo(modelPick.model);
+      if (!applicability.ok) {
+        vscode.window.showWarningMessage(applicability.reason);
+        return;
+      }
 
       // Step 2: discover and pick the personality (bundled + global)
       const presets = await discoverPersonalities(context);

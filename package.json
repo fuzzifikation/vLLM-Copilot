@@ -322,7 +322,7 @@
     "license:check": "license-checker-rseidelsohn --production --excludePrivatePackages --onlyAllow \"MIT;ISC;Apache-2.0;BSD-2-Clause;BSD-3-Clause;CC0-1.0;CC-BY-3.0;BlueOak-1.0.0\"",
     "license:notices": "node scripts/generate-notices.mjs",
     "check:prompt-drift": "node scripts/check-prompt-drift.mjs",
-    "build": "npm run license:check && npm run compile && npm test && npx @vscode/vsce package --allow-missing-repository --baseContentUrl \"https://example.com\""
+    "build": "npm run license:check && npm run compile && npm test && npm run test:coverage && npx @vscode/vsce package --allow-missing-repository --baseContentUrl \"https://example.com\""
   },
   "devDependencies": {
     "@babel/parser": "^7.29.7",
