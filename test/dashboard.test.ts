@@ -215,9 +215,9 @@ describe('DashboardTreeProvider', () => {
     expect(await rootLabels(provider)).not.toContain('s:8000');
   });
 
-  it('shows a Token Usage node with aggregate + per-model rows and derived cost', async () => {
+  it('shows a Token Usage and Cost node with per-model Today/Overall rows and derived cost', async () => {
     (vscode as any).workspace._mockConfig = {
-      models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1', cost: { input: 1, output: 2, cachedInput: 0.5 } }],
+      models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1', displayName: 'Friendly M1', cost: { input: 1, output: 2, cachedInput: 0.5 } }],
     };
     vi.stubGlobal('fetch', onlineFetch);
     recordRequest({
@@ -233,26 +233,32 @@ describe('DashboardTreeProvider', () => {
       const children = await provider.getChildren();
       const serverNode = children.find(c => (c as any).label === 's:8000');
       const metrics = await provider.getChildren(serverNode as any);
-      const usageNode = metrics.find(m => (m as any).label === 'Token Usage');
+      const usageNode = metrics.find(m => (m as any).label === 'Token Usage and Cost');
       expect(usageNode).toBeDefined();
+      // No in/out summary on the node itself — it's a pure container.
+      expect((usageNode as any).description).toBeUndefined();
 
-      const rows = await provider.getChildren(usageNode as any);
+      // Model-first: one collapsible model node, labeled by displayName,
+      // priced at a glance (today's cost).
+      const modelNodes = await provider.getChildren(usageNode as any);
+      const modelNode = modelNodes.find(m => (m as any).label === 'Friendly M1');
+      expect(modelNode).toBeDefined();
+      // fresh 800k×$1 + cached 200k×$0.5 + out 500k×$2 = $1.90. Just recorded, so the
+      // recording window is under 0.1 days → today-only summary.
+      expect((modelNode as any).description).toBe('$1.90 today');
+      expect(modelNodes.find(m => (m as any).label === 'm1')).toBeUndefined(); // wire id hidden
+
+      // Today + Overall rows under the model, price-first.
+      const rows = await provider.getChildren(modelNode as any);
       const labels = rows.map(r => (r as any).label as string);
-      expect(labels).toContain('Today');
-      expect(labels).toContain('Session');
-      expect(labels).toContain('Total');
-      expect(labels).toContain('m1');
-      expect(labels).toContain('Reset Usage');
+      expect(labels).toEqual(['Today', 'Overall']);
 
-      // Server aggregate rows are TOKEN-ONLY (cost is per-model, never summed).
       const today = rows.find(r => (r as any).label === 'Today');
-      expect((today as any).description).not.toContain('$');
-      expect((today as any).description).toContain('20% cached');
+      expect((today as any).description).toBe('$1.90 · 800 k in · 200 k cached · 500 k out');
 
-      // Cost appears on the per-model row, labeled with its own currency.
-      // fresh = 800K×$1 + cached 200K×$0.5 + output 500K×$2 = $1.90
-      const modelRow = rows.find(r => (r as any).label === 'm1');
-      expect((modelRow as any).description).toContain('$1.90');
+      const overall = rows.find(r => (r as any).label === 'Overall');
+      expect((overall as any).description).toContain('$1.90');
+      expect((overall as any).description).toContain('started'); // recording-since suffix
     });
   });
 
@@ -280,6 +286,35 @@ describe('DashboardTreeProvider', () => {
       expect(costRow).toBeDefined();
       // fresh 5×$1 + output 7×$2 = $0.000005 + $0.000014 = $0.000019
       expect((costRow as any).description).toBe('$0.000019');
+    });
+  });
+
+  it('splits Last Request Input Tokens into fresh + cached when cache details exist', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+    recordRequest({
+      serverUrl: normalizeServerUrl('http://s:8000/v1'),
+      modelId: 'm1', timestamp: 1, promptTokens: 3_700, completionTokens: 5_000, totalTokens: 8_700,
+      cachedTokens: 1_200, hasMetrics: false, hasCacheDetails: true, maxModelLen: 1000, maxOutputTokens: 100,
+      firstTokenTimeMs: 10,
+    });
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 's:8000');
+      const metrics = await provider.getChildren(serverNode as any);
+      const last = metrics.find(m => (m as any).label === 'Last Request');
+      const rows = await provider.getChildren(last as any);
+      const input = rows.find(r => (r as any).label === 'Input Tokens');
+      expect(input).toBeDefined();
+      // fresh 3.7k − 1.2k cached → 2.5 k in · 1.2 k cached; no redundant %
+      expect((input as any).description).toContain('2.5 k in');
+      expect((input as any).description).toContain('1.2 k cached');
+      expect((input as any).description).not.toContain('%');
     });
   });
 });

@@ -374,17 +374,17 @@ export function registerRemoveModelCommand(
 /**
  * Reset accumulated usage counters.
  *
- * Triggered from the dashboard's "Reset Usage" row (arg = `{ serverUrl }`) or
- * from the command palette (no arg → QuickPick scope). Clears all-time, daily,
- * and session totals for the chosen scope. The Last Request node is NOT
- * cleared — it remains the useful last prompt.
+ * Triggered from the "Token Usage and Cost" node's context menu (arg =
+ * `{ serverUrl }`) or from the command palette (no arg → QuickPick scope).
+ * Clears all-time and daily totals for the chosen scope. The Last Request
+ * node is NOT cleared — it remains the useful last prompt.
  */
 export function registerResetUsageCommand(outputChannel: vscode.OutputChannel): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.resetUsage', async (arg?: any) => {
     const serverUrl = typeof arg === 'object' && arg ? arg.serverUrl : undefined;
     if (serverUrl) {
       const confirm = await vscode.window.showWarningMessage(
-        `Reset all accumulated usage for ${serverUrl}? This clears all-time, daily, and session totals for every model on this server.`,
+        `Reset all accumulated usage for ${serverUrl}? This clears all-time and daily totals for every model on this server.`,
         { modal: true },
         'Reset',
         'Cancel',

@@ -10,10 +10,9 @@
  * Data planes:
  *   - Last request: in-memory `Map<serverUrl, LastRequestData>` (replace per
  *     server — only the most recent prompt is kept).
- *   - Cumulative: per `(serverUrl, modelId)` token counts, in three planes:
+ *   - Cumulative: per `(serverUrl, modelId)` token counts, in two planes:
  *       allTime — persisted, since last reset (exact "Total")
  *       days    — persisted, keyed by `YYYY-MM-DD`, pruned after 90 days
- *       session — in-memory, since this extension activation
  *
  * Summation semantics: `cached` ⊆ `prompt` (cache-read input tokens) and
  * `reasoning` ⊆ `completion`. Components are summed independently; totals are
@@ -30,7 +29,7 @@
 
 import * as vscode from 'vscode';
 import type { WireMetrics } from './types.js';
-import { normalizeServerUrl, resolveVllmModelId, type ModelConfig } from './config.js';
+import { findModelConfig, type ModelConfig } from './config.js';
 
 // ─── Last request ─────────────────────────────────────────────────────────
 
@@ -81,17 +80,19 @@ export type UsageServerMap = Record<string, Record<string, UsageCounts>>;
 
 /** Persisted shape under `globalState` (versioned for forward migration). */
 interface PersistedUsage {
-  version: 1;
+  version: 2;
   allTime: UsageServerMap;
   /** `YYYY-MM-DD` → server map. */
   days: Record<string, UsageServerMap>;
+  /** First-recorded timestamp (epoch ms) per (serverUrl, modelId) — backs the
+   *  "started X ago" label on a model's Overall row. */
+  startedAt: Record<string, Record<string, number>>;
 }
 
-/** Per-model cumulative counts for one server across all three planes. */
+/** Per-model cumulative counts for one server across all-time and today. */
 export interface ServerUsage {
   allTime: Record<string, UsageCounts>;
   today: Record<string, UsageCounts>;
-  session: Record<string, UsageCounts>;
 }
 
 // ─── Cost rates ───────────────────────────────────────────────────────────
@@ -111,7 +112,7 @@ const RETENTION_DAYS = 90;
 const lastRequest = new Map<string, LastRequestData>();
 let allTime: UsageServerMap = {};
 let days: Record<string, UsageServerMap> = {};
-let session: UsageServerMap = {};
+let startedAt: Record<string, Record<string, number>> = {};
 let globalState: vscode.Memento | undefined;
 let writeQueue: Promise<void> = Promise.resolve();
 let logError: (msg: string) => void = () => {};
@@ -130,7 +131,7 @@ export function dayKey(ts: number = Date.now()): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-function emptyCounts(): UsageCounts {
+export function emptyCounts(): UsageCounts {
   return { prompt: 0, completion: 0, cached: 0, reasoning: 0 };
 }
 
@@ -168,10 +169,21 @@ function pruneDays(): void {
 function load(): void {
   const raw = globalState?.get<unknown>(STORAGE_KEY);
   if (raw && typeof raw === 'object') {
-    const p = raw as PersistedUsage;
-    if (p.version === 1 && p.allTime && p.days) {
+    // Loose shape — the blob is an unknown external value, not a typed
+    // PersistedUsage. `version` is a plain number here so both v1 and v2 are
+    // comparable (PersistedUsage's literal `version: 2` would reject `=== 1`).
+    const p = raw as {
+      version?: number;
+      allTime?: UsageServerMap;
+      days?: Record<string, UsageServerMap>;
+      startedAt?: Record<string, Record<string, number>>;
+    };
+    // version 1 is upgraded in place (startedAt defaults to {}); the counts
+    // are unchanged, so there is no data migration.
+    if ((p.version === 1 || p.version === 2) && p.allTime && p.days) {
       allTime = p.allTime;
       days = p.days;
+      startedAt = p.startedAt ?? {};
     }
   }
   pruneDays();
@@ -186,7 +198,7 @@ function load(): void {
  */
 function schedulePersist(): void {
   if (!globalState) return;
-  const snapshot: PersistedUsage = JSON.parse(JSON.stringify({ version: 1, allTime, days })) as PersistedUsage;
+  const snapshot: PersistedUsage = JSON.parse(JSON.stringify({ version: 2, allTime, days, startedAt })) as PersistedUsage;
   writeQueue = writeQueue
     .then(() => globalState!.update(STORAGE_KEY, snapshot))
     .catch(err => logError(`[usage] persist failed: ${err instanceof Error ? err.message : String(err)}`));
@@ -210,7 +222,7 @@ export function initUsageStore(
 
 /**
  * Record a completed request. Stores it as the server's last request AND
- * accumulates it into all-time, today, and session counters, then persists and
+ * accumulates it into the all-time and today counters, then persists and
  * fires the change event (the dashboard re-renders immediately).
  */
 export function recordRequest(data: LastRequestData): void {
@@ -226,7 +238,12 @@ export function recordRequest(data: LastRequestData): void {
   const todayKey = dayKey();
   if (!days[todayKey]) days[todayKey] = {};
   accumulate(days[todayKey], data.serverUrl, data.modelId, counts);
-  accumulate(session, data.serverUrl, data.modelId, counts);
+
+  // Stamp the first-record timestamp for this (server, model) — backs the
+  // "started X ago" label on the model's Overall row. Reset clears the entry,
+  // so the next record re-stamps it (recording "restarted").
+  const srvStarted = startedAt[data.serverUrl] ?? (startedAt[data.serverUrl] = {});
+  if (srvStarted[data.modelId] === undefined) srvStarted[data.modelId] = Date.now();
 
   schedulePersist();
   emitter.fire();
@@ -237,25 +254,27 @@ export function getLastRequest(serverUrl: string): LastRequestData | undefined {
   return lastRequest.get(serverUrl);
 }
 
-/** Cumulative per-model counts for a server across all three planes. */
+/** Cumulative per-model counts for a server across all-time and today. */
 export function getServerUsage(serverUrl: string): ServerUsage {
   return {
     allTime: allTime[serverUrl] ?? {},
     today: days[dayKey()]?.[serverUrl] ?? {},
-    session: session[serverUrl] ?? {},
   };
 }
 
-/** True when a server has any recorded usage (all-time or this session). */
+/** True when a server has any recorded usage (all-time). */
 export function hasServerUsage(serverUrl: string): boolean {
-  return Object.keys(allTime[serverUrl] ?? {}).length > 0
-    || Object.keys(session[serverUrl] ?? {}).length > 0;
+  return Object.keys(allTime[serverUrl] ?? {}).length > 0;
 }
 
-/** Server URLs that have any recorded usage (all-time or session). */
+/** Server URLs that have any recorded usage (all-time). */
 export function getServersWithUsage(): string[] {
-  const urls = new Set<string>([...Object.keys(allTime), ...Object.keys(session)]);
-  return [...urls];
+  return Object.keys(allTime);
+}
+
+/** Epoch ms of the first recorded request for (serverUrl, modelId), or undefined. */
+export function getModelStartedAt(serverUrl: string, modelId: string): number | undefined {
+  return startedAt[serverUrl]?.[modelId];
 }
 
 /**
@@ -267,12 +286,12 @@ export function resetUsage(scope: 'all' | { serverUrl: string }): void {
   if (scope === 'all') {
     allTime = {};
     days = {};
-    session = {};
+    startedAt = {};
   } else {
     const url = scope.serverUrl;
     delete allTime[url];
     for (const key of Object.keys(days)) delete days[key][url];
-    delete session[url];
+    delete startedAt[url];
   }
   schedulePersist();
   emitter.fire();
@@ -307,30 +326,77 @@ export function findModelCost(
   serverUrl: string,
   modelId: string,
 ): CostRates | undefined {
-  const normalized = normalizeServerUrl(serverUrl);
-  const entry = models.find(m =>
-    resolveVllmModelId(m) === modelId
-    && normalizeServerUrl(m.serverUrl ?? '') === normalized
-  );
-  return entry?.cost;
+  // The (serverUrl, wire id) match itself lives in findModelConfig (config.ts).
+  return findModelConfig(models, serverUrl, modelId)?.cost;
+}
+
+/** Precision-aware amount formatting (no currency decoration). */
+function formatAmount(value: number): string {
+  // Money convention for >= $1 (keep 2 decimals); extended precision with
+  // trailing-zero stripping below $1 so per-request costs survive rounding.
+  if (value >= 100) return value.toFixed(0);
+  if (value >= 1) return value.toFixed(2);
+  if (value >= 0.01) return value.toFixed(4).replace(/\.?0+$/, '');
+  return value.toFixed(6).replace(/\.?0+$/, '');
+}
+
+/**
+ * Static currency-prefix map — deliberately NOT an i18n toolbox. Common
+ * currencies render their symbol; anything else falls back to the raw currency
+ * string (e.g. `EUR 12.35`) so a non-USD setting never displays a wrong `$`.
+ * AI Credits are handled separately (suffix, not prefix).
+ */
+const CURRENCY_PREFIX: Record<string, string> = {
+  usd: '$', eur: '€', gbp: '£', jpy: '¥', cny: '¥',
+};
+function currencyPrefix(currency?: string): string {
+  const sym = CURRENCY_PREFIX[(currency ?? 'USD').toLowerCase()];
+  return sym ?? `${currency ?? 'USD'} `;
 }
 
 /**
  * Format a derived cost value with its currency label. `"AI Credits"` (case-
  * insensitive) renders a credits suffix (1 credit = $0.01, per Copilot's
- * convention); anything else renders a `$` prefix. Precision adapts to magnitude
- * so a per-request cost of $0.000019 never collapses to `$0.0000`.
+ * convention); common currencies render their symbol ($ € £ ¥); anything else
+ * falls back to the raw currency string. Precision adapts to magnitude so a
+ * per-request cost of $0.000019 never collapses to `$0.0000`.
  */
 export function formatCost(value: number, currency?: string): string {
-  const isCredits = (currency ?? 'USD').toLowerCase() === 'ai credits';
-  // Money convention for >= $1 (keep 2 decimals); extended precision with
-  // trailing-zero stripping below $1 so per-request costs survive rounding.
-  let amount: string;
-  if (value >= 100) amount = value.toFixed(0);
-  else if (value >= 1) amount = value.toFixed(2);
-  else if (value >= 0.01) amount = value.toFixed(4).replace(/\.?0+$/, '');
-  else amount = value.toFixed(6).replace(/\.?0+$/, '');
-  return isCredits ? `${amount} credits` : `$${amount}`;
+  return (currency ?? 'USD').toLowerCase() === 'ai credits'
+    ? `${formatAmount(value)} credits`
+    : `${currencyPrefix(currency)}${formatAmount(value)}`;
+}
+
+/**
+ * Compact collapsed-node summary: `$11.51 today and $31.13 in 3.1 days` — the
+ * model's today cost and its all-time cost over the recording window (now −
+ * startedAt, 1 decimal). Falls back to today-only when the overall cost or
+ * start time is unknown (legacy data) or the window is under 0.1 days.
+ */
+export function formatCostSummary(
+  todayCost: number | undefined,
+  overallCost: number | undefined,
+  currency: string | undefined,
+  startedAt: number | undefined,
+): string | undefined {
+  if (todayCost === undefined) return undefined;
+  const today = `${formatCost(todayCost, currency)} today`;
+  if (overallCost === undefined || startedAt === undefined) return today;
+  const days = (Date.now() - startedAt) / 86_400_000;
+  if (days < 0.1) return today;
+  return `${today} and ${formatCost(overallCost, currency)} in ${days.toFixed(1)} days`;
+}
+
+/**
+ * Abbreviate large token counts for compact dashboard rows: 3883588 → "3.88 M",
+ * 12345 → "12.35 k", 999 → "999". Two decimals, trailing zeros stripped.
+ * Presentation ONLY — the stored counts are never rounded; this runs at render
+ * time on already-accumulated integers.
+ */
+export function fmtCount(n: number): string {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, '')} M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(2).replace(/\.?0+$/, '')} k`;
+  return String(n);
 }
 
 /** Test-only: reset module state between tests. */
@@ -338,7 +404,7 @@ export function resetUsageStoreForTests(): void {
   lastRequest.clear();
   allTime = {};
   days = {};
-  session = {};
+  startedAt = {};
   globalState = undefined;
   writeQueue = Promise.resolve();
   logError = () => {};

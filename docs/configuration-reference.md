@@ -122,19 +122,18 @@ When server flags aren't set, the node shows a hint: "Start vLLM with `--enable-
 
 ### Token Usage & Cost
 
-Under each server, a collapsible **Token Usage** node shows **cumulative** token consumption across all requests (not just the last one). It updates **immediately** after every completed prompt — it does not wait for the metrics poll interval. For the design and data model behind this feature, see [usage.md](usage.md).
+Under each server, a collapsible **Token Usage and Cost** node shows **cumulative** token consumption across all requests (not just the last one). It updates **immediately** after every completed prompt — it does not wait for the metrics poll interval. The node is **model-first**: one collapsible entry per model (labeled by `displayName`), each with **Today** and **Overall** rows. For the design and data model behind this feature, see [usage.md](usage.md).
 
 | Row | Description |
 |---|---|
-| **Today** | Tokens consumed today, summed across all models on this server |
-| **Session** | Tokens consumed since this VS Code window opened (resets on reload) |
-| **Total** | All tokens since the last reset (persisted across reloads) |
-| **Per-model rows** | Today's breakdown per model — the "where did the money go" view |
-| **Reset Usage** | Click to clear all usage for this server (all-time, daily, session). The Last Request node is kept. |
+| **Model node** | One collapsible entry per model; its description shows `$11.51 today and $31.13 in 3.1 days` (today's cost + all-time cost over the recording window). |
+| **Today** | That model's price + today's tokens: `$1.90 · 800 k in · 200 k cached · 500 k out`. |
+| **Overall** | That model's price + all-time tokens, plus `· started 5d ago` (when recording began). |
+| **Reset Usage** | Right-click the **Token Usage and Cost** node → clear all usage for this server (all-time, daily, started-at). The Last Request node is kept. |
 
-Each row shows exact counts: `in · out · cached (% cached)` — cached = cache-*read* input tokens (a subset of input). **Cost is shown per model, never summed** — the Today/Session/Total rows are token-only, because models on one server may use different currencies. The per-model rows append the cost in that model's currency: `· $0.42` (or `· 42.00 credits`); the Last Request node shows a per-request **Cost** row the same way. Sum costs across models manually.
+Rows are **price-first**: when the model has `cost` configured the cost leads (`$1.90 · …` or `42.00 credits`), then the token split — `in` **excludes** cache, `in + cached = total input` (cached = cache-*read* input tokens). **There is no server-level cost sum** — models on one server may use different currencies, so each model's rows carry that model's cost in its own currency. The Last Request node shows a per-request **Cost** row the same way. Sum costs across models manually. Currency decoration uses a small static map — `$` (USD), `€` (EUR), `£` (GBP), `¥` (JPY/CNY), `credits` (AI Credits) — and any other currency falls back to its raw code (`EUR 12.35`); no currency library is bundled.
 
-**Entry point:** right-click the **Token Usage** node → **Set Cost…** to configure the per-1M rates through guided prompts (model → input/output/cached-input → currency). Writes the `cost` block into the model entry for you; the dashboard re-renders immediately.
+**Entry points (right-click the Token Usage and Cost node):** **Set Cost…** configures the per-1M rates through guided prompts (model → input/output/cached-input → currency) and writes the `cost` block for you; **Reset Usage** clears the server's counters. The dashboard re-renders immediately after either.
 
 **Cost configuration** — optional per-model rates, in **currency units per 1,000,000 tokens**:
 
