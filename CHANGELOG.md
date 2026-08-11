@@ -2,7 +2,7 @@
 
 ## v1.22.0 — Token & Cost Usage Tracker
 
-- **Token & cost usage tracker** — a cumulative **Token Usage and Cost** node under each server, **model-first**: one collapsible entry per model (labeled by `displayName`) carrying the price (`$11.51 today and $31.13 in 3.1 days` — today's cost + all-time cost over the recording window), expanding to **Today** and **Overall** token rows (`800 k in · 200 k cached · 500 k out`; input split, cache never double-counted). Persisted across reloads (90-day retention).
+- **Token & cost usage tracker** — a cumulative **Token Usage and Cost** node under each server, **model-first**: one collapsible entry per model (labeled by `displayName`) carrying the price (`$11.51 today and $31.13 in 3.1 days` — today's cost + all-time cost over the recording window), expanding to **Today** and **Overall** token rows (`800k in · 200k cached · 500k out`; input split, cache never double-counted). Persisted across reloads (90-day retention).
 - **Per-model cost tracking** — optional per-1M `cost` rates (`input` / `output` / `cachedInput` + `currency`), derived at render time so editing a rate re-prices all history. Costs round to 2 decimals (fine precision on the per-request Last Request row); token counts round to whole thousands. Currency decoration uses a small static symbol map ($ € £ ¥, `credits` for AI Credits, raw-code fallback — no i18n library); also fixes non-USD currencies that previously rendered as a wrong `$`.
 - **Set Cost…** — right-click the node to configure a model's rates via guided prompts (model → rates → currency).
 - **Reset Usage** — right-click action on the node (server scope) or a palette command (all / per-server); clears all-time + daily. The Last Request node is kept.
