@@ -400,21 +400,22 @@ export function formatCostSummary(
 }
 
 /**
- * Abbreviate large token counts for compact dashboard rows: 3883588 → "3.88 M",
- * 836350 → "836 k", 999 → "999". Thousands are rounded to whole k (sub-1000
+ * Abbreviate large token counts for compact dashboard rows: 3883588 → "3.88M",
+ * 836350 → "836k", 999 → "999". Thousands are rounded to whole k (sub-1000
  * precision is noise); millions keep 2 decimals, trailing zeros stripped.
- * Presentation ONLY — the stored counts are never rounded; this runs at render
- * time on already-accumulated integers.
+ * No space between the number and the unit. Presentation ONLY — the stored
+ * counts are never rounded; this runs at render time on already-accumulated
+ * integers.
  */
 export function fmtCount(n: number): string {
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, '')} M`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`;
   if (n >= 1e3) {
     const k = Math.round(n / 1e3);
-    if (k >= 1000) { // 999,500 → 1000 k → "1 M"
+    if (k >= 1000) { // 999,500 → 1000k → "1M"
       const m = k / 1000;
-      return `${m.toFixed(2).replace(/\.?0+$/, '')} M`;
+      return `${m.toFixed(2).replace(/\.?0+$/, '')}M`;
     }
-    return `${k} k`;
+    return `${k}k`;
   }
   return String(n);
 }

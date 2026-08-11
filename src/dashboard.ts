@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import { getConfig, resolveServerConfig, normalizeServerUrl, findModelConfig, type ModelConfig } from './config.js';
-import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtTokens, fmtThroughput, shortUrl, getMetricsEngine } from './vllmMetrics.js';
+import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import {
   getLastRequest, getServerUsage, hasServerUsage, onUsageStoreDidChange,
   computeCost, findModelCost, formatCostFine, formatCostSummary, fmtCount, emptyCounts,
@@ -390,7 +390,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     }
     items.push(new MetricTreeItem(
       'Context Window',
-      fmtTokens(m.maxModelLen),
+      m.maxModelLen != null ? fmtCount(m.maxModelLen) : '—',
       'layers',
       'Maximum context length (input + output combined) for this model.',
     ));
