@@ -9,8 +9,9 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from './provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl } from './config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId } from './config.js';
 import type { ModelConfig } from './config.js';
+import { patchModelConfig } from './configStore.js';
 import { promptForServerAuth } from './commands/serverAuth.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
@@ -22,6 +23,7 @@ import {
   WorkspaceEntry,
 } from './sessionManager.js';
 import { getMetricsEngine } from './vllmMetrics.js';
+import { resetUsage, getServersWithUsage } from './usageStore.js';
 
 // Re-export the extracted workflows so extension.ts and tests keep a single
 // stable import surface (matches the autoConfig.ts facade pattern).
@@ -366,6 +368,153 @@ export function registerRemoveModelCommand(
     _provider.clearCache();
     outputChannel.appendLine(`[INFO] Removed model "${configId}" from ${serverUrl}.`);
     vscode.window.showInformationMessage(`Removed model "${configId}" from ${serverUrl}.`);
+  });
+}
+
+/**
+ * Reset accumulated usage counters.
+ *
+ * Triggered from the dashboard's "Reset Usage" row (arg = `{ serverUrl }`) or
+ * from the command palette (no arg → QuickPick scope). Clears all-time, daily,
+ * and session totals for the chosen scope. The Last Request node is NOT
+ * cleared — it remains the useful last prompt.
+ */
+export function registerResetUsageCommand(outputChannel: vscode.OutputChannel): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.resetUsage', async (arg?: any) => {
+    const serverUrl = typeof arg === 'object' && arg ? arg.serverUrl : undefined;
+    if (serverUrl) {
+      const confirm = await vscode.window.showWarningMessage(
+        `Reset all accumulated usage for ${serverUrl}? This clears all-time, daily, and session totals for every model on this server.`,
+        { modal: true },
+        'Reset',
+        'Cancel',
+      );
+      if (confirm !== 'Reset') return;
+      resetUsage({ serverUrl: normalizeServerUrl(serverUrl) });
+      outputChannel.appendLine(`[INFO] Reset usage for ${serverUrl}.`);
+      vscode.window.showInformationMessage(`Usage reset for ${serverUrl}.`);
+      return;
+    }
+
+    // Palette path: pick a scope.
+    const servers = getServersWithUsage();
+    const items = [
+      { label: 'All servers', description: 'Reset usage for every configured server', scope: 'all' as const },
+      ...servers.map(s => ({ label: s, description: 'Reset usage for this server', scope: { serverUrl: s } as const })),
+    ];
+    if (items.length === 1) {
+      vscode.window.showInformationMessage('No usage recorded yet.');
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Reset usage for…' });
+    if (!picked) return;
+    const confirm = await vscode.window.showWarningMessage(
+      `Reset usage for ${picked.label}?`,
+      { modal: true },
+      'Reset',
+      'Cancel',
+    );
+    if (confirm !== 'Reset') return;
+    resetUsage(picked.scope);
+    outputChannel.appendLine(`[INFO] Reset usage for ${picked.label}.`);
+    vscode.window.showInformationMessage(`Usage reset for ${picked.label}.`);
+  });
+}
+
+/**
+ * Configure per-model cost rates for the dashboard Token Usage tracker.
+ *
+ * Triggered from the Token Usage node's context menu ("Set Cost…", arg =
+ * `{ serverUrl }`). Guides the user through: model quickpick → three per-1M
+ * rate inputs (input / output / cachedInput, prefilled from any existing
+ * `cost`) → currency label quickpick (USD / AI Credits / custom). Writes the
+ * `cost` block via {@link patchModelConfig}, so the settings change fires the
+ * dashboard's config-change handler and the cost appears without a reload.
+ *
+ * Cost is per MODEL — the user sums costs manually (see usageStore docs).
+ */
+export function registerConfigureCostCommand(
+  _context: vscode.ExtensionContext,
+  outputChannel: vscode.OutputChannel,
+): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.configureCost', async (arg?: any) => {
+    const serverUrl = typeof arg === 'object' && arg ? arg.serverUrl : undefined;
+    if (!serverUrl) {
+      vscode.window.showErrorMessage('Server URL not provided.');
+      return;
+    }
+    const normalized = normalizeServerUrl(serverUrl);
+    const config = vscode.workspace.getConfiguration('vllm-copilot');
+    const models: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+    const serverModels = models.filter(m => m.serverUrl && normalizeServerUrl(m.serverUrl) === normalized);
+    if (serverModels.length === 0) {
+      vscode.window.showWarningMessage(`No configured models found on ${serverUrl}.`);
+      return;
+    }
+
+    const picked = await vscode.window.showQuickPick(
+      serverModels.map(m => ({
+        label: m.displayName || m.id || resolveVllmModelId(m) || '(unnamed)',
+        description: resolveVllmModelId(m),
+        model: m,
+      })),
+      { placeHolder: 'Select a model to set per-1M cost rates' },
+    );
+    if (!picked) return;
+
+    const model = picked.model;
+    const configId = resolveConfigId(model);
+    if (!configId || !model.serverUrl) {
+      vscode.window.showWarningMessage(`Model "${picked.label}" has no config id; cannot set cost.`);
+      return;
+    }
+    const existing = model.cost ?? {};
+    const currencyNow = existing.currency ?? 'USD';
+
+    // Rate inputs, prefilled from the existing cost block. Blank/0 = unpriced.
+    const numOrZero = (v: string | undefined): number => {
+      const n = Number(v);
+      return !isNaN(n) && n >= 0 ? n : 0;
+    };
+    const askRate = async (value: number | undefined, prompt: string): Promise<string | undefined> => {
+      return vscode.window.showInputBox({
+        prompt,
+        value: value !== undefined && value > 0 ? String(value) : '',
+        placeHolder: '0 = unpriced',
+        validateInput: v => (v === '' || (!isNaN(Number(v)) && Number(v) >= 0) ? undefined : 'Enter a non-negative number'),
+      });
+    };
+
+    const input = await askRate(existing.input, `Input cost per 1M tokens (${currencyNow}) — fresh, uncached input.`);
+    if (input === undefined) return;
+    const output = await askRate(existing.output, `Output cost per 1M tokens (${currencyNow}) — includes reasoning tokens.`);
+    if (output === undefined) return;
+    const cachedInput = await askRate(existing.cachedInput, `Cache-read input cost per 1M tokens (${currencyNow}).`);
+    if (cachedInput === undefined) return;
+
+    let currency = currencyNow;
+    const curPick = await vscode.window.showQuickPick(
+      ['USD', 'AI Credits', 'Other…'].map(label => ({ label })),
+      { placeHolder: `Currency label (currently ${currencyNow})` },
+    );
+    if (curPick === undefined) return;
+    if (curPick.label === 'Other…') {
+      const custom = await vscode.window.showInputBox({ prompt: 'Currency label (display only)', value: currencyNow });
+      if (custom === undefined) return;
+      if (custom.trim()) currency = custom.trim();
+    } else {
+      currency = curPick.label;
+    }
+
+    const cost = {
+      input: numOrZero(input),
+      output: numOrZero(output),
+      cachedInput: numOrZero(cachedInput),
+      currency,
+    };
+    await patchModelConfig({ id: configId, serverUrl: model.serverUrl }, { cost });
+    outputChannel.appendLine(`[INFO] Set cost for ${picked.label} (${currency}): in ${cost.input}, out ${cost.output}, cached-in ${cost.cachedInput} per 1M.`);
+    vscode.window.showInformationMessage(`Cost set for ${picked.label}.`);
   });
 }
 

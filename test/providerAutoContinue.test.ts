@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { VllmChatModelProvider } from '../src/provider.js';
 import type { ProviderClient } from '../src/provider/contracts.js';
 import type { VllmConfig } from '../src/config.js';
-import { getLastRequest } from '../src/lastRequestStore.js';
+import { getLastRequest } from '../src/usageStore.js';
 import type { StreamEvent } from '../src/types.js';
 
 /**

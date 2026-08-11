@@ -15,8 +15,11 @@ import {
   registerUpdateServerAuthCommand,
   registerRemoveServerCommand,
   registerRemoveModelCommand,
+  registerResetUsageCommand,
+  registerConfigureCostCommand,
 } from './commands.js';
 import { setExtensionVersion } from './diagnostics.js';
+import { initUsageStore } from './usageStore.js';
 import { DashboardTreeProvider } from './dashboard.js';
 import { ServerSettingsViewProvider } from './serverSettingsView.js';
 import { openDeepDive } from './deepDiveView.js';
@@ -71,6 +74,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Wire output channel to sessionManager for logging
     setSessionManagerOutput(outputChannel);
+
+    // Initialize usage store (last request + cumulative token/cost tracking).
+    // Must run before any request can complete so the persisted counters load
+    // and the change event is live for the dashboard.
+    context.subscriptions.push(initUsageStore(context, outputChannel));
 
     // Initialize file logger
     fileLogger = new FileLogger(context, outputChannel);
@@ -167,6 +175,8 @@ export async function activate(context: vscode.ExtensionContext) {
       registerUpdateServerAuthCommand(context, activeProvider, outputChannel),
       registerRemoveServerCommand(context, activeProvider, outputChannel),
       registerRemoveModelCommand(context, activeProvider, outputChannel),
+      registerResetUsageCommand(outputChannel),
+      registerConfigureCostCommand(context, outputChannel),
     );
 
     // Deep-Dive: open editor-area webview for a single server

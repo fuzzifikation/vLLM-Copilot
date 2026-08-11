@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { DashboardTreeProvider } from '../src/dashboard.js';
-import { setLastRequest } from '../src/lastRequestStore.js';
+import { recordRequest, resetUsageStoreForTests } from '../src/usageStore.js';
 import { normalizeServerUrl } from '../src/config.js';
 
 /**
@@ -52,6 +52,7 @@ describe('DashboardTreeProvider', () => {
 
   beforeEach(() => {
     (vscode as any).workspace._mockConfig = {};
+    resetUsageStoreForTests();
     provider = makeProvider();
   });
 
@@ -59,6 +60,7 @@ describe('DashboardTreeProvider', () => {
     provider.dispose();
     vi.unstubAllGlobals();
     (vscode as any).workspace._mockConfig = {};
+    resetUsageStoreForTests();
   });
 
   it('shows poll interval, add, and refresh items with no servers configured', async () => {
@@ -181,7 +183,7 @@ describe('DashboardTreeProvider', () => {
       models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1' }],
     };
     vi.stubGlobal('fetch', onlineFetch);
-    setLastRequest({
+    recordRequest({
       serverUrl: normalizeServerUrl('http://s:8000/v1'),
       modelId: 'm1', timestamp: 1, promptTokens: 5, completionTokens: 7, totalTokens: 12,
       hasMetrics: false, hasCacheDetails: false, maxModelLen: 100, maxOutputTokens: 100,
@@ -211,5 +213,73 @@ describe('DashboardTreeProvider', () => {
 
     provider.dispose();
     expect(await rootLabels(provider)).not.toContain('s:8000');
+  });
+
+  it('shows a Token Usage node with aggregate + per-model rows and derived cost', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1', cost: { input: 1, output: 2, cachedInput: 0.5 } }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+    recordRequest({
+      serverUrl: normalizeServerUrl('http://s:8000/v1'),
+      modelId: 'm1', timestamp: 1, promptTokens: 1_000_000, completionTokens: 500_000, totalTokens: 1_500_000,
+      cachedTokens: 200_000, hasMetrics: false, hasCacheDetails: true, maxModelLen: 1000, maxOutputTokens: 100,
+      firstTokenTimeMs: 10,
+    });
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 's:8000');
+      const metrics = await provider.getChildren(serverNode as any);
+      const usageNode = metrics.find(m => (m as any).label === 'Token Usage');
+      expect(usageNode).toBeDefined();
+
+      const rows = await provider.getChildren(usageNode as any);
+      const labels = rows.map(r => (r as any).label as string);
+      expect(labels).toContain('Today');
+      expect(labels).toContain('Session');
+      expect(labels).toContain('Total');
+      expect(labels).toContain('m1');
+      expect(labels).toContain('Reset Usage');
+
+      // Server aggregate rows are TOKEN-ONLY (cost is per-model, never summed).
+      const today = rows.find(r => (r as any).label === 'Today');
+      expect((today as any).description).not.toContain('$');
+      expect((today as any).description).toContain('20% cached');
+
+      // Cost appears on the per-model row, labeled with its own currency.
+      // fresh = 800K×$1 + cached 200K×$0.5 + output 500K×$2 = $1.90
+      const modelRow = rows.find(r => (r as any).label === 'm1');
+      expect((modelRow as any).description).toContain('$1.90');
+    });
+  });
+
+  it('shows a Cost row under Last Request when the model has cost rates', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1', cost: { input: 1, output: 2, cachedInput: 0.5 } }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+    recordRequest({
+      serverUrl: normalizeServerUrl('http://s:8000/v1'),
+      modelId: 'm1', timestamp: 1, promptTokens: 5, completionTokens: 7, totalTokens: 12,
+      cachedTokens: 0, hasMetrics: false, hasCacheDetails: true, maxModelLen: 1000, maxOutputTokens: 100,
+      firstTokenTimeMs: 10,
+    });
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 's:8000');
+      const metrics = await provider.getChildren(serverNode as any);
+      const last = metrics.find(m => (m as any).label === 'Last Request');
+      const rows = await provider.getChildren(last as any);
+      const costRow = rows.find(r => (r as any).label === 'Cost');
+      expect(costRow).toBeDefined();
+      // fresh 5×$1 + output 7×$2 = $0.000005 + $0.000014 = $0.000019
+      expect((costRow as any).description).toBe('$0.000019');
+    });
   });
 });

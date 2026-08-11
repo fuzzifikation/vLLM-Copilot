@@ -75,6 +75,26 @@ export interface ModelConfig {
    * are resolved against the workspace root and remain valid for custom files.
    */
   systemMessageReplacementsFile?: string;
+  /**
+   * Optional per-model cost rates for the dashboard usage tracker.
+   * All rates are per 1,000,000 tokens and interpreted IN `currency` units.
+   * Cost is derived at render time from these rates + stored token counts —
+   * never stored — so editing a rate re-prices all history without migration.
+   */
+  cost?: {
+    /** Cost per 1,000,000 fresh (uncached) input tokens. */
+    input?: number;
+    /** Cost per 1,000,000 output tokens (includes reasoning tokens). */
+    output?: number;
+    /** Cost per 1,000,000 cache-read input tokens. */
+    cachedInput?: number;
+    /**
+     * Display unit for the rates. Default `"USD"`. Use `"AI Credits"` to compare
+     * with the Copilot model picker (1 credit = $0.01 — enter credit values
+     * directly; no conversion is applied).
+     */
+    currency?: string;
+  };
 }
 
 export interface VllmConfig {

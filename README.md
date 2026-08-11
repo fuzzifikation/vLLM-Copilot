@@ -14,7 +14,7 @@
 For anyone using AI models served on vLLM servers, self-hosted or professionally hosted within your company, this gets you:
 
 - **Native Copilot integration**: your models show up in the Copilot model picker with chat, tools, vision, subagent capabilities and context-window stats, fully supported.
-- **Live server dashboard**: at-a-glance metrics for every vLLM server right in the sidebar: queue status, KV-cache usage, TTFT, throughput, and per-request token details.
+- **Live server dashboard**: at-a-glance metrics for every vLLM server right in the sidebar: queue status, KV-cache usage, TTFT, throughput, per-request token details, and a **cumulative token & cost tracker** (today/session/total, per model, with optional per-1M cost rates).
 - **Personality presets**: strip Microsoft's 21KB of system-prompt boilerplate, or give a model a character. Per model, no JSON editing.
 - **Per-server control**: each server carries its own endpoint, auth, sampling, token budget.
 - **Fully configurable model-modes**: Copilot gives you thinking effort. This gives you full control with configurable request parameters, not only thinking, but *any* vLLM parameter. Fully supported in the sidebar-UI.
@@ -183,7 +183,8 @@ A native Tree View sidebar shows live metrics for each configured vLLM server. N
 - **At-a-glance queue status:** Each server shows running and waiting request counts (or *idle*)
 - **Expandable metrics:** Model IDs, vLLM version, context window, KV cache usage & hit rate, TTFT, throughput (tokens/sec)
 - **MTP / speculative decoding:** Acceptance rate, draft depth, proposal count (when active)
-- **Last Request Details:** Per-server node showing the most recent request's token counts (input, output, cached, reasoning), timing metrics (TTFT, queue time, generation time), and throughput. Requires vLLM `--enable-prompt-tokens-details` and `--enable-per-request-metrics` server flags for full detail. Displays hints when flags aren't set.
+- **Last Request Details:** Per-server node showing the most recent request's token counts (input, output, cached, reasoning), timing metrics (TTFT, queue time, generation time), and throughput — updated **immediately** after every prompt, not on the poll interval. Requires vLLM `--enable-prompt-tokens-details` and `--enable-per-request-metrics` server flags for full detail. Displays hints when flags aren't set.
+- **Token Usage tracker:** Per-server cumulative **Today / Session / Total** token counts (input, output, cached) with per-model breakdown and optional **cost** — set per-model `cost` rates in `settings.json` (per 1M tokens, USD or AI Credits) and every row shows derived spend. Includes a per-server **Reset Usage** action. See [Configuration Reference → Token Usage & Cost](docs/configuration-reference.md#token-usage--cost) and [usage.md](docs/usage.md) for the design.
 - **Configurable polling:** Click **Refresh Interval** at the top of the tree to change; enter `15s`, `30s`, `1m`, etc.
 
 Access via **View → vLLM-Copilot → Dashboard** or the sidebar section header.

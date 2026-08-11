@@ -29,6 +29,7 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 | `streamInactivityTimeout` | `0` (off) | SSE stream timeout in ms. `0` = wait indefinitely. |
 | `autoContinueRetries` | `1` | Retry attempts on empty/truncated responses (assistant prefill). `0` = off. |
 | `systemMessageReplacementsFile` | — | Path to a JSON file of `{ ruleName, find, replace }` pairs applied to every system message. See [System Message Replacements](#system-message-replacements) below. |
+| `cost` | — | Optional per-model cost rates for the dashboard **Token Usage** tracker (per 1,000,000 tokens). See [Token Usage & Cost](#token-usage--cost) below. |
 
 **Resolution chain (highest wins):** built-in defaults → model `defaultParams` → the selected `modelModes` entry.
 
@@ -117,7 +118,53 @@ Under each server in the Dashboard tree, a collapsible **Last Request** node sho
 
 When server flags aren't set, the node shows a hint: "Start vLLM with `--enable-prompt-tokens-details` and `--enable-per-request-metrics` for full details."
 
+> **Cost row:** when the model has a `cost` config, the Last Request node also shows a **Cost** row — the estimated cost of that single request, derived from the model's per-1M rates. This is the per-prompt money-verification view.
+
+### Token Usage & Cost
+
+Under each server, a collapsible **Token Usage** node shows **cumulative** token consumption across all requests (not just the last one). It updates **immediately** after every completed prompt — it does not wait for the metrics poll interval. For the design and data model behind this feature, see [usage.md](usage.md).
+
+| Row | Description |
+|---|---|
+| **Today** | Tokens consumed today, summed across all models on this server |
+| **Session** | Tokens consumed since this VS Code window opened (resets on reload) |
+| **Total** | All tokens since the last reset (persisted across reloads) |
+| **Per-model rows** | Today's breakdown per model — the "where did the money go" view |
+| **Reset Usage** | Click to clear all usage for this server (all-time, daily, session). The Last Request node is kept. |
+
+Each row shows exact counts: `in · out · cached (% cached)` — cached = cache-*read* input tokens (a subset of input). **Cost is shown per model, never summed** — the Today/Session/Total rows are token-only, because models on one server may use different currencies. The per-model rows append the cost in that model's currency: `· $0.42` (or `· 42.00 credits`); the Last Request node shows a per-request **Cost** row the same way. Sum costs across models manually.
+
+**Entry point:** right-click the **Token Usage** node → **Set Cost…** to configure the per-1M rates through guided prompts (model → input/output/cached-input → currency). Writes the `cost` block into the model entry for you; the dashboard re-renders immediately.
+
+**Cost configuration** — optional per-model rates, in **currency units per 1,000,000 tokens**:
+
+```jsonc
+"vllm-copilot.models": [
+  {
+    "id": "deepseek-v4 on localhost:8000",
+    "vllmModelId": "DeepSeek/V4-Flash",
+    "serverUrl": "http://localhost:8000",
+    "cost": {
+      "input": 0.14,        // $ per 1M fresh (uncached) input tokens
+      "output": 0.28,       // $ per 1M output tokens (includes reasoning)
+      "cachedInput": 0.014, // $ per 1M cache-read input tokens
+      "currency": "USD"     // display unit; default "USD"
+    }
+  }
+]
+```
+
+- **All rates are per 1,000,000 tokens.** Most providers publish per-1M prices (OpenAI, Anthropic, DeepSeek); if yours bills per 1K, multiply by 1000.
+- **`currency`** is a display label only — enter the rates *in that unit*. Use `"AI Credits"` to compare with the Copilot model picker: 1 AI credit = $0.01, so enter credit values directly (no conversion is applied).
+- **Rates are derived at render time, never stored.** Edit a rate and every historical total re-prices instantly — no migration.
+- **Omit `cost` or set all rates to `0`** → no cost lines for that model (e.g. a free local server).
+- **Cost formula** (per request/bucket): `(prompt − cached)/1M × input + cached/1M × cachedInput + completion/1M × output`. Fresh input is priced at `input`; cache-read input at `cachedInput`.
+
+**Reset via command palette** — `vLLM-Copilot: Reset Usage` lets you pick *All servers* or a single server.
+
 ---
+
+## Typical Example
 
 ## Typical Example
 

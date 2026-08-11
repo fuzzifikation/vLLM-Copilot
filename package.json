@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "You use vLLM and want its AI models in Copilot? This is what you need. The full Copilot integration for vLLM models — *all* features supported. Optimized for robust hosting of local AI with fully configurable model modes, supporting every vLLM parameter with full UI configuration. Supports multiple servers and models, each with its own auth, parameters, and modes. Auto-detects vLLM server models and their capabilities. Includes a dashboard for server metrics and model status.",
-  "version": "1.21.0",
+  "version": "1.22.0",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -146,12 +146,26 @@
       {
         "command": "vllm-copilot.setPollInterval",
         "title": "Set Poll Interval"
+      },
+      {
+        "command": "vllm-copilot.resetUsage",
+        "title": "Reset Usage",
+        "category": "vLLM-Copilot"
+      },
+      {
+        "command": "vllm-copilot.configureCost",
+        "title": "Set Cost…",
+        "category": "vLLM-Copilot"
       }
     ],
     "menus": {
       "commandPalette": [
         {
           "command": "vllm-copilot.setPollInterval",
+          "when": "false"
+        },
+        {
+          "command": "vllm-copilot.configureCost",
           "when": "false"
         }
       ],
@@ -165,6 +179,11 @@
           "command": "vllm-copilot.openDeepDive",
           "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline)",
           "group": "2_deepDive@1"
+        },
+        {
+          "command": "vllm-copilot.configureCost",
+          "when": "view == vllm-copilot.dashboard && viewItem == tokenUsage",
+          "group": "1_usage@1"
         }
       ]
     },
@@ -267,6 +286,30 @@
                   "type": "string",
                   "markdownDescription": "⚡ **Advanced** — Path to a JSON file with find/replace rules for system messages. Each rule: `{ \"ruleName\": \"...\", \"find\": \"exact substring\", \"replace\": \"replacement text\" }`. Applied to every system message before sending to vLLM. Recommended: `.vllm/prompt-replacements.json`",
                   "default": ""
+                },
+                "cost": {
+                  "type": "object",
+                  "default": {},
+                  "properties": {
+                    "input": {
+                      "type": "number",
+                      "markdownDescription": "Cost per 1,000,000 **fresh (uncached) input** tokens, in the configured `currency` unit. `0`/absent = this component unpriced."
+                    },
+                    "output": {
+                      "type": "number",
+                      "markdownDescription": "Cost per 1,000,000 **output** tokens (includes reasoning tokens), in the configured `currency` unit. `0`/absent = this component unpriced."
+                    },
+                    "cachedInput": {
+                      "type": "number",
+                      "markdownDescription": "Cost per 1,000,000 **cache-read input** tokens, in the configured `currency` unit. `0`/absent = this component unpriced."
+                    },
+                    "currency": {
+                      "type": "string",
+                      "default": "USD",
+                      "markdownDescription": "Display unit for the cost values. Default `\"USD\"`. Use `\"AI Credits\"` to compare with the Copilot model picker (1 AI credit = $0.01 — **enter credit values directly**; no conversion is applied). Any other label is shown verbatim."
+                    }
+                  },
+                  "markdownDescription": "⚡ Optional per-model cost rates for the dashboard **Token Usage** tracker. All rates are per **1,000,000 tokens** and interpreted in `currency` units. Omit the whole object or set all rates to `0` to hide cost lines for this model (e.g. a free local server)."
                 }
               }
             },
