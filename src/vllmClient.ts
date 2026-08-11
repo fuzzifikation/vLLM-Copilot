@@ -82,7 +82,7 @@ export class VllmClient {
         method: 'GET',
       }, requestHeaders, this.retryCallbacks.onRetry, this.retryCallbacks.onRetrySuccess);
 
-      const data: any = await response.json();
+      const data = await response.json() as { data?: VllmModel[] };
       this.fileLogger?.logResponse(response.status, url, this.getResponseHeaders(response), data);
 
       const models = data.data || [];

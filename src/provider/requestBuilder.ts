@@ -1,0 +1,136 @@
+import * as vscode from 'vscode';
+import { convertMessages } from '../messageConverter.js';
+import {
+  resolveVllmModelId,
+  resolveOverrideForModel,
+  resolveServerConfig,
+  resolveModelSettings,
+  resolveRequestParams,
+  type VllmConfig,
+} from '../config.js';
+import type { OpenAIChatMessage } from '../types.js';
+
+/** Per-model server config resolved by {@link buildRequest} for the client call. */
+export interface ServerConfig {
+  serverUrl: string;
+  requestHeaders: Record<string, string>;
+  streamInactivityTimeout: number;
+}
+
+/** Result of request assembly: everything the stream call needs. */
+export interface BuildRequestResult {
+  vllmModelId: string;
+  openaiMessages: OpenAIChatMessage[];
+  mergedOptions: Record<string, unknown>;
+  serverConfig: ServerConfig;
+}
+
+/**
+ * Phase 1 — assemble the vLLM chat request.
+ *
+ * Converts VS Code messages to OpenAI format, merges config defaults with
+ * Copilot's `modelOptions` and the selected model-mode parameters, and resolves
+ * the vLLM server model id to call.
+ *
+ * Collaborators are explicit: the config (for overrides/params) and an output
+ * channel for diagnostics. The provider instance is never passed in.
+ */
+export function buildRequest(
+  model: vscode.LanguageModelChatInformation,
+  messages: readonly vscode.LanguageModelChatRequestMessage[],
+  options: vscode.ProvideLanguageModelChatResponseOptions,
+  config: VllmConfig,
+  output: vscode.OutputChannel,
+): BuildRequestResult {
+  // Build tools array if requested
+  let tools: any[] | undefined;
+  const availableTools = options.tools || [];
+  if (availableTools.length > 0) {
+    tools = availableTools.map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.inputSchema,
+      },
+    }));
+  }
+
+  // Convert VS Code messages to OpenAI format.
+  // NOTE: VS Code Copilot injects all user-authored instruction files into the
+  // system message — .github/copilot-instructions.md, AGENTS.md, and CLAUDE.md
+  // (when their respective settings are enabled). No need to re-read or prepend
+  // them here; the system message arrives complete from VS Code.
+  // NOTE: System message replacements were applied before this method was called,
+  // so the messages parameter already contains transformed system messages.
+  const openaiMessages = convertMessages(messages);
+
+  // Resolve the effective request params via the layering chain (highest wins):
+  //   DEFAULT_REQUEST_PARAMS ← (max_tokens + Copilot modelOptions) ← model defaultParams ← selected mode.
+  // max_tokens = output budget only; vLLM enforces prompt+output <= max_model_len server-side.
+  const modelConfiguration = (options as any).modelConfiguration as Record<string, unknown> | undefined;
+  const modelOverrides = config.models || [];
+  const override = resolveOverrideForModel(modelOverrides, model.id);
+
+  const selectedMode = typeof modelConfiguration?.reasoningEffort === 'string'
+    ? modelConfiguration.reasoningEffort as string
+    : undefined;
+
+  const modeParams = selectedMode && override?.modelModes?.[selectedMode]
+    ? override.modelModes[selectedMode]
+    : undefined;
+
+  const mergedOptions: Record<string, unknown> = {
+    // Layered params: defaults ← (max_tokens + Copilot modelOptions) ← defaultParams ← mode.
+    // Copilot's modelOptions can carry arbitrary keys (incl. a UI max_tokens); a
+    // max_tokens from there is re-asserted below, so maxOutputTokens remains the
+    // only source of the output budget.
+    ...resolveRequestParams(override, selectedMode, {
+      max_tokens: model.maxOutputTokens,
+      ...options.modelOptions,
+    }),
+    // NOTE: tools/tool_choice come last so Copilot's tool definitions always win.
+    tools,
+    // Enforce tool_choice when Copilot requires the model to call a tool.
+    ...(options.toolMode === vscode.LanguageModelChatToolMode.Required && tools
+      ? { tool_choice: 'required' as const }
+      : {}),
+  };
+
+  // Re-assert max_tokens after layering so a stray `max_tokens` in defaultParams
+  // or a mode entry cannot override the safety-critical output budget derived
+  // from the server's context window (deriveTokenBudget). Same pattern as
+  // tools/tool_choice above — these must always win.
+  mergedOptions.max_tokens = model.maxOutputTokens;
+
+  // Log model mode diagnostic info to output channel for debugging
+  output.appendLine(`[DEBUG] Model ${model.id}: modelConfiguration=${JSON.stringify(modelConfiguration)}, override.modelModes=${override?.modelModes ? Object.keys(override.modelModes).join(', ') : 'none'}, selectedMode=${selectedMode ?? 'none'}`);
+
+  if (modeParams) {
+    output.appendLine(`[INFO] Model mode: "${selectedMode}" → ${JSON.stringify(modeParams)}`);
+  } else if (selectedMode) {
+    output.appendLine(`[WARN] Selected mode "${selectedMode}" not found in modelModes for ${model.id} — no mode parameters applied`);
+  } else if (override?.modelModes && Object.keys(override.modelModes).length > 0) {
+    output.appendLine(`[WARN] Model has modelModes configured but none was selected for ${model.id}`);
+  }
+
+  // Resolve the vLLM server model ID: use vllmModelId from override if set, otherwise fall back to preset id
+  const vllmModelId = resolveVllmModelId(override) || model.id;
+
+  // Resolve per-model server config (serverUrl + isolated request headers + transport).
+  const resolved = resolveServerConfig(override);
+  const serverConfig: ServerConfig = {
+    ...resolved,
+    streamInactivityTimeout: resolveModelSettings(override).streamInactivityTimeout,
+  };
+
+  // Log which headers are being sent (keys only, not values) for diagnostics
+  const headerKeys = Object.keys(resolved.requestHeaders);
+  if (headerKeys.length > 0) {
+    output.appendLine(
+      `[INFO] Model "${model.id}" → requestHeaders sent: ${headerKeys.join(', ')}`
+    );
+  }
+
+  return { vllmModelId, openaiMessages, mergedOptions, serverConfig };
+}

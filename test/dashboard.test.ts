@@ -1,0 +1,215 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as vscode from 'vscode';
+import { DashboardTreeProvider } from '../src/dashboard.js';
+import { setLastRequest } from '../src/lastRequestStore.js';
+import { normalizeServerUrl } from '../src/config.js';
+
+/**
+ * Dashboard tree-provider tests.
+ *
+ * Exercises the provider (not the metrics engine, which is covered in
+ * vllmMetrics.test.ts): tree structure, the visibility/epoch subscription
+ * lifecycle, and the offline/online metric rendering. Global fetch is stubbed
+ * so the polling engine's first tick completes quickly against fake endpoints.
+ */
+
+const jsonResponse = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+/** Fetch stub that makes every endpoint offline (health check fails). */
+const offlineFetch = vi.fn(async () => new Response(null, { status: 0 }));
+
+/** Fetch stub that serves a reachable vLLM server with one loaded model. */
+const onlineFetch = vi.fn(async (url: unknown) => {
+  const u = String(url);
+  if (u.endsWith('/health')) return new Response('OK', { status: 200 });
+  if (u.endsWith('/v1/models')) return jsonResponse({ data: [{ id: 'm1', max_model_len: 100 }] });
+  if (u.endsWith('/version')) return jsonResponse({ version: 'v0.6' });
+  if (u.endsWith('/metrics')) return new Response('vllm:num_requests_running{model_name="m1"} 3', { status: 200 });
+  if (u.endsWith('/load')) return jsonResponse({ server_load: 0.5 });
+  return new Response(null, { status: 404 });
+});
+
+/** Let the async refreshSubscriptions + first engine tick settle. */
+const settle = () => new Promise<void>(r => setTimeout(r, 0));
+
+function makeProvider(): DashboardTreeProvider {
+  const context = { subscriptions: [] } as any;
+  const output = {
+    appendLine: vi.fn(), append: vi.fn(), replace: vi.fn(), clear: vi.fn(),
+    show: vi.fn(), hide: vi.fn(), dispose: vi.fn(), name: 'test',
+  } as any;
+  return new DashboardTreeProvider(context, output);
+}
+
+/** Root children with the given label, if any. */
+function rootLabels(provider: DashboardTreeProvider): Promise<string[]> {
+  return provider.getChildren().then(children => children.map(c => (c as any).label as string));
+}
+
+describe('DashboardTreeProvider', () => {
+  let provider: DashboardTreeProvider;
+
+  beforeEach(() => {
+    (vscode as any).workspace._mockConfig = {};
+    provider = makeProvider();
+  });
+
+  afterEach(() => {
+    provider.dispose();
+    vi.unstubAllGlobals();
+    (vscode as any).workspace._mockConfig = {};
+  });
+
+  it('shows poll interval, add, and refresh items with no servers configured', async () => {
+    (vscode as any).workspace._mockConfig = { models: [] };
+
+    const labels = await rootLabels(provider);
+
+    expect(labels).toContain('Refresh Interval');
+    expect(labels).toContain('Add or Reconfigure Server/Model');
+    expect(labels).toContain('Test & Refresh Models');
+    expect(labels).toHaveLength(3);
+  });
+
+  it('setVisible(true) subscribes configured servers and lists them', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', offlineFetch);
+
+    provider.setVisible(true);
+    await settle();
+
+    const labels = await rootLabels(provider);
+    expect(labels).toContain('s:8000');
+  });
+
+  it('shows an offline server with an Error child', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', offlineFetch);
+
+    provider.setVisible(true);
+    await settle();
+
+    const serverNode = (await provider.getChildren()).find(c => (c as any).label === 's:8000');
+    expect(serverNode).toBeDefined();
+    const children = await provider.getChildren(serverNode as any);
+    expect(children).toHaveLength(1);
+    expect((children[0] as any).label).toBe('Error');
+  });
+
+  it('setVisible(false) removes the server from the tree and stops polling', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', offlineFetch);
+
+    provider.setVisible(true);
+    await settle();
+    expect(await rootLabels(provider)).toContain('s:8000');
+
+    provider.setVisible(false);
+    expect(await rootLabels(provider)).not.toContain('s:8000');
+  });
+
+  it('does not subscribe when the sidebar is hidden during an in-flight refresh', async () => {
+    // Regression for the background-polling race: setVisible(true) fires an
+    // async refreshSubscriptions that awaits getConfig; hiding during that gap
+    // must abort the continuation so no engine is subscribed for a hidden view.
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', offlineFetch);
+
+    provider.setVisible(true); // starts refresh; continuation queued on getConfig
+    provider.setVisible(false); // hides before the continuation runs
+    await settle();
+
+    expect(await rootLabels(provider)).not.toContain('s:8000');
+  });
+
+  it('two overlapping shows do not double-subscribe (epoch guard)', async () => {
+    // Regression for the double-subscribe race: two refreshSubscriptions in
+    // flight must leave exactly one subscription per server, or the tree would
+    // list duplicate server nodes (and poll the server twice).
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', offlineFetch);
+
+    provider.setVisible(true);
+    provider.setVisible(true);
+    await settle();
+
+    const labels = await rootLabels(provider);
+    expect(labels.filter(l => l === 's:8000')).toHaveLength(1);
+  });
+
+  it('renders online server metric rows from a completed poll', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 's:8000');
+      expect(serverNode).toBeDefined();
+      const metrics = await provider.getChildren(serverNode as any);
+      const labels = metrics.map(m => (m as any).label as string);
+      expect(labels).toContain('vLLM Version');
+      expect(labels).toContain('Model IDs');
+      expect(labels).toContain('Running');
+
+      const versionItem = metrics.find(m => (m as any).label === 'vLLM Version');
+      expect((versionItem as any).description).toBe('v0.6');
+      const runningItem = metrics.find(m => (m as any).label === 'Running');
+      expect((runningItem as any).description).toBe('3');
+    });
+  });
+
+  it('shows Last Request for a server configured with a non-canonical URL (normalized lookup)', async () => {
+    // consumeStream writes the store keyed by the NORMALIZED server URL; the
+    // dashboard's node carries the raw `model.serverUrl`. A /v1 form must still
+    // find its Last Request entry (regression: the node silently vanished).
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+    setLastRequest({
+      serverUrl: normalizeServerUrl('http://s:8000/v1'),
+      modelId: 'm1', timestamp: 1, promptTokens: 5, completionTokens: 7, totalTokens: 12,
+      hasMetrics: false, hasCacheDetails: false, maxModelLen: 100, maxOutputTokens: 100,
+      firstTokenTimeMs: 10,
+    });
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 's:8000');
+      expect(serverNode).toBeDefined();
+      const metrics = await provider.getChildren(serverNode as any);
+      expect(metrics.some(m => (m as any).label === 'Last Request')).toBe(true);
+    });
+  });
+
+  it('dispose() clears subscriptions so no server remains listed', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', offlineFetch);
+
+    provider.setVisible(true);
+    await settle();
+    expect(await rootLabels(provider)).toContain('s:8000');
+
+    provider.dispose();
+    expect(await rootLabels(provider)).not.toContain('s:8000');
+  });
+});

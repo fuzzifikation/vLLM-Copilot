@@ -94,6 +94,12 @@ export async function activate(context: vscode.ExtensionContext) {
             fileLogger.close().catch(() => { /* best-effort flush */ });
           }
         }
+        if (e.affectsConfiguration('vllm-copilot.logBodyLimit')) {
+          // The logger reads logBodyLimit at write time; apply a mid-session
+          // change in place without rotating the active log file.
+          const limit = vscode.workspace.getConfiguration('vllm-copilot').get<number>('logBodyLimit');
+          fileLogger.setLogBodyLimit(typeof limit === 'number' ? limit : 4000);
+        }
         // Auto-invalidate cached config on any vllm-copilot settings change
         if (e.affectsConfiguration('vllm-copilot')) {
           try {
@@ -146,7 +152,7 @@ export async function activate(context: vscode.ExtensionContext) {
     );
 
     // Register all user-facing commands. Each returns a Disposable (see commands.ts
-    // and autoConfig.ts). Test & Refresh is the central workflow; Add Server &
+    // and the commands/ flow modules). Test & Refresh is the central workflow; Add Server &
     // Model is the entry-point wizard; the rest are utility/maintenance commands.
     context.subscriptions.push(
       registerTestAndRefreshModelsCommand(context, activeProvider, outputChannel),

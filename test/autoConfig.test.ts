@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { mergePresetWithUserConfig, findPresetForModel, stripJsonComments, parseHeadersInput, parsePresetJson } from '../src/autoConfig.js';
+import { mergePresetWithUserConfig, findPresetForModel, stripJsonComments, parsePresetJson } from '../src/commands/presets.js';
+import { parseHeadersInput } from '../src/commands/serverAuth.js';
 import type { ModelConfig } from '../src/config.js';
 
 describe('parsePresetJson', () => {

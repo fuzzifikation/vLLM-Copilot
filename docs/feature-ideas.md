@@ -200,7 +200,7 @@ Implemented as suggested: personalities are materialized in global storage and r
 **Category:** Painkiller (performance)
 **Status:** Not implemented
 
-**What:** `serverSettingsView.ts::refreshWebview()` fetches `/v1/models` from ALL configured servers on every webview refresh: initial load, config change (`onDidChangeConfiguration`), and after every model save (`saveModelConfig`). The model list is static until the vLLM server restarts — re-fetching it on every interaction is wasteful.
+**What:** `serverSettingsView.ts::refreshWebview()` fetches `/v1/models` from ALL configured servers on every webview refresh: initial load and every config change (`onDidChangeConfiguration` — which covers each model save, since a save writes `vllm-copilot.models`). The model list is static until the vLLM server restarts — re-fetching it on every interaction is wasteful.
 
 **Suggestion:** Cache the model list per server URL in a `Map<string, string[]>` with lazy invalidation. Re-fetch only when:
 - The webview first loads

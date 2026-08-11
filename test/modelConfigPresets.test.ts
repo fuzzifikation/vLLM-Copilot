@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { parsePresetJson } from '../src/autoConfig.js';
+import { parsePresetJson } from '../src/commands/presets.js';
 
 /**
  * Guards the shipped model-configs/ presets: every JSON must parse through the

@@ -128,6 +128,16 @@ export interface DiagnosticReport {
 // version is always correct regardless of publisher/name.
 let extensionVersion = 'unknown';
 
+/**
+ * True when a fetch result failed with a TLS-related error message. Used to
+ * distinguish certificate/trust failures from plain network/proxy failures —
+ * both produce `ok:false` without a status, but only the former justify an
+ * "incomplete certificate chain" conclusion.
+ */
+function isTlsError(r?: FetchResult): boolean {
+  return !!(r && !r.ok && r.error && /verify|certificate|cert|ssl|tls|handshake/i.test(r.error));
+}
+
 /** Set the extension version at activation (called from extension.ts). */
 export function setExtensionVersion(v: string): void {
   extensionVersion = v;
@@ -472,16 +482,34 @@ async function runChainBuildOpenSSL(url: string): Promise<CertChainResult> {
   try {
     // openssl s_client reads from stdin; we pipe an empty string so it
     // connects, gets the cert chain, then closes on EOF.
-    const { exec } = await import('node:child_process');
-    const stdout = await new Promise<string>((resolve, reject) => {
-      exec(
-        `echo | openssl s_client -connect ${parsed.hostname}:${port} -showcerts 2>&1`,
-        { timeout: 20000 },
-        (err, stdout) => {
-          if (err && !stdout) { reject(err); return; }
-          resolve(stdout ?? '');
-        }
+    const { spawn } = await import('node:child_process');
+    const { stdout, exitCode } = await new Promise<{ stdout: string; exitCode: number }>((resolve, reject) => {
+      // Argument array (not a shell string): `hostname` comes from a
+      // user-supplied URL, and WHATWG host parsing accepts shell metacharacters
+      // (verified: `http://$(id):443` → hostname `$(id)`). spawn never runs a
+      // shell, so nothing is interpreted. stdin is `/dev/null` — the canonical
+      // `openssl s_client ... < /dev/null` idiom — so s_client exits after the
+      // handshake instead of blocking on stdin.
+      const child = spawn(
+        'openssl',
+        ['s_client', '-connect', `${parsed.hostname}:${port}`, '-showcerts'],
+        { timeout: 20000, stdio: ['ignore', 'pipe', 'pipe'] },
       );
+      let out = '';
+      let errOut = '';
+      child.stdout?.on('data', (d) => { out += d.toString(); });
+      child.stderr?.on('data', (d) => { errOut += d.toString(); });
+      child.on('error', (err) => reject(err));
+      child.on('close', (code) => {
+        // Mirror the old `echo | ... 2>&1`: fold stderr into stdout; reject
+        // only when the process failed with no output at all.
+        const combined = out || errOut;
+        if (code !== 0 && !combined) {
+          reject(new Error(`openssl s_client failed (exit code ${code})`));
+          return;
+        }
+        resolve({ stdout: combined || '', exitCode: code ?? -1 });
+      });
     });
     const elements: Array<{ subject?: string; issuer?: string }> = [];
     let currentSubject = '';
@@ -506,8 +534,11 @@ async function runChainBuildOpenSSL(url: string): Promise<CertChainResult> {
       }
     }
     return {
-      valid: !verifyError,
-      errors: verifyError || 'none',
+      // `valid` must reflect the handshake actually completing: a non-zero exit
+      // (connection reset, protocol error, server shutdown mid-handshake) with
+      // no `verify error:` line previously reported valid:true.
+      valid: exitCode === 0 && !verifyError,
+      errors: verifyError || (exitCode !== 0 ? `openssl s_client exited with code ${exitCode}` : 'none'),
       elements,
     };
   } catch (err) {
@@ -735,8 +766,7 @@ export async function runDiagnostics(
 
   // Chain inspection — if ANY fetch failed with a TLS error, inspect the chain.
   // This ensures we catch TLS issues even when they only appear in one transport.
-  const tlsError = (r?: FetchResult) =>
-    r && !r.ok && r.error && /verify|certificate|cert|ssl|tls|handshake/i.test(r.error);
+  const tlsError = isTlsError;
   let chain: CertChainResult | undefined;
   if (tlsError(nodeFetch) || tlsError(systemFetch) || tlsError(nodeDirectFetch)) {
     chain = await runChainInspection(url);
@@ -953,15 +983,19 @@ export function formatReport(r: DiagnosticReport): string {
   // Direct Node transport (http/https.request) — same Node core modules,
   // but without the Fetch API layer. Useful to isolate Fetch-specific failures.
   lines.push(...formatFetchResult('Node direct transport (http/https.request)', r.nodeDirectFetch));
-  // Add a brief comparison note when transports disagree on TLS.
+  // Add a brief comparison note when transports disagree AND the failure is
+  // TLS-related. Without the TLS gate, a proxy-routing failure (patched fetch
+  // fails through the proxy, the direct transport bypasses it and succeeds)
+  // would be misreported as an incomplete certificate chain — the conclusion
+  // above already attributes that case to a proxy/network issue.
   const nodeFailed = !r.nodeFetch.ok;
   const directOk = r.nodeDirectFetch.ok;
   const systemOk = r.systemFetch?.ok ?? false;
-  if (nodeFailed && (directOk || systemOk)) {
+  if (nodeFailed && isTlsError(r.nodeFetch) && (directOk || systemOk)) {
     const okPath = directOk ? 'direct Node transport' : 'system native test';
     lines.push('');
     lines.push('— Transport comparison —');
-    lines.push(`  VS Code's patched fetch failed but ${okPath} succeeded.`);
+    lines.push(`  VS Code's patched fetch failed with a TLS error but ${okPath} succeeded.`);
     lines.push('  This indicates the server is not sending the complete certificate chain.');
     lines.push('  Node\'s OpenSSL requires the full chain, while SChannel can retrieve');
     lines.push('  missing intermediates from the OS trust store.');

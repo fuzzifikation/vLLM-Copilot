@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePresetJson, findPresetForModel } from '../src/autoConfig.js';
+import { parsePresetJson, findPresetForModel } from '../src/commands/presets.js';
 import { normalizeModelId } from '../src/config.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';

@@ -1,15 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from '../src/provider.js';
+import type { ProviderClient } from '../src/provider/contracts.js';
+import type { VllmConfig } from '../src/config.js';
+import { getLastRequest } from '../src/lastRequestStore.js';
 import type { StreamEvent } from '../src/types.js';
 
 /**
  * Unit tests for the auto-continue retry loop in
  * {@link VllmChatModelProvider.provideLanguageModelChatResponse}.
  *
- * Strategy: stub the request-assembly phase ({@link VllmChatModelProvider.buildRequest})
- * and the HTTP layer ({@link VllmClient.chatCompletionStream}) so the loop runs against
- * deterministic streams. Each `chatCompletionStream` call's messages + options are
+ * The request-assembly phase ({@link buildRequest}) and the HTTP layer
+ * ({@link ProviderClient}) are collaborators: a fake client is injected via the
+ * constructor's `dependencies` seam, and the real `buildRequest` free function
+ * runs against it. Each `chatCompletionStream` call's messages + options are
  * captured so we can assert the exact request shape per retry trigger.
  */
 
@@ -38,24 +42,23 @@ interface Captured {
   options: Record<string, unknown>;
 }
 
+/** Default no-op fake client satisfying {@link ProviderClient}. */
+function fakeClient(overrides: Partial<ProviderClient> = {}): ProviderClient {
+  return {
+    getConfigCached: async () => ({ models: [], enableFileLogging: false } as VllmConfig),
+    invalidateConfigCache: vi.fn(),
+    getModelContextWindow: async () => undefined,
+    chatCompletionStream: async function* () {},
+    ...overrides,
+  };
+}
+
 /**
  * Wire up a provider whose retry loop will see `streams` in order — one array of
  * StreamEvents per `chatCompletionStream` call. The last entry is reused if the loop
  * makes more calls than provided.
  */
 function setupProvider(streams: StreamEvent[][], autoContinueRetries = 1) {
-  const provider = new VllmChatModelProvider(makeContext(), makeOutput());
-
-  (provider as any).client.getConfigCached = async () => ({
-    models: [{ id: 'm', serverUrl: 'http://localhost:8000', autoContinueRetries }],
-  });
-  (provider as any).buildRequest = async () => ({
-    vllmModelId: 'm',
-    openaiMessages: [{ role: 'user', content: 'hi' }],
-    mergedOptions: { temperature: 0 },
-    serverConfig: { serverUrl: 'http://localhost:8000', requestHeaders: {} },
-  });
-
   const captured: Captured[] = [];
   let call = 0;
   const spy = vi.fn((_modelId: string, messages: any[], options: Record<string, unknown>) => {
@@ -64,7 +67,13 @@ function setupProvider(streams: StreamEvent[][], autoContinueRetries = 1) {
     call++;
     return streamOf(stream);
   });
-  (provider as any).client.chatCompletionStream = spy;
+  const client = fakeClient({
+    getConfigCached: async () => ({
+      models: [{ id: 'm', serverUrl: 'http://localhost:8000', autoContinueRetries }],
+    } as VllmConfig),
+    chatCompletionStream: spy as any,
+  });
+  const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
 
   return { provider, captured, spy };
 }
@@ -208,6 +217,60 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
 
     expect(spy).toHaveBeenCalledTimes(1);
   });
+
+  it('does not report "no output" when the user cancels before the first token', async () => {
+    const output = makeOutput();
+    const client = fakeClient({
+      getConfigCached: async () => ({
+        models: [{ id: 'm', serverUrl: 'http://localhost:8000', autoContinueRetries: 1 }],
+      } as VllmConfig),
+      chatCompletionStream: async function* () {
+        yield ev({ finishReason: 'stop' });
+      },
+    });
+    const provider = new VllmChatModelProvider(makeContext(), output, undefined, { client });
+    const progress = { report: vi.fn() };
+
+    await provider.provideLanguageModelChatResponse(
+      { id: 'm', maxOutputTokens: 100 } as any,
+      [{ content: [] }] as any,
+      {} as any,
+      progress as any,
+      { isCancellationRequested: true, onCancellationRequested: () => ({ dispose() {} }) },
+    );
+
+    // A cancel before any content is a quiet stop — no spurious "no output"
+    // warning (regression: reportPostStreamDiagnostics used to run regardless
+    // of cancellation, firing the ⚠️ message on a cancelled empty stream).
+    const texts = progress.report.mock.calls.map((c) => (c[0] as any)?.value ?? '');
+    expect(texts.some((t: string) => t.includes('no output'))).toBe(false);
+    expect(texts.some((t: string) => t.includes('⚠️'))).toBe(false);
+  });
+
+  it('reports usage per attempt but the dashboard retains the final attempt', async () => {
+    // Two attempts; each stream carries a usage block. Every attempt's
+    // consumeStream reports its own usage and overwrites the last-request store,
+    // so the dashboard must reflect the FINAL attempt, not the first.
+    const { provider, spy } = setupProvider([
+      [
+        ev({ content: 'partial:', finishReason: null as any }),
+        ev({ finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } as any }),
+      ],
+      [
+        ev({ content: ' done', finishReason: null as any }),
+        ev({ finishReason: 'stop', usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } as any }),
+      ],
+    ]);
+    const progress = { report: vi.fn() };
+
+    await run(provider, progress);
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    const last = getLastRequest('http://localhost:8000');
+    expect(last?.promptTokens).toBe(10);
+    expect(last?.completionTokens).toBe(20);
+    expect(last?.totalTokens).toBe(30);
+  });
 });
 
 describe('remote-install guard', () => {
@@ -249,15 +312,8 @@ describe('remote-install guard', () => {
       secrets: { get: async () => undefined },
       extension: { extensionKind: vscode.ExtensionKind.Workspace },
     };
-    const provider = new VllmChatModelProvider(context as any, makeOutput());
-
-    // Stub the downstream so we can verify the guard doesn't short-circuit
-    (provider as any).client.getConfigCached = async () => ({ models: [] });
-    (provider as any).buildRequest = async () => ({
-      vllmModelId: 'm',
-      openaiMessages: [],
-      mergedOptions: {},
-      serverConfig: { serverUrl: '', requestHeaders: {}, streamInactivityTimeout: 0 },
+    const provider = new VllmChatModelProvider(context as any, makeOutput(), undefined, {
+      client: fakeClient({ getConfigCached: async () => ({ models: [], enableFileLogging: false } as VllmConfig) }),
     });
 
     const progress = { report: vi.fn() };
@@ -286,14 +342,8 @@ describe('remote-install guard', () => {
       secrets: { get: async () => undefined },
       extension: { extensionKind: vscode.ExtensionKind.UI },
     };
-    const provider = new VllmChatModelProvider(context as any, makeOutput());
-
-    (provider as any).client.getConfigCached = async () => ({ models: [] });
-    (provider as any).buildRequest = async () => ({
-      vllmModelId: 'm',
-      openaiMessages: [],
-      mergedOptions: {},
-      serverConfig: { serverUrl: '', requestHeaders: {}, streamInactivityTimeout: 0 },
+    const provider = new VllmChatModelProvider(context as any, makeOutput(), undefined, {
+      client: fakeClient({ getConfigCached: async () => ({ models: [], enableFileLogging: false } as VllmConfig) }),
     });
 
     const progress = { report: vi.fn() };
@@ -310,5 +360,46 @@ describe('remote-install guard', () => {
 
     // Restore
     (vscode.env as any).remoteName = originalRemoteName;
+  });
+});
+
+describe('config-read / pipeline failure routing', () => {
+  it('routes a rejected config read through handleResponseError (ERROR log + chat part)', async () => {
+    const output = makeOutput();
+    const client = fakeClient({
+      getConfigCached: async () => { throw new Error('settings corrupt'); },
+    });
+    const provider = new VllmChatModelProvider(makeContext(), output, undefined, { client });
+    const progress = { report: vi.fn() };
+
+    await run(provider, progress);
+
+    expect(output.appendLine).toHaveBeenCalledWith(
+      expect.stringContaining('[ERROR] Chat response failed for m')
+    );
+    const calls = progress.report.mock.calls.map(c => (c[0] as any)?.value ?? '');
+    expect(calls.some((t: string) => t.includes('⚠️'))).toBe(true);
+  });
+
+  it('logs a config-read rejection quietly when the user cancelled', async () => {
+    const output = makeOutput();
+    const client = fakeClient({
+      getConfigCached: async () => { throw new Error('settings corrupt'); },
+    });
+    const provider = new VllmChatModelProvider(makeContext(), output, undefined, { client });
+    const progress = { report: vi.fn() };
+
+    await provider.provideLanguageModelChatResponse(
+      { id: 'm', maxOutputTokens: 100 } as any,
+      [{ content: [] }] as any,
+      {} as any,
+      progress as any,
+      { isCancellationRequested: true, onCancellationRequested: () => ({ dispose() {} }) },
+    );
+
+    expect(output.appendLine).toHaveBeenCalledWith(
+      expect.stringContaining('request cancelled by user')
+    );
+    expect(progress.report).not.toHaveBeenCalled();
   });
 });

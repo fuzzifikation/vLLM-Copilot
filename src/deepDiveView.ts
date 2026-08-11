@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import { getMetricsEngine } from './vllmMetrics.js';
 import type { ServerRawData } from './vllmMetrics.js';
+import { normalizeServerUrl } from './config.js';
 
 interface ReadyMessage {
   type: 'ready';
@@ -20,8 +21,12 @@ export function openDeepDive(
   context: vscode.ExtensionContext,
   outputChannel: vscode.OutputChannel,
 ): void {
+  // Panels are keyed by the NORMALIZED URL so `http://host:8000`,
+  // `http://host:8000/`, and `http://host:8000/v1` share one panel — matching
+  // how metrics engines are keyed (getMetricsEngine → normalizeServerUrl).
+  const panelKey = normalizeServerUrl(serverUrl);
   // If a panel for this server is already open, reveal it
-  const existing = openPanels.get(serverUrl);
+  const existing = openPanels.get(panelKey);
   if (existing) {
     existing.reveal(vscode.ViewColumn.Beside);
     return;
@@ -60,17 +65,30 @@ export function openDeepDive(
   // Message handler — disposed when panel closes
   const msgDisposable = panel.webview.onDidReceiveMessage(async (msg: ReadyMessage) => {
     if (msg.type === 'ready') {
-      isReady = true;
+      // The panel may have been closed between the webview posting `ready` and
+      // this handler running. If so, `onDidDispose` already ran with
+      // `engineSubscription === undefined` — subscribing now would create a
+      // metrics poller that is never disposed (leaks for the session).
+      if (disposed) return;
       const engine = getMetricsEngine(serverUrl, requestHeaders);
 
-      // Push cached data immediately (may be null before first tick completes)
+      // Subscribe only on the FIRST ready. A second `ready` (webview recycle /
+      // manual reload) must not orphan the first subscription: it is still live
+      // and pushes to this panel, so re-subscribing would leak the first
+      // callback forever. isReady must be set BEFORE any push — pushData guards
+      // on it.
+      if (!isReady) {
+        isReady = true;
+        engineSubscription = engine.subscribe((_aggregated, raw) => {
+          pushData(raw);
+        });
+      }
+
+      // Push cached data immediately (may be null before the first tick
+      // completes). Runs on first ready AND re-ready (reload) so the page never
+      // sits on "Loading…" until the next engine tick.
       const cached = engine.getCachedRaw();
       if (cached) pushData(cached);
-
-      // Subscribe — engine starts polling if this is the first subscriber
-      engineSubscription = engine.subscribe((_aggregated, raw) => {
-        pushData(raw);
-      });
     }
   });
 
@@ -81,11 +99,11 @@ export function openDeepDive(
       try { engineSubscription.dispose(); } catch { /* best-effort */ }
       engineSubscription = undefined;
     }
-    openPanels.delete(serverUrl);
+    openPanels.delete(panelKey);
     msgDisposable.dispose();
   });
 
-  openPanels.set(serverUrl, panel);
+  openPanels.set(panelKey, panel);
 }
 
 function buildHtml(webview: vscode.Webview, scriptUri: vscode.Uri, styleUri: vscode.Uri): string {

@@ -81,18 +81,18 @@ describe('convertAssistantMessage', () => {
     const result = convertAssistantMessage(asstMsg([
       new vscode.LanguageModelTextPart('line 1'),
       new vscode.LanguageModelTextPart('line 2'),
-    ]));
+    ]))!;
     expect(result.content).toBe('line 1\nline 2');
   });
 
   it('emits tool_calls with stringified arguments', () => {
     const result = convertAssistantMessage(asstMsg([
       new vscode.LanguageModelToolCallPart('call_1', 'readFile', { path: '/foo' }),
-    ]));
+    ]))!;
     expect(result.role).toBe('assistant');
     expect(result.content).toBe('');
     expect(result.tool_calls).toHaveLength(1);
-    expect(result.tool_calls[0]).toEqual({
+    expect(result.tool_calls![0]).toEqual({
       id: 'call_1',
       type: 'function',
       function: { name: 'readFile', arguments: '{"path":"/foo"}' },
@@ -103,7 +103,7 @@ describe('convertAssistantMessage', () => {
     const result = convertAssistantMessage(asstMsg([
       new vscode.LanguageModelTextPart('Let me check that.'),
       new vscode.LanguageModelToolCallPart('c1', 'readFile', { path: '/a' }),
-    ]));
+    ]))!;
     expect(result.content).toBe('Let me check that.');
     expect(result.tool_calls).toHaveLength(1);
   });
@@ -111,7 +111,7 @@ describe('convertAssistantMessage', () => {
   it('uses empty string content when only tool_calls present', () => {
     const result = convertAssistantMessage(asstMsg([
       new vscode.LanguageModelToolCallPart('c1', 'foo', {}),
-    ]));
+    ]))!;
     expect(result.content).toBe('');
   });
 
@@ -188,7 +188,7 @@ describe('convertUserMessage', () => {
     expect(result).toHaveLength(1);
     const content = result[0].content;
     expect(Array.isArray(content)).toBe(true);
-    const imageContent = content.find((c: any) => c.type === 'image_url');
+    const imageContent = (content as any[]).find((c: any) => c.type === 'image_url');
     expect(imageContent).toBeTruthy();
     expect(imageContent.image_url.url).toMatch(/^data:image\/jpeg;base64,/);
     expect(imageContent.image_url.url).toContain('/9j/'); // base64 of FFD8FF

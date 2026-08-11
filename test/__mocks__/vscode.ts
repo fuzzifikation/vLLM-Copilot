@@ -1,130 +1,429 @@
 /**
  * Minimal stub of the VS Code API for unit tests.
- * Only includes what messageConverter.ts touches (and a couple of extras for safety).
  *
- * Vitest aliases `vscode` to this file via vitest.config.ts.
+ * Only the surface actually used by `src/` and `test/` is typed here; runtime
+ * behavior is a deliberate no-op (returns undefined, captures registrations,
+ * honors the `_mockConfig` / `_mockFs*` test hooks). This is NOT a full mirror
+ * of @types/vscode — when a member is missing, add it here.
+ *
+ * Vitest aliases `vscode` to this file (vitest.config.ts). The root tsconfig
+ * (`npm run compile`) type-checks src/ against the REAL @types/vscode; this
+ * mock exists so `test:typecheck` (test/tsconfig.json) can validate tests
+ * against the same surface they run against at runtime.
  */
 
+export type Thenable<T> = PromiseLike<T>;
+export type Event<T> = (listener: (e: T) => any, thisArgs?: unknown, disposables?: Disposable[]) => Disposable;
+
+// ── Enums (numeric values match the real VS Code API) ──────────────────────
+export enum LanguageModelChatMessageRole { System = 1, User = 2, Assistant = 3 }
+export enum LanguageModelChatToolMode { Auto = 1, Required = 2 }
+export enum ExtensionKind { UI = 1, Workspace = 2 }
+export enum ProgressLocation { Notification = 15 }
+export enum ConfigurationTarget { Global = 1, Workspace = 2, WorkspaceFolder = 3 }
+export enum QuickPickItemKind { Separator = 0, Default = 1 }
+export enum FileType { File = 1, Directory = 2, SymbolicLink = 64 }
+export enum TreeItemCollapsibleState { None = 0, Collapsed = 1, Expanded = 2 }
+
+// ── Message parts ──────────────────────────────────────────────────────────
 export class LanguageModelTextPart {
   constructor(public value: string) {}
 }
-
 export class LanguageModelThinkingPart {
   constructor(public value: string | string[]) {}
 }
-
 export class LanguageModelToolCallPart {
   constructor(public callId: string, public name: string, public input: any) {}
 }
-
 export class LanguageModelToolResultPart {
-  constructor(public callId: string, public content: any) {}
+  constructor(public callId: string, public content: readonly unknown[]) {}
 }
-
 export class LanguageModelDataPart {
   constructor(public data: Uint8Array, public mimeType: string) {}
 }
 
-export const LanguageModelChatMessageRole = {
-  System: 1,
-  User: 2,
-  Assistant: 3,
-} as const;
+/** Wire part types a provider can emit in a response stream. */
+export type LanguageModelResponsePart =
+  | LanguageModelTextPart
+  | LanguageModelThinkingPart
+  | LanguageModelToolCallPart
+  | LanguageModelToolResultPart
+  | LanguageModelDataPart;
 
-export const LanguageModelChatToolMode = {
-  Auto: 1,
-  Required: 2,
-} as const;
-
-export const ExtensionKind = {
-  UI: 1,
-  Workspace: 2,
-} as const;
-
-export class RelativePattern {
-  constructor(
-    public base: any,
-    public pattern: string,
-  ) {}
+export interface LanguageModelChatMessage {
+  role: LanguageModelChatMessageRole;
+  content: readonly unknown[];
+}
+export interface LanguageModelChatRequestMessage extends LanguageModelChatMessage {
+  name?: string;
 }
 
+export interface LanguageModelChatCapabilities {
+  imageInput?: boolean;
+  toolCalling?: boolean | number;
+}
+export interface LanguageModelChatInformation {
+  readonly id: string;
+  readonly name: string;
+  readonly family: string;
+  readonly version: string;
+  readonly maxInputTokens: number;
+  readonly maxOutputTokens: number;
+  readonly capabilities: LanguageModelChatCapabilities;
+}
+
+export interface LanguageModelChatTool {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+}
+export interface ProvideLanguageModelChatResponseOptions {
+  tools?: readonly LanguageModelChatTool[];
+  modelOptions?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface PrepareLanguageModelChatModelOptions {
+  readonly silent: boolean;
+}
+export type ProviderResult<T> = T | undefined | null | Thenable<T | undefined | null>;
+
+export interface LanguageModelChatProvider {
+  readonly onDidChangeLanguageModelChatInformation?: Event<void>;
+  provideLanguageModelChatInformation(
+    options: PrepareLanguageModelChatModelOptions,
+    token: CancellationToken
+  ): ProviderResult<LanguageModelChatInformation[]>;
+  provideLanguageModelChatResponse(
+    model: LanguageModelChatInformation,
+    messages: readonly LanguageModelChatRequestMessage[],
+    options: ProvideLanguageModelChatResponseOptions,
+    progress: Progress<LanguageModelResponsePart>,
+    token: CancellationToken
+  ): Thenable<void>;
+  provideTokenCount(
+    model: LanguageModelChatInformation,
+    text: string | LanguageModelChatRequestMessage,
+    token: CancellationToken
+  ): Thenable<number>;
+}
+
+// ── Core interfaces ────────────────────────────────────────────────────────
+export interface Disposable { dispose(): void; }
+export interface CancellationToken {
+  isCancellationRequested: boolean;
+  onCancellationRequested: Event<any>;
+}
+export interface Progress<T> { report(value: T): void; }
+export interface QuickPickItem {
+  label: string;
+  description?: string;
+  detail?: string;
+  kind?: QuickPickItemKind;
+  picked?: boolean;
+  alwaysShow?: boolean;
+}
+export interface QuickPickOptions {
+  canPickMany?: boolean;
+  placeHolder?: string;
+  matchOnDescription?: boolean;
+  matchOnDetail?: boolean;
+  ignoreFocusOut?: boolean;
+  [key: string]: unknown;
+}
+export interface OutputChannel extends Disposable {
+  readonly name: string;
+  append(value: string): void;
+  appendLine(value: string): void;
+  replace(value: string): void;
+  clear(): void;
+  show(preserveFocus?: boolean): void;
+  hide(): void;
+}
+export interface FileSystemWatcher extends Disposable {
+  ignoreCreateEvents: boolean;
+  ignoreChangeEvents: boolean;
+  ignoreDeleteEvents: boolean;
+  onDidCreate: Event<Uri>;
+  onDidChange: Event<Uri>;
+  onDidDelete: Event<Uri>;
+}
+export interface ConfigurationChangeEvent {
+  affectsConfiguration(section: string, scope?: unknown): boolean;
+  [key: string]: unknown;
+}
+export interface Memento {
+  get<T>(key: string, defaultValue?: T): T | undefined;
+  update(key: string, value: unknown): Thenable<void>;
+}
+export interface ExtensionContext {
+  extension: { id: string; extensionUri: Uri; extensionKind: ExtensionKind; packageJSON: Record<string, unknown> };
+  extensionUri: Uri;
+  extensionPath: string;
+  globalStorageUri: Uri;
+  workspaceState: Memento;
+  globalState: Memento;
+  secrets: {
+    get(key: string): Promise<string | undefined>;
+    store(key: string, value: string): Promise<void>;
+    delete(key: string): Promise<void>;
+  };
+  subscriptions: Disposable[];
+  [key: string]: any;
+}
+export interface WorkspaceFolder { uri: Uri; name: string; index: number; }
+export interface WorkspaceConfiguration {
+  get<T>(key: string, defaultValue: T): T;
+  get<T>(key: string): T | undefined;
+  has(key: string): boolean;
+  update(key: string, value: unknown, target?: ConfigurationTarget | boolean): Thenable<void>;
+  inspect<T>(section: string): { defaultValue?: T; globalValue?: T; workspaceValue?: T; workspaceFolderValue?: T } | undefined;
+}
+export interface InputBoxOptions {
+  title?: string;
+  prompt?: string;
+  placeHolder?: string;
+  value?: string;
+  ignoreFocusOut?: boolean;
+  password?: boolean;
+  validateInput?(value: string): string | undefined | Thenable<string | undefined>;
+  [key: string]: unknown;
+}
+
+/**
+ * Uri type + a value that keeps the historical "returns a string handle"
+ * runtime. Tests drive the workspace.fs hooks with string paths, so
+ * joinPath/file keep returning the last segment / path at runtime.
+ */
+export interface Uri {
+  readonly scheme: string;
+  readonly authority: string;
+  readonly path: string;
+  readonly query: string;
+  readonly fragment: string;
+  readonly fsPath: string;
+  toString(): string;
+}
+export const Uri: {
+  file(path: string): Uri;
+  parse(value: string): Uri;
+  joinPath(base: Uri, ...pathSegments: (string | Uri)[]): Uri;
+} = {
+  file: (path: string) => path as unknown as Uri,
+  parse: (value: string) => value as unknown as Uri,
+  joinPath: (...uris: unknown[]) => uris[uris.length - 1] as unknown as Uri,
+};
+
+export class RelativePattern {
+  constructor(public base: any, public pattern: string) {}
+}
+
+// ── EventEmitter ───────────────────────────────────────────────────────────
 export class EventEmitter<T> {
-  private listeners: ((e: T) => void)[] = [];
-  readonly event = (listener: (e: T) => void) => {
+  private listeners: ((e: T) => any)[] = [];
+  readonly event: Event<T> = (listener) => {
     this.listeners.push(listener);
     return { dispose: () => { this.listeners = this.listeners.filter(l => l !== listener); } };
   };
-  fire(data: T): void {
-    for (const l of this.listeners) l(data);
-  }
-  dispose(): void {
-    this.listeners = [];
-  }
+  fire(data: T): void { for (const l of this.listeners) l(data); }
+  dispose(): void { this.listeners = []; }
 }
 
-// workspace stub for config tests
-export const workspace = {
-  getConfiguration: (_section?: string) => {
+// ── Tree view surface ──────────────────────────────────────────────────────
+// Minimal stand-in for the vscode tree API (TreeDataProvider, TreeItem, theme
+// classes) so dashboard/deep-dive tree providers can be imported in tests.
+export class ThemeColor {
+  constructor(public readonly id: string) {}
+}
+export class ThemeIcon {
+  constructor(public readonly id: string, public readonly color?: ThemeColor) {}
+}
+export class MarkdownString {
+  constructor(public readonly value?: string) {}
+}
+export interface Command {
+  command: string;
+  title: string;
+  arguments?: unknown[];
+  tooltip?: string;
+}
+export class TreeItem {
+  label?: string;
+  id?: string;
+  description?: string | boolean;
+  tooltip?: string | MarkdownString;
+  iconPath?: ThemeIcon | string | Uri | { light: string | Uri; dark: string | Uri };
+  contextValue?: string;
+  command?: Command;
+  collapsibleState?: TreeItemCollapsibleState;
+  constructor(label?: string, collapsibleState?: TreeItemCollapsibleState) {
+    this.label = label;
+    this.collapsibleState = collapsibleState;
+  }
+}
+export interface TreeDataProvider<T> {
+  getTreeItem(element: T): TreeItem;
+  getChildren(element?: T): ProviderResult<T[]>;
+  onDidChangeTreeData?: Event<T | undefined | null | void>;
+}
+
+// ── workspace ──────────────────────────────────────────────────────────────
+export const workspace: {
+  getConfiguration(section?: string, scope?: unknown): WorkspaceConfiguration;
+  workspaceFolders: readonly WorkspaceFolder[] | undefined;
+  fs: { readDirectory(uri: Uri): Promise<[string, FileType][]>; readFile(uri: Uri): Promise<Uint8Array>; };
+  createFileSystemWatcher(globPattern: string | RelativePattern): FileSystemWatcher;
+  onDidChangeConfiguration(listener: (e: ConfigurationChangeEvent) => any): Disposable;
+  openTextDocument(uri: Uri | string): Thenable<unknown>;
+  // Test hooks (typed so tests can set them without casts).
+  _mockConfig: any;
+  _mockFsReadDirectory?: (uri: Uri) => Promise<[string, FileType][]>;
+  _mockFsReadFile?: (uri: Uri) => Promise<Uint8Array>;
+} = {
+  getConfiguration: (_section?: string, _scope?: unknown) => {
     const config = workspace._mockConfig;
     // If the test set a specific config for this section, return it.
     // Otherwise return a default config that responds to .get() with undefined.
-    if (config && typeof config.get === 'function') return config;
+    if (config && typeof config.get === 'function') return config as WorkspaceConfiguration;
     // Default: return an object with a .get() that returns undefined for unknown keys.
     return {
-      get: (key: string) => (config && config[key] !== undefined ? config[key] : undefined),
-      getSection: undefined,
+      get: <T>(key: string, defaultValue?: T) => (config && config[key] !== undefined ? config[key] : defaultValue),
       has: () => false,
       update: () => Promise.resolve(),
-    };
+      inspect: () => undefined,
+    } as WorkspaceConfiguration;
   },
   _mockConfig: {} as any,
   workspaceFolders: undefined,
+  fs: {
+    readDirectory: (uri: Uri) => {
+      const hook = workspace._mockFsReadDirectory;
+      return hook ? hook(uri) : Promise.resolve([]);
+    },
+    readFile: (uri: Uri) => {
+      const hook = workspace._mockFsReadFile;
+      return hook ? hook(uri) : Promise.resolve(new Uint8Array());
+    },
+  },
   createFileSystemWatcher: () => ({
+    ignoreCreateEvents: false,
+    ignoreChangeEvents: false,
+    ignoreDeleteEvents: false,
     onDidChange: () => ({ dispose: () => {} }),
     onDidDelete: () => ({ dispose: () => {} }),
+    onDidCreate: () => ({ dispose: () => {} }),
     dispose: () => {},
   }),
   onDidChangeConfiguration: () => ({ dispose: () => {} }),
-} as any;
+  openTextDocument: () => Promise.resolve({}),
+};
 
-// env stub (for remote detection) — tests can override if needed
-export const env = {
+// ── env ────────────────────────────────────────────────────────────────────
+export const env: {
+  remoteName: string | undefined;
+  uiKind: number;
+  appName: string;
+  language: string;
+  uriScheme: string;
+  clipboard: { readText(): Promise<string>; writeText(text: string): Promise<void> };
+  openExternal(target: string | Uri): Promise<boolean>;
+} = {
   remoteName: undefined,
   uiKind: 1, // Desktop
   appName: 'Code',
   language: 'en',
   uriScheme: 'vscode',
-  clipboard: { readText: () => '', writeText: () => Promise.resolve() },
+  clipboard: { readText: () => Promise.resolve(''), writeText: () => Promise.resolve() },
   openExternal: () => Promise.resolve(true),
-} as any;
+};
 
-// window stub (for showInformationMessage, etc.)
-export const window = {
-  showInformationMessage: (_message: string) => Promise.resolve(undefined),
-  createOutputChannel: (name: string) => ({
+// ── window ─────────────────────────────────────────────────────────────────
+export const window: {
+  showInformationMessage(message: string, ...items: (string | Record<string, unknown>)[]): Promise<string | undefined>;
+  showWarningMessage(message: string, ...items: (string | Record<string, unknown>)[]): Promise<string | undefined>;
+  showErrorMessage(message: string, ...items: (string | Record<string, unknown>)[]): Promise<string | undefined>;
+  showInputBox(options?: InputBoxOptions, token?: CancellationToken): Promise<string | undefined>;
+  showQuickPick<T extends QuickPickItem>(
+    items: readonly T[] | Thenable<readonly T[]>,
+    options: QuickPickOptions & { canPickMany: true },
+    token?: CancellationToken
+  ): Promise<T[] | undefined>;
+  showQuickPick<T extends QuickPickItem>(
+    items: readonly T[] | Thenable<readonly T[]>,
+    options?: QuickPickOptions,
+    token?: CancellationToken
+  ): Promise<T | undefined>;
+  withProgress<R>(options: unknown, task: (progress: Progress<unknown>) => Thenable<R>): Promise<R>;
+  createOutputChannel(name: string): OutputChannel;
+  showTextDocument(document: unknown, ..._rest: unknown[]): Promise<unknown>;
+} = {
+  showInformationMessage: () => Promise.resolve(undefined),
+  showWarningMessage: () => Promise.resolve(undefined),
+  showErrorMessage: () => Promise.resolve(undefined),
+  showInputBox: () => Promise.resolve(undefined),
+  showQuickPick: ((..._args: unknown[]) => Promise.resolve(undefined)) as any,
+  withProgress: <R,>(_options: unknown, task: (progress: Progress<unknown>) => Thenable<R>) =>
+    Promise.resolve(task({ report: () => {} })),
+  createOutputChannel: (name: string): OutputChannel => ({
+    name,
+    append: () => {},
     appendLine: () => {},
-    dispose: () => {},
+    replace: () => {},
+    clear: () => {},
     show: () => {},
     hide: () => {},
+    dispose: () => {},
   }),
-} as any;
+  showTextDocument: () => Promise.resolve({}),
+};
 
-// Uri stub
-export const Uri = {
-  joinPath: (...uris: any[]) => uris[uris.length - 1],
-  file: (path: string) => path,
-} as any;
+// ── commands ───────────────────────────────────────────────────────────────
+export const commands: {
+  executeCommand<T = unknown>(command: string, ...rest: unknown[]): Thenable<T>;
+  registerCommand(command: string, callback: (...args: any[]) => any, thisArg?: unknown): Disposable;
+  /** Test helper: captured registrations. */
+  _registrations: { name: string; fn: (...args: any[]) => any }[];
+  /** Test helper: run the callback registered under `name`. */
+  _run(name: string, ...args: any[]): any;
+} = {
+  executeCommand: <T = unknown,>(_command: string, ..._rest: unknown[]): Thenable<T> =>
+    Promise.resolve(undefined as unknown as T),
+  _registrations: [],
+  registerCommand: (name: string, fn: (...args: any[]) => any) => {
+    commands._registrations.push({ name, fn });
+    return { dispose: () => {} };
+  },
+  _run: (name: string, ...args: any[]) => {
+    const reg = commands._registrations.find(r => r.name === name);
+    if (!reg) throw new Error(`no command registered as "${name}"`);
+    return reg.fn(...args);
+  },
+};
 
-// ConfigurationTarget enum
-export const ConfigurationTarget = {
-  Global: 1,
-  Workspace: 2,
-  WorkspaceFolder: 3,
-} as const;
+// ── Webview (type-only surface for serverSettingsView / deepDiveView) ──────
+export interface Webview {
+  html: string;
+  options: Record<string, unknown>;
+  cspSource: string;
+  onDidReceiveMessage: Event<any>;
+  postMessage(message: unknown): Thenable<boolean>;
+  asWebviewUri(uri: Uri): Uri;
+}
+export interface WebviewView {
+  webview: Webview;
+  visible: boolean;
+  title?: string;
+  description?: string;
+  onDidChangeVisibility: Event<boolean>;
+  onDidDispose: Event<void>;
+  show(preserveFocus?: boolean): void;
+}
+export interface WebviewViewResolveContext { [key: string]: unknown; }
+export interface WebviewViewProvider {
+  resolveWebviewView(webviewView: WebviewView, context: WebviewViewResolveContext, token: CancellationToken): Thenable<void> | void;
+}
 
-// commands stub
-export const commands = {
-  executeCommand: () => Promise.resolve(undefined),
-} as any;
+// ── Misc namespace members ─────────────────────────────────────────────────
+export const version = 'test';
 
 // Anything else accessed on `vscode.*` is undefined; tests should only touch the above.

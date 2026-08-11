@@ -36,6 +36,18 @@ describe('deriveTokenBudget', () => {
     expect(b.maxOutputTokens).toBe(4096); // global config
   });
 
+  it('clamps a 0/negative maxOutputTokens override to at least 1', () => {
+    // A 0 would pass through as max_tokens: 0, which vLLM rejects.
+    expect(deriveTokenBudget(10000, 4096, { maxOutputTokens: 0 }).maxOutputTokens).toBeGreaterThanOrEqual(1);
+    expect(deriveTokenBudget(10000, 4096, { maxOutputTokens: -5 }).maxOutputTokens).toBeGreaterThanOrEqual(1);
+  });
+
+  it('clamps a 0/negative maxInputTokens override to at least 1', () => {
+    // A 0/negative override would otherwise advertise a model with no input.
+    expect(deriveTokenBudget(10000, 4096, { maxInputTokens: 0 }).maxInputTokens).toBeGreaterThanOrEqual(1);
+    expect(deriveTokenBudget(10000, 4096, { maxInputTokens: -5 }).maxInputTokens).toBeGreaterThanOrEqual(1);
+  });
+
   it('honors both overrides', () => {
     const b = deriveTokenBudget(10000, 4096, { maxInputTokens: 6000, maxOutputTokens: 1000 });
     expect(b.maxInputTokens).toBe(6000);
@@ -45,6 +57,22 @@ describe('deriveTokenBudget', () => {
   it('never returns negative input when output override exceeds window', () => {
     const b = deriveTokenBudget(1000, 4096, { maxOutputTokens: 2000 });
     expect(b.maxInputTokens).toBeGreaterThanOrEqual(0);
+  });
+
+  it('reserves at least one input token even when the output budget consumes the window', () => {
+    // Default 4096 output budget on a model whose window is <= 4096 used to
+    // clamp output to the full window, leaving maxInputTokens = 0 — a model
+    // that cannot accept any prompt at all. The output budget must yield one
+    // token of input headroom so the model stays usable.
+    const b = deriveTokenBudget(4096, 4096, undefined);
+    expect(b.maxInputTokens).toBeGreaterThanOrEqual(1);
+    expect(b.maxOutputTokens).toBeLessThanOrEqual(b.maxModelLen - 1);
+    expect(b.maxInputTokens + b.maxOutputTokens).toBe(b.maxModelLen);
+
+    const c = deriveTokenBudget(2048, 4096, undefined);
+    expect(c.maxInputTokens).toBeGreaterThanOrEqual(1);
+    expect(c.maxOutputTokens).toBe(2047);
+    expect(c.maxInputTokens + c.maxOutputTokens).toBe(c.maxModelLen);
   });
 
   it('clamps maxInputTokens when overrides exceed maxModelLen', () => {

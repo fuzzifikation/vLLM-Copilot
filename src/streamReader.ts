@@ -111,22 +111,21 @@ export async function* readSseStream(
     },
   });
 
-  // Sentinel used by drainAndCheck: when streamDone is true, drainAndCheck throws
-  // this unique object. The call site catches it and breaks the outer loop instead
-  // of propagating it as an error. A unique object ensures no real Error matches.
-  const STOP_ITERATION = {};
-
   /**
-   * Helper generator that yields all currently queued events, then checks
-   * for stream-level errors and completion. Consolidates the three near-identical
-   * drain sites into one so there is no risk of a fourth site diverging.
+   * Helper generator that yields all currently queued events, then checks for
+   * stream-level errors and completion. Returns `true` once the stream reached
+   * its natural end (`[DONE]` marker or server error), so the read loop can
+   * break out; stream errors are thrown and propagate. Callers only need
+   * `if (yield* drainAndCheck()) break;` — no per-site try/catch. This
+   * consolidates the four near-identical drain sites into one so a future
+   * edit cannot diverge one site from the others.
    */
-  function* drainAndCheck(): Generator<StreamEvent> {
+  function* drainAndCheck(): Generator<StreamEvent, boolean> {
     while (eventQueue.length > 0) {
       yield eventQueue.shift()!;
     }
     if (streamError) throw streamError;
-    if (streamDone) throw STOP_ITERATION;
+    return streamDone;
   }
   try {
     const decoder = new TextDecoder();
@@ -137,7 +136,7 @@ export async function* readSseStream(
       }
 
       // Drain any events queued by the parser callback, check error/done
-      try { yield* drainAndCheck(); } catch (e) { if (e === STOP_ITERATION) break; else throw e; }
+      if (yield* drainAndCheck()) break;
 
       // ── Read next chunk with timeout ────────────────────────────────
       let done: boolean;
@@ -215,20 +214,21 @@ export async function* readSseStream(
       }
 
       // Yield events from this chunk (parser.onEvent fires synchronously)
-      try { yield* drainAndCheck(); } catch (e) { if (e === STOP_ITERATION) break; else throw e; }
+      if (yield* drainAndCheck()) break;
 
       if (done) {
         // Flush any buffered event that lacked a trailing \n\n.
         // Feed two newlines: one to terminate the current line (if it lacks \n),
         // one more to create the empty line that triggers event dispatch.
         parser.feed('\n\n');
-        try { yield* drainAndCheck(); } catch (e) { if (e === STOP_ITERATION) break; else throw e; }
+        yield* drainAndCheck();
         break;
       }
     }
 
-    // Drain any remaining events
-    try { yield* drainAndCheck(); } catch (e) { if (e !== STOP_ITERATION) throw e; }
+    // Drain any remaining events. A stream error propagates (thrown); reaching
+    // the natural end just falls through to the belt-and-suspenders below.
+    yield* drainAndCheck();
 
     // Belt-and-suspenders: if the stream ended without [DONE] or finish_reason,
     // finalize any pending tool calls (e.g., reverse proxy closed connection).

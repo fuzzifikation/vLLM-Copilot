@@ -109,7 +109,7 @@ export interface SessionPickedItem extends vscode.QuickPickItem {
 export async function discoverWorkspaces(): Promise<WorkspaceEntry[]> {
   const entries: WorkspaceEntry[] = [];
 
-  // Collect all DB paths at once, then batch-query in a single Python process
+  // Collect all DB paths at once, then batch-query them via node:sqlite
   const dbPathMap = new Map<string, string>(); // dbPath -> id
 
   const globalPath = globalDbPath();
@@ -131,7 +131,7 @@ export async function discoverWorkspaces(): Promise<WorkspaceEntry[]> {
     log('WARN', `Cannot read workspace storage at ${wsRoot}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // Batch count all DBs in one Python process
+  // Batch count all DBs via node:sqlite
   const dbCounts = await countSessionsBatch([...dbPathMap.entries()]);
 
   // Also scan filesystem session directories for each workspace

@@ -168,6 +168,11 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     webviewView.onDidDispose(() => {
       msgDisposable.dispose();
       configDisposable.dispose();
+      // Drop the stale view reference so an in-flight refreshWebview (which
+      // passed the entry guard before awaiting getConfig) can't postMessage to
+      // a dead webview. resolveWebviewView re-creates both on re-show.
+      this.view = undefined;
+      this.isWebviewReady = false;
     });
 
     // Set HTML synchronously - references external files
@@ -250,6 +255,10 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    // The view may have been disposed during the awaits above (entry guard
+    // passed, then the config/server/personality fetches ran). Posting to a
+    // dead webview throws, so re-check before the single postMessage.
+    if (!this.view || !this.isWebviewReady) return;
     this.view.webview.postMessage({
       type: 'data',
       servers,
@@ -312,8 +321,14 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
    * Persist a model edit from the webview. Identity is extracted here — `id` and
    * `serverUrl` are lookup keys, never patchable properties — and delegated to
    * `configStore.patchModelConfig`, which owns the field-merge / composite-id
-   * logic. All side effects (log, cache clear, webview refresh, toast) run in
-   * this handler AFTER the store write succeeds, so the store stays pure.
+   * logic. Side effects (log, cache clear, toast) run in this handler AFTER the
+   * store write succeeds, so the store stays pure. The webview refresh is NOT one
+   * of them: `patchModelConfig` writes `vllm-copilot.models`, which fires the
+   * `onDidChangeConfiguration` listener registered in `resolveWebviewView`, and
+   * that listener owns the single refresh. Refreshing here too would post two
+   * `data` messages per save — harmless for the plain save path, but the second
+   * message would re-render and clobber a draft the webview deliberately preserved
+   * across an auto-applied change (personality).
    */
   private async saveModelConfig(updates: Partial<ModelConfig>): Promise<void> {
     const { id, serverUrl, ...rest } = updates;
@@ -325,7 +340,6 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     const result = await patchModelConfig(identity, rest);
     this.outputChannel.appendLine(`[SETTINGS] Saved config for ${identity.id}`);
     this.clearCache?.();
-    this.refreshWebview();
     vscode.window.showInformationMessage(
       `Settings saved for "${result.model.displayName || identity.id}"`
     );

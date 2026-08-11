@@ -363,7 +363,7 @@ describe('ServerSettingsViewProvider', () => {
       expect(stored[0].vllmModelId).toBe('wire-model');
     });
 
-    it('P2: fires toast, clearCache, and refreshWebview after persistence (side-effect boundary)', async () => {
+    it('P2: fires toast and clearCache after persistence; the config listener owns the refresh', async () => {
       const clearCache = vi.fn();
       const providerWithCache = new ServerSettingsViewProvider(mockContext, mockOutputChannel, clearCache);
       const refreshSpy = vi.spyOn(providerWithCache as any, 'refreshWebview').mockResolvedValue(undefined);
@@ -382,7 +382,11 @@ describe('ServerSettingsViewProvider', () => {
 
       expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Settings saved for "New Model"');
       expect(clearCache).toHaveBeenCalled();
-      expect(refreshSpy).toHaveBeenCalled();
+      // saveModelConfig must NOT refresh: patchModelConfig writes vllm-copilot.models,
+      // which fires the onDidChangeConfiguration listener that owns the single refresh.
+      // A second refresh here would post a duplicate 'data' message that clobbers a
+      // draft the webview preserved across an auto-applied personality change.
+      expect(refreshSpy).not.toHaveBeenCalled();
     });
 
     it('P2: a rejected persistence suppresses clearCache, refresh, and the success toast', async () => {

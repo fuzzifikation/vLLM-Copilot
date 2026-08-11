@@ -21,7 +21,7 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 | `maxOutputTokens` | `4096` | Max tokens per response. Server enforces its own hard limit. |
 | `maxInputTokens` | computed | Auto-computed as `max_model_len - maxOutputTokens`. Set only to reduce further. |
 | `estimateCharsPerToken` | `3.5` | Chars-per-token for local token estimation. |
-| `defaultParams` | `temp: 0.7, top_p: 1.0` | Model-scope generation params. Layered under `modelModes`. |
+| `defaultParams` | `temp: 1.0, top_p: 1.0` | Model-scope generation params. Layered under `modelModes`. |
 | `modelModes` | — | Switchable named presets (Think/No Think, etc.). Bundled presets auto-applied by **Add vLLM Server & Model**; for existing entries, hand-edit and copy from [`model-configs/`](../model-configs/). |
 | `defaultMode` | first mode | Which mode is active before the user picks one. |
 | `capabilities.toolCalling` | `true` | Model supports tool/function calling. |
@@ -66,7 +66,7 @@ Any vLLM chat body field except `model`, `messages`, `stream`, `stream_options`.
 | `chat_template_kwargs` | vLLM chat template params (e.g. `{ "enable_thinking": true }`) *(vLLM-only)* |
 | `allowed_token_ids` | Restrict generation to these token IDs *(vLLM-only; niche)* |
 
-> **Enabled by default:** Every model has `repetition_detection` enabled with safe defaults (`max_pattern_size: 5, min_pattern_size: 2, min_count: 3`). This catches runaway loops without affecting normal output. Override in a model's `defaultParams` if needed, or set `max_pattern_size: 0` to disable.
+> **Not enabled by default:** `repetition_detection` is **off** unless you add it to a model's `defaultParams` or a mode. The n-gram detector (`max_pattern_size: 5, min_pattern_size: 2, min_count: 3`) triggers on structured output like XML tables, JSON arrays, and code loops — not just actual repetition — so it is opt-in. If you want it, add it per-model: `"repetition_detection": { "max_pattern_size": 5, "min_pattern_size": 2, "min_count": 3 }`.
 
 ---
 
@@ -94,7 +94,6 @@ The **vLLM Dashboard** sidebar shows live metrics for each configured vLLM serve
 
 | Setting | Default | Description |
 |---|---|---|
-| `vllm-copilot.dashboard.enabled` | `true` | Enable the Dashboard sidebar and polling |
 | `vllm-copilot.dashboard.pollIntervalMs` | `15000` | How often to refresh metrics (ms). Click **Refresh Interval** in the sidebar to change — enter `15s`, `30s`, `1m`, etc. Also editable in Settings |
 
 ### Last Request Details
@@ -122,7 +121,7 @@ When server flags aren't set, the node shows a hint: "Start vLLM with `--enable-
 
 ## Typical Example
 
-A working chat model — minimum viable config. No modes, no custom params, just authorizes a model on a server. Everything else uses built-in defaults (`temperature: 0.7`, `top_p: 1.0`, `maxOutputTokens: 4096`):
+A working chat model — minimum viable config. No modes, no custom params, just authorizes a model on a server. Everything else uses built-in defaults (`temperature: 1.0`, `top_p: 1.0`, `maxOutputTokens: 4096`):
 
 ```json
 "vllm-copilot.models": [

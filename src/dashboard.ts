@@ -4,7 +4,7 @@
  */
 
 import * as vscode from 'vscode';
-import { getConfig, resolveServerConfig } from './config.js';
+import { getConfig, resolveServerConfig, normalizeServerUrl } from './config.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtTokens, fmtThroughput, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import { getLastRequest } from './lastRequestStore.js';
 
@@ -175,6 +175,17 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   private outputChannel: vscode.OutputChannel;
   /** Flag to coalesce multiple per-server updates into one tree re-render. */
   private refreshScheduled = false;
+  /** Whether the sidebar is currently visible. `refreshSubscriptions` is async
+   *  (awaits `getConfig`); this flag guards the continuation against a hide or
+   *  dispose that happened while the await was in flight, so a hidden sidebar
+   *  is never left polling. */
+  private visible = false;
+  /** Monotonic refresh token. Each `refreshSubscriptions` captures the current
+   *  value and its continuation aborts if a newer refresh has since started.
+   *  Without this, two overlapping refreshes (e.g. a config change racing a
+   *  `setVisible(true)`) both pass the visibility check and both subscribe,
+   *  double-polling the servers until the next toggle. */
+  private refreshEpoch = 0;
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -204,6 +215,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
   /** Call when the tree view becomes visible or hidden */
   setVisible(visible: boolean): void {
+    this.visible = visible;
     if (visible) {
       this.refreshSubscriptions();
       this.fireTreeUpdate(); // refresh on show
@@ -213,9 +225,19 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   }
 
   private async refreshSubscriptions(): Promise<void> {
+    const epoch = ++this.refreshEpoch;
     this.disposeSubscriptions();
     try {
       const config = await getConfig(this.context);
+      // The await above is a genuine suspension point. Abort the continuation if
+      // either condition held while getConfig was resolving:
+      //  - the sidebar was hidden or the provider disposed (visible flag);
+      //  - a newer refresh started (epoch mismatch) and will subscribe itself.
+      // In both cases subscribing here would create orphaned or duplicated
+      // engine pollers.
+      if (!this.visible || epoch !== this.refreshEpoch) {
+        return;
+      }
       // Group models by server URL
       const serverMap = new Map<string, Record<string, string>>();
       for (const model of config.models) {
@@ -294,7 +316,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
     // Basic info
     if (m.version) {
-      items.push(new MetricTreeItem('vLLM Version', 'v' + m.version, 'server'));
+      // vLLM's /version endpoint already returns the version with a leading
+      // "v" (e.g. "v0.6.0"), so prepending another "v" would render "vv0.6.0".
+      items.push(new MetricTreeItem('vLLM Version', m.version, 'server'));
     }
     if (m.models.length > 0) {
       items.push(new ModelsTreeItem(m.models));
@@ -387,7 +411,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
     // Last request details (if we have data for this server)
     if (serverUrl) {
-      const lastRequest = getLastRequest(serverUrl);
+      // consumeStream writes the store keyed by the NORMALIZED server URL
+      // (resolveServerConfig → normalizeServerUrl). The dashboard's serverUrl
+      // here is the raw `model.serverUrl` — a config may legally use a
+      // scheme-less, trailing-slash, or /v1 form — so normalize before the
+      // lookup, otherwise the Last Request node silently vanishes for those
+      // forms.
+      const lastRequest = getLastRequest(normalizeServerUrl(serverUrl));
       if (lastRequest) {
         items.push(new LastRequestTreeItem(
           lastRequest.serverUrl,
@@ -525,7 +555,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   }
 
   dispose(): void {
+    this.visible = false;
     this.disposeSubscriptions();
+    this._onDidChangeTreeData.dispose();
   }
 }
 

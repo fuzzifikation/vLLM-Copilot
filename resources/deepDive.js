@@ -489,9 +489,11 @@
       var sl = data.serverLoad;
       var loadHtml = '<div class="kv-grid">';
       if (sl !== null && sl !== undefined) {
+        // server_load is a 0..1 utilization ratio from /load, not a request
+        // count — render it as a percentage under the Server Load label.
         loadHtml += '<div class="kv-item">' +
-          '<span class="kv-label">GPU-Utilizing Requests</span>' +
-          '<span class="kv-value">' + formatValue(sl) + '</span></div>';
+          '<span class="kv-label">Server Load</span>' +
+          '<span class="kv-value">' + Math.round(sl * 100) + '%</span></div>';
       } else {
         loadHtml += '<div class="kv-item">' +
           '<span class="kv-label">Server Load</span>' +

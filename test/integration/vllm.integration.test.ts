@@ -49,7 +49,7 @@ d('vLLM integration', () => {
     client = new VllmClient(makeContext(), makeOutput());
     // Fetch model list directly (listModels() was removed as dead production code).
     const resp = await fetch(`${SERVER_URL}/v1/models`, { headers: REQUEST_HEADERS });
-    const data = await resp.json();
+    const data = (await resp.json()) as { data?: Array<{ id: string }> };
     const models = data.data || [];
     expect(models.length).toBeGreaterThan(0);
     modelId = MODEL_OVERRIDE || models[0].id;

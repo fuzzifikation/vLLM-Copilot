@@ -7,6 +7,12 @@ import * as path from 'path';
  * Writes all request/response traffic to a log file in the extension's storage path.
  * Enabled via `vllm-copilot.enableFileLogging` setting.
  */
+
+/** Maximum number of timestamped log files to retain in the storage directory.
+ *  Every activation writes a new `vllm-copilot-<ts>.log`; without a cap the
+ *  directory accumulates one plaintext-API-key file per reload with no bound. */
+const MAX_LOG_FILES = 20;
+
 export class FileLogger implements vscode.Disposable {
   private logStream: fs.WriteStream | null = null;
   private logFilePath: string | null = null;
@@ -19,6 +25,14 @@ export class FileLogger implements vscode.Disposable {
     private context: vscode.ExtensionContext,
     private output?: vscode.OutputChannel,
   ) {}
+
+  /**
+   * Apply a new body limit in place. The limit is read at write time, so this
+   * takes effect immediately without rotating the active log file.
+   */
+  setLogBodyLimit(limit: number): void {
+    this.logBodyLimit = limit;
+  }
 
   /**
    * Initialize the logger. Creates the log file and opens the write stream.
@@ -63,6 +77,37 @@ export class FileLogger implements vscode.Disposable {
       this.logFilePath = null;
       const reason = err instanceof Error ? err.message : String(err);
       this.output?.appendLine(`[ERROR] File logging FAILED to initialize: ${reason}`);
+    }
+
+    // Retain only the most recent log files. Without this cap the storage dir
+    // grows by one file per activation, each holding unredacted auth headers.
+    if (this.logStream !== null) {
+      this.pruneOldLogFiles();
+    }
+  }
+
+  /**
+   * Delete all but the `keep` newest `vllm-copilot-*.log` files in the storage
+   * directory. Best-effort: never throws. Skips the active log file.
+   * Filenames are zero-padded ISO timestamps, so lexicographic sort is
+   * chronological. Runs synchronously because `init()` is synchronous.
+   */
+  private pruneOldLogFiles(keep: number = MAX_LOG_FILES): void {
+    const logDir = this.context.globalStorageUri?.fsPath;
+    if (!logDir) return;
+    try {
+      const entries = fs.readdirSync(logDir)
+        .filter(e => /^vllm-copilot-.*\.log$/.test(e))
+        .sort();
+      if (entries.length <= keep) return;
+      const toDelete = entries.slice(0, entries.length - keep);
+      for (const entry of toDelete) {
+        const fullPath = path.join(logDir, entry);
+        if (this.logFilePath && fullPath === this.logFilePath) continue;
+        try { fs.unlinkSync(fullPath); } catch { /* best-effort */ }
+      }
+    } catch {
+      // Can't read the directory — skip pruning rather than failing init().
     }
   }
 

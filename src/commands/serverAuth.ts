@@ -1,0 +1,112 @@
+import * as vscode from 'vscode';
+import { buildAuthHeaders } from '../config.js';
+import { jsonrepair } from 'jsonrepair';
+
+/**
+ * Parse a user-entered headers string into a validated `Record<string, string>`.
+ * Accepts either JSON (`{"X-API-Key":"..."}`) or blank (no headers).
+ * Returns `undefined` on parse/type error (caller shows the message).
+ *
+ * Forgiving: accepts strict JSON (`{"X-API-Key":"..."}`) and, via `jsonrepair`,
+ * common shorthand — missing outer braces (`"X-API-Key":"..."`), unquoted
+ * keys/values (`X-API-Key: abc`), single quotes, trailing/missing commas, and
+ * one-pair-per-line input. Blank input means no headers.
+ * @internal Exported for testing.
+ */
+export function parseHeadersInput(raw: string): { headers: Record<string, string> } | { error: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { headers: {} };
+
+  const headerNameRe = /^[a-zA-Z0-9!#$%&'*+.^_`|~-]+$/;
+
+  // Validate + normalize a parsed value into a Record<string,string>.
+  // Coerce numeric/boolean values to strings — header values are always strings.
+  const fromObject = (parsed: unknown): { headers: Record<string, string> } | { error: string } | null => {
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      const name = k.trim();
+      if (!headerNameRe.test(name)) return { error: `Invalid header name "${name}".` };
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+        headers[name] = String(v);
+      } else {
+        return { error: `Header "${name}" must be a string value.` };
+      }
+    }
+    return { headers };
+  };
+
+  // Candidate strings to try parsing/repairing, in order of preference.
+  // The brace-wrapped variant handles input that omits the outer { }.
+  const candidates = trimmed.startsWith('{') ? [trimmed] : [trimmed, `{${trimmed}}`];
+
+  for (const candidate of candidates) {
+    // Strict parse first, then jsonrepair as a fallback (same pattern as tool-call args).
+    for (const text of [candidate, tryRepair(candidate)]) {
+      if (text === undefined) continue;
+      try {
+        const result = fromObject(JSON.parse(text));
+        if (result) return result;
+      } catch { /* try next candidate */ }
+    }
+  }
+
+  return { error: 'Headers must be JSON like {"X-API-Key":"..."} or lines like X-API-Key: value' };
+}
+
+/** Repair a malformed JSON string; returns undefined if repair itself throws. */
+function tryRepair(text: string): string | undefined {
+  try {
+    return jsonrepair(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Prompt user for server auth credentials (API key + custom headers) via two
+ * sequential input boxes. Handles cancellation, validation, and combines both
+ * into a single headers object. Returns `undefined` if the user cancelled at
+ * either step.
+ */
+export async function promptForServerAuth(options: {
+  apiKeyTitle: string;
+  apiKeyPrompt: string;
+  apiKeyPlaceholder: string;
+  headersTitle: string;
+  headersPrompt: string;
+  headersPlaceholder: string;
+}): Promise<Record<string, string> | undefined> {
+  // API key (optional). Folded into headers as Authorization: Bearer.
+  const apiKeyInput = await vscode.window.showInputBox({
+    title: options.apiKeyTitle,
+    prompt: options.apiKeyPrompt,
+    placeHolder: options.apiKeyPlaceholder,
+    ignoreFocusOut: true,
+    password: true,
+  });
+  if (apiKeyInput === undefined) return undefined; // cancelled
+  const apiKey = apiKeyInput.trim();
+
+  // Custom headers (optional). Accepts JSON or forgiving shorthand.
+  // Merged on top of the key-derived auth headers, so a custom header wins.
+  const headersInput = await vscode.window.showInputBox({
+    title: options.headersTitle,
+    prompt: options.headersPrompt,
+    placeHolder: options.headersPlaceholder,
+    ignoreFocusOut: true,
+    validateInput: (v) => {
+      const r = parseHeadersInput(v);
+      return 'error' in r ? r.error : undefined;
+    },
+  });
+  if (headersInput === undefined) return undefined; // cancelled
+  const parsedHeaders = parseHeadersInput(headersInput);
+  if ('error' in parsedHeaders) {
+    vscode.window.showErrorMessage(parsedHeaders.error);
+    return undefined;
+  }
+
+  // Combine: API-key-derived auth first, then custom headers (custom wins).
+  return { ...buildAuthHeaders(apiKey), ...parsedHeaders.headers };
+}

@@ -1,14 +1,11 @@
 out/
 node_modules/
 coverage/
-Colleague_Diagnosis_Fix/
 temp/
 *.tsbuildinfo
 *.vsix
 *.db
-keep_this/
 .vllm/
-temp/
 
 # Local connection settings and credentials must never be committed.
 .env
