@@ -126,12 +126,12 @@ Under each server, a collapsible **Token Usage and Cost** node shows **cumulativ
 
 | Row | Description |
 |---|---|
-| **Model node** | One collapsible entry per model; its description shows `$11.51 today and $31.13 in 3.1 days` (today's cost + all-time cost over the recording window). |
-| **Today** | That model's price + today's tokens: `$1.90 · 800 k in · 200 k cached · 500 k out`. |
-| **Overall** | That model's price + all-time tokens, plus `· started 5d ago` (when recording began). |
+| **Model node** | One collapsible entry per model; its description carries the price: `$11.51 today and $31.13 in 3.1 days` (today's cost + all-time cost over the recording window). |
+| **Today** | Today's tokens: `800 k in · 200 k cached · 500 k out` (price is on the model line above). |
+| **Overall** | All-time tokens plus `· started 5d ago` (when recording began). |
 | **Reset Usage** | Right-click the **Token Usage and Cost** node → clear all usage for this server (all-time, daily, started-at). The Last Request node is kept. |
 
-Rows are **price-first**: when the model has `cost` configured the cost leads (`$1.90 · …` or `42.00 credits`), then the token split — `in` **excludes** cache, `in + cached = total input` (cached = cache-*read* input tokens). **There is no server-level cost sum** — models on one server may use different currencies, so each model's rows carry that model's cost in its own currency. The Last Request node shows a per-request **Cost** row the same way. Sum costs across models manually. Currency decoration uses a small static map — `$` (USD), `€` (EUR), `£` (GBP), `¥` (JPY/CNY), `credits` (AI Credits) — and any other currency falls back to its raw code (`EUR 12.35`); no currency library is bundled.
+The price sits on the **model line** (its collapsed summary: `$11.51 today and $31.13 in 3.1 days`); the **Today / Overall** rows are token-only — `800 k in · 200 k cached · 500 k out`, where `in` **excludes** cache and `in + cached = total input` (cached = cache-*read* input tokens). Costs round to 2 decimals (the per-request **Cost** row under Last Request keeps fine precision for tiny amounts); token counts round to whole thousands. **There is no server-level cost sum** — models on one server may use different currencies, so each model's price uses its own currency. Sum costs across models manually. Currency decoration uses a small static map — `$` (USD), `€` (EUR), `£` (GBP), `¥` (JPY/CNY), `credits` (AI Credits) — and any other currency falls back to its raw code (`EUR 12.35`); no currency library is bundled.
 
 **Entry points (right-click the Token Usage and Cost node):** **Set Cost…** configures the per-1M rates through guided prompts (model → input/output/cached-input → currency) and writes the `cost` block for you; **Reset Usage** clears the server's counters. The dashboard re-renders immediately after either.
 

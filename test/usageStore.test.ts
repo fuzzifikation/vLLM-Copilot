@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import {
   initUsageStore, recordRequest, getLastRequest, getServerUsage, hasServerUsage,
   getServersWithUsage, resetUsage, computeCost, findModelCost, getModelStartedAt,
-  formatCost, formatCostSummary, fmtCount, sumCounts, dayKey, resetUsageStoreForTests, onUsageStoreDidChange,
+  formatCost, formatCostFine, formatCostSummary, fmtCount, sumCounts, dayKey, resetUsageStoreForTests, onUsageStoreDidChange,
   type LastRequestData,
 } from '../src/usageStore.js';
 import type { ModelConfig } from '../src/config.js';
@@ -243,9 +243,9 @@ describe('cost derivation', () => {
   it('formats currency and AI credits', () => {
     expect(formatCost(0.42)).toBe('$0.42');
     expect(formatCost(12.3456)).toBe('$12.35');
-    expect(formatCost(120)).toBe('$120');
-    expect(formatCost(0.0007)).toBe('$0.0007');
-    expect(formatCost(0.000019)).toBe('$0.000019'); // per-request costs never collapse to 0
+    expect(formatCost(120)).toBe('$120.00');
+    expect(formatCost(0.8379)).toBe('$0.84'); // rounded to 2 decimals
+    expect(formatCost(0.0007)).toBe('$0.00'); // standard money display
     expect(formatCost(42, 'AI Credits')).toBe('42.00 credits'); // fractional credits allowed
     expect(formatCost(42, 'ai credits')).toBe('42.00 credits');
   });
@@ -256,6 +256,13 @@ describe('cost derivation', () => {
     expect(formatCost(12.3456, 'JPY')).toBe('¥12.35');
     expect(formatCost(42, 'XYZ')).toBe('XYZ 42.00'); // unknown → raw string fallback (never a wrong $)
     expect(formatCost(0.42)).toBe('$0.42'); // USD default unchanged
+  });
+
+  it('formatCostFine keeps fine precision for tiny per-request costs', () => {
+    expect(formatCostFine(0.0007)).toBe('$0.0007');
+    expect(formatCostFine(0.000019)).toBe('$0.000019'); // never collapses to $0.00
+    expect(formatCostFine(12.3456)).toBe('$12.35');
+    expect(formatCostFine(42, 'AI Credits')).toBe('42.00 credits');
   });
 
   it('formatCostSummary renders today + overall over the recording window', () => {
@@ -274,9 +281,11 @@ describe('cost derivation', () => {
   it('fmtCount abbreviates with k/M, presentation only', () => {
     expect(fmtCount(0)).toBe('0');
     expect(fmtCount(999)).toBe('999');      // below k: raw
-    expect(fmtCount(1000)).toBe('1 k');     // trailing zeros stripped
-    expect(fmtCount(1500)).toBe('1.5 k');
-    expect(fmtCount(12_345)).toBe('12.35 k');
+    expect(fmtCount(1000)).toBe('1 k');
+    expect(fmtCount(1500)).toBe('2 k');     // rounded to whole thousands
+    expect(fmtCount(12_345)).toBe('12 k');
+    expect(fmtCount(836_350)).toBe('836 k'); // no sub-1000 precision
+    expect(fmtCount(999_500)).toBe('1 M');   // rounds up over the k/M boundary
     expect(fmtCount(1_000_000)).toBe('1 M');
     expect(fmtCount(3_883_588)).toBe('3.88 M');
   });

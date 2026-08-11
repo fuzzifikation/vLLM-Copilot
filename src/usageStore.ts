@@ -355,13 +355,25 @@ function currencyPrefix(currency?: string): string {
 }
 
 /**
- * Format a derived cost value with its currency label. `"AI Credits"` (case-
- * insensitive) renders a credits suffix (1 credit = $0.01, per Copilot's
- * convention); common currencies render their symbol ($ € £ ¥); anything else
- * falls back to the raw currency string. Precision adapts to magnitude so a
- * per-request cost of $0.000019 never collapses to `$0.0000`.
+ * Format a cost with its currency label, rounded to 2 decimals — the standard
+ * money display (model summary, etc.). `"AI Credits"` (case-insensitive)
+ * renders a credits suffix; common currencies render their symbol ($ € £ ¥);
+ * anything else falls back to the raw currency string. Per-request costs use
+ * {@link formatCostFine} (fine precision) instead.
  */
 export function formatCost(value: number, currency?: string): string {
+  const amount = value.toFixed(2);
+  return (currency ?? 'USD').toLowerCase() === 'ai credits'
+    ? `${amount} credits`
+    : `${currencyPrefix(currency)}${amount}`;
+}
+
+/**
+ * Fine-precision variant for the per-request Cost row, where numbers are tiny
+ * (a request can cost $0.000019) — 2 decimals would collapse it to $0.00.
+ * Keeps the adaptive precision (up to 6 decimals, trailing zeros stripped).
+ */
+export function formatCostFine(value: number, currency?: string): string {
   return (currency ?? 'USD').toLowerCase() === 'ai credits'
     ? `${formatAmount(value)} credits`
     : `${currencyPrefix(currency)}${formatAmount(value)}`;
@@ -389,13 +401,21 @@ export function formatCostSummary(
 
 /**
  * Abbreviate large token counts for compact dashboard rows: 3883588 → "3.88 M",
- * 12345 → "12.35 k", 999 → "999". Two decimals, trailing zeros stripped.
+ * 836350 → "836 k", 999 → "999". Thousands are rounded to whole k (sub-1000
+ * precision is noise); millions keep 2 decimals, trailing zeros stripped.
  * Presentation ONLY — the stored counts are never rounded; this runs at render
  * time on already-accumulated integers.
  */
 export function fmtCount(n: number): string {
   if (n >= 1e6) return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, '')} M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(2).replace(/\.?0+$/, '')} k`;
+  if (n >= 1e3) {
+    const k = Math.round(n / 1e3);
+    if (k >= 1000) { // 999,500 → 1000 k → "1 M"
+      const m = k / 1000;
+      return `${m.toFixed(2).replace(/\.?0+$/, '')} M`;
+    }
+    return `${k} k`;
+  }
   return String(n);
 }
 
