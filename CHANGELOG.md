@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.22.0 — Token & Cost Usage Tracker
+
+### Added
+
+- **Cumulative Token Usage tracker in the Dashboard** — a new **Token Usage** node under each server shows **Today / Session / Total** token counts (input, output, cached, reasoning) with a per-model breakdown. Persisted across reloads in `globalState` (day buckets, 90-day retention). Includes a per-server **Reset Usage** action and a `vLLM-Copilot: Reset Usage` palette command (all / per-server scope).
+- **Per-model cost tracking** — optional `cost` config on each model entry (`input` / `output` / `cachedInput`, per 1,000,000 tokens, in a `currency` unit defaulting to `USD`, or `"AI Credits"` for Copilot-picker comparison). Cost is derived at render time from the stored token counts, so editing a rate re-prices all history without migration. Shown on the per-model Token Usage rows and as a **Cost** row on the Last Request node.
+- **`Set Cost…` entry point** — right-click the **Token Usage** node to configure a model's per-1M cost rates through guided prompts (model → input/output/cached-input → currency). Writes the `cost` block via the config store; the dashboard re-renders immediately.
+- **Live dashboard updates** — both the **Last Request** and **Token Usage** nodes now re-render immediately after every completed prompt via a change event from the combined usage store, instead of waiting for the metrics poll interval. This also fixed a pre-existing bug where the Last Request node was stale for up to `pollIntervalMs` after each request.
+
+### Internal
+
+- **`lastRequestStore.ts` merged into `src/usageStore.ts`** — a single ingestion point (`recordRequest`) captures the last request AND accumulates the cumulative counters, with one change event feeding both dashboard nodes. Serialized `globalState` writes prevent lost updates under rapid completions. Added `test/usageStore.test.ts` (accumulation, persistence round-trip, retention, reset, cost math).
+
 ## v1.21.0 — Provider & command decomposition + bug-squash edition
 
 ### Fixed

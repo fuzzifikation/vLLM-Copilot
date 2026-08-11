@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { consumeStream } from '../src/provider/consumeStream.js';
 import { createOutcome } from '../src/provider/outcome.js';
-import { getLastRequest } from '../src/lastRequestStore.js';
+import { getLastRequest } from '../src/usageStore.js';
 import type { StreamEvent } from '../src/types.js';
 
 /**

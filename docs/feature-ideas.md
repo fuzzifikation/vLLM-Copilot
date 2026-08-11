@@ -1,7 +1,7 @@
 # Feature Ideas: vLLM Capabilities → Better VS Code Experience
 
 **Generated:** 2026-06-06
-**Updated:** 2026-08-09 (consolidated; shipped items removed or marked done)
+**Updated:** 2026-08-11 (completed items removed; only open, unimplemented ideas remain)
 **Source:** [vLLM SamplingParams API Reference](https://docs.vllm.ai/en/latest/api/vllm/sampling_params.html)
 
 **Context:** vLLM supports many per-request sampling parameters that the extension doesn't expose yet. These represent opportunities to build features that VS Code's built-in Copilot doesn't have — making vLLM-Copilot the superior local model integration.
@@ -26,49 +26,6 @@ Two buckets:
 - 🛡️ **Painkillers (the moat)** — sampling / structured-output params BYOK literally cannot send. These make the extension _irreplaceable_.
 - ✨ **Vitamins (on-brand, but replaceable)** — informational / UX features like the Server Status UI and the Model Configuration UI. Genuinely differentiating and worth building, but Microsoft could add equivalents.
 
-> **Fixed.** All six vLLM-specific params (`response_format`, `bad_words`, `structured_outputs`, `repetition_detection`, `ignore_eos`, `min_tokens`) now have `KNOWN_PARAMS` UI entries.
-
----
-
-## ✅ Custom System Prompt Override
-
-**Done.** Solved by **Model Personalities** (`setModelPersonality` command with predefined presets) and **System Message Replacements** (`systemMessageReplacementsFile` for custom find/replace rules). Users can control what the model sees without full prompt replacement.
-
----
-
-## ✅ Server Status Dashboard
-
-**Done.** Shipped as a native VS Code Tree View (not a webview). Polls `/metrics`, shows per-server health, loaded models, KV cache, running/waiting requests, TTFT/TPOT, cache hit rate, preemptions, and evictions. Configurable poll interval.
-
----
-
-## ✅ Last Request Details Dashboard Entry
-
-**Done.** Shipped as a collapsible tree node under each server in the Dashboard. Shows model ID, relative timestamp, input/output tokens, cached tokens, reasoning tokens, and timing metrics (TTFT, generation time, throughput). Displays a hint suggesting `--enable-prompt-tokens-details` and/or `--enable-per-request-metrics` when those server flags aren't set.
-
-## Currently Exposed via KNOWN_PARAMS ✅
-
-These params are available in the Server Settings UI (`KNOWN_PARAMS` in `serverSettingsView.ts`) and also work via `defaultParams`/`modelModes`:
-
-| Param                                                         | Type                | Notes             |
-| ------------------------------------------------------------- | ------------------- | ----------------- |
-| `temperature`, `top_p`, `top_k`, `min_p`                      | number              | Sampling control  |
-| `repetition_penalty`, `presence_penalty`, `frequency_penalty` | number              | Penalty control   |
-| `max_tokens`, `min_tokens`                                    | number              | Output length     |
-| `stop`                                                        | json (array)        | Stop sequences    |
-| `response_format`                                             | json                | Output format     |
-| `seed`                                                        | number              | Reproducibility   |
-| `skip_special_tokens`                                         | string (true/false) | Output formatting |
-| `parallel_tool_calls`                                         | string (true/false) | Tool calling      |
-| `chat_template_kwargs`                                        | json                | Template control  |
-| `reasoning_effort`                                            | string (options)    | Thinking depth    |
-| `bad_words`                                                   | json                | Blocked tokens    |
-| `structured_outputs`                                          | json                | Token constraints |
-| `repetition_detection`                                        | json                | N-gram early-stop |
-| `ignore_eos`                                                  | string (true/false) | Ignore EOS        |
-
-(All params supported via `defaultParams`/`modelModes` now also have `KNOWN_PARAMS` UI entries.)
-
 ---
 
 ## Not Exposed — 12 Remaining Parameters
@@ -92,51 +49,6 @@ These params are defined in vLLM's `SamplingParams` but not exposed by the exten
 | `stop_token_ids`                | `list[int]`        | Generation Control | 💡 P2 — precise stop control                    |
 
 All are niche or debugging-focused. No P1 (high-impact, general-purpose) features remain.
-
----
-
-## ✅ Personality Presets Should Be Global, Not Workspace-Local
-
-**Category:** Vitamins (UX polish)
-**Status:** Implemented — personalities now copy into the extension's global storage (`personalities/`), follow the user across workspaces, and the **Set Model Personality** command works without an open workspace. The **Server Settings** sidebar has a personality dropdown in each model's **General** section.
-
-### Problem (original)
-
-The **Set Model Personality** command copies the chosen preset file to `.vllm/` in the current workspace root and sets `systemMessageReplacementsFile` to a workspace-relative path (e.g. `.vllm/prompt-replacements-supportive-mentor.json`). This means:
-
-- The personality is tied to one workspace — opening a different folder loses it. Users who work across multiple repos must re-run the command for each.
-- The `.vllm/` directory is workspace-scoped state that doesn't belong in version control (it's user preference, not project config), yet it lives inside the workspace tree.
-- Personality selection should logically be a **model-level** (or user-level) preference, not a workspace artifact.
-
-### Suggestion (original)
-
-Store the personality file in the extension's global storage directory (`context.globalStorageUri`) and set `systemMessageReplacementsFile` to its absolute path there. This way:
-
-- The personality follows the user across all workspaces.
-- No `.vllm/` directory is created in the workspace.
-- The Set Personality command works even when no workspace folder is open (currently it bails with "Open a folder first").
-
-### Status
-
-Implemented as suggested: personalities are materialized in global storage and referenced by absolute path. Legacy workspace copies (`.vllm/prompt-replacements-*.json`) are no longer discovered as personalities — the picker only lists bundled and global ones. Such `.vllm/` files still work as custom replacement files when pointed at by `systemMessageReplacementsFile`, but they are not offered in the personality picker.
-
-| Param                           | Category           | Notes                                                                                                                         |
-| ------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `n`                             | Generation Control | **Blocked** — Chat Provider API can't render parallel outputs. Would need `InlineCompletionItemProvider` + `/v1/completions`. |
-| `logprobs`                      | Logprobs           | **See below** — Logprob Viewer (P2, researched)                                                          |
-| `prompt_logprobs`               | Logprobs           | Input token analysis. Dependent on logprobs infrastructure.                                                                   |
-| `flat_logprobs`                 | Logprobs           | Perf optimization. Dependent on logprobs infrastructure.                                                                      |
-| `logprob_token_ids`             | Logprobs           | Targeted scoring. Dependent on logprobs infrastructure.                                                                       |
-| `logit_bias`                    | Logits Processing  | Token steering. Requires tokenizer access to convert strings → IDs.                                                           |
-| `stop_token_ids`                | Generation Control | Precise stop control. Tokenizer-dependent.                                                                                    |
-| `allowed_token_ids`             | Logits Processing  | Vocabulary restriction. Tokenizer-dependent.                                                                                  |
-| `include_stop_str_in_output`    | Output Formatting  | Simple boolean toggle. Minor convenience.                                                                                     |
-| `detokenize`                    | Output Formatting  | Debug-only. Rarely useful.                                                                                                    |
-| `extra_args`                    | Plugin/Custom      | Forward-compat hook. No validation.                                                                                           |
-| `routed_experts_prompt_start`   | Experts/Routing    | MoE niche.                                                                                                                    |
-| `spaces_between_special_tokens` | Output Formatting  | Formatting tweak. Minor.                                                                                                      |
-
-**Common theme:** Logprobs and logits-processing params are interesting but require tokenizer access or new UI infrastructure to be useful. Output formatting params are debugging-only.
 
 ---
 
@@ -180,7 +92,7 @@ Implemented as suggested: personalities are materialized in global storage and r
 **Implementation plan:**
 1. Add `logprobs` to `KNOWN_PARAMS` (number field: top N candidates per token)
 2. Capture logprobs from SSE stream alongside usage/metrics
-3. Store in `lastRequestStore` alongside token counts and timing
+3. Store in `usageStore` (the combined last-request + cumulative store) alongside token counts and timing
 4. Dashboard shows "Token Confidence" node under Last Request
 5. Clicking opens Logprob Viewer webview with color-coded output
 6. Separate sections for reasoning tokens and content tokens
@@ -191,7 +103,7 @@ Implemented as suggested: personalities are materialized in global storage and r
 - **Show top alternatives?** Just the chosen token + confidence, or the top 3 candidates?
 - **Integrate with Deep-Dive?** Or standalone webview? Could complement the metrics view.
 
-**Effort:** Medium-high. Requires new webview, stream capture changes, and storage in `lastRequestStore`. But the moat value is significant — BYOK literally cannot do this.
+**Effort:** Medium-high. Requires new webview, stream capture changes, and storage in `usageStore`. But the moat value is significant — BYOK literally cannot do this.
 
 ---
 
@@ -232,40 +144,20 @@ The fix is small (< 10 lines) and eliminates a correctness gap.
 ## 🛡️ Token & Credit Usage Tracker
 
 **Category:** Painkiller (transparency)
-**Status:** Not implemented
+**Status:** ✅ **Implemented** — see [`src/usageStore.ts`](../src/usageStore.ts), the dashboard **Token Usage** node, and [docs/configuration-reference.md](../docs/configuration-reference.md) → *Token Usage & Cost*.
 
-**What:** A persistent counter showing cumulative token consumption (input, output, cached, reasoning) and estimated AI credits used by the local vLLM model — per session, per day, or total. Displayed somewhere accessible: the dashboard, a status bar item, or a hover tooltip.
+**What (as built):** A persistent counter showing cumulative token consumption (input, output, cached, reasoning) and estimated cost per model — per session, per day, or total. Displayed in the dashboard's **Token Usage** node under each server, live (no poll-interval lag), with a per-server **Reset Usage** action. Cost is derived at render time from optional per-model `cost` rates (per 1M tokens, in USD or AI Credits).
 
-**Why it matters:**
-- Users with limited compute budgets (cloud vLLM instances, API proxies) need to track how much they've consumed
-- Unlike GitHub Copilot's own credit tracker (which only counts Copilot API calls), this tracks tokens flowing through the local vLLM server — both chat and tool-call usage
-- Helps identify expensive sessions or unexpectedly high token consumption
-- Gives a sense of "how much work did this model do today"
-
-**What we already have:**
-- `usageReporting.ts` already reports per-request token counts to VS Code via `LanguageModelDataPart` with MIME type `'usage'`
-- `lastRequestStore.ts` stores the last request's token counts per server
-- `WireUsage` in `types.ts` already carries `prompt_tokens`, `completion_tokens`, `total_tokens`, cached tokens, and reasoning tokens
-
-**What's missing:**
-- An accumulator that sums token usage across multiple requests (not just the last one)
-- A persistence layer (extension local storage or globalState) so counts survive window reloads
-- A UI element to display the running totals
-
-**Suggestion:**
-1. Create a `TokenAccumulator` in a new `src/tokenTracker.ts` that reads the last request from `setLastRequest` and increments running totals stored in `context.globalState`
-2. Accumulate per model ID (or per server URL) so users with multiple models can see individual usage
-3. Store counters with timestamps for daily/weekly/monthly breakdowns
-4. Display in the Dashboard as a collapsible "Token Usage" node under each server, showing:
-   - Total tokens consumed today (input + output)
-   - Total tokens this session
-   - Estimated credits (if a conversion rate is configured — e.g. 1 credit = 1000 tokens)
-   - Percentage of any configured budget
-5. Optionally add a status bar item showing total tokens used today
+**How it's built:**
+- A single ingestion point (`recordRequest` in `src/usageStore.ts`) runs at the completion of every prompt carrying a usage payload. It both stores the server's **Last Request** and accumulates the **Today / Session / Total** counters per `(server, model)`.
+- **Live UI:** the store fires one change event (`onUsageStoreDidChange`) that the dashboard subscribes to, so both the Last Request and Token Usage nodes re-render immediately — no poll-interval lag (this also fixed a pre-existing staleness bug in the Last Request node).
+- **Persistence:** day buckets + all-time totals in `globalState` (`vllm-copilot.usage.v1`), serialized writes, 90-day retention. Session counters are in-memory.
+- **Cost:** optional per-model `cost` rates (`input` / `output` / `cachedInput`, per 1M tokens, `currency` label default `USD`). Derived at render time — never stored, so editing a rate re-prices all history. Supports `"AI Credits"` display for Copilot-picker comparison.
+- **Reset:** per-server row in the Token Usage node, plus a `vLLM-Copilot: Reset Usage` palette command (all / per-server scope). Last Request survives a reset.
 
 **What it is NOT:** This is not a replacement for server-side metrics (`/metrics`). The vLLM `/metrics` endpoint already reports cumulative token counts from server start. This tracker is about *client-side* usage that the user can see without looking at the metrics endpoint, and that survives restarts of individual vLLM server instances.
 
-**Effort:** Low-Medium (~1-2h). The data flows already exist; the work is in the accumulator, persistence, and dashboard tree items. No changes to the chat or stream path are needed.
+**Deferred:** a status bar item showing "tokens used today" (the tree node already delivers the value).
 
 ---
 
@@ -295,7 +187,7 @@ The fix is small (< 10 lines) and eliminates a correctness gap.
 
 **Implementation sketch:**
 1. **Request level** — parse `routed_experts` from the SSE response in `sseParser.ts` alongside tool calls and usage
-2. **Store** — add routed experts data to `lastRequestStore` alongside token counts and timing
+2. **Store** — add routed experts data to `usageStore` alongside token counts and timing
 3. **Display** — show per-token expert assignments in a collapsible section, or add a new "Routed Experts" node under Last Request in the dashboard
 4. **Parameter** — add `enable_return_routed_experts` to `KNOWN_PARAMS` (string: true/false) and document `routed_experts_prompt_start`
 

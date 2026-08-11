@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { FileLogger } from '../logger.js';
 import { reportTokenUsage, logTokenUsage } from '../usageReporting.js';
-import { setLastRequest, type LastRequestData } from '../lastRequestStore.js';
+import { recordRequest, type LastRequestData } from '../usageStore.js';
 import type { WireMetrics } from '../types.js';
 import { parseToolCallArgs } from '../messageConverter.js';
 import type { StreamEvent, WireUsage } from '../types.js';
@@ -121,7 +121,10 @@ export async function consumeStream(
     fileLogger?.logStreamFinish(outcome.finishReason || 'unknown', pendingUsage);
     logTokenUsage(output, model.id, pendingUsage, totalElapsedMs, outcome.firstTokenTime);
 
-    // Store last request data for the dashboard
+    // Record last request + accumulate cumulative usage for the dashboard.
+    // `recordRequest` both stores the server's last request AND sums it into
+    // the all-time/today/session counters, then fires the change event so the
+    // dashboard re-renders immediately (no poll-interval lag).
     const hasCacheDetails = !!pendingUsage.prompt_tokens_details;
     const hasMetrics = !!pendingMetrics;
     const lastRequestData: LastRequestData = {
@@ -141,6 +144,6 @@ export async function consumeStream(
       maxOutputTokens: model.maxOutputTokens || 0,
       firstTokenTimeMs: outcome.firstTokenTime ?? null,
     };
-    setLastRequest(lastRequestData);
+    recordRequest(lastRequestData);
   }
 }
