@@ -11,7 +11,7 @@
 A client-side tracker that shows **cumulative** token consumption and estimated cost for every configured vLLM server, live in the dashboard. It captures each completed prompt exactly once and surfaces it in two places:
 
 - **Last Request** — the most recent prompt per server (per-prompt tokens, timing, and estimated cost).
-- **Token Usage and Cost** — **model-first**: one collapsible node per model with **Today / Overall** rows (price-first, persisted across reloads). A model's collapsed description reads `$11.51 today and $31.13 in 3.1 days` — today's cost plus the all-time cost over the recording window.
+- **Token Usage and Cost** — **model-first**: one collapsible node per model whose collapsed line carries the price (`$11.51 today and $31.13 in 3.1 days`), expanding to **Today / Overall** token-only rows (persisted across reloads).
 
 ## What it is NOT
 
@@ -77,7 +77,7 @@ cost = (prompt − cached) / 1M × input
 - **Currency decoration uses a small static map, not an i18n library** — `$` (USD), `€` (EUR), `£` (GBP), `¥` (JPY/CNY), `credits` (AI Credits); any other currency falls back to its raw code (`EUR 12.35`). This also means a non-USD currency never renders as a wrong `$`.
 - Fresh input is priced at `input`; cache-read input at `cachedInput`. No cache-write surcharge — self-hosted vLLM never bills for it.
 - Because cost is derived, **editing a rate re-prices all history** — no migration.
-- **Cost is per MODEL only; there is no server-level cost sum.** Models on one server may legitimately use different currencies (USD vs AI Credits), so summing them into a server aggregate would produce a wrong money number. Each model's **Today / Overall** rows carry that model's cost (price-first, labeled with its currency); the per-request **Cost** row under Last Request does the same. The user sums costs across models manually. This was a deliberate decision after `aggregateCost` was removed — do not re-introduce a server cost aggregate.
+- **Cost is per MODEL only; there is no server-level cost sum.** Models on one server may legitimately use different currencies (USD vs AI Credits), so summing them into a server aggregate would produce a wrong money number. Each model's price sits on its collapsed line (labeled with its currency); the **Today / Overall** rows are token-only. The per-request **Cost** row under Last Request shows the single-request cost with fine precision. The user sums costs across models manually. This was a deliberate decision after `aggregateCost` was removed — do not re-introduce a server cost aggregate.
 - **Entry point:** right-click the Token Usage and Cost node → **Set Cost…** (`vllm-copilot.configureCost`) guides through model → rates → currency and writes the `cost` block via the config store. Hidden from the command palette because it requires a server-context argument.
 
 ## Reset semantics

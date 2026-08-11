@@ -8,7 +8,7 @@ import { getConfig, resolveServerConfig, normalizeServerUrl, findModelConfig, ty
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtTokens, fmtThroughput, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import {
   getLastRequest, getServerUsage, hasServerUsage, onUsageStoreDidChange,
-  computeCost, findModelCost, formatCost, formatCostSummary, fmtCount, emptyCounts,
+  computeCost, findModelCost, formatCostFine, formatCostSummary, fmtCount, emptyCounts,
   getModelStartedAt,
   type UsageCounts,
 } from './usageStore.js';
@@ -200,19 +200,18 @@ function timeAgo(ts: number): string {
 }
 
 /**
- * One-line usage summary: PRICE-FIRST when cost is configured (`$price · in ·
- * cached · out`), then the token split (in EXCLUDES cache; in + cached = total
+ * One-line usage row: the token split (in EXCLUDES cache; in + cached = total
  * input), optionally suffixed with `· started X ago` for the Overall row.
- * k/M-abbreviated; presentation only, the stored counts are never rounded.
+ * Token-only — the price lives on the model line above. k/M-abbreviated;
+ * presentation only, the stored counts are never rounded.
  */
-function usageLine(counts: UsageCounts, cost?: number, currency?: string, since?: number): string {
+function usageLine(counts: UsageCounts, since?: number): string {
   const fresh = Math.max(0, counts.prompt - counts.cached);
   const tokens = counts.cached > 0
     ? `${fmtCount(fresh)} in · ${fmtCount(counts.cached)} cached · ${fmtCount(counts.completion)} out`
     : `${fmtCount(counts.prompt)} in · ${fmtCount(counts.completion)} out`;
-  const costPart = cost !== undefined ? `${formatCost(cost, currency)} · ` : '';
   const sincePart = since !== undefined ? ` · started ${timeAgo(since)}` : '';
-  return `${costPart}${tokens}${sincePart}`;
+  return `${tokens}${sincePart}`;
 }
 
 // ─── Tree Data Provider ──────────────────────────────────────────────
@@ -625,7 +624,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     if (cost !== undefined) {
       items.push(new RequestMetricTreeItem(
         'Cost',
-        formatCost(cost, rates?.currency),
+        formatCostFine(cost, rates?.currency),
         'credit-card',
         'Estimated cost of this request from the model\'s configured per-1M cost rates. Shown per-prompt for money verification.',
       ));
@@ -667,25 +666,22 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     });
   }
 
-  /** Children of a model node: Today and Overall, price-first. */
+  /** Children of a model node: Today and Overall — token-only (price is on the model line above). */
   private getModelUsageChildren(e: ModelUsageTreeItem): MetricTreeItem[] {
-    const models = this.readConfiguredModels();
     const usage = getServerUsage(e.serverUrl);
-    const entry = findModelConfig(models, e.serverUrl, e.modelId);
-    const currency = entry?.cost?.currency;
     const today = usage.today[e.modelId] ?? emptyCounts();
     const overall = usage.allTime[e.modelId] ?? emptyCounts();
     const since = getModelStartedAt(e.serverUrl, e.modelId);
     return [
       new MetricTreeItem(
         'Today',
-        usageLine(today, computeCost(today, entry?.cost), currency),
+        usageLine(today),
         'calendar',
         `Today's usage for ${e.modelLabel}. Input is split: 'in' excludes cache; in + cached = total input.`,
       ),
       new MetricTreeItem(
         'Overall',
-        usageLine(overall, computeCost(overall, entry?.cost), currency, since),
+        usageLine(overall, since),
         'history',
         `All-time usage for ${e.modelLabel}${since !== undefined ? `; recording started ${timeAgo(since)}.` : '.'}`,
       ),
