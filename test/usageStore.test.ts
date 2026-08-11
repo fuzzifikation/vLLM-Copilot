@@ -280,14 +280,15 @@ describe('cost derivation', () => {
 
   it('fmtCount abbreviates with k/M, presentation only', () => {
     expect(fmtCount(0)).toBe('0');
-    expect(fmtCount(999)).toBe('999');      // below k: raw
-    expect(fmtCount(1000)).toBe('1 k');
-    expect(fmtCount(1500)).toBe('2 k');     // rounded to whole thousands
-    expect(fmtCount(12_345)).toBe('12 k');
-    expect(fmtCount(836_350)).toBe('836 k'); // no sub-1000 precision
-    expect(fmtCount(999_500)).toBe('1 M');   // rounds up over the k/M boundary
-    expect(fmtCount(1_000_000)).toBe('1 M');
-    expect(fmtCount(3_883_588)).toBe('3.88 M');
+    expect(fmtCount(999)).toBe('999');       // below k: raw
+    expect(fmtCount(1000)).toBe('1k');
+    expect(fmtCount(1500)).toBe('2k');       // rounded to whole thousands
+    expect(fmtCount(12_345)).toBe('12k');
+    expect(fmtCount(836_350)).toBe('836k');  // no sub-1000 precision
+    expect(fmtCount(999_500)).toBe('1M');    // rounds up over the k/M boundary
+    expect(fmtCount(1_000_000)).toBe('1M');
+    expect(fmtCount(19_480_000)).toBe('19.48M');
+    expect(fmtCount(3_883_588)).toBe('3.88M');
   });
 
   it('findModelCost locates rates by (serverUrl, wire modelId)', () => {

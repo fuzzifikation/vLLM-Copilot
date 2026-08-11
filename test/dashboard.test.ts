@@ -254,10 +254,10 @@ describe('DashboardTreeProvider', () => {
       expect(labels).toEqual(['Today', 'Overall']);
 
       const today = rows.find(r => (r as any).label === 'Today');
-      expect((today as any).description).toBe('800 k in · 200 k cached · 500 k out');
+      expect((today as any).description).toBe('800k in · 200k cached · 500k out');
 
       const overall = rows.find(r => (r as any).label === 'Overall');
-      expect((overall as any).description).toContain('800 k in · 200 k cached · 500 k out');
+      expect((overall as any).description).toContain('800k in · 200k cached · 500k out');
       expect((overall as any).description).not.toContain('$'); // price lives on the model line
       expect((overall as any).description).toContain('started'); // recording-since suffix
     });
@@ -312,9 +312,9 @@ describe('DashboardTreeProvider', () => {
       const rows = await provider.getChildren(last as any);
       const input = rows.find(r => (r as any).label === 'Input Tokens');
       expect(input).toBeDefined();
-      // fresh 3.7k − 1.2k cached → 2.5k, rounded to whole thousands → 3 k in · 1 k cached
-      expect((input as any).description).toContain('3 k in');
-      expect((input as any).description).toContain('1 k cached');
+      // fresh 3.7k − 1.2k cached → 2.5k, rounded to whole thousands → 3k in · 1k cached
+      expect((input as any).description).toContain('3k in');
+      expect((input as any).description).toContain('1k cached');
       expect((input as any).description).not.toContain('%');
     });
   });

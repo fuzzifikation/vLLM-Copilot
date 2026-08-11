@@ -647,12 +647,6 @@ export function fmtN(v: number | null): string {
   return v == null ? '—' : String(v);
 }
 
-export function fmtTokens(tokens: number | null): string {
-  if (tokens == null) return '—';
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(tokens % 1000 === 0 ? 0 : 1)}K`;
-  return String(tokens);
-}
-
 export function fmtThroughput(avgTPOTms: number | null): string {
   if (avgTPOTms == null || avgTPOTms <= 0) return '—';
   const tokPerSec = 1000 / avgTPOTms;

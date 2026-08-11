@@ -6,7 +6,6 @@ import {
   fmtPct,
   fmtMs,
   fmtN,
-  fmtTokens,
   fmtThroughput,
   shortUrl,
   getMetricsEngine,
@@ -310,20 +309,6 @@ describe('fmtN', () => {
   });
   it('formats numbers', () => {
     expect(fmtN(42)).toBe('42');
-  });
-});
-
-describe('fmtTokens', () => {
-  it('formats null as dash', () => {
-    expect(fmtTokens(null)).toBe('—');
-  });
-  it('formats large numbers in K', () => {
-    expect(fmtTokens(4000)).toBe('4K');      // exact multiple → 0 decimals
-    expect(fmtTokens(4096)).toBe('4.1K');    // remainder → 1 decimal
-    expect(fmtTokens(13312)).toBe('13.3K');  // remainder → 1 decimal
-  });
-  it('formats small numbers as-is', () => {
-    expect(fmtTokens(512)).toBe('512');
   });
 });
 
