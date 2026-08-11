@@ -207,7 +207,7 @@ describe('buildChatBody — protected keys', () => {
     } catch {
       // May throw — body was captured before streaming started
     }
-    await generator.return?.();
+    await generator.return?.({} as any);
     if (!capturedBody) throw new Error('Body was not captured');
     return capturedBody;
   }

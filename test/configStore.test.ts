@@ -81,6 +81,27 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     expect('systemMessageReplacementsFile' in stored[0]).toBe(false);
   });
 
+  it('replace-mode clears every clearable scalar field via an empty-string signal', async () => {
+    existingConfig = [
+      baseConfig({
+        displayName: 'Test Model',
+        maxOutputTokens: 8192,
+        defaultMode: 'Think',
+        defaultParams: { temperature: 0.7 },
+        systemMessageReplacementsFile: '.vllm/prompt-replacements-tough-love.json',
+      }),
+    ];
+
+    await replaceModelConfig(baseConfig({ displayName: '', maxOutputTokens: '', defaultMode: '', defaultParams: '' } as any));
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    // systemMessageReplacementsFile is covered by its own dedicated test above.
+    for (const k of ['displayName', 'maxOutputTokens', 'defaultMode', 'defaultParams']) {
+      expect(k in stored[0]).toBe(false);
+    }
+  });
+
   it('replaces the replacements file when a new value is set', async () => {
     existingConfig = [
       baseConfig({ systemMessageReplacementsFile: '.vllm/prompt-replacements-tough-love.json' }),
@@ -488,6 +509,45 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
     const stored = storedModels();
     expect(stored).toHaveLength(1);
     expect(stored[0].displayName).toBe('Test Model');
+  });
+
+  it("4a: patch-mode '' on clearable scalar fields deletes them (Save All clear semantics)", async () => {
+    existingConfig = [
+      {
+        id: 'test-model', vllmModelId: 'test-model', serverUrl: 'http://localhost:8000',
+        displayName: 'Test Model', maxOutputTokens: 8192, maxInputTokens: 4096,
+        estimateCharsPerToken: 4, streamInactivityTimeout: 30000, autoContinueRetries: 3,
+        defaultMode: 'Think', defaultParams: { temperature: 0.7 },
+      },
+    ];
+
+    // The webview's save() sends '' for every empty [data-f] field and for an
+    // emptied defaultParams. The store must map '' → delete so the clear sticks
+    // (absent keys are otherwise preserved by the shallow merge).
+    await patchModelConfig(identity(), {
+      displayName: '', maxOutputTokens: '', maxInputTokens: '', estimateCharsPerToken: '',
+      streamInactivityTimeout: '', autoContinueRetries: '', defaultMode: '', defaultParams: '',
+    } as any);
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    for (const k of ['displayName', 'maxOutputTokens', 'maxInputTokens', 'estimateCharsPerToken',
+      'streamInactivityTimeout', 'autoContinueRetries', 'defaultMode', 'defaultParams']) {
+      expect(k in stored[0]).toBe(false);
+    }
+  });
+
+  it('4b: a legitimate 0 is NOT cleared (streamInactivityTimeout 0 = infinite)', async () => {
+    existingConfig = [
+      { id: 'test-model', vllmModelId: 'test-model', serverUrl: 'http://localhost:8000', streamInactivityTimeout: 30000, autoContinueRetries: 1 },
+    ];
+
+    // The clear check must be `=== ''`, not truthiness: 0 is a real value.
+    await patchModelConfig(identity(), { streamInactivityTimeout: 0, autoContinueRetries: 0 } as any);
+
+    const stored = storedModels();
+    expect(stored[0].streamInactivityTimeout).toBe(0);
+    expect(stored[0].autoContinueRetries).toBe(0);
   });
 
   it('3c: performs no user-visible side effects — the handler owns the toast', async () => {

@@ -83,9 +83,6 @@ function makeValidConfig(): VllmConfig {
   return {
     models: [{ id: 'm', serverUrl: 'http://localhost:8000' }],
     enableFileLogging: false,
-    serverUrl: '',
-    apiKey: '',
-    requestHeaders: {},
   };
 }
 

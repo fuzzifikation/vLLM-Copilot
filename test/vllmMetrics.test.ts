@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   MetricsParser,
   parseRawMetrics,
@@ -9,6 +9,7 @@ import {
   fmtTokens,
   fmtThroughput,
   shortUrl,
+  getMetricsEngine,
   type ModelAccumulator,
   type RawMetricEntry,
   type ServerRawData,
@@ -345,5 +346,34 @@ describe('shortUrl', () => {
   });
   it('falls back to stripped URL on invalid input', () => {
     expect(shortUrl('not-a-url')).toBe('not-a-url');
+  });
+});
+
+// ─── Engine Registry lifecycle ──────────────────────────────────────
+
+describe('ServerMetricsEngine registry lifecycle', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('releases the engine from the registry when the last subscriber unsubscribes', () => {
+    // fetch resolves offline (status 0) so tick() completes quickly without
+    // hanging on a real server.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 0 })));
+
+    const url = 'http://registry-test:8000';
+    const first = getMetricsEngine(url);
+    const sub = first.subscribe(() => {});
+    const shared = getMetricsEngine(url);
+    // While subscribed, the registry returns the SAME engine (shared cache).
+    expect(shared).toBe(first);
+
+    sub.dispose();
+    const after = getMetricsEngine(url);
+    // Last subscriber left: the engine was disposed AND removed from the
+    // registry. A fresh engine (no stale cache, no orphaned poller) is created.
+    expect(after).not.toBe(first);
+    expect(after.getCachedRaw()).toBeNull();
+    expect(after.getCachedAggregated()).toBeNull();
   });
 });

@@ -3,13 +3,28 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'node:fs/promises';
-import { VllmChatModelProvider } from '../src/provider.js';
+import { SystemMessagePipeline } from '../src/provider/systemMessagePipeline.js';
 
-function makeProvider(): VllmChatModelProvider {
-  return new VllmChatModelProvider(
-    { extension: { extensionKind: vscode.ExtensionKind.UI } } as any,
-    { appendLine: vi.fn() } as any,
-  );
+/**
+ * Direct tests for the extracted system-message pipeline
+ * (`systemMessagePipeline.ts`). The transformation path is exercised with an
+ * injected capture writer so the collected entries are observable without
+ * touching the file system; the write path itself has its own end-to-end suite
+ * in `providerCapture.test.ts`.
+ */
+function makePipeline() {
+  const captureWriter = vi.fn().mockResolvedValue(undefined);
+  const pipeline = new SystemMessagePipeline({ appendLine: vi.fn() } as any, captureWriter);
+  return { pipeline, captureWriter };
+}
+
+/** Minimal LanguageModelChatInformation fixture (the pipeline only reads model.id). */
+function makeModel(id = 'model'): vscode.LanguageModelChatInformation {
+  return {
+    id, name: id, family: 'test', version: '1.0.0',
+    maxInputTokens: 4096, maxOutputTokens: 4096,
+    capabilities: { toolCalling: true, imageInput: false },
+  };
 }
 
 describe('system message processing', () => {
@@ -23,21 +38,20 @@ describe('system message processing', () => {
       get: (key: string) => key === 'systemMessageCapture' ? true : undefined,
     };
 
-    const provider = makeProvider();
-    const captureToDisk = vi.spyOn(provider as any, 'captureToDisk').mockResolvedValue(undefined);
+    const { pipeline, captureWriter } = makePipeline();
     const systemMessage = {
       role: vscode.LanguageModelChatMessageRole.System,
       content: [new vscode.LanguageModelTextPart('original system prompt')],
     };
 
-    const result = await (provider as any).processSystemMessages(
-      { id: 'model' },
+    const result = await pipeline.processSystemMessages(
+      makeModel('model'),
       [systemMessage],
       { models: [{ id: 'model' }], enableFileLogging: false },
     );
 
     expect(result).toEqual([systemMessage]);
-    expect(captureToDisk).toHaveBeenCalledWith([
+    expect(captureWriter).toHaveBeenCalledWith([
       {
         receivedContent: 'original system prompt',
         deliveredContent: 'original system prompt',
@@ -46,25 +60,24 @@ describe('system message processing', () => {
     ]);
   });
 
-  it('does not call captureToDisk when capture is disabled even with replacements', async () => {
-    const provider = makeProvider();
-    const captureToDisk = vi.spyOn(provider as any, 'captureToDisk').mockResolvedValue(undefined);
+  it('does not call the capture writer when capture is disabled', async () => {
+    const { pipeline, captureWriter } = makePipeline();
 
-    await (provider as any).processSystemMessages(
-      { id: 'model' },
+    await pipeline.processSystemMessages(
+      makeModel('model'),
       [{ role: vscode.LanguageModelChatMessageRole.System, content: [new vscode.LanguageModelTextPart('x')] }],
       { models: [{ id: 'model' }], enableFileLogging: false },
     );
 
-    expect(captureToDisk).not.toHaveBeenCalled();
+    expect(captureWriter).not.toHaveBeenCalled();
   });
 
   it('passes non-system messages through by reference (never mutated)', async () => {
-    const provider = makeProvider();
+    const { pipeline } = makePipeline();
     const userMsg = { role: vscode.LanguageModelChatMessageRole.User, content: [new vscode.LanguageModelTextPart('hi')] };
 
-    const result = await (provider as any).processSystemMessages(
-      { id: 'model' },
+    const result = await pipeline.processSystemMessages(
+      makeModel('model'),
       [userMsg],
       { models: [{ id: 'model' }], enableFileLogging: false },
     );
@@ -72,20 +85,18 @@ describe('system message processing', () => {
     expect(result).toEqual([userMsg]);
   });
 
-  it('returns the original messages unchanged when processing fails', async () => {
-    const provider = makeProvider();
-    // A config whose models entry has a bad replacements file path still resolves;
-    // force a failure via an unreadable config.models structure is awkward, so
-    // instead verify the error-swallowing path via a malformed file below.
-
+  it('returns the original messages when a malformed replacements file is configured', async () => {
+    // This exercises the INTERNAL swallow in loadReplacements (bad file -> []
+    // after a warning) — it does NOT reach the pipeline's outer catch, which
+    // has its own test below.
+    const { pipeline } = makePipeline();
     const msg = { role: vscode.LanguageModelChatMessageRole.System, content: [new vscode.LanguageModelTextPart('text')] };
-    // malformed replacements file → loadReplacements returns [] after logging.
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vllm-psm-'));
     try {
       const bad = path.join(dir, 'bad.json');
       await fs.writeFile(bad, '{ not json', 'utf-8');
-      const result = await (provider as any).processSystemMessages(
-        { id: 'model' },
+      const result = await pipeline.processSystemMessages(
+        makeModel('model'),
         [msg],
         { models: [{ id: 'model', systemMessageReplacementsFile: bad }], enableFileLogging: false },
       );
@@ -94,6 +105,27 @@ describe('system message processing', () => {
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it('falls back to the original messages when the pipeline itself throws', async () => {
+    // Trigger the OUTER catch: the config read throws inside the try. The
+    // malformed-file path never reaches it (loadReplacements swallows its own
+    // errors), so this is the only test that exercises the WARN fallback.
+    const appendLine = vi.fn();
+    const pipeline = new SystemMessagePipeline({ appendLine } as any);
+    vscode.workspace._mockConfig = {
+      get: () => { throw new Error('config boom'); },
+    };
+    const msg = { role: vscode.LanguageModelChatMessageRole.System, content: [new vscode.LanguageModelTextPart('text')] };
+
+    const result = await pipeline.processSystemMessages(
+      makeModel('model'),
+      [msg],
+      { models: [{ id: 'model' }], enableFileLogging: false },
+    );
+
+    expect(result).toEqual([msg]);
+    expect(appendLine).toHaveBeenCalledWith(expect.stringContaining('System message pipeline failed'));
   });
 });
 
@@ -118,8 +150,7 @@ describe('system message processing — replacement application', () => {
   });
 
   it('applies replacements and creates NEW message objects (original stays pristine)', async () => {
-    const provider = makeProvider();
-    const captureToDisk = vi.spyOn(provider as any, 'captureToDisk').mockResolvedValue(undefined);
+    const { pipeline, captureWriter } = makePipeline();
     vscode.workspace._mockConfig = {
       get: (key: string) => key === 'systemMessageCapture' ? true : undefined,
     };
@@ -129,8 +160,8 @@ describe('system message processing — replacement application', () => {
       content: [new vscode.LanguageModelTextPart('original system prompt')],
     };
 
-    const result = await (provider as any).processSystemMessages(
-      { id: 'model' },
+    const result = await pipeline.processSystemMessages(
+      makeModel('model'),
       [original],
       { models: [{ id: 'model', systemMessageReplacementsFile: replFile }], enableFileLogging: false },
     );
@@ -140,7 +171,7 @@ describe('system message processing — replacement application', () => {
     expect(original.content[0].value).toBe('original system prompt');
     expect((result[0].content[0] as vscode.LanguageModelTextPart).value).toBe('replaced system prompt');
 
-    expect(captureToDisk).toHaveBeenCalledWith([
+    expect(captureWriter).toHaveBeenCalledWith([
       {
         receivedContent: 'original system prompt',
         deliveredContent: 'replaced system prompt',
@@ -150,12 +181,12 @@ describe('system message processing — replacement application', () => {
   });
 
   it('preserves non-system messages and applies replacements only to system role', async () => {
-    const provider = makeProvider();
+    const { pipeline } = makePipeline();
     vscode.workspace._mockConfig = { get: () => undefined };
     const userMsg = { role: vscode.LanguageModelChatMessageRole.User, content: [new vscode.LanguageModelTextPart('original question')] };
 
-    const result = await (provider as any).processSystemMessages(
-      { id: 'model' },
+    const result = await pipeline.processSystemMessages(
+      makeModel('model'),
       [userMsg, { role: vscode.LanguageModelChatMessageRole.System, content: [new vscode.LanguageModelTextPart('original system prompt')] }],
       { models: [{ id: 'model', systemMessageReplacementsFile: replFile }], enableFileLogging: false },
     );
@@ -180,7 +211,7 @@ describe('loadReplacements — path resolution', () => {
   });
 
   it('resolves a workspace-relative systemMessageReplacementsFile against the first workspace folder', async () => {
-    const provider = makeProvider();
+    const { pipeline } = makePipeline();
     // Fake workspace root = the temp dir; relative path points into .vllm inside it.
     (vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: dir } }];
     const vllmDir = path.join(dir, '.vllm');
@@ -188,7 +219,7 @@ describe('loadReplacements — path resolution', () => {
     const file = path.join(vllmDir, 'repl.json');
     await fs.writeFile(file, JSON.stringify([{ find: 'a', replace: 'b' }]), 'utf-8');
 
-    const rules = await (provider as any).loadReplacements({
+    const rules = await pipeline.loadReplacements({
       id: 'm',
       serverUrl: 'http://localhost:8000',
       systemMessageReplacementsFile: '.vllm/repl.json',
@@ -199,11 +230,10 @@ describe('loadReplacements — path resolution', () => {
   });
 
   it('returns [] (with a warning) when the relative file is missing', async () => {
-    const provider = makeProvider();
+    const { pipeline } = makePipeline();
     (vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: dir } }];
-    const output = provider as any;
 
-    const rules = await output.loadReplacements({
+    const rules = await pipeline.loadReplacements({
       id: 'm',
       serverUrl: 'http://localhost:8000',
       systemMessageReplacementsFile: '.vllm/missing.json',

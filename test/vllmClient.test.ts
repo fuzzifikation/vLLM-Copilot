@@ -77,12 +77,12 @@ describe('VllmClient retry logic (via getModelContextWindow)', () => {
       () => {
         if (calls.length === 0) {
           calls.push(jsonResponse(502, { error: 'bad gateway' }));
-          return calls[calls.length - 1];
+          return Promise.resolve(calls[calls.length - 1]);
         }
         calls.push(jsonResponse(200, { data: [{ id: 'm1', object: 'model', owned_by: 'test', max_model_len: 4096 }] }));
-        return calls[calls.length - 1];
+        return Promise.resolve(calls[calls.length - 1]);
       }
-    ) as any;
+    );
     const client = new VllmClient(makeContext(), makeOutput());
     const ctx = await client.getModelContextWindow('http://test', {}, 'm1');
     expect(ctx).toBe(4096);
@@ -118,13 +118,13 @@ describe('VllmClient retry logic (via getModelContextWindow)', () => {
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
       () => {
         if (calls.length === 0) {
-          calls.push(Promise.resolve());
+          calls.push(jsonResponse(500, {}));
           return Promise.reject(new TypeError('fetch failed'));
         }
-        calls.push(Promise.resolve());
+        calls.push(jsonResponse(500, {}));
         return Promise.resolve(jsonResponse(200, { data: [{ id: 'm1', object: 'model', owned_by: 'test', max_model_len: 4096 }] }));
       }
-    ) as any;
+    );
     const client = new VllmClient(makeContext(), makeOutput());
     const ctx = await client.getModelContextWindow('http://test', {}, 'm1');
     expect(ctx).toBe(4096);

@@ -10,6 +10,7 @@ Ready-to-use model configurations shipped with the extension. **Add vLLM Server 
 | `Poolside-Laguna-S-2.1.json` | Laguna-S-2.1 (Poolside) | Think, No Think | ❌ | ✅ |
 | `Tencent-Hy3-config.json` | Hy3 (Tencent) | Think (Deep), Think (Light), No Think | ❌ | ✅ |
 | `DeepSeek-V4-Flash.json` | DeepSeek V4 Flash | Think (Max), Think (High), No Think | ❌ | ✅ |
+| `DeepSeek-V4-Flash-0731.json` | DeepSeek V4 Flash (0731) | Think (Max), Think (High), No Think | ❌ | ✅ |
 | `glm-5.2-config.json` | GLM-5.2 (Z-AI) | Think (Max), Think (High), No Think | ❌ | ✅ |
 
 To use a preset manually, copy the JSON object from the corresponding file into your `vllm-copilot.models` array (no reload needed).

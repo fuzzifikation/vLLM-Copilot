@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import * as autoConfig from '../src/autoConfig.js';
+import * as addServerFlow from '../src/commands/addServerFlow.js';
 import * as configStore from '../src/configStore.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -40,7 +40,7 @@ describe('persistAddedModel — BYOK setup after model persistence', () => {
         () => new Promise<configStore.SaveModelResult>((res) => { resolveWrite = res; }),
       );
 
-    const pending = autoConfig.persistAddedModel({
+    const pending = addServerFlow.persistAddedModel({
       id: 'new-model',
       serverUrl: 'http://localhost:8000',
     });
@@ -67,7 +67,7 @@ describe('persistAddedModel — BYOK setup after model persistence', () => {
       created: true,
     });
 
-    await autoConfig.persistAddedModel(
+    await addServerFlow.persistAddedModel(
       { id: 'new-model', serverUrl: 'http://localhost:8000' },
       onSaved,
     );

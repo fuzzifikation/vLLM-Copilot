@@ -51,7 +51,6 @@ details[open] > summary::before { content: '\25BC'; }
 .field-param .remove-param-btn { position: absolute; top: 2px; right: 0; width: 22px; padding: 2px 0; font-size: 1.1em; line-height: 1; text-align: center; }
 .selector-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .selector-row label { font-size: 0.8em; color: var(--vscode-descriptionForeground); }
-.btn-row { display: flex; gap: 6px; margin-top: 10px; }
 .action-btn-row { display: flex; gap: 6px; margin: 8px 0; }
 .modal-overlay {
   display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -102,3 +101,15 @@ button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-off
 
 /* Empty / loading states */
 .empty-state { padding: 16px 8px; text-align: center; }
+
+/* Sticky Save All / Revert action bar — stays visible while scrolling the form */
+.action-bar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--vscode-sideBar-background);
+  padding: 6px 0; margin-bottom: 10px;
+  border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-input-border));
+}
+.dirty-status { font-size: 0.75em; margin-right: auto; color: var(--vscode-descriptionForeground); }
+.dirty-status.dirty { color: var(--vscode-inputValidation-warningForeground, var(--vscode-editorWarning-foreground, #cca700)); }
+#saveBtn:disabled, #revertBtn:disabled { opacity: 0.5; cursor: default; }

@@ -1,0 +1,125 @@
+import * as vscode from 'vscode';
+import {
+  resolveVllmModelId,
+  resolveOverrideForModel,
+  resolveServerConfig,
+  resolveModelSettings,
+  type ModelConfig,
+} from '../config.js';
+import { buildModelInfo } from '../modelInfo.js';
+import { describeError } from '../messageConverter.js';
+import type { ProviderClient } from './contracts.js';
+
+/**
+ * Discover available models from configured overrides: fetch each model's
+ * context window from its server, build the model info, and collect warnings.
+ *
+ * All models are queried in parallel so discovery time = max(server latencies),
+ * not sum. Pure w.r.t. the collaborator surfaces — the remote-install guard and
+ * the cached-model set are the provider's (lifecycle/cache owner); this function
+ * takes the overrides + client and returns the discovered models.
+ */
+export async function discoverModels(
+  modelOverrides: ModelConfig[],
+  client: Pick<ProviderClient, 'getModelContextWindow'>,
+  output: vscode.OutputChannel,
+): Promise<vscode.LanguageModelChatInformation[]> {
+  // Process each model: fetch context window from server, build info, or record error.
+  // All models are queried in parallel so discovery time = max(server latencies), not sum.
+  const tasks = modelOverrides.map(async (override) => {
+    if (!override.serverUrl) {
+      const id = override.id || resolveVllmModelId(override) || '(unnamed model)';
+      return {
+        model: null,
+        error: `[WARN] Model "${id}" has no serverUrl and will be skipped. Add one or run "Add vLLM Server & Model".`,
+      };
+    }
+
+    const settings = resolveModelSettings(override);
+    const vllmModelId = resolveVllmModelId(override) || override.id || '';
+    const serverConfig = resolveServerConfig(override);
+
+    try {
+      // Fetch context window from vLLM server — this is authoritative and cannot
+      // be set in settings. Also serves as a server availability check.
+      const maxModelLen = await client.getModelContextWindow(
+        serverConfig.serverUrl,
+        serverConfig.requestHeaders,
+        vllmModelId
+      );
+
+      if (!maxModelLen) {
+        return {
+          model: null,
+          error: `[WARN] Model "${vllmModelId}" — server did not report max_model_len. Server may be offline or model not loaded.`,
+        };
+      }
+
+      const serverModel = { id: vllmModelId, max_model_len: maxModelLen };
+      return {
+        model: buildModelInfo(serverModel, override, settings, serverConfig.serverUrl, (family, modelId) => {
+          // Fires only when no preset-declared family was available AND
+          // HuggingFace auto-discovery did not provide one — the heuristic
+          // fell through to the org-name guess. The family is just a sort key
+          // in the model picker so this is non-fatal, but the user should
+          // know the discovery path didn't reach HuggingFace.
+          output.appendLine(
+            `[WARN] Model "${modelId}" — family estimated as "${family}" from org-name fallback (no preset/HuggingFace family available). Family is informational only; use a preset or run auto-discovery for authoritative values.`
+          );
+        }),
+        error: null,
+      };
+    } catch (err) {
+      const id = override.id || vllmModelId || '(unnamed model)';
+      return {
+        model: null,
+        error: `[WARN] Model "${id}" — failed to connect to server: ${describeError(err)}`,
+      };
+    }
+  });
+
+  const results = await Promise.allSettled(tasks);
+  const models: vscode.LanguageModelChatInformation[] = [];
+
+  // Every task self-catches and resolves with `{ model, error }` — a task can
+  // only reject on a programming error inside the map callback, so the
+  // allSettled rejected branch is unreachable by construction (previously a
+  // "Should not happen" else that no reader could safely assume was dead).
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      const { model, error } = result.value;
+      if (model) {
+        models.push(model);
+      }
+      if (error) {
+        output.appendLine(error);
+      }
+    }
+  }
+
+  // Picker ids are unique per (server, model) by construction (composite ids
+  // for id-less configs). The only remaining collision source is an explicit
+  // duplicate `id` in settings — surface it so a silent collapse in the picker
+  // is never a mystery (all working models must stay visible).
+  const seenIds = new Set<string>();
+  const duplicateIds = new Set<string>();
+  for (const m of models) {
+    if (seenIds.has(m.id)) duplicateIds.add(m.id);
+    seenIds.add(m.id);
+  }
+  for (const dup of duplicateIds) {
+    output.appendLine(
+      `[WARN] Duplicate model id "${dup}" — multiple configs share this id and collapse to one picker entry. Give each model a unique "id".`
+    );
+  }
+
+  if (models.length > 0) {
+    const summary = models.map(m => {
+      const ctx = ((m.maxInputTokens || 0) + (m.maxOutputTokens || 0)).toLocaleString();
+      return `${m.id} (${ctx} ctx)`;
+    }).join(', ');
+    output.appendLine(`[INFO] Loaded ${models.length} model(s): ${summary}`);
+  }
+
+  return models;
+}

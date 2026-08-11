@@ -1,0 +1,175 @@
+import * as vscode from 'vscode';
+import type { ModelConfig } from '../config.js';
+import { resolveConfigId, resolveVllmModelId, normalizeServerUrl, buildModelId } from '../config.js';
+import { replaceModelConfig, type IdentifiedModelConfig } from '../configStore.js';
+import { resolveModelConfigForAdd } from './hfDiscovery.js';
+import { confirmAndSaveAddedModel, type ClearCacheProvider } from './addServerFlow.js';
+
+/**
+ * Standalone command: re-run auto-configuration (HuggingFace + vLLM server discovery)
+ * for an already-configured model. Lets the user update modelModes, capabilities,
+ * family, token budgets, etc. without deleting and re-adding the model.
+ */
+export function registerAutoConfigureModelCommand(
+  context: vscode.ExtensionContext,
+  provider: ClearCacheProvider,
+  output: vscode.OutputChannel
+): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { serverUrl?: string; id?: string }) => {
+    const config = vscode.workspace.getConfiguration('vllm-copilot');
+    const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+    if (existing.length === 0) {
+      vscode.window.showInformationMessage('No models configured. Use "Add vLLM Server & Model" first.');
+      return;
+    }
+
+    let modelConfig: ModelConfig | undefined;
+    let vllmId: string;
+    const argServerUrl = arg?.serverUrl;
+    const argModelId = arg?.id;
+
+    if (argServerUrl && argModelId) {
+      const argServerNorm = normalizeServerUrl(argServerUrl);
+      // Called with explicit server + model identity (e.g. from Server Settings
+      // webview). The webview keys everything by the extension `id`; for an
+      // unconfigured server-reported model that id is just the server model id.
+      modelConfig = existing.find(
+        m => resolveConfigId(m) === argModelId && m.serverUrl &&
+             normalizeServerUrl(m.serverUrl) === argServerNorm
+      );
+      vllmId = resolveVllmModelId(modelConfig) || argModelId;
+
+      if (!modelConfig) {
+        // Unconfigured model: the server reports it but settings has no entry
+        // (Server Settings lists server-reported models even when unconfigured).
+        // Auto-configure it as a NEW model — borrow auth from a sibling model on
+        // the same server. That sibling is guaranteed to exist: the server group
+        // only appears in the webview because it has at least one configured model.
+        const sibling = existing.find(
+          m => m.serverUrl && normalizeServerUrl(m.serverUrl) === argServerNorm
+        );
+        const serverUrl = normalizeServerUrl(sibling?.serverUrl ?? argServerUrl);
+        const discoveryResult = await resolveModelConfigForAdd(
+          context, vllmId, serverUrl, sibling?.requestHeaders
+        );
+        if (!discoveryResult) return;
+
+        const newConfig: IdentifiedModelConfig = {
+          ...discoveryResult.modelConfig,
+          id: buildModelId(serverUrl, vllmId),
+          vllmModelId: vllmId,
+          serverUrl,
+          ...(sibling?.requestHeaders ? { requestHeaders: sibling.requestHeaders } : {}),
+        };
+        if (discoveryResult.suggestedMaxOutputTokens !== undefined && newConfig.maxOutputTokens === undefined) {
+          newConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
+        }
+        await confirmAndSaveAddedModel(
+          newConfig, vllmId, serverUrl, discoveryResult.summary.join('\n'), output,
+          () => provider.clearCache()
+        );
+        return;
+      }
+    } else {
+      // No args — show QuickPick to select a model
+      const items = existing.map((m, idx) => {
+        const label = m.displayName || resolveVllmModelId(m);
+        const server = m.serverUrl ? ` (${normalizeServerUrl(m.serverUrl)})` : '';
+        return {
+          label,
+          description: `#${idx + 1}`,
+          detail: m.serverUrl || '(no server)',
+        } as vscode.QuickPickItem;
+      });
+
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select a model to re-configure',
+      });
+      if (!selected) return;
+
+      const idx = items.indexOf(selected);
+      modelConfig = existing[idx];
+      if (!modelConfig) return;
+
+      vllmId = resolveVllmModelId(modelConfig) || '';
+      if (!vllmId) {
+        vscode.window.showErrorMessage('Selected model has no identifiable vLLM model id.');
+        return;
+      }
+    }
+
+    const serverUrl = modelConfig.serverUrl;
+    if (!serverUrl) {
+      vscode.window.showErrorMessage(`Model "${vllmId}" has no serverUrl configured.`);
+      return;
+    }
+
+    // 2. Shared resolution (preset check → dialog → preset or HuggingFace)
+    const discoveryResult = await resolveModelConfigForAdd(
+      context, vllmId, normalizeServerUrl(serverUrl), modelConfig.requestHeaders,
+      undefined, // no server root for existing models
+      modelConfig // preserve identity
+    );
+    if (!discoveryResult) return;
+
+    // 3. Merge: discovery result is the base (full model-specific replace).
+    //    Only infrastructure/personal fields survive from the user's old config.
+    const newConfig: ModelConfig = {
+      ...discoveryResult.modelConfig,
+      id: modelConfig.id,
+      vllmModelId: modelConfig.vllmModelId,
+      serverUrl: modelConfig.serverUrl,
+      requestHeaders: modelConfig.requestHeaders,
+      systemMessageReplacementsFile: modelConfig.systemMessageReplacementsFile,
+      autoContinueRetries: modelConfig.autoContinueRetries,
+      streamInactivityTimeout: modelConfig.streamInactivityTimeout,
+      // Token-budget overrides are user-configured (webview "reserve headroom" /
+      // chars-per-token fields) and must survive re-configure like the other
+      // transport settings. replaceModelConfig strips undefined, so unset values
+      // are inert here.
+      maxInputTokens: modelConfig.maxInputTokens,
+      estimateCharsPerToken: modelConfig.estimateCharsPerToken,
+    };
+    if (discoveryResult.suggestedMaxOutputTokens !== undefined && newConfig.maxOutputTokens === undefined) {
+      newConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
+    }
+
+    await applyAutoConfigUpdate(newConfig, vllmId, discoveryResult.summary.join('\n'), output, () => provider.clearCache());
+  });
+}
+
+/**
+ * Show the final confirm dialog for an auto-configured model update, then save it
+ * or copy its JSON. Shared by the preset and HuggingFace branches so both end
+ * the same way.
+ */
+export async function applyAutoConfigUpdate(
+  newConfig: ModelConfig,
+  vllmId: string,
+  detail: string,
+  output: vscode.OutputChannel,
+  onSaved?: () => void
+): Promise<void> {
+  output.appendLine(`[INFO] Auto-configure ${vllmId}:`);
+  output.appendLine(detail);
+
+  const action = await vscode.window.showInformationMessage(
+    `Update configuration for "${vllmId}"?`,
+    { modal: true },
+    'Save',
+    'Copy JSON'
+  );
+
+  if (action === 'Save') {
+    // The auto-configure path guards identity (vllmId via resolveVllmModelId,
+    // non-blank serverUrl) before building newConfig; the store's runtime check
+    // is the backstop against a malformed write. No BYOK write here — the model
+    // already exists.
+    await replaceModelConfig(newConfig as IdentifiedModelConfig);
+    onSaved?.();
+    vscode.window.showInformationMessage(`Model "${vllmId}" updated.`);
+  } else if (action === 'Copy JSON') {
+    await vscode.env.clipboard.writeText(JSON.stringify(newConfig, null, 2));
+    vscode.window.showInformationMessage('Model config copied to clipboard.');
+  }
+}

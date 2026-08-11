@@ -40,12 +40,24 @@ export function deriveTokenBudget(
     );
   }
   const maxModelLen = serverMaxModelLen;
-  let maxOutputTokens = override?.maxOutputTokens ?? configMaxOutputTokens;
-  maxOutputTokens = Math.min(maxOutputTokens, maxModelLen);
+  // Clamp a 0/negative maxOutputTokens override to at least 1 — a 0 would pass
+  // straight through as `max_tokens: 0`, which vLLM rejects. A deliberate
+  // misconfiguration degrades to a minimal (1-token) output instead of a
+  // broken request.
+  let maxOutputTokens = Math.max(1, override?.maxOutputTokens ?? configMaxOutputTokens);
+  // Always reserve at least 1 token for input. Without this, a model whose
+  // window is at or below the configured output budget (e.g. a 2k window vs the
+  // default 4096) would have its output clamped to the full window and end up
+  // with `maxInputTokens = 0` — advertised as a model that can take no prompt
+  // at all, i.e. unusable. The output budget is reduced instead so a minimum
+  // input capacity always survives.
+  maxOutputTokens = Math.min(maxOutputTokens, Math.max(1, maxModelLen - 1));
   // Clamp maxInputTokens so input + output never exceeds maxModelLen.
   // When the user overrides maxInputTokens but it conflicts with maxOutputTokens,
-  // output wins (the server will enforce it) and input is clamped down.
+  // output wins (the server will enforce it) and input is clamped down. A 0/
+  // negative override is likewise clamped to at least 1 (subject to remaining
+  // input room) so the picker never advertises a model with no input capacity.
   const remainingForInput = maxModelLen - maxOutputTokens;
-  const maxInputTokens = Math.max(0, (override?.maxInputTokens ?? remainingForInput));
+  const maxInputTokens = Math.max(1, (override?.maxInputTokens ?? remainingForInput));
   return { maxModelLen, maxOutputTokens, maxInputTokens: Math.min(maxInputTokens, remainingForInput) };
 }

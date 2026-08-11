@@ -8,6 +8,40 @@
   let S = { servers: [], selServer: '', selModel: '', mc: null, knownParams: {}, personalities: [], activePersonalities: {} };
   const secState = {};
 
+  // Dirty tracking: the form is a draft over the persisted config (S.servers).
+  // Any edit marks it dirty; render() (Revert, a server/model switch, or a host
+  // refresh after save) resets it. Save All / Revert are enabled only while dirty.
+  let dirty = false;
+  function markDirty() { if (!dirty) { dirty = true; setDirtyUI(); } }
+  function setDirtyUI() {
+    const status = document.getElementById('dirtyStatus');
+    const saveBtn = document.getElementById('saveBtn');
+    const revertBtn = document.getElementById('revertBtn');
+    if (status) { status.textContent = dirty ? '\u25CF Unsaved changes' : ''; status.classList.toggle('dirty', dirty); }
+    if (saveBtn) saveBtn.disabled = !dirty;
+    if (revertBtn) revertBtn.disabled = !dirty;
+  }
+  // Field edits bubble input/change from inside #root. Navigation and auto-applied
+  // controls are excluded: the server/model selects (their re-render resets dirty)
+  // and the personality dropdown + capture toggle (auto-save via their own handlers).
+  // Modal inputs live outside #root, so they are naturally excluded.
+  document.addEventListener('input', e => {
+    if (e.target.closest && e.target.closest('#root') && !e.target.closest('#sSel, #mSel, #personalitySel, #captureCb')) markDirty();
+  });
+  document.addEventListener('change', e => {
+    if (e.target.closest && e.target.closest('#root') && !e.target.closest('#sSel, #mSel, #personalitySel, #captureCb')) markDirty();
+  });
+
+  // Set before posting a 'save' and consumed by the next 'data' message. A save is
+  // answered with a full re-render (the form then reflects persisted state and the
+  // dirty indicator resets). Any OTHER 'data' message — an auto-applied personality
+  // change, or a models write from another command (auto-configure, add/remove model,
+  // Set Personality) — must NOT wipe an open draft: when the form is dirty, state is
+  // merged and the draft preserved instead of re-rendering. The decision is made on
+  // live state at message time (not a one-shot flag), so it cannot misfire under
+  // concurrent refreshes.
+  let pendingSave = false;
+
   // Wait for data from extension
   window.addEventListener('message', e => {
     if (e.data && e.data.type === 'data') {
@@ -26,8 +60,22 @@
       S.personalities = e.data.personalities || [];
       S.activePersonalities = e.data.activePersonalities || {};
       S.systemMessageCapture = e.data.systemMessageCapture === true;
-      try { render(); } catch(err) {
-        document.getElementById('root').innerHTML = '<p style="color:var(--vscode-errorForeground)">Render error: ' + E(err.message) + '</p>';
+      // External change while the form is dirty (unsaved edits) must not be wiped by
+      // a full re-render. After a 'save' (pendingSave), or when the form is clean,
+      // re-render so the form reflects the latest persisted state.
+      const keepDraft = dirty && !pendingSave;
+      pendingSave = false;
+      if (keepDraft) {
+        // Merge the new baseline + active-personality label without rebuilding the
+        // form, so the rest of the draft (unsaved edits) is not discarded.
+        const activeName = S.activePersonalities[S.selModel];
+        const pSel = document.getElementById('personalitySel');
+        const hint = pSel && !pSel.disabled ? document.querySelector('.personality-card .field-hint') : null;
+        if (hint) hint.textContent = activeName ? 'Active: ' + activeName : 'Copilot\'s original system prompt';
+      } else {
+        try { render(); } catch(err) {
+          document.getElementById('root').innerHTML = '<p style="color:var(--vscode-errorForeground)">Render error: ' + E(err.message) + '</p>';
+        }
       }
     }
   });
@@ -92,6 +140,13 @@
       const opt = allOptions.find(o => o.value === S.selModel);
       if (opt) mc = opt.mc;
     }
+    if (!mc) {
+      // The selection may be a wire id whose configured entry uses a composite id
+      // (e.g. just saved an unconfigured stub — patchModelConfig derives the id).
+      // Remap to that entry instead of bouncing to the first model.
+      const byWire = allOptions.find(o => o.configured && (o.mc.vllmModelId || o.mc.id) === S.selModel);
+      if (byWire) { mc = byWire.mc; S.selModel = byWire.value; }
+    }
     if (!mc) { mc = (allOptions[0] && allOptions[0].mc) || null; if (mc) S.selModel = configKey(mc); }
     S.mc = mc;
 
@@ -154,9 +209,20 @@
       h += sec('Transport', fields([{ k: 'streamInactivityTimeout', t: 'number', v: m.streamInactivityTimeout ?? 0, h: 'SSE timeout in ms (0 = infinite)' },
         { k: 'autoContinueRetries', t: 'number', v: m.autoContinueRetries ?? 1, h: 'Auto-retry count (default: 1)' }]));
       h += sec('Model Modes', modesSection(m));
-      h += '<div class="btn-row"><button id="saveBtn">Save All Changes</button><button class="secondary" id="revertBtn" style="margin-left:8px">Revert</button></div>';
     }
     r.innerHTML = h;
+
+    if (S.mc) {
+      // Sticky action bar — pinned while scrolling the (long) form. Save All
+      // commits the draft; Revert discards it and re-renders from persisted
+      // state. Both are disabled until a field is edited (see dirty tracking).
+      r.insertAdjacentHTML('afterbegin',
+        '<div class="action-bar" id="actionBar">' +
+        '<span id="dirtyStatus" class="dirty-status"></span>' +
+        '<button id="saveBtn">Save All Changes</button>' +
+        '<button class="secondary" id="revertBtn">Revert</button>' +
+        '</div>');
+    }
 
     r.querySelectorAll('details').forEach(d => {
       const title = d.dataset.sec;
@@ -181,6 +247,8 @@
         // Changes" writes the new value instead of the stale one.
         const pathInput = document.querySelector('[data-f="systemMessageReplacementsFile"]');
         if (pathInput) pathInput.value = targetPath;
+        // The host answers with a full re-render; the data handler preserves the
+        // draft (merges state) whenever the form is dirty, so no flag is needed here.
         vscode.postMessage(targetPath === ''
           ? { type: 'applyPersonality', serverUrl: S.selServer, id: S.selModel, clear: true }
           : { type: 'applyPersonality', serverUrl: S.selServer, id: S.selModel, sourcePath: sourcePath });
@@ -194,6 +262,11 @@
     if (saveButton) saveButton.onclick = save;
     const revertButton = document.getElementById('revertBtn');
     if (revertButton) revertButton.onclick = render;
+    // A freshly rendered form reflects persisted state — nothing to save or revert.
+    // Sync unconditionally (not just on a dirty→clean transition) so the buttons
+    // render disabled on first paint too.
+    dirty = false;
+    setDirtyUI();
     const autoCfgBtn = document.getElementById('autoConfigureBtn');
     if (autoCfgBtn) autoCfgBtn.onclick = () => vscode.postMessage({ type: 'autoConfigure', serverUrl: S.selServer, id: S.selModel });
     const rmBtn = document.getElementById('removeModelBtn');
@@ -325,9 +398,10 @@
     const u = { ...mc };
     document.querySelectorAll('[data-f]').forEach(el => {
       const k = el.dataset.f;
-      let v = el.type === 'number' ? (el.value === '' ? undefined : Number(el.value)) : el.value;
-      if (v === '') v = undefined;  // empty select = no value
-      if (v === undefined) delete u[k]; else u[k] = v;
+      // Empty value is an explicit CLEAR signal: `''` reaches the store, which maps
+      // '' → delete for every clearable scalar field (normalizeModelEntry). A typed
+      // `0` is a real value and stays (e.g. streamInactivityTimeout 0 = infinite).
+      u[k] = el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value;
     });
     const caps = {};
     document.querySelectorAll('[data-k]').forEach(el => {
@@ -361,10 +435,11 @@
       else v = inp.value === '' ? undefined : Number(inp.value);
       if (v !== undefined) dp[k] = v;
     });
-    u.defaultParams = Object.keys(dp).length ? dp : undefined;
+    u.defaultParams = Object.keys(dp).length ? dp : ''; // '' = explicit clear (all params removed)
     u.serverUrl = S.selServer;
     u.vllmModelId = mc.vllmModelId || mc.id;
     u.id = mc.id || mc.vllmModelId;
+    pendingSave = true;
     vscode.postMessage({ type: 'save', config: u });
   }
 
@@ -386,22 +461,23 @@
     const name = await webviewPrompt('Mode name (e.g. "Think", "Coding"):');
     if (!name) return;
     document.getElementById('modesList').insertAdjacentHTML('beforeend', modeCard(name, {}));
+    markDirty();
   }
   async function renameMode(btn) {
     const card = btn.closest('.mode-card');
     const old = card.dataset.mn;
     const nw = await webviewPrompt('New mode name:', old);
-    if (nw && nw !== old) { card.dataset.mn = nw; card.querySelector('.mode-title').textContent = nw; }
+    if (nw && nw !== old) { card.dataset.mn = nw; card.querySelector('.mode-title').textContent = nw; markDirty(); }
   }
   async function removeMode(btn) {
     const card = btn.closest('.mode-card');
-    if (await webviewConfirm('Remove mode "' + card.dataset.mn + '"?')) card.remove();
+    if (await webviewConfirm('Remove mode "' + card.dataset.mn + '"?')) { card.remove(); markDirty(); }
   }
   async function addModeParam(btn) {
     const card = btn.closest('.mode-card');
     const used = [...card.querySelectorAll('[data-mk]')].map(el => el.dataset.mk);
     const avail = Object.entries(S.knownParams).filter(([k]) => !used.includes(k));
-    if (!avail.length) { const k = await webviewPrompt('Parameter name:'); if (k) insertMP(card, k, 'number'); return; }
+    if (!avail.length) { const k = await webviewPrompt('Parameter name:'); if (k) { insertMP(card, k, 'number'); markDirty(); } return; }
     const pick = await webviewParamPick(avail);
     if (!pick) return;
     if (pick.info.options) {
@@ -409,6 +485,7 @@
     } else {
       insertMP(card, pick.key, pick.info.type === 'json' ? 'textarea' : pick.info.type === 'string' ? 'text' : 'number', pick.info.label);
     }
+    markDirty();
   }
   function insertMP(card, key, type, label, options) {
     const cont = card.querySelector('.mode-params');
@@ -426,7 +503,8 @@
     cont.appendChild(div);
   }
   function removeParam(btn) {
-    btn.closest('.mode-param, .field-param')?.remove();
+    const el = btn.closest('.mode-param, .field-param');
+    if (el) { el.remove(); markDirty(); }
   }
   async function addDp() {
     const used = [...document.querySelectorAll('[data-dk]')].map(el => el.dataset.dk);
@@ -451,11 +529,12 @@
       div.innerHTML = '<label>' + E(pick.info.label) + '</label><input type="number" data-dk="' + E(pick.key) + '" step="any">' +
         '<button class="secondary remove-param-btn" data-dk="' + E(pick.key) + '">⊗</button>';
     list.appendChild(div);
+    markDirty();
   }
   function webviewParamPick(avail) {
     let html = '<label>Known Parameters</label><select id="modalInput">';
     avail.forEach(([k, info], i) => { html += '<option value="' + i + '">' + E(info.label || k) + '</option>'; });
-    html += '</select><div class="field-hint" style="margin-top:4px">or type "0" for custom</div>' +
+    html += '</select>' +
       '<div class="modal-actions"><button id="modalCancel">Cancel</button><button id="modalOk">OK</button></div>';
     return showModal(html, () => {
       const sel = document.getElementById('modalInput');

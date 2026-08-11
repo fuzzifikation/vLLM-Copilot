@@ -15,7 +15,7 @@
  */
 
 import * as vscode from 'vscode';
-import { buildEndpoint } from './config.js';
+import { buildEndpoint, normalizeServerUrl } from './config.js';
 import { buildRequestHeaders } from './fetchRetry.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -327,8 +327,12 @@ export class ServerMetricsEngine {
     if (idx >= 0) this.callbacks.splice(idx, 1);
     this.subscriberCount--;
     if (this.subscriberCount <= 0) {
-      this.subscriberCount = 0;
-      this.stopPolling();
+      // Last subscriber left: release the engine entirely. This stops polling
+      // AND removes it from the registry (via dispose), so a server whose
+      // dashboard/deep-dive views are all closed stops being scraped and is
+      // not kept alive in the module-level map. Without this, engines
+      // accumulate for every URL ever opened.
+      this.dispose();
     }
   }
 
@@ -397,10 +401,17 @@ export function getMetricsEngine(
   serverUrl: string,
   requestHeaders?: Record<string, string>,
 ): ServerMetricsEngine {
-  let engine = engineRegistry.get(serverUrl);
+  // Key engines by the canonical server URL (scheme added, trailing slash and
+  // trailing /v1 stripped) so hand-edited variants of the same server — e.g.
+  // `http://host:8000`, `http://host:8000/`, `http://host:8000/v1` — share one
+  // engine instead of spawning duplicate pollers against the same physical
+  // vLLM process. The engine stores the canonical URL too, so endpoint fetch
+  // and the registry removal in dispose() agree on identity.
+  const key = normalizeServerUrl(serverUrl);
+  let engine = engineRegistry.get(key);
   if (!engine) {
-    engine = new ServerMetricsEngine(serverUrl, requestHeaders ?? {});
-    engineRegistry.set(serverUrl, engine);
+    engine = new ServerMetricsEngine(key, requestHeaders ?? {});
+    engineRegistry.set(key, engine);
   } else if (requestHeaders && Object.keys(requestHeaders).length > 0) {
     // Update headers on re-use so auth changes propagate
     engine.setHeaders(requestHeaders);

@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "You use vLLM and want its AI models in Copilot? This is what you need. The full Copilot integration for vLLM models — *all* features supported. Optimized for robust hosting of local AI with fully configurable model modes, supporting every vLLM parameter with full UI configuration. Supports multiple servers and models, each with its own auth, parameters, and modes. Auto-detects vLLM server models and their capabilities. Includes a dashboard for server metrics and model status.",
-  "version": "1.20.8",
+  "version": "1.21.0",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -39,8 +39,7 @@
     "structured-output"
   ],
   "activationEvents": [
-    "languageModel_chatVendor:vllm-copilot",
-    "onView:vllm-copilot.serverSettings"
+    "languageModel_chatVendor:vllm-copilot"
   ],
   "main": "./out/extension.js",
   "extensionKind": [
@@ -143,6 +142,10 @@
         "command": "vllm-copilot.openDeepDive",
         "title": "vLLM Deep-Dive",
         "category": "vLLM-Copilot"
+      },
+      {
+        "command": "vllm-copilot.setPollInterval",
+        "title": "Set Poll Interval"
       }
     ],
     "menus": {
@@ -297,11 +300,6 @@
       {
         "title": "Dashboard",
         "properties": {
-          "vllm-copilot.dashboard.enabled": {
-            "type": "boolean",
-            "default": true,
-            "markdownDescription": "Enable the vLLM Dashboard sidebar. When disabled, polling stops."
-          },
           "vllm-copilot.dashboard.pollIntervalMs": {
             "type": "number",
             "default": 15000,
@@ -316,13 +314,14 @@
     "compile": "node -e \"const fs=require('fs');fs.rmSync('out',{recursive:true,force:true})\" && tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "vitest run",
+    "test:typecheck": "tsc -p test/tsconfig.json --noEmit",
     "test:coverage": "vitest run --coverage",
     "test:integration": "VLLM_INTEGRATION=1 vitest run test/integration",
     "validate-webview-js": "node -e \"const fs=require('fs');const path=require('path');const files=fs.readdirSync('resources').filter(f=>f.endsWith('.js'));files.forEach(f=>{try{const code=fs.readFileSync(path.join('resources',f),'utf8');require('vm').createScript(code);console.log('OK: '+f)}catch(e){console.error('FAIL: '+f+': '+e.message);process.exitCode=1}})\"",
     "license:check": "license-checker-rseidelsohn --production --excludePrivatePackages --onlyAllow \"MIT;ISC;Apache-2.0;BSD-2-Clause;BSD-3-Clause;CC0-1.0;CC-BY-3.0;BlueOak-1.0.0\"",
     "license:notices": "node scripts/generate-notices.mjs",
     "check:prompt-drift": "node scripts/check-prompt-drift.mjs",
-    "build": "npm run license:check && npm run compile && npm test && npm run test:coverage && npx @vscode/vsce package --allow-missing-repository --baseContentUrl \"https://example.com\""
+    "build": "npm run license:check && npm run compile && npm run test:typecheck && npm test && npm run test:coverage && npx @vscode/vsce package --allow-missing-repository --baseContentUrl \"https://example.com\""
   },
   "devDependencies": {
     "@babel/parser": "^7.29.7",

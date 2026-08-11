@@ -48,7 +48,7 @@ describe('buildConfigurationSchema', () => {
       const modelOverride = {
         id: 'some-model',
         capabilities: { toolCalling: true },
-      };
+      } as any;
 
       const schema = buildConfigurationSchema(modelOverride);
       expect(schema).toBeUndefined();
@@ -58,7 +58,7 @@ describe('buildConfigurationSchema', () => {
       const modelOverride = {
         id: 'some-model',
         maxInputTokens: 8192,
-      };
+      } as any;
 
       const schema = buildConfigurationSchema(modelOverride);
       expect(schema).toBeUndefined();

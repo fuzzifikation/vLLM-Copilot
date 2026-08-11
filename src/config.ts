@@ -408,7 +408,7 @@ export function buildEndpoint(baseUrl: string, path: string): string {
  * empty object when no key is set.
  *
  * ⚠️ **Scope: write/migration paths only.** This function is used only by the
- * Add Server and Update Auth commands (`autoConfig.ts`, `commands.ts`) to
+ * Add Server and Update Auth commands (`commands/addServerFlow.ts`, `commands.ts`) to
  * construct headers from user-provided key input. Runtime chat requests do
  * NOT call this — auth comes from the per-model `requestHeaders` in settings.
  * Wiring this into runtime code would silently add or omit the wrong headers.
@@ -585,18 +585,42 @@ export function findModelConfigIndex(
 }
 
 /**
- * Normalize a model config entry for storage: an empty/clear `systemMessageReplacementsFile`
- * (`''`, the explicit "no personality" signal) is removed rather than persisted as `""`.
- * An absent key is left alone — on merge that preserves the previous value, which is what
- * makes "undefined preserves, '' clears" work in both save paths.
+ * Fields whose empty-string value is an explicit "clear" signal (mapped to
+ * deletion by {@link normalizeModelEntry}). The webview's form cannot express
+ * "remove this key" except via the empty-string signal, so every clearable
+ * scalar field participates. Checked with `=== ''` — NOT truthiness — so a
+ * legitimate `0` (e.g. `streamInactivityTimeout: 0` = wait indefinitely)
+ * survives. `systemMessageReplacementsFile` is a string, so `''` is its only
+ * empty form and it is covered by the same rule.
+ */
+const CLEARABLE_ON_EMPTY: readonly (keyof ModelConfig)[] = [
+  'displayName',
+  'maxOutputTokens',
+  'maxInputTokens',
+  'estimateCharsPerToken',
+  'streamInactivityTimeout',
+  'autoContinueRetries',
+  'defaultMode',
+  'defaultParams',
+  'systemMessageReplacementsFile',
+] as const;
+
+/**
+ * Normalize a model config entry for storage: an empty-string value on any
+ * {@link CLEARABLE_ON_EMPTY} field (e.g. `''` on `displayName`, or `''` on
+ * `defaultParams` after every param is removed) is removed rather than
+ * persisted as `""`. An absent key is left alone — on merge that preserves the
+ * previous value, which is what makes "undefined preserves, '' clears" work in
+ * both save paths.
  *
  * Shared by {@link replaceModelConfig} (configStore.ts) and the webview's patch
  * path (serverSettingsView.ts) so the clear semantics live in one place. Mutates
  * and returns the entry (callers always pass a freshly-built object).
  */
 export function normalizeModelEntry(entry: ModelConfig): ModelConfig {
-  if (!entry.systemMessageReplacementsFile) {
-    delete entry.systemMessageReplacementsFile;
+  const rec = entry as unknown as Record<string, unknown>;
+  for (const k of CLEARABLE_ON_EMPTY) {
+    if (rec[k] === '') delete rec[k];
   }
   return entry;
 }
