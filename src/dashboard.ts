@@ -4,11 +4,12 @@
  */
 
 import * as vscode from 'vscode';
-import { getConfig, resolveServerConfig, normalizeServerUrl, type ModelConfig } from './config.js';
+import { getConfig, resolveServerConfig, normalizeServerUrl, findModelConfig, type ModelConfig } from './config.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtTokens, fmtThroughput, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import {
   getLastRequest, getServerUsage, hasServerUsage, onUsageStoreDidChange,
-  computeCost, findModelCost, formatCost, sumCounts,
+  computeCost, findModelCost, formatCost, formatCostSummary, fmtCount, emptyCounts,
+  getModelStartedAt,
   type UsageCounts,
 } from './usageStore.js';
 
@@ -157,28 +158,32 @@ class FlagHintTreeItem extends vscode.TreeItem {
   }
 }
 
-/** Collapsible "Token Usage" node — cumulative token/cost usage per server. */
+/** Collapsible "Token Usage and Cost" node — cumulative token/cost usage per server. */
 class TokenUsageTreeItem extends vscode.TreeItem {
   constructor(
     public readonly serverUrl: string,
-    summary: string,
   ) {
-    super('Token Usage', vscode.TreeItemCollapsibleState.Collapsed);
-    this.iconPath = new vscode.ThemeIcon('dashboard');
+    super('Token Usage and Cost', vscode.TreeItemCollapsibleState.Collapsed);
+    this.iconPath = new vscode.ThemeIcon('credit-card');
     this.id = `tokenUsage:${serverUrl}`;
-    this.description = summary;
     this.contextValue = 'tokenUsage';
-    this.tooltip = new vscode.MarkdownString('Cumulative token usage for this server (today / session / total). Click to expand. Right-click → Set Cost… to configure per-model per-1M cost rates.');
+    this.tooltip = new vscode.MarkdownString('Cumulative token & cost usage per model for this server. Click to expand. Right-click → Set Cost… / Reset Usage.');
   }
 }
 
-/** Clickable "Reset Usage" action under the Token Usage node. */
-class ResetUsageTreeItem extends vscode.TreeItem {
-  constructor(serverUrl: string) {
-    super('Reset Usage', vscode.TreeItemCollapsibleState.None);
-    this.iconPath = new vscode.ThemeIcon('trash');
-    this.command = { command: 'vllm-copilot.resetUsage', title: 'Reset Usage', arguments: [{ serverUrl }] };
-    this.tooltip = new vscode.MarkdownString('Clear all accumulated usage for this server (all-time, daily, and session totals). The Last Request node is kept.');
+/** Collapsible per-model usage node — children are Today and Overall. */
+class ModelUsageTreeItem extends vscode.TreeItem {
+  constructor(
+    public readonly serverUrl: string,
+    public readonly modelId: string,
+    public readonly modelLabel: string,
+    todayCost?: string,
+  ) {
+    super(modelLabel, vscode.TreeItemCollapsibleState.Collapsed);
+    if (todayCost) this.description = todayCost;
+    this.id = `modelUsage:${serverUrl}:${modelId}`;
+    this.iconPath = new vscode.ThemeIcon('symbol-class');
+    this.tooltip = new vscode.MarkdownString(`Today's usage for ${modelLabel}. Click to expand for the Today / Overall breakdown.`);
   }
 }
 
@@ -190,28 +195,30 @@ function timeAgo(ts: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
-  return `${hours}h ago`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 /**
- * One-line usage summary: exact token counts (in / out / cached with cache-read
- * %) plus the derived cost in the model's currency when rates are configured.
- * Exact numbers (toLocaleString) because the tracker's purpose is money/spend
- * verification — K/M abbreviations would hide the figures being verified.
+ * One-line usage summary: PRICE-FIRST when cost is configured (`$price · in ·
+ * cached · out`), then the token split (in EXCLUDES cache; in + cached = total
+ * input), optionally suffixed with `· started X ago` for the Overall row.
+ * k/M-abbreviated; presentation only, the stored counts are never rounded.
  */
-function usageLine(counts: UsageCounts, cost?: number, currency?: string): string {
-  const cachedPct = counts.prompt > 0 && counts.cached > 0
-    ? ` (${Math.round((counts.cached / counts.prompt) * 100)}% cached)`
-    : '';
-  let line = `${counts.prompt.toLocaleString()} in · ${counts.completion.toLocaleString()} out · ${counts.cached.toLocaleString()} cached${cachedPct}`;
-  if (cost !== undefined) line += ` · ${formatCost(cost, currency)}`;
-  return line;
+function usageLine(counts: UsageCounts, cost?: number, currency?: string, since?: number): string {
+  const fresh = Math.max(0, counts.prompt - counts.cached);
+  const tokens = counts.cached > 0
+    ? `${fmtCount(fresh)} in · ${fmtCount(counts.cached)} cached · ${fmtCount(counts.completion)} out`
+    : `${fmtCount(counts.prompt)} in · ${fmtCount(counts.completion)} out`;
+  const costPart = cost !== undefined ? `${formatCost(cost, currency)} · ` : '';
+  const sincePart = since !== undefined ? ` · started ${timeAgo(since)}` : '';
+  return `${costPart}${tokens}${sincePart}`;
 }
 
 // ─── Tree Data Provider ──────────────────────────────────────────────
 
-export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ResetUsageTreeItem> {
-  private _onDidChangeTreeData = new vscode.EventEmitter<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ResetUsageTreeItem | undefined | void>();
+export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   /** Active engine subscriptions: serverUrl → { metrics, dispose } */
@@ -331,11 +338,11 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     return new PollIntervalTreeItem(label);
   }
 
-  getTreeItem(element: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ResetUsageTreeItem): vscode.TreeItem {
+  getTreeItem(element: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem): vscode.TreeItem {
     return element;
   }
 
-  async getChildren(element?: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ResetUsageTreeItem): Promise<(ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ResetUsageTreeItem)[]> {
+  async getChildren(element?: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem): Promise<(ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem)[]> {
     if (!element) {
       const items: (ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem)[] = [this.getPollIntervalTreeItem()];
       const servers = this.subscriptions.map(sub =>
@@ -358,6 +365,10 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
     if (element instanceof TokenUsageTreeItem) {
       return this.getTokenUsageChildren(element);
+    }
+
+    if (element instanceof ModelUsageTreeItem) {
+      return this.getModelUsageChildren(element);
     }
 
     return [];
@@ -501,12 +512,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       // before the read or the node silently vanishes for scheme-less/slash/v1 forms.
       const normalizedUrl = normalizeServerUrl(serverUrl);
       if (hasServerUsage(normalizedUrl)) {
-        const usage = getServerUsage(normalizedUrl);
-        const today = sumCounts(usage.today);
-        items.push(new TokenUsageTreeItem(
-          normalizedUrl,
-          `${fmtTokens(today.prompt)} in · ${fmtTokens(today.completion)} out`,
-        ));
+        items.push(new TokenUsageTreeItem(normalizedUrl));
       }
     }
 
@@ -521,7 +527,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       const pct = ((e.totalTokens / e.maxModelLen) * 100).toFixed(1);
       items.push(new RequestMetricTreeItem(
         'Total Tokens',
-        `${fmtTokens(e.totalTokens)}  ·  ${pct}% of context`,
+        `${fmtCount(e.totalTokens)}  ·  ${pct}% of context`,
         'symbol-numeric',
         'Total tokens consumed (input + output) as a percentage of the model\'s context window.',
       ));
@@ -529,17 +535,18 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
     // 2. Input Tokens — always available from usage block; cache % needs --enable-prompt-tokens-details
     if (e.cachedTokens != null && e.cachedTokens > 0) {
-      const cachedPct = ((e.cachedTokens / e.promptTokens) * 100).toFixed(1);
+      // Input split: 'in' excludes cache; in + cached = total prompt.
+      const fresh = Math.max(0, e.promptTokens - e.cachedTokens);
       items.push(new RequestMetricTreeItem(
         'Input Tokens',
-        `${fmtTokens(e.promptTokens)}  ·  ${cachedPct}% cached`,
+        `${fmtCount(fresh)} in · ${fmtCount(e.cachedTokens)} cached`,
         'symbol-parameter',
-        'Tokens in the prompt. Cached tokens were served from KV cache (not recomputed).',
+        "Input split: 'in' excludes cache; 'cached' was served from KV cache (not recomputed). in + cached = total prompt.",
       ));
     } else {
       items.push(new RequestMetricTreeItem(
         'Input Tokens',
-        fmtTokens(e.promptTokens),
+        fmtCount(e.promptTokens),
         'symbol-parameter',
         'Tokens in the prompt.',
       ));
@@ -550,7 +557,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       const pct = ((e.completionTokens / e.maxOutputTokens) * 100).toFixed(1);
       items.push(new RequestMetricTreeItem(
         'Output Tokens',
-        `${fmtTokens(e.completionTokens)}  ·  ${pct}% of max output`,
+        `${fmtCount(e.completionTokens)}  ·  ${pct}% of max output`,
         'code',
         'Tokens generated by the model. Max output = configured output budget from settings.',
       ));
@@ -638,55 +645,51 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     return items;
   }
 
-  /** Children of the Token Usage node: aggregate rows, per-model breakdown, reset. */
-  private getTokenUsageChildren(e: TokenUsageTreeItem): (MetricTreeItem | ResetUsageTreeItem)[] {
-    const items: (MetricTreeItem | ResetUsageTreeItem)[] = [];
+  /** Children of the Token Usage node: one collapsible node per model. */
+  private getTokenUsageChildren(e: TokenUsageTreeItem): ModelUsageTreeItem[] {
     const models = this.readConfiguredModels();
     const usage = getServerUsage(e.serverUrl);
+    // Union of models with any today or all-time usage (a model used yesterday
+    // still needs its Overall row visible).
+    const modelIds = Array.from(new Set([...Object.keys(usage.today), ...Object.keys(usage.allTime)])).sort();
+    return modelIds.map(modelId => {
+      const entry = findModelConfig(models, e.serverUrl, modelId);
+      const label = entry?.displayName || entry?.id || modelId;
+      // Collapsed description: "$11.51 today and $31.13 in 3.1 days" — today's
+      // cost plus the all-time cost over the recording window (startedAt).
+      const summary = formatCostSummary(
+        computeCost(usage.today[modelId] ?? emptyCounts(), entry?.cost),
+        computeCost(usage.allTime[modelId] ?? emptyCounts(), entry?.cost),
+        entry?.cost?.currency,
+        getModelStartedAt(e.serverUrl, modelId),
+      );
+      return new ModelUsageTreeItem(e.serverUrl, modelId, label, summary);
+    });
+  }
 
-    const today = sumCounts(usage.today);
-    const session = sumCounts(usage.session);
-    const total = sumCounts(usage.allTime);
-
-    // The Today/Session/Total rows are deliberately TOKEN-ONLY. Cost is shown
-    // per model below, each labeled with its own currency — models on one
-    // server may use different currencies (e.g. USD vs AI Credits), so summing
-    // them into a server aggregate would be a wrong money number. The user
-    // sums costs manually.
-    items.push(new MetricTreeItem(
-      'Today',
-      usageLine(today),
-      'calendar',
-      'Tokens consumed today, summed across all models on this server. Cached tokens are cache-read input (subset of input). Set per-model costs to see spend.',
-    ));
-    items.push(new MetricTreeItem(
-      'Session',
-      usageLine(session),
-      'timer',
-      'Tokens consumed since this VS Code window opened (resets on reload).',
-    ));
-    items.push(new MetricTreeItem(
-      'Total',
-      usageLine(total),
-      'history',
-      'All tokens consumed since the last reset.',
-    ));
-
-    // Per-model breakdown (today) — the "where did the money go" view.
-    // Cost is per model, each labeled with its own currency.
-    for (const [modelId, counts] of Object.entries(usage.today).sort()) {
-      const rates = findModelCost(models, e.serverUrl, modelId);
-      const cost = computeCost(counts, rates);
-      items.push(new MetricTreeItem(
-        modelId,
-        usageLine(counts, cost, rates?.currency),
-        'symbol-class',
-        `Today's usage for ${modelId}.`,
-      ));
-    }
-
-    items.push(new ResetUsageTreeItem(e.serverUrl));
-    return items;
+  /** Children of a model node: Today and Overall, price-first. */
+  private getModelUsageChildren(e: ModelUsageTreeItem): MetricTreeItem[] {
+    const models = this.readConfiguredModels();
+    const usage = getServerUsage(e.serverUrl);
+    const entry = findModelConfig(models, e.serverUrl, e.modelId);
+    const currency = entry?.cost?.currency;
+    const today = usage.today[e.modelId] ?? emptyCounts();
+    const overall = usage.allTime[e.modelId] ?? emptyCounts();
+    const since = getModelStartedAt(e.serverUrl, e.modelId);
+    return [
+      new MetricTreeItem(
+        'Today',
+        usageLine(today, computeCost(today, entry?.cost), currency),
+        'calendar',
+        `Today's usage for ${e.modelLabel}. Input is split: 'in' excludes cache; in + cached = total input.`,
+      ),
+      new MetricTreeItem(
+        'Overall',
+        usageLine(overall, computeCost(overall, entry?.cost), currency, since),
+        'history',
+        `All-time usage for ${e.modelLabel}${since !== undefined ? `; recording started ${timeAgo(since)}.` : '.'}`,
+      ),
+    ];
   }
 
   /** Read the configured model entries (sync settings read) for cost lookups. */

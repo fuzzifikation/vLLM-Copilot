@@ -184,6 +184,11 @@
           "command": "vllm-copilot.configureCost",
           "when": "view == vllm-copilot.dashboard && viewItem == tokenUsage",
           "group": "1_usage@1"
+        },
+        {
+          "command": "vllm-copilot.resetUsage",
+          "when": "view == vllm-copilot.dashboard && viewItem == tokenUsage",
+          "group": "1_usage@2"
         }
       ]
     },

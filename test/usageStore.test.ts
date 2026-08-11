@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import {
   initUsageStore, recordRequest, getLastRequest, getServerUsage, hasServerUsage,
-  getServersWithUsage, resetUsage, computeCost, findModelCost,
-  formatCost, sumCounts, dayKey, resetUsageStoreForTests, onUsageStoreDidChange,
+  getServersWithUsage, resetUsage, computeCost, findModelCost, getModelStartedAt,
+  formatCost, formatCostSummary, fmtCount, sumCounts, dayKey, resetUsageStoreForTests, onUsageStoreDidChange,
   type LastRequestData,
 } from '../src/usageStore.js';
 import type { ModelConfig } from '../src/config.js';
@@ -60,7 +60,7 @@ describe('recordRequest — last request + accumulation', () => {
     expect(getLastRequest(url)?.modelId).toBe('m1');
   });
 
-  it('accumulates all-time, today, and session per (server, model)', () => {
+  it('accumulates all-time and today per (server, model)', () => {
     recordRequest(req({ promptTokens: 100, completionTokens: 50, cachedTokens: 10, reasoningTokens: 5 }));
     recordRequest(req({ promptTokens: 200, completionTokens: 100, cachedTokens: 20, reasoningTokens: 0 }));
     recordRequest(req({ modelId: 'm2', promptTokens: 7, completionTokens: 3, cachedTokens: 1 }));
@@ -68,9 +68,8 @@ describe('recordRequest — last request + accumulation', () => {
     const usage = getServerUsage(url);
     expect(usage.allTime['m1']).toEqual({ prompt: 300, completion: 150, cached: 30, reasoning: 5 });
     expect(usage.allTime['m2']).toEqual({ prompt: 7, completion: 3, cached: 1, reasoning: 5 }); // req() default reasoningTokens
-    // today and session mirror allTime for the same activation/day
+    // today mirrors allTime for the same day
     expect(usage.today['m1']).toEqual(usage.allTime['m1']);
-    expect(usage.session['m1']).toEqual(usage.allTime['m1']);
   });
 
   it('tracks independent servers and model-keyed usage', () => {
@@ -98,6 +97,16 @@ describe('recordRequest — last request + accumulation', () => {
     expect(fired).toBe(1);
     sub.dispose();
   });
+
+  it('stamps the first-record time per (server, model)', () => {
+    expect(getModelStartedAt(url, 'm1')).toBeUndefined();
+    recordRequest(req());
+    const t = getModelStartedAt(url, 'm1');
+    expect(t).toBeTypeOf('number');
+    recordRequest(req());
+    expect(getModelStartedAt(url, 'm1')).toBe(t); // not re-stamped on later records
+    expect(getModelStartedAt(url, 'm2')).toBeUndefined(); // per-model granularity
+  });
 });
 
 describe('persistence (globalState)', () => {
@@ -110,17 +119,36 @@ describe('persistence (globalState)', () => {
     recordRequest(req({ promptTokens: 100, completionTokens: 50, cachedTokens: 10 }));
     await flushWrites(m, 1);
 
-    expect(m.stored.version).toBe(1);
+    expect(m.stored.version).toBe(2);
     expect(m.stored.allTime[url]['m1']).toEqual({ prompt: 100, completion: 50, cached: 10, reasoning: 5 });
     expect(m.stored.days[dayKey()][url]['m1'].prompt).toBe(100);
+    expect(typeof m.stored.startedAt[url]['m1']).toBe('number'); // first-record stamp persisted
 
     // Simulate a window reload: fresh module state, same memento.
     resetUsageStoreForTests();
     initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
     const usage = getServerUsage(url);
     expect(usage.allTime['m1'].prompt).toBe(100);
-    // session is in-memory — empty after reload
-    expect(usage.session).toEqual({});
+    expect(getModelStartedAt(url, 'm1')).toBe(m.stored.startedAt[url]['m1']);
+  });
+
+  it('migrates version-1 data in place (startedAt defaults to {})', async () => {
+    const v1 = {
+      version: 1 as const,
+      allTime: { [url]: { m1: { prompt: 100, completion: 50, cached: 10, reasoning: 5 } } },
+      days: {},
+    };
+    const m = makeMemento(v1);
+    initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
+
+    expect(getServerUsage(url).allTime['m1'].prompt).toBe(100); // counts preserved
+    expect(getModelStartedAt(url, 'm1')).toBeUndefined();       // no stamp for legacy data
+
+    // a new record persists as version 2 with a stamp
+    recordRequest(req({ promptTokens: 7 }));
+    await flushWrites(m, 1);
+    expect(m.stored.version).toBe(2);
+    expect(m.stored.startedAt[url]['m1']).toBeTypeOf('number');
   });
 
   it('ignores corrupt/missing persisted data and starts fresh', () => {
@@ -157,7 +185,7 @@ describe('resetUsage', () => {
 
     expect(hasServerUsage(url)).toBe(false);
     expect(getServerUsage(url).allTime).toEqual({});
-    expect(getServerUsage(url).session).toEqual({});
+    expect(getModelStartedAt(url, 'm1')).toBeUndefined(); // recording restarted
     // Last Request deliberately survives a reset
     expect(getLastRequest(url)).toBeDefined();
   });
@@ -169,6 +197,8 @@ describe('resetUsage', () => {
 
     expect(hasServerUsage('http://a:1')).toBe(false);
     expect(getServerUsage('http://b:2').allTime['m1'].prompt).toBe(9);
+    expect(getModelStartedAt('http://a:1', 'm1')).toBeUndefined();
+    expect(getModelStartedAt('http://b:2', 'm1')).toBeTypeOf('number');
   });
 
   it('fires the change event on reset', () => {
@@ -218,6 +248,37 @@ describe('cost derivation', () => {
     expect(formatCost(0.000019)).toBe('$0.000019'); // per-request costs never collapse to 0
     expect(formatCost(42, 'AI Credits')).toBe('42.00 credits'); // fractional credits allowed
     expect(formatCost(42, 'ai credits')).toBe('42.00 credits');
+  });
+
+  it('formatCost uses the correct currency symbol (static map, no toolbox)', () => {
+    expect(formatCost(12.3456, 'EUR')).toBe('€12.35');
+    expect(formatCost(12.3456, 'GBP')).toBe('£12.35');
+    expect(formatCost(12.3456, 'JPY')).toBe('¥12.35');
+    expect(formatCost(42, 'XYZ')).toBe('XYZ 42.00'); // unknown → raw string fallback (never a wrong $)
+    expect(formatCost(0.42)).toBe('$0.42'); // USD default unchanged
+  });
+
+  it('formatCostSummary renders today + overall over the recording window', () => {
+    const now = Date.now();
+    expect(formatCostSummary(undefined, undefined, undefined, undefined)).toBeUndefined();
+    // no startedAt (legacy data) → today only
+    expect(formatCostSummary(11.51, 31.13, 'USD', undefined)).toBe('$11.51 today');
+    // recording window under 0.1 days → today only (no "0.0 days")
+    expect(formatCostSummary(11.51, 31.13, 'USD', now - 60_000)).toBe('$11.51 today');
+    // ~3.1-day window
+    expect(formatCostSummary(11.51, 31.13, 'USD', now - 3.1 * 86_400_000)).toBe('$11.51 today and $31.13 in 3.1 days');
+    // AI Credits keep the suffix wording (31.13 < 100 keeps 2 decimals)
+    expect(formatCostSummary(12, 31.13, 'AI Credits', now - 3.1 * 86_400_000)).toBe('12.00 credits today and 31.13 credits in 3.1 days');
+  });
+
+  it('fmtCount abbreviates with k/M, presentation only', () => {
+    expect(fmtCount(0)).toBe('0');
+    expect(fmtCount(999)).toBe('999');      // below k: raw
+    expect(fmtCount(1000)).toBe('1 k');     // trailing zeros stripped
+    expect(fmtCount(1500)).toBe('1.5 k');
+    expect(fmtCount(12_345)).toBe('12.35 k');
+    expect(fmtCount(1_000_000)).toBe('1 M');
+    expect(fmtCount(3_883_588)).toBe('3.88 M');
   });
 
   it('findModelCost locates rates by (serverUrl, wire modelId)', () => {

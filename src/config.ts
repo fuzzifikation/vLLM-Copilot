@@ -605,6 +605,27 @@ export function findModelConfigIndex(
 }
 
 /**
+ * Locate a model config by `(serverUrl, wire modelId)` — the id the usage
+ * tracker keys on (`vllmModelId`, or legacy `id` when `vllmModelId` is unset).
+ * Returns undefined when no configured entry matches. Shared by the dashboard
+ * (cost lookup + display-name labeling) so wire-id matching stays in one place.
+ *
+ * Distinct from {@link findModelConfigIndex}, which matches on the extension
+ * identity (`resolveConfigId`: `id` or `vllmModelId`) for config writes.
+ */
+export function findModelConfig(
+  models: ModelConfig[],
+  serverUrl: string,
+  modelId: string,
+): ModelConfig | undefined {
+  const normalized = normalizeServerUrl(serverUrl);
+  return models.find(m =>
+    resolveVllmModelId(m) === modelId
+    && normalizeServerUrl(m.serverUrl ?? '') === normalized
+  );
+}
+
+/**
  * Fields whose empty-string value is an explicit "clear" signal (mapped to
  * deletion by {@link normalizeModelEntry}). The webview's form cannot express
  * "remove this key" except via the empty-string signal, so every clearable

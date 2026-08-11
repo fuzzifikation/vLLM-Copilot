@@ -123,7 +123,7 @@ export async function consumeStream(
 
     // Record last request + accumulate cumulative usage for the dashboard.
     // `recordRequest` both stores the server's last request AND sums it into
-    // the all-time/today/session counters, then fires the change event so the
+    // the all-time/today counters, then fires the change event so the
     // dashboard re-renders immediately (no poll-interval lag).
     const hasCacheDetails = !!pendingUsage.prompt_tokens_details;
     const hasMetrics = !!pendingMetrics;
