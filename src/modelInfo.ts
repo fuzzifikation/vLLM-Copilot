@@ -89,9 +89,9 @@ export function buildModelInfo(
   // shows as two picker entries instead of colliding on the wire id.
   // `resolveOverrideForModel` round-trips this derived id back to its config.
   const presetId = override?.id || buildModelId(serverUrl, serverModel.id);
-  // `configurationSchema` is an undocumented field VS Code reads for the
-  // model-modes picker; it is not on the published LanguageModelChatInformation
-  // type, so it is declared via intersection rather than erased with `any`.
+  // `configurationSchema` is a `chatProvider`-proposal field VS Code reads for the
+  // model-modes picker; it is not on the stable LanguageModelChatInformation type,
+  // so it is declared via intersection rather than erased with `any`.
   const info: vscode.LanguageModelChatInformation & {
     configurationSchema?: { properties: Record<string, unknown> };
   } = {

@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.22.1 — Docs & internal notes
+
+- **Docs:** removed the stale vendored `chatProvider` proposal declaration (`docs/vscode.proposed.chatProvider.d.ts`, never compiled); corrected the `configurationSchema` / `modelConfiguration` docs and comments — these are `chatProvider`-proposal fields (absent from stable `@types/vscode`, declared upstream), not undocumented reverse-engineered APIs. Fixed a fabricated `@types/vscode ≥ 1.120.0` graduation note for `LanguageModelThinkingPart` (proposal-gated).
+- **Internal:** comments only. No functional or runtime change.
+
 ## v1.22.0 — Token & Cost Usage Tracker
 
 - **Token & cost usage tracker** — a cumulative **Token Usage and Cost** node under each server, **model-first**: one collapsible entry per model (labeled by `displayName`) carrying the price (`$11.51 today and $31.13 in 3.1 days` — today's cost + all-time cost over the recording window), expanding to **Today** and **Overall** token rows (`800k in · 200k cached · 500k out`; input split, cache never double-counted). Persisted across reloads (90-day retention).

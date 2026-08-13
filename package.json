@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "You use vLLM and want its AI models in Copilot? This is what you need. The full Copilot integration for vLLM models — *all* features supported. Optimized for robust hosting of local AI with fully configurable model modes, supporting every vLLM parameter with full UI configuration. Supports multiple servers and models, each with its own auth, parameters, and modes. Auto-detects vLLM server models and their capabilities. Includes a dashboard for server metrics and model status.",
-  "version": "1.22.0",
+  "version": "1.22.1",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
