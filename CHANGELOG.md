@@ -2,53 +2,34 @@
 
 ## v1.22.1 — Docs & internal notes
 
-- **Docs:** removed the stale vendored `chatProvider` proposal declaration (`docs/vscode.proposed.chatProvider.d.ts`, never compiled); corrected the `configurationSchema` / `modelConfiguration` docs and comments — these are `chatProvider`-proposal fields (absent from stable `@types/vscode`, declared upstream), not undocumented reverse-engineered APIs. Fixed a fabricated `@types/vscode ≥ 1.120.0` graduation note for `LanguageModelThinkingPart` (proposal-gated).
-- **Internal:** comments only. No functional or runtime change.
+- Removed stale vendored `chatProvider` proposal declaration; corrected `configurationSchema`/`modelConfiguration` docs (proposal-gated, not undocumented) and the `LanguageModelThinkingPart` note.
+- Internal only — no functional change.
 
 ## v1.22.0 — Token & Cost Usage Tracker
 
-- **Token & cost usage tracker** — a cumulative **Token Usage and Cost** node under each server, **model-first**: one collapsible entry per model (labeled by `displayName`) carrying the price (`$11.51 today and $31.13 in 3.1 days` — today's cost + all-time cost over the recording window), expanding to **Today** and **Overall** token rows (`800k in · 200k cached · 500k out`; input split, cache never double-counted). Persisted across reloads (90-day retention).
-- **Per-model cost tracking** — optional per-1M `cost` rates (`input` / `output` / `cachedInput` + `currency`), derived at render time so editing a rate re-prices all history. Costs round to 2 decimals (fine precision on the per-request Last Request row); token counts round to whole thousands. Currency decoration uses a small static symbol map ($ € £ ¥, `credits` for AI Credits, raw-code fallback — no i18n library); also fixes non-USD currencies that previously rendered as a wrong `$`.
-- **Set Cost…** — right-click the node to configure a model's rates via guided prompts (model → rates → currency).
-- **Reset Usage** — right-click action on the node (server scope) or a palette command (all / per-server); clears all-time + daily. The Last Request node is kept.
-- **Live dashboard updates** — Last Request and usage nodes re-render immediately after every prompt (also fixes the stale Last Request node).
-- **Removed the Session plane** — it was in-memory state that reset on reload (reading `0` after install); no session identity is available through the provider API. The tracker keeps persisted Today / Overall. No migration — the persisted shape is unchanged (v2 adds `startedAt`, additive).
-- **Internal:** `lastRequestStore.ts` merged into `usageStore.ts` — single ingestion point, serialized `globalState` writes, one change event.
+- **Token & cost tracker** — per-server, model-first usage node with today/all-time cost, persisted Today/Overall (90-day retention). Costs round to 2 decimals; tokens to whole thousands.
+- **Set Cost… / Reset Usage** actions.
+- Live dashboard updates after every prompt.
+- Removed in-memory Session plane; `lastRequestStore.ts` merged into `usageStore.ts`.
 
 ## v1.21.0 — Provider & command decomposition + bug fixes
 
 ### Fixed
 
-- Duplicate `settings.json` entries no longer created on Set Personality / Replace Config (server-less and shared-model configs).
-- Test & Refresh now reports silent failures (unreachable servers, zero-model servers) instead of passing silently.
-- A failing diagnostic no longer skips the model-cache clear.
-- Chat config-read / pipeline failures routed through the standard error path — no more unhandled rejections.
-- Cancelling before the first token no longer shows a spurious "model returned no output".
-- Diagnostics no longer misattribute proxy/network failures to a bad certificate chain.
-- TLS diagnostics report `valid: false` on a failed handshake, not just on a verify error.
-- **Security:** the diagnostics `openssl` check no longer runs a shell command with an interpolated hostname (command-injection fixed).
-- Deep-Dive no longer opens duplicate panels for different spellings of the same server URL.
-- Deep-Dive no longer orphans a metrics poller on a second `ready` or on close during the ready handshake.
-- Deep-Dive shows cached data immediately on first open instead of "Loading…" until the first poll.
-- Dashboard no longer keeps polling a hidden sidebar or double-subscribes on overlapping refreshes.
-- Metrics engines are released when the last subscriber unsubscribes, and are keyed by canonical server URL.
-- File logs pruned to the 20 most recent (plaintext API keys no longer accumulate unbounded).
-- Auto-configure no longer claims tool calling the model provably lacks.
-- Auto-configure preserves token-budget overrides and personality.
-- Token budgets no longer produce zero-input or zero-output models.
-- Dead Copilot `max_tokens` UI layering removed (the chat control now reaches the wire).
-- Dashboard no longer shows "vv0.6.0" for the vLLM version.
+- No duplicate `settings.json` entries; Test & Refresh reports silent failures.
+- Diagnostics: no more unhandled rejections, spurious "no output" on cancel, or misattributed proxy/TLS errors; `openssl` command-injection fixed.
+- Deep-Dive: no duplicate panels, orphaned pollers, or stale first view. Dashboard stops polling a hidden sidebar.
+- File logs pruned to the 20 most recent.
+- Auto-configure: no false tool-calling claims; preserves token budgets and personality; no zero-window models.
 
 ### Changed
 
 - Provider decomposed into `src/provider/*` and `src/commands/*` — behavior-preserving.
-- Server Settings: Save/Revert moved into a sticky action bar with an unsaved-changes indicator.
-- Server Settings: unsaved edits survive external config refreshes.
-- Server Settings: any scalar field can be cleared.
+- Server Settings: sticky Save/Revert bar, unsaved-changes indicator, any scalar field clearable.
 
 ### Internal
 
-- Added a typecheck build gate and removed obsolete code.
+- Added a typecheck build gate; removed obsolete code.
 
 ## v1.20.8 — Test & Refresh consolidation
 
