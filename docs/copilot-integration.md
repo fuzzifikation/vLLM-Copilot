@@ -259,11 +259,11 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
 
 ### `configurationSchema`: Model Picker Settings (Thinking Effort)
 
-**⚠️ UNDOCUMENTED API** — `configurationSchema` is not declared in `@types/vscode`, `vscode.proposed.chatProvider.d.ts`, or any public VS Code documentation. It was discovered by reverse-engineering VS Code's compiled extension host. It works reliably as of VS Code 1.120+ but could break in any future release without deprecation notice. The same applies to `options.modelConfiguration` on the request side.
+**⚠️ PROPOSED API** — `configurationSchema` is a `chatProvider`-proposal field. It is **not** in stable `@types/vscode` (the `LanguageModelChatInformation` interface there omits it), but it **is** declared in upstream `vscode.proposed.chatProvider.d.ts` (microsoft/vscode). It still requires `enabledApiProposals: ["chatProvider"]` and VS Code reads it at runtime. The same applies to `options.modelConfiguration` on the request side — also a proposal field absent from `@types/vscode`.
 
-**Status:** Implemented. Runtime undocumented API — not in `@types/vscode` or proposed API declarations, but actively read by VS Code at runtime.
+**Status:** Implemented. Proposed API — absent from stable `@types/vscode` but declared upstream and read by VS Code at runtime. Can change or be dropped with a future proposal update.
 
-**Discovery:** Found by grepping VS Code's compiled extension host (`extensionHostProcess.js`) and the Copilot extension (`copilot/dist/extension.js`). The Local Model Provider extension (krevas) does NOT use it.
+**Discovery:** The field name was confirmed against upstream `vscode.proposed.chatProvider.d.ts`. What was verified by reading VS Code's compiled extension host (`extensionHostProcess.js`) and the Copilot extension (`copilot/dist/extension.js`) is the **runtime contract** — the gear-menu rendering, default merging, and where the resolved config lands — which is still not in any public stable docs. The Local Model Provider extension (krevas) does NOT use it.
 
 **How it works (from VS Code source):**
 

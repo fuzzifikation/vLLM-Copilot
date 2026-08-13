@@ -15,8 +15,8 @@ export interface FinalizedToolCall {
 // ── OpenAI/vLLM wire contracts ───────────────────────────────────────────────
 // These describe the exact JSON we send to and receive from the vLLM server.
 // We own this contract (it is the OpenAI/vLLM chat-completions format), so it is
-// fully typed — unlike the VS Code provider API, where some fields are undocumented
-// and must be reached via casts.
+// fully typed — unlike the VS Code provider API, where some proposal-gated fields
+// are absent from the stable types and must be reached via casts.
 
 /** A single tool call we send back to the server inside an assistant message. */
 export interface OpenAIToolCall {

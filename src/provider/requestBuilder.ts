@@ -68,6 +68,10 @@ export function buildRequest(
   // Resolve the effective request params via the layering chain (highest wins):
   //   DEFAULT_REQUEST_PARAMS ← (max_tokens + Copilot modelOptions) ← model defaultParams ← selected mode.
   // max_tokens = output budget only; vLLM enforces prompt+output <= max_model_len server-side.
+  // `modelConfiguration` is a `chatProvider`-proposal field: absent from stable
+  // `@types/vscode` (pair with `configurationSchema` in modelInfo.ts). This `any`
+  // read means a future proposal drop compiles clean and the mode picker fails
+  // silently — a known, accepted coupling.
   const modelConfiguration = (options as any).modelConfiguration as Record<string, unknown> | undefined;
   const modelOverrides = config.models || [];
   const override = resolveOverrideForModel(modelOverrides, model.id);

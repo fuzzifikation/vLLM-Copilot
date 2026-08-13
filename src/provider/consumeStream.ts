@@ -39,7 +39,9 @@ export async function consumeStream(
   const reportedToolCallIds = new Set<string>();
 
   // Look up LanguageModelThinkingPart once before the loop, not on every chunk.
-  // Once @types/vscode ships the type (engine ≥ 1.120.0), replace (vscode as any) with vscode.
+  // It is proposal-gated (`enabledApiProposals: ["languageModelThinkingPart"]`),
+  // so it is absent from stable @types/vscode and must be reached via `any`.
+  // If/when the proposal graduates, replace `(vscode as any)` with `vscode`.
   const ThinkingPart = (vscode as any).LanguageModelThinkingPart;
 
   // Defer usage reporting to end of stream. Some vLLM servers (e.g. with
