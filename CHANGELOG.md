@@ -3,7 +3,7 @@
 ## v1.22.1 — Docs & internal notes
 
 - Removed stale vendored `chatProvider` proposal declaration; corrected `configurationSchema`/`modelConfiguration` docs (proposal-gated, not undocumented) and the `LanguageModelThinkingPart` note.
-- Internal only — no functional change.
+- Models flagged `isBYOK: true` — VS Code now routes them as user-credential-served (BYOK), enabling MCP/agent-mode utility flows.
 
 ## v1.22.0 — Token & Cost Usage Tracker
 

@@ -91,9 +91,13 @@ export function buildModelInfo(
   const presetId = override?.id || buildModelId(serverUrl, serverModel.id);
   // `configurationSchema` is a `chatProvider`-proposal field VS Code reads for the
   // model-modes picker; it is not on the stable LanguageModelChatInformation type,
-  // so it is declared via intersection rather than erased with `any`.
+  // so it is declared via intersection rather than erased with `any`. `isBYOK` is
+  // likewise proposal-gated and signals that this model is served with user-supplied
+  // credentials rather than the built-in Copilot (CAPI) service — which is what lets
+  // VS Code route MCP/agent-mode utility flows to it.
   const info: vscode.LanguageModelChatInformation & {
     configurationSchema?: { properties: Record<string, unknown> };
+    isBYOK?: boolean;
   } = {
     id: presetId,
     name: override?.displayName || presetId,
@@ -105,6 +109,7 @@ export function buildModelInfo(
       toolCalling: override?.capabilities?.toolCalling ?? true,
       imageInput: override?.capabilities?.imageInput ?? false,
     },
+    isBYOK: true,
   };
 
   const schema = override ? buildConfigurationSchema(override) : undefined;
