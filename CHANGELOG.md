@@ -2,6 +2,7 @@
 
 ## v1.22.1 — Docs & internal notes
 
+- Added pre-release model-config for Qwen3.8-27B (doing what I can to have the best possible setup right when it drops). I will improve the setup once all data are available.
 - Removed stale vendored `chatProvider` proposal declaration; corrected `configurationSchema`/`modelConfiguration` docs (proposal-gated, not undocumented) and the `LanguageModelThinkingPart` note.
 - Models flagged `isBYOK: true` — VS Code now routes them as user-credential-served (BYOK), enabling MCP/agent-mode utility flows.
 
