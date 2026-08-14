@@ -1,0 +1,88 @@
+// Qwen3.8-27B — Model configuration (DRAFT)
+// Source: Qwen3.8 family model card (Qwen3.8-2.4T-A95B, released 2026-08-14)
+// https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B
+// Blog: https://qwen.ai/blog?id=qwen3.8
+//
+// ⚠️ DRAFT — Qwen3.8-27B is NOT yet released (expected 2026-08-14).
+// These params are inherited from the released Qwen3.8-2.4T-A95B family card.
+// VERIFY against the 27B model card on release before trusting them:
+//   - family (dense 27B; may get its own model_type, currently assumed qwen3_5)
+//   - whether "No Think" is supported (the 2.4T requires thinking and cannot
+//     disable it; the dense line historically can)
+//   - imageInput (the 2.4T is text-only; defaulted to false until proven)
+//   - context window (2.4T is 262,144 native; dense 27B may differ)
+//
+// NOTE: These params work for ANY quantization variant (FP8, GGUF, AWQ, etc.).
+// The extension's model matcher strips quantization suffixes automatically.
+//
+// Chat template parameters (all Jinja template variables, passed via chat_template_kwargs):
+//   - `enable_thinking: true/false` — enables/disables reasoning token generation
+//   - `preserve_thinking: true` — keeps  thinking... response blocks visible in multi-turn
+//     conversation history. On by default for the Qwen3.8 family.
+//
+// Reasoning depth (new Qwen3.8 family control, top-level request param):
+//   - `reasoning_effort`: xhigh (default) | medium | low
+//
+// Recommended sampling (family-wide, also what generation_config.json ships):
+//   temperature=1.0, top_p=0.95, top_k=20, min_p=0.0,
+//   presence_penalty=0.0, repetition_penalty=1.0
+//
+// Copy the "id" object below into your settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//
+// Requirements:
+//   - vLLM >=0.19.0 launched with --reasoning-parser qwen3
+//   - For tool calling: also add --enable-auto-tool-choice --tool-call-parser qwen3_coder
+//   - For vision: do NOT use --language-model-only (verify 27B supports vision first)
+
+
+{
+  "vllmModelId": "Qwen/Qwen3.8-27B",
+  "displayName": "Qwen3.8-27B",
+  "family": "qwen3_5",
+  "maxOutputTokens": 32768,
+  "capabilities": {
+    "toolCalling": true,
+    "imageInput": false
+  },
+  "modelModes": {
+    "Think (Deep)": {
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "preserve_thinking": true
+      },
+      "reasoning_effort": "xhigh",
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0,
+      "presence_penalty": 0.0,
+      "repetition_penalty": 1.0
+    },
+    "Think (Balanced)": {
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "preserve_thinking": true
+      },
+      "reasoning_effort": "medium",
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0,
+      "presence_penalty": 0.0,
+      "repetition_penalty": 1.0
+    },
+    "No Think": {
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      },
+      "temperature": 0.7,
+      "top_p": 0.8,
+      "top_k": 20,
+      "min_p": 0.0,
+      "presence_penalty": 1.5,
+      "repetition_penalty": 1.0
+    }
+  },
+  "defaultMode": "Think (Deep)"
+}
