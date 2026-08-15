@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider.js';
-import { getConfig, validateConfig, resolveServerConfig } from './config.js';
+import { getConfig, validateConfig, resolveServerConfig, resolveServerType } from './config.js';
 import { FileLogger } from './logger.js';
 import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault } from './autoConfig.js';
 import { setSessionManagerOutput } from './sessionManager.js';
@@ -192,7 +192,7 @@ export async function activate(context: vscode.ExtensionContext) {
         const models = config.get<any[]>('models') || [];
         const firstModel = models.find(m => m.serverUrl === serverUrl);
         const headers = firstModel ? (resolveServerConfig(firstModel).requestHeaders ?? {}) : {};
-        openDeepDive(serverUrl, headers, context, outputChannel);
+        openDeepDive(serverUrl, headers, resolveServerType(firstModel), context, outputChannel);
       }),
     );
 

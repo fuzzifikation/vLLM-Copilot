@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { getMetricsEngine } from './vllmMetrics.js';
 import type { ServerRawData } from './vllmMetrics.js';
-import { normalizeServerUrl } from './config.js';
+import { normalizeServerUrl, type ServerType } from './config.js';
 
 interface ReadyMessage {
   type: 'ready';
@@ -18,6 +18,7 @@ const openPanels = new Map<string, vscode.WebviewPanel>();
 export function openDeepDive(
   serverUrl: string,
   requestHeaders: Record<string, string>,
+  serverType: ServerType,
   context: vscode.ExtensionContext,
   outputChannel: vscode.OutputChannel,
 ): void {
@@ -70,7 +71,7 @@ export function openDeepDive(
       // `engineSubscription === undefined` — subscribing now would create a
       // metrics poller that is never disposed (leaks for the session).
       if (disposed) return;
-      const engine = getMetricsEngine(serverUrl, requestHeaders);
+      const engine = getMetricsEngine(serverUrl, requestHeaders, serverType);
 
       // Subscribe only on the FIRST ready. A second `ready` (webview recycle /
       // manual reload) must not orphan the first subscription: it is still live

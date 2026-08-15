@@ -15,7 +15,7 @@
  */
 
 import * as vscode from 'vscode';
-import { buildEndpoint, normalizeServerUrl } from './config.js';
+import { buildEndpoint, normalizeServerUrl, type ServerType } from './config.js';
 import { buildRequestHeaders } from './fetchRetry.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -283,6 +283,7 @@ export class ServerMetricsEngine {
   constructor(
     private serverUrl: string,
     private requestHeaders: Record<string, string>,
+    private serverType: ServerType = 'vllm',
   ) {}
 
   /** Latest aggregated metrics (synchronous, may be null before first poll). */
@@ -309,6 +310,11 @@ export class ServerMetricsEngine {
   /** Update request headers in-place (called by getMetricsEngine on re-use). */
   setHeaders(headers: Record<string, string>): void {
     this.requestHeaders = { ...headers };
+  }
+
+  /** Update the backend type in-place (called by getMetricsEngine on re-use). */
+  setServerType(serverType: ServerType): void {
+    this.serverType = serverType;
   }
 
   dispose(): void {
@@ -341,7 +347,7 @@ export class ServerMetricsEngine {
     if (this._disposed) return;
 
     try {
-      const { aggregated, raw } = await fetchAllEndpoints(this.serverUrl, this.requestHeaders);
+      const { aggregated, raw } = await fetchAllEndpoints(this.serverUrl, this.requestHeaders, this.serverType);
 
       if (this._disposed) return;
       this._lastAggregated = aggregated;
@@ -400,6 +406,7 @@ const engineRegistry = new Map<string, ServerMetricsEngine>();
 export function getMetricsEngine(
   serverUrl: string,
   requestHeaders?: Record<string, string>,
+  serverType: ServerType = 'vllm',
 ): ServerMetricsEngine {
   // Key engines by the canonical server URL (scheme added, trailing slash and
   // trailing /v1 stripped) so hand-edited variants of the same server — e.g.
@@ -410,11 +417,17 @@ export function getMetricsEngine(
   const key = normalizeServerUrl(serverUrl);
   let engine = engineRegistry.get(key);
   if (!engine) {
-    engine = new ServerMetricsEngine(key, requestHeaders ?? {});
+    engine = new ServerMetricsEngine(key, requestHeaders ?? {}, serverType);
     engineRegistry.set(key, engine);
-  } else if (requestHeaders && Object.keys(requestHeaders).length > 0) {
-    // Update headers on re-use so auth changes propagate
-    engine.setHeaders(requestHeaders);
+  } else {
+    if (requestHeaders && Object.keys(requestHeaders).length > 0) {
+      // Update headers on re-use so auth changes propagate
+      engine.setHeaders(requestHeaders);
+    }
+    // Update backend type on re-use so a dashboard/deep-dive opened for a
+    // non-vLLM server probes online via that backend's own endpoint, even if the
+    // engine was first created before the type was known.
+    engine.setServerType(serverType);
   }
   return engine;
 }
@@ -435,6 +448,7 @@ export function getMetricsEngine(
 async function fetchAllEndpoints(
   serverUrl: string,
   requestHeaders: Record<string, string>,
+  serverType: ServerType = 'vllm',
 ): Promise<{ aggregated: ServerMetrics; raw: ServerRawData }> {
   const baseUrl = serverUrl.replace(/\/+$/, '');
   const controller = new AbortController();
@@ -442,17 +456,19 @@ async function fetchAllEndpoints(
   const headers = buildRequestHeaders(undefined, requestHeaders);
 
   // Fetch all endpoints in parallel. Read all bodies as text immediately
-  // (Response body can only be consumed once).
+  // (Response body can only be consumed once). The `/v1/models` response is kept
+  // (not just its text) because it doubles as the online probe for non-vLLM.
   const [
-    healthRes, modelsText, versionText, metricsText, loadText,
+    healthRes, v1ModelsRes, versionText, metricsText, loadText,
   ] = await Promise.all([
     safeFetch(buildEndpoint(baseUrl, 'health'), { signal: controller.signal, headers }),
-    safeFetch(buildEndpoint(baseUrl, 'v1/models'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
+    safeFetch(buildEndpoint(baseUrl, 'v1/models'), { signal: controller.signal, headers }),
     safeFetch(buildEndpoint(baseUrl, 'version'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
     safeFetch(buildEndpoint(baseUrl, 'metrics'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
     safeFetch(buildEndpoint(baseUrl, 'load'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
   ]);
   clearTimeout(timer);
+  const modelsText = v1ModelsRes.ok ? await v1ModelsRes.text() : '';
 
   // ── Shared parse helpers ──
   const parseJsonSafe = <T>(text: string): T | undefined => {
@@ -490,8 +506,20 @@ async function fetchAllEndpoints(
   }
 
   // ── Online check ──
-  const online = healthRes.ok;
-  const errorStr = online ? undefined : (healthRes.status === 0 ? 'Cannot connect' : `Health check failed: ${healthRes.status}`);
+  // vLLM documents `/health`; LM Studio, llama.cpp, and Ollama do not (their
+  // OpenAI-compatible `/v1/models` is the reachability signal, and it's the
+  // endpoint the chat path actually uses). Gating online solely on `/health` made
+  // every non-vLLM server appear offline — hiding the degraded notice, measured
+  // throughput, Last Request, and Token Usage nodes even though chat works.
+  const probeRes = serverType === 'vllm' ? healthRes : v1ModelsRes;
+  const online = probeRes.ok;
+  const errorStr = online
+    ? undefined
+    : probeRes.status === 0
+      ? 'Cannot connect'
+      : serverType === 'vllm'
+        ? `Health check failed: ${probeRes.status}`
+        : `${serverType} /v1/models failed: ${probeRes.status}`;
 
   // ── Health body (for deep-dive) ──
   const healthBody = online && healthRes.ok ? await healthRes.text() : undefined;

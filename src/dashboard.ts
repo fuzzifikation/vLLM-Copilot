@@ -324,7 +324,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       }
 
       for (const [url, headers] of serverMap) {
-        const engine = getMetricsEngine(url, headers);
+        const engine = getMetricsEngine(url, headers, this.serverTypes.get(url));
         const sub = engine.subscribe((aggregated) => {
           // Update cached metrics and schedule a single re-render
           const entry = this.subscriptions.find(s => s.serverUrl === url);
@@ -608,10 +608,15 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
         'rocket',
         'Time to generate all output tokens. Throughput = output tokens / generation time.',
       ));
-    } else if (e.completionTokens > 0 && e.firstTokenTimeMs != null && e.totalTimeMs != null && e.totalTimeMs > e.firstTokenTimeMs) {
+    } else if (e.completionTokens > 1 && e.firstTokenTimeMs != null && e.totalTimeMs != null && e.totalTimeMs > e.firstTokenTimeMs) {
       const decodeMs = Math.max(e.totalTimeMs - e.firstTokenTimeMs, 1);
+      // The decode window [firstTokenTimeMs, totalTimeMs] covers tokens 2..N —
+      // the first token arrived at firstTokenTimeMs. Dividing by all N tokens
+      // overstates the rate (doubling a 2-token response) and invents a rate
+      // for a 1-token response that had no measured decode interval.
+      const decodeTokens = e.completionTokens - 1;
       const sec = (decodeMs / 1000).toFixed(2);
-      const tokPerSec = ((e.completionTokens / decodeMs) * 1000).toFixed(1);
+      const tokPerSec = ((decodeTokens / decodeMs) * 1000).toFixed(1);
       items.push(new RequestMetricTreeItem(
         'Generation (measured)',
         `${sec}s  ·  ${tokPerSec} tok/s`,

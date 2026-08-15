@@ -99,8 +99,16 @@ export async function fetchWithRetry(
         signal: callerSignal,
       });
     } catch (err) {
-      // Don't retry user cancellations
-      if (err instanceof Error && err.name === 'AbortError') {
+      // Don't retry aborts. A rejected fetch whose signal is aborted is a
+      // CANCELLATION (user cancel or a timeout), not a server failure — in
+      // Node/undici this rejects with the signal's reason, which is NOT always an
+      // AbortError (AbortController.abort('msg') rejects with the raw string;
+      // AbortSignal.timeout() rejects with TimeoutError). Retrying would delay a
+      // user cancel by the 1.5s sleep and double every metadata timeout.
+      // The name check is defensive: an AbortError always implies an aborted
+      // signal in practice, but keeping it costs nothing and guards callers that
+      // throw a hand-built AbortError.
+      if (callerSignal?.aborted || (err instanceof Error && err.name === 'AbortError')) {
         throw err;
       }
 

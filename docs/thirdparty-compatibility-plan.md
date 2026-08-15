@@ -1,6 +1,6 @@
 # Third-Party Backend Compatibility Plan
 
-Status: **Implemented — compile clean, 659 tests passing. Live-verified against `llm.example-corp.com` (llama.cpp) and `vllm.example-corp.com` (vLLM). Dashboard flags non-vLLM servers as degraded and shows client-measured throughput when the server reports no per-request metrics. Pending live LM Studio/Ollama verification and the F5 vLLM byte-identical gate.**
+Status: **Implemented — compile clean, 662 tests passing (3 skipped). Live-verified against `llm.example-corp.com` (llama.cpp) and `vllm.example-corp.com` (vLLM). Dashboard flags non-vLLM servers as degraded and shows client-measured throughput when the server reports no per-request metrics. Pending live LM Studio/Ollama verification and the F5 vLLM byte-identical gate.**
 
 ## 1. Objective
 
