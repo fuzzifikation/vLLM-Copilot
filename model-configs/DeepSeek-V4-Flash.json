@@ -48,7 +48,7 @@
 //   - No Think:       Direct responses, no thinking tokens (IdentityReasoningParser)
 
 {
-  "vllmModelId": "deepseek-ai/DeepSeek-V4-Flash",
+  "vllmModelId": "DeepSeek-V4-Flash",
   "displayName": "DeepSeek V4 Flash",
   "family": "deepseek_v4",
   "maxOutputTokens": 65536,

@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.30.0 — Third-party backends, measured throughput & hardened auto-config
+
+### Added
+
+- **Third-party backends** — llama.cpp, LM Studio, Ollama as first-class per-model `serverType` (`vllm` | `lmstudio` | `llamacpp` | `ollama`). Context window resolved from each backend's own endpoint; no fabrication — a backend that can't report a window is not served (actionable error).
+- **Add Server / Server Settings auto-detect `serverType`** and persist it.
+- **Measured throughput** — `Generation (measured)` row for non-vLLM backends and vLLM servers without per-request metrics.
+- **Dashboard degradation notice** — non-vLLM servers labeled `(degraded)`, with vLLM-only rows called out.
+
+### Fixed
+
+- **Non-vLLM auto-continue duplicated output** — assistant-prefill continuation is vLLM-only; other backends retry as an empty-prefill nudge.
+- **Initial chat POST hangs forever on a silent server** — now aborted after 60s without a response (AbortError, not retried).
+
+### Changed
+
+- **Preset matching is a case-insensitive substring match** (longest wins, org-free ids).
+- **Exact wire-id matching** — removed `normalizeModelId`/`modelMatchKey`; `vllmModelId` must be a served model id. `resolveContextWindow`/T&R match `m.id` exactly; `resolveOverrideForModel` keeps only exact + composite tiers. Mismatched configs fail loudly instead of being forgiven.
+- **Test & Refresh** — servers whose matched models lack a resolvable context window render ⚠, not ✓.
+- **Auto-configure & Add Server** — resolver errors wrapped in an error boundary.
+- **Hy3 preset**: `topP` → `top_p`.
+
+### Internal
+
+- Fixed four test-fixture type gaps that broke the `test:typecheck` build gate.
+
 ## v1.22.1 — Docs & internal notes
 
 - Added pre-release model-config for Qwen3.8-27B (doing what I can to have the best possible setup right when it drops). I will improve the setup once all data are available.

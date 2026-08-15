@@ -131,7 +131,13 @@
       ...sv.models.map(m => ({ value: configKey(m), configured: true, mc: m })),
       ...(sv.serverModelIds || [])
         .filter(serverId => !configKeys.has(serverId) && !coveredWire.has(serverId))
-        .map(serverId => ({ value: serverId, configured: false, mc: { vllmModelId: serverId, id: serverId, serverUrl: sv.url } })),
+        .map(serverId => ({ value: serverId, configured: false, mc: {
+          vllmModelId: serverId, id: serverId, serverUrl: sv.url,
+          // Backend auto-detected from the server's /v1/models (max_model_len → vllm,
+          // owned_by "llamacpp" → llamacpp). Absent when there's no honest signal —
+          // then serverType is left unset and the select defaults to vllm.
+          ...(sv.detectedServerType ? { serverType: sv.detectedServerType } : {})
+        } })),
     ];
 
     // Find the currently selected model config, or the matching option (unconfigured stub).
@@ -176,6 +182,17 @@
     h += '<div class="field"><label>displayName</label>' +
       '<input type="text" data-f="displayName" value="' + E(String(mc.displayName || '')) + '">' +
       '<div class="field-hint">Name shown in model picker</div></div>';
+
+    // Backend type: every released config is vLLM. Secondary backends are opt-in.
+    // A select persists serverType; unset stays undefined (→ vLLM by policy).
+    // For unconfigured server models the select is pre-set from the backend
+    // auto-detected via /v1/models (max_model_len → vllm, owned_by "llamacpp" → llamacpp).
+    h += '<div class="field"><label>serverType</label>' +
+      '<select data-f="serverType">' +
+      ['vllm', 'lmstudio', 'llamacpp', 'ollama'].map(t =>
+        '<option value="' + t + '"' + (mc.serverType === t ? ' selected' : '') + '>' + t + '</option>').join('') +
+      '</select>' +
+      '<div class="field-hint">Backend serving this model. Auto-detected from /v1/models for unconfigured models; default vllm.</div></div>';
 
     // Action buttons row — these address the model, not the personality.
     h += '<div class="action-btn-row">';

@@ -64,7 +64,10 @@ export function processSSEChunk(
       event.content = delta.content;
     }
 
-    const reasoning = delta.reasoning;
+    // vLLM streams reasoning as `delta.reasoning`; llama.cpp & LM Studio use
+    // `delta.reasoning_content`. Read both so third-party reasoning isn't dropped.
+    // Additive — vLLM's path is unchanged.
+    const reasoning = delta.reasoning ?? delta.reasoning_content;
     if (reasoning) {
       event.reasoning_content = reasoning;
     }

@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "You use vLLM and want its AI models in Copilot? This is what you need. The full Copilot integration for vLLM models — *all* features supported. Optimized for robust hosting of local AI with fully configurable model modes, supporting every vLLM parameter with full UI configuration. Supports multiple servers and models, each with its own auth, parameters, and modes. Auto-detects vLLM server models and their capabilities. Includes a dashboard for server metrics and model status.",
-  "version": "1.22.1",
+  "version": "1.30.0",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -205,7 +205,13 @@
               "properties": {
                 "serverUrl": {
                   "type": "string",
-                  "markdownDescription": "**Required.** The vLLM server URL hosting this model (OpenAI-compatible API). Each model targets its own server; there is no global server."
+                  "markdownDescription": "**Required.** The server URL hosting this model (OpenAI-compatible API). Each model targets its own server; there is no global server."
+                },
+                "serverType": {
+                  "type": "string",
+                  "enum": ["vllm", "lmstudio", "llamacpp", "ollama"],
+                  "default": "vllm",
+                  "markdownDescription": "Backend serving this model. **Default: `vllm`.** Missing/omitted always means `vllm`. Secondary backends (LM Studio, llama.cpp, Ollama) must be added via the **Add vLLM Server & Model** command or set `serverType` explicitly."
                 },
                 "requestHeaders": {
                   "type": "object",

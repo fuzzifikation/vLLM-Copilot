@@ -63,6 +63,8 @@ export interface LastRequestData {
   maxOutputTokens: number;
   /** Time-to-first-token in ms, measured by the provider. Always available. */
   firstTokenTimeMs: number | null;
+  /** Total wall-clock request time in ms, measured by the provider. Always available. */
+  totalTimeMs: number | null;
 }
 
 // ─── Cumulative usage ─────────────────────────────────────────────────────

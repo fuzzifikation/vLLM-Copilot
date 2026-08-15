@@ -5,7 +5,9 @@
 // Verified 2026-07-28.
 //
 // NOTE: These params work for ANY quantization variant (NVFP4, FP8, INT4, GGUF, etc.).
-// The extension's model matcher strips quantization suffixes automatically.
+// Preset matching is substring-based, so a preset for the base model applies to
+// any served variant whose id contains it. The config's `vllmModelId` must still
+// be an EXACT served model id — the extension never strips or forgives mismatches.
 //
 // Chat template parameters (all Jinja template variables, passed via chat_template_kwargs):
 //   - `enable_thinking: true/false` — enables/disables native interleaved reasoning
@@ -55,7 +57,7 @@
 //     shared by all modes). Override per-mode by adding the key inside a specific mode entry.
 //
 {
-  "vllmModelId": "poolside/Laguna-S-2.1",
+  "vllmModelId": "Laguna-S-2.1",
   "displayName": "Laguna-S-2.1",
   "family": "laguna",
   "maxOutputTokens": 32768,

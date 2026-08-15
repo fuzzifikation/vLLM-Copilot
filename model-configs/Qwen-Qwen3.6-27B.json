@@ -4,7 +4,9 @@
 // Verified 2026-07-10.
 //
 // NOTE: These params work for ANY quantization variant (FP8, GGUF, AWQ, etc.).
-// The extension's model matcher strips quantization suffixes automatically.
+// Preset matching is substring-based, so a preset for the base model applies to
+// any served variant whose id contains it. The config's `vllmModelId` must still
+// be an EXACT served model id — the extension never strips or forgives mismatches.
 //
 // Chat template parameters (all Jinja template variables, passed via chat_template_kwargs):
 //   - `enable_thinking: true/false` — enables/disables reasoning token generation
@@ -36,7 +38,7 @@
 
 
 {
-  "vllmModelId": "Qwen/Qwen3.6-27B",
+  "vllmModelId": "Qwen3.6-27B",
   "displayName": "Qwen3.6-27B",
   "family": "qwen3_5",
   "maxOutputTokens": 32768,

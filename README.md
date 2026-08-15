@@ -14,7 +14,8 @@
 For anyone using AI models served on vLLM servers, self-hosted or professionally hosted within your company, this gets you:
 
 - **Native Copilot integration**: your models show up in the Copilot model picker with chat, tools, vision, subagent capabilities and context-window stats, fully supported.
-- **Live server dashboard**: at-a-glance metrics for every vLLM server right in the sidebar: queue status, KV-cache usage, TTFT, throughput, per-request token details, and a **cumulative token & cost tracker** (per model, Today / Overall, with optional per-1M cost rates).
+- **Third-party backends**: llama.cpp, LM Studio, and Ollama are supported alongside vLLM, each with a per-model `serverType`. The extension never invents metadata — every backend's context window is read from its own documented endpoint, and a model that can't honestly report one is not served. Add vLLM Server & Model and Server Settings auto-detect the backend for you.
+- **Live server dashboard**: at-a-glance metrics for every server right in the sidebar: queue status, KV-cache usage, TTFT, throughput, per-request token details, and a **cumulative token & cost tracker** (per model, Today / Overall, with optional per-1M cost rates). Non-vLLM servers are flagged as degraded (the vLLM-specific rows don't exist there), and throughput is still shown via client-side measurement (output tokens ÷ total time − time-to-first-token).
 - **Personality presets**: strip Microsoft's 21KB of system-prompt boilerplate, or give a model a character. Per model, no JSON editing.
 - **Per-server control**: each server carries its own endpoint, auth, sampling, token budget.
 - **Fully configurable model-modes**: Copilot gives you thinking effort. This gives you full control with configurable request parameters, not only thinking, but *any* vLLM parameter. Fully supported in the sidebar-UI.

@@ -43,35 +43,45 @@ describe('discoverModels', () => {
     expect(models).toHaveLength(0);
   });
 
-  it('warns when the server does not report max_model_len', async () => {
+
+
+  it('skips the model when the resolver throws (no fabrication)', async () => {
     const output = makeOutput();
     const models = await discoverModels(
       [{ id: 'm1', serverUrl: server }],
-      makeClient({ getModelContextWindow: async () => undefined }),
+      makeClient({ getModelContextWindow: async () => { throw new Error('no context window'); } }),
       output,
     );
+    // Policy: no fabricated budget — the model is NOT served.
     expect(models).toHaveLength(0);
-    expect(lines(output)).toContain('did not report max_model_len');
+    expect(lines(output)).toContain('skipped');
   });
 
-  it('warns when connecting to the server fails', async () => {
+  it('preserves the resolver detail, only naming transport failures as such', async () => {
     const output = makeOutput();
-    const models = await discoverModels(
+    await discoverModels(
       [{ id: 'm1', serverUrl: server }],
-      makeClient({ getModelContextWindow: async () => { throw new Error('ECONNREFUSED'); } }),
+      makeClient({ getModelContextWindow: async () => {
+        throw new Error('llamacpp model "qwen" has no context window: GET /props did not report default_generation_settings.n_ctx.');
+      } }),
       output,
     );
-    expect(models).toHaveLength(0);
-    expect(lines(output)).toContain('failed to connect to server');
+    const all = lines(output);
+    expect(all).toContain('llamacpp model "qwen" has no context window');
+    expect(all).toContain('default_generation_settings.n_ctx');
+    // The resolver's backend-specific message is NOT rewritten as a connection failure.
+    expect(all).not.toContain('failed to connect');
   });
 
-  it('builds model info on success and logs a summary', async () => {
+  it('passes the resolved serverType into the resolver and builds model info', async () => {
     const output = makeOutput();
+    const spy = vi.fn(async () => 8192);
     const models = await discoverModels(
       [{ id: 'm1', serverUrl: server, family: 'test-family' }],
-      makeClient({ getModelContextWindow: async () => 8192 }),
+      { getModelContextWindow: spy },
       output,
     );
+    expect(spy).toHaveBeenCalledWith('vllm', server, {}, 'm1');
     expect(models).toHaveLength(1);
     expect(models[0].id).toBe('m1');
     expect(models[0].family).toBe('test-family');
@@ -79,6 +89,30 @@ describe('discoverModels', () => {
     expect(models[0].maxInputTokens).toBeGreaterThan(0);
     expect(models[0].maxInputTokens + models[0].maxOutputTokens).toBe(8192);
     expect(lines(output)).toContain('Loaded 1 model(s)');
+  });
+
+  it('queries models in parallel; a missing window skips that model (no fabrication)', async () => {
+    const output = makeOutput();
+    const client = makeClient({
+      getModelContextWindow: async (serverType: string, url: string) => {
+        if (url === server) return 4096;
+        throw new Error('no context window');
+      },
+    });
+    const models = await discoverModels(
+      [
+        { id: 'good', serverUrl: server, family: 'test-family' },
+        { id: 'bad', serverUrl: 'http://other:8000' },
+      ],
+      client,
+      output,
+    );
+    // 'good' survives with its real window; 'bad' is skipped — no default invented.
+    expect(models).toHaveLength(1);
+    expect(models[0].id).toBe('good');
+    const all = lines(output);
+    expect(all).toContain('skipped');
+    expect(all).toContain('Loaded 1 model(s)');
   });
 
   it('warns on duplicate model ids', async () => {
@@ -93,25 +127,5 @@ describe('discoverModels', () => {
     );
     expect(models).toHaveLength(2);
     expect(lines(output)).toContain('Duplicate model id "dup"');
-  });
-
-  it('queries models in parallel and collects per-model failures', async () => {
-    const output = makeOutput();
-    const client = makeClient({
-      getModelContextWindow: async (url: string) => (url === server ? 4096 : undefined),
-    });
-    const models = await discoverModels(
-      [
-        { id: 'good', serverUrl: server, family: 'test-family' },
-        { id: 'bad', serverUrl: 'http://other:8000' },
-      ],
-      client,
-      output,
-    );
-    expect(models).toHaveLength(1);
-    expect(models[0].id).toBe('good');
-    const all = lines(output);
-    expect(all).toContain('did not report max_model_len');
-    expect(all).toContain('Loaded 1 model(s)');
   });
 });

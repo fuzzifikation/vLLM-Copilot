@@ -86,8 +86,12 @@ export async function runChatResponse(
     let attemptCount = 0;        // actual number of attempts made (for accurate diagnostics)
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       attemptCount++;
-      // Continuation mode applies only once we have streamed text to resume.
-      const continuing = assistantPrefill.length > 0;
+      // Continuation mode (continue_final_message) is a vLLM-only feature. For
+      // secondary backends buildChatBody strips those flags but KEEPS the assistant
+      // prefill — so a colon-continuation would send the partial text as a COMPLETE
+      // assistant turn and the server would regenerate from scratch, making the user see
+      // the partial text twice. Non-vLLM backends always retry in nudge mode.
+      const continuing = assistantPrefill.length > 0 && serverConfig.serverType === 'vllm';
       const requestOptions = continuing
         ? { ...mergedOptions, continue_final_message: true, add_generation_prompt: false }
         : mergedOptions;
@@ -119,9 +123,12 @@ export async function runChatResponse(
         && attempt < maxRetries;
       if (!shouldRetry) break;
 
-      // Grow the prefill: a colon-truncated reply continues from everything streamed so far;
-      // an empty response contributes nothing, keeping assistantPrefill empty (nudge mode).
-      if (outcome.hadContent) {
+      // Grow the prefill: a colon-truncated reply continues from everything streamed so far.
+      // Only for vLLM (true continuation mode). For secondary backends the partial text
+      // must NOT be replayed as a completed assistant turn — buildChatBody strips the
+      // continuation flags there, so the server would regenerate and duplicate output.
+      // An empty response contributes nothing, keeping assistantPrefill empty (nudge mode).
+      if (outcome.hadContent && serverConfig.serverType === 'vllm') {
         assistantPrefill += outcome.contentBuffer ?? '';
       }
       const prefillMessage: OpenAIChatMessage = { role: 'assistant', content: assistantPrefill };

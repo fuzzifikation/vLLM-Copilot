@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { autoConfigureModel, resolveModelConfigForAdd } from '../src/commands/hfDiscovery.js';
+import { autoConfigureModel, resolveModelConfigForAdd, resolveModelConfigForAddSafely } from '../src/commands/hfDiscovery.js';
 
 /**
  * Direct tests for the hfDiscovery module's autoConfigureModel. Global fetch is
@@ -75,7 +75,7 @@ describe('autoConfigureModel', () => {
     expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/api/models/plain-model'))).toBe(true);
   });
 
-  it('survives a vLLM server error, reporting it in the summary', async () => {
+  it('THROWS (no context, no model) when the server cannot report a context window', async () => {
     const fetchFn = stubFetch((url: string) => {
       if (url.endsWith('/v1/models')) {
         return jsonResponse({ error: 'nope' }, 503);
@@ -83,20 +83,16 @@ describe('autoConfigureModel', () => {
       return jsonResponse({}, 404);
     });
 
-    const result = await autoConfigureModel('m', 'http://host:8000');
-
-    expect(result.summary.join('\n')).toContain('Could not fetch model info from vLLM server');
-    expect(result.suggestedMaxOutputTokens).toBeUndefined();
-    // Still reached HF (via /api/models/m) despite the vLLM failure.
-    expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/api/models/m'))).toBe(true);
-    // Default capabilities are explicit even with no HF data.
-    expect(result.modelConfig.capabilities).toEqual({ toolCalling: true, imageInput: false });
+    // Strict policy: a model without a resolvable context window is not saved.
+    await expect(autoConfigureModel('m', 'http://host:8000')).rejects.toThrow(/HTTP 503/);
+    // No HF lookup happened — the flow aborted at the mandatory context check.
+    expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/api/models/m'))).toBe(false);
   });
 
   it('detects vision support from a vision model_type', async () => {
     stubFetch((url: string) => {
       if (url.endsWith('/v1/models')) {
-        return jsonResponse({ data: [{ id: 'vl-model' }] });
+        return jsonResponse({ data: [{ id: 'vl-model', max_model_len: 32768 }] });
       }
       if (url.includes('/api/models/vl-model')) {
         return jsonResponse({ id: 'vl-model', config: { model_type: 'qwen2_5_vl' } });
@@ -113,7 +109,7 @@ describe('autoConfigureModel', () => {
   it('does not claim tool calling when the chat template provably lacks tool markers', async () => {
     stubFetch((url: string) => {
       if (url.endsWith('/v1/models')) {
-        return jsonResponse({ data: [{ id: 'plain-text' }] });
+        return jsonResponse({ data: [{ id: 'plain-text', max_model_len: 8192 }] });
       }
       if (url.includes('/api/models/plain-text')) {
         // A plain chat template with no tools/function_call markers.
@@ -136,7 +132,7 @@ describe('autoConfigureModel', () => {
   it('passes per-server request headers through to the vLLM fetch', async () => {
     const fetchFn = stubFetch((url: string) => {
       if (url.endsWith('/v1/models')) {
-        return jsonResponse({ data: [{ id: 'm' }] });
+        return jsonResponse({ data: [{ id: 'm', max_model_len: 4096 }] });
       }
       return jsonResponse({}, 404);
     });
@@ -159,10 +155,11 @@ describe('resolveModelConfigForAdd', () => {
 
   const stubDiscovery = () => {
     // autoConfigureModel does real fetch; route /v1/models and HF so the
-    // Auto-Discover / no-preset branches resolve through it.
+    // Auto-Discover / no-preset branches resolve through it. Any requested
+    // model gets a valid window (mandatory no-context-no-model check).
     const fn = vi.fn(async (url: string) => {
       if (String(url).endsWith('/v1/models')) {
-        return jsonResponse({ data: [{ id: 'org/Model' }] });
+        return jsonResponse({ data: [{ id: 'org/Model', max_model_len: 8192 }, { id: 'unknown-model', max_model_len: 8192 }] });
       }
       if (String(url).includes('/api/models/')) {
         return jsonResponse({ id: 'x', config: { model_type: 'qwen' } });
@@ -208,6 +205,9 @@ describe('resolveModelConfigForAdd', () => {
   it('returns the preset-merged config, preserving the caller identity, on Use Preset', async () => {
     seedPreset();
     vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue('Use Preset' as any);
+    // The preset path now resolves context via the SHARED resolver — serve a
+    // valid vLLM window so the strict no-context-no-model check passes.
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ data: [{ id: 'org/Model', max_model_len: 8192 }] })));
     const base = { id: 'user-id', vllmModelId: 'user-wire', serverUrl: 'http://host:8000' };
 
     const result = await resolveModelConfigForAdd(
@@ -245,5 +245,45 @@ describe('resolveModelConfigForAdd', () => {
     expect(result!.modelConfig.id).toBe('unknown-model');
     expect(result!.modelConfig.family).toBe('qwen');
     expect(fetchFn).toHaveBeenCalled();
+  });
+});
+
+describe('resolveModelConfigForAddSafely', () => {
+  const extContext = { extensionUri: vscode.Uri.file('/ext') } as any;
+  const output = { appendLine: vi.fn() } as any;
+
+  const jsonResponse = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    delete (vscode as any).workspace._mockFsReadDirectory;
+    delete (vscode as any).workspace._mockFsReadFile;
+  });
+
+  it('logs the backend-specific detail and returns null instead of letting the strict error escape', async () => {
+    // No presets, and the server is llama.cpp-shaped: /v1/models reports
+    // owned_by "llamacpp" but no max_model_len → the strict vLLM resolver throws.
+    (vscode as any).workspace._mockFsReadDirectory = () => Promise.resolve([]);
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      jsonResponse({ data: [{ id: 'unknown-model', owned_by: 'llamacpp' }] })
+    ));
+    const errSpy = vi.spyOn(vscode.window, 'showErrorMessage').mockResolvedValue(undefined);
+
+    const result = await resolveModelConfigForAddSafely(
+      output, extContext, 'unknown-model', 'http://host:8000'
+    );
+
+    // The strict policy refuses to serve — the wrapper converts the throw into a
+    // logged, user-facing error and returns null (nothing saved).
+    expect(result).toBeNull();
+    expect(output.appendLine).toHaveBeenCalledWith(
+      expect.stringContaining('[ERROR] Auto-configure failed for "unknown-model"'),
+    );
+    // The actionable detail (names serverType as the fix) reaches the user.
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('serverType'),
+    );
   });
 });

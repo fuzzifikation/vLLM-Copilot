@@ -170,7 +170,7 @@ describe('registerAddServerModelCommand', () => {
       .spyOn(configStore, 'replaceModelConfig')
       .mockResolvedValue({ model: { id: 'x' } as any, created: true });
     resolveSpy = vi
-      .spyOn(hfDiscovery, 'resolveModelConfigForAdd')
+      .spyOn(hfDiscovery, 'resolveModelConfigForAddSafely')
       .mockResolvedValue({
         modelConfig: { id: 'model', vllmModelId: 'model', displayName: 'Model' },
         summary: ['discovered'],
@@ -213,15 +213,20 @@ describe('registerAddServerModelCommand', () => {
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer secret');
 
     expect(resolveSpy).toHaveBeenCalledWith(
-      expect.anything(), 'model', 'http://host:8000', { Authorization: 'Bearer secret' }, 'org/model',
+      expect.anything(), // output channel
+      expect.anything(), // extension context
+      'model', 'http://host:8000', { Authorization: 'Bearer secret' }, 'org/model',
+      undefined, // no baseConfig (add-server path)
+      'vllm',   // detected backend type passed into auto-discovery
     );
 
-    // Composite id + serverUrl + suggested tokens assembled by the flow.
+    // Composite id + serverUrl + detected serverType + suggested tokens.
     expect(replaceSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'model on host:8000',
         vllmModelId: 'model',
         serverUrl: 'http://host:8000',
+        serverType: 'vllm',
         requestHeaders: { Authorization: 'Bearer secret' },
         displayName: 'Model',
       }),

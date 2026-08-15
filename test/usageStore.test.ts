@@ -22,7 +22,7 @@ function req(over: Partial<LastRequestData> = {}): LastRequestData {
     promptTokens: 100, completionTokens: 50, totalTokens: 150,
     cachedTokens: 10, reasoningTokens: 5,
     hasMetrics: false, hasCacheDetails: true, maxModelLen: 1000, maxOutputTokens: 100,
-    firstTokenTimeMs: 5, ...over,
+    firstTokenTimeMs: 5, totalTimeMs: 500, ...over,
   };
 }
 

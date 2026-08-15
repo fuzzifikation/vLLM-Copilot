@@ -66,6 +66,8 @@ export interface WireDelta {
   content?: string;
   /** Reasoning/thinking text. vLLM's streaming field (formerly `reasoning_content`). */
   reasoning?: string;
+  /** llama.cpp / LM Studio stream reasoning here instead of `reasoning`. */
+  reasoning_content?: string;
   tool_calls?: WireToolCallDelta[];
 }
 
@@ -97,16 +99,43 @@ export interface WireMetrics {
   queue_time_ms?: number;
 }
 
-/** A single model entry in the vLLM `/v1/models` response `data` array. */
+/** A single model entry in the `/v1/models` response `data` array. */
 export interface VllmModel {
   id: string;
   object: string;
   owned_by: string;
+  /** Runtime context window — vLLM only. Other backends omit this field. */
   max_model_len?: number;
+  /** llama.cpp vanilla carries training context here. */
+  meta?: { n_ctx_train?: number };
   /** Underlying checkpoint id. vLLM sets this to the HF repo when the model is a
    *  `--served-model-name` alias, so it links aliases back to their real model. */
   root?: string;
   permission?: unknown[];
+}
+
+/**
+ * A single model entry in LM Studio's `/api/v1/models` response `models` array.
+ * LM Studio's OpenAI `/v1/models` has NO context field — its documented metadata
+ * endpoint carries the configured window (`max_context_length`) and the live
+ * loaded-instance window (`loaded_instances[].config.context_length`).
+ * Only fields consumed by the context resolver are typed; the full wire shape also
+ * carries display_name/format/capabilities, which the resolver ignores.
+ */
+export interface LmStudioModel {
+  /** Identifier — matches the OpenAI `/v1/models` `id` for the same model. */
+  key: string;
+  id?: string;
+  /** Configured context window for the model. */
+  max_context_length?: number;
+  /** Live loaded engine instances (empty when installed but not loaded). */
+  loaded_instances?: Array<{
+    id?: string;
+    config?: {
+      /** Runtime context window of the loaded instance — preferred over max_context_length. */
+      context_length?: number;
+    };
+  }>;
 }
 
 /** Wire-format for vLLM repetition_detection parameter. */
