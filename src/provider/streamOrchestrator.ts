@@ -124,7 +124,12 @@ export async function runChatResponse(
       // gated by `hadContent`, so `hadToolCalls` only matters for the empty case.
       if (token.isCancellationRequested) break;
       const endsWithColon = !!outcome.contentBuffer && outcome.contentBuffer.trimEnd().endsWith(':');
-      const shouldRetry = (!outcome.hadContent || endsWithColon)
+      // Colon-continuation retries are vLLM-only. Without vLLM's
+      // continue_final_message the server cannot resume an open assistant turn —
+      // for secondary backends a colon retry would drop the already-streamed text,
+      // nudge with an empty assistant message, and produce a disjoint fresh answer
+      // (or a reject). Empty-response nudges are backend-agnostic and stay.
+      const shouldRetry = (!outcome.hadContent || (endsWithColon && serverConfig.serverType === 'vllm'))
         && !outcome.hadToolCalls
         && outcome.finishReason === 'stop'
         && attempt < maxRetries;

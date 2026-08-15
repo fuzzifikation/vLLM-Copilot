@@ -9,7 +9,7 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from './provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId } from './config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId, resolveServerType } from './config.js';
 import type { ModelConfig } from './config.js';
 import { patchModelConfig } from './configStore.js';
 import { promptForServerAuth } from './commands/serverAuth.js';
@@ -253,8 +253,15 @@ export function registerUpdateServerAuthCommand(
 
     await config.update('models', updatedModels, vscode.ConfigurationTarget.Global);
     _provider.clearCache();
-    // Push new headers to the metrics engine so open deep-dive uses fresh auth
-    getMetricsEngine(serverUrl)?.setHeaders(finalHeaders ?? {});
+    // Push new headers to the metrics engine so open deep-dive uses fresh auth,
+    // with the TARGET server's backend type so its online probe stays correct.
+    // (Not updatedModels[0] — that's the first model in the whole config, which may
+    // belong to a different server and would switch an Ollama/llama.cpp engine back
+    // to vLLM /health probing.)
+    const targetModel = updatedModels.find(
+      m => m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl
+    );
+    getMetricsEngine(serverUrl, undefined, targetModel ? resolveServerType(targetModel) : undefined)?.setHeaders(finalHeaders ?? {});
     outputChannel.appendLine(`[INFO] Updated auth for ${updated} model(s) on ${serverUrl}.`);
     vscode.window.showInformationMessage(`Updated auth for ${updated} model(s) on ${serverUrl}.`);
   });

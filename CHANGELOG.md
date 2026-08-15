@@ -11,8 +11,13 @@
 
 ### Fixed
 
-- **Non-vLLM auto-continue duplicated output** — assistant-prefill continuation is vLLM-only; other backends retry as an empty-prefill nudge.
+- **Non-vLLM auto-continue no longer duplicates output** — continuation is vLLM-only. Colon-truncation retries are fully disabled outside vLLM (no backend can resume an open assistant turn); empty-response nudges stay for all backends.
 - **Initial chat POST hangs forever on a silent server** — now aborted after 60s without a response (AbortError, not retried).
+- **Non-vLLM servers no longer appear offline in the dashboard** — online status now uses `/v1/models` for LM Studio/llama.cpp/Ollama (which don't document `/health`), so the degraded notice, Last Request, Token Usage, and measured throughput are reachable while chat works.
+- **Cancellation and metadata timeouts no longer enter the retry path** — a rejected fetch whose signal is aborted (raw-string `AbortController.abort`, `AbortSignal.timeout` → `TimeoutError`) is never retried; previously both slept 1.5s and doubled each 10s metadata timeout.
+- **Client-measured throughput no longer overstated** — the decode window starts after the first token, so the numerator is `completionTokens − 1`; a 1-token response shows no measured rate.
+- **Update Auth keeps the target server's backend** — serverType now comes from the model matching the server URL, not the first model in the config (which could flip an Ollama/llama.cpp engine back to vLLM `/health` probing).
+- **Offline error reports the probe actually used** — `Health check failed: {status}` for vLLM, `{backend} /v1/models failed: {status}` for LM Studio/llama.cpp/Ollama; no more misleading `/health` status on a `/v1/models` failure.
 
 ### Changed
 

@@ -30,6 +30,21 @@ const onlineFetch = vi.fn(async (url: unknown) => {
   return new Response(null, { status: 404 });
 });
 
+/**
+ * Fetch stub for a reachable NON-vLLM server (e.g. Ollama): `/health` is not
+ * documented and returns 404, but the OpenAI-compatible `/v1/models` (the
+ * endpoint chat actually uses) works. Previously this made the server appear OFFLINE.
+ */
+const nonVllmOnlineFetch = vi.fn(async (url: unknown) => {
+  const u = String(url);
+  if (u.endsWith('/health')) return new Response(null, { status: 404 });
+  if (u.endsWith('/v1/models')) return jsonResponse({ data: [{ id: 'm1', max_model_len: 100 }] });
+  if (u.endsWith('/version')) return new Response(null, { status: 404 });
+  if (u.endsWith('/metrics')) return new Response(null, { status: 404 });
+  if (u.endsWith('/load')) return new Response(null, { status: 404 });
+  return new Response(null, { status: 404 });
+});
+
 /** Let the async refreshSubscriptions + first engine tick settle. */
 const settle = () => new Promise<void>(r => setTimeout(r, 0));
 
@@ -349,12 +364,52 @@ describe('DashboardTreeProvider', () => {
       const last = metrics.find(m => (m as any).label === 'Last Request');
       const rows = await provider.getChildren(last as any);
       const rowLabels = rows.map(r => (r as any).label as string);
-      // Client-measured throughput: 40 tok / (50ms − 10ms) = 1000.0 tok/s.
+      // Client-measured throughput: the decode window [10ms, 50ms] covers
+      // tokens 2..40 (39 tokens) → 39 tok / 40ms = 975.0 tok/s.
       const gen = rows.find(r => (r as any).label === 'Generation (measured)');
       expect(gen).toBeDefined();
-      expect((gen as any).description).toContain('1000.0 tok/s');
+      expect((gen as any).description).toContain('975.0 tok/s');
       // vLLM-only launch flags are meaningless here — no hint.
       expect(rowLabels).not.toContain('⚡ More data with --enable-per-request-metrics');
+    });
+  });
+
+  it('keeps a non-vLLM server ONLINE when /health is absent but /v1/models works', async () => {
+    // Regression: the metrics engine gated online solely on /health, which LM
+    // Studio/Ollama/llama.cpp do not document — so they appeared offline (only an
+    // error row), hiding Last Request / Token Usage / measured throughput even though
+    // chat worked. Online is now /v1/models.ok for non-vLLM backends.
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1', serverType: 'ollama' }],
+    };
+    vi.stubGlobal('fetch', nonVllmOnlineFetch);
+    recordRequest({
+      serverUrl: normalizeServerUrl('http://s:8000'),
+      modelId: 'm1', timestamp: 1, promptTokens: 10, completionTokens: 3, totalTokens: 13,
+      hasMetrics: false, hasCacheDetails: false, maxModelLen: 100, maxOutputTokens: 100,
+      firstTokenTimeMs: 10, totalTimeMs: 20,
+    });
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 's:8000');
+      expect(serverNode).toBeDefined();
+      // Not "Offline" — the degraded notice proves the server is considered online.
+      expect((serverNode as any).description).not.toContain('Offline');
+      expect((serverNode as any).description).toContain('ollama (degraded)');
+
+      const metrics = await provider.getChildren(serverNode as any);
+      const labels = metrics.map(m => (m as any).label as string);
+      // No error row — Last Request and Token Usage are reachable.
+      expect(labels).not.toContain('Error');
+      expect(labels).toContain('Last Request');
+      const last = metrics.find(m => (m as any).label === 'Last Request');
+      const rows = await provider.getChildren(last as any);
+      const rowLabels = rows.map(r => (r as any).label as string);
+      // Measured throughput present (2 decode tokens over the [10,20]ms window).
+      expect(rowLabels).toContain('Generation (measured)');
     });
   });
 

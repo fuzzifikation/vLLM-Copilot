@@ -151,11 +151,12 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
     expect(reportedText(progress)).toBe('Here are the steps:\n1. Do it');
   });
 
-  it('retries a colon-truncated response on a NON-vLLM backend as a nudge, never continuation (no duplicated output)', async () => {
-    // buildChatBody strips continuation flags for non-vLLM but KEEPS the prefill —
-    // so replaying the partial text as a completed assistant turn would make the server
-    // regenerate from scratch and the user would see the colon lead-in twice. The
-    // orchestrator must therefore retry in nudge mode (empty prefill, no flags).
+  it('does NOT retry a colon-truncated response on a NON-vLLM backend (no continuation semantics)', async () => {
+    // Colon-continuation requires vLLM's continue_final_message — a secondary
+    // backend cannot resume an open assistant turn. Retrying would drop the
+    // already-streamed text and nudge with an empty assistant message, producing a
+    // disjoint fresh answer (or a reject). Only empty-response nudges are
+    // backend-agnostic; a colon stop on non-vLLM is left as-is.
     const { provider, captured, spy } = setupProvider(
       [
         [ev({ content: 'Here are the steps:', finishReason: null as any }), ev({ finishReason: 'stop' })],
@@ -168,11 +169,10 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
 
     await run(provider, progress);
 
-    expect(spy).toHaveBeenCalledTimes(2);
-    expect(captured[1].options.continue_final_message).toBeUndefined();
-    expect(captured[1].options.add_generation_prompt).toBeUndefined();
-    expect(lastMessage(captured[1])).toEqual({ role: 'assistant', content: '' });
-    expect(reportedText(progress)).toBe('Here are the steps:\n1. Do it');
+    // No retry at all — the partial text stands as the final answer.
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(captured).toHaveLength(1);
+    expect(reportedText(progress)).toBe('Here are the steps:');
   });
 
   it('does not continuation-retry when the colon stop is on the last allowed attempt', async () => {
