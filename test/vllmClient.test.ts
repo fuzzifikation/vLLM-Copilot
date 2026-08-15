@@ -406,8 +406,8 @@ describe('chatCompletionStream backend adaptation (via buildChatBody)', () => {
   });
 
   function streamResult(fetchSpy: ReturnType<typeof vi.fn>) {
-    const url = fetchSpy.mock.calls[0][0];
-    const init = fetchSpy.mock.calls[0][1] as any;
+    const url = fetchSpy.mock.calls[fetchSpy.mock.calls.length - 1][0];
+    const init = fetchSpy.mock.calls[fetchSpy.mock.calls.length - 1][1] as any;
     return JSON.parse(init.body) as Record<string, any>;
   }
 
@@ -447,11 +447,18 @@ describe('chatCompletionStream backend adaptation (via buildChatBody)', () => {
     );
     const client = new VllmClient(makeContext(), output as any);
     const options = { tool_choice: 'required' as const, tools: [{ type: 'function' as const, function: { name: 'f' } }] };
-    await client.chatCompletionStream('m', [] as any, options as any, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any, { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, serverType: 'ollama' }).next();
+    const serverConfig = { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, serverType: 'ollama' } as const;
+    const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any;
+    // Two requests with tool_choice — the WARN fires exactly ONCE (per session),
+    // not per request. The misleading "ONE [WARN]" comment once described a
+    // per-request append; it is now actually once.
+    await client.chatCompletionStream('m', [] as any, options as any, token, serverConfig).next();
+    await client.chatCompletionStream('m', [] as any, options as any, token, serverConfig).next();
     const body = streamResult(fetchSpy);
     expect(body.tool_choice).toBeUndefined();
     expect(body.tools).toHaveLength(1);
-    expect(calls.some((s) => s.includes('[WARN]') && s.includes('tool_choice'))).toBe(true);
+    const warns = calls.filter((s) => s.includes('[WARN]') && s.includes('tool_choice'));
+    expect(warns).toHaveLength(1);
   });
 });
 

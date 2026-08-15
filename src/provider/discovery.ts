@@ -82,22 +82,19 @@ export async function discoverModels(
     }
   });
 
-  const results = await Promise.allSettled(tasks);
+  const results = await Promise.all(tasks);
   const models: vscode.LanguageModelChatInformation[] = [];
 
-  // Every task self-catches and resolves with `{ model, error }` — a task can
-  // only reject on a programming error inside the map callback, so the
-  // allSettled rejected branch is unreachable by construction (previously a
-  // "Should not happen" else that no reader could safely assume was dead).
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
-      const { model, error } = result.value;
-      if (model) {
-        models.push(model);
-      }
-      if (error) {
-        output.appendLine(error);
-      }
+  // Every task self-catches and resolves with `{ model, error }` — no task can
+  // reject (a rejection here would be a programming error inside the map
+  // callback, not a model-skipping condition). `Promise.all` is honest: there is
+  // no rejected branch to handle.
+  for (const { model, error } of results) {
+    if (model) {
+      models.push(model);
+    }
+    if (error) {
+      output.appendLine(error);
     }
   }
 

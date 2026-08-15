@@ -109,6 +109,11 @@ export function processSSEChunk(
 /**
  * Drain all accumulated pending tool calls into finalized objects and clear the map.
  * Only includes entries that have a name (guards against partial/corrupt deltas).
+ *
+ * Note: the synthesized id (when the server sends none) uses a nonce suffix so
+ * multiple id-less calls don't collide on the empty-string key in the provider's
+ * de-dup set. This makes the function non-deterministic for id-less input — it
+ * remains deterministic (and unit-testable) whenever ids are present.
  */
 export function finalizePendingToolCalls(
   pending: Map<number, PendingToolCall>
@@ -116,9 +121,6 @@ export function finalizePendingToolCalls(
   const result: FinalizedToolCall[] = [];
   for (const [idx, tc] of pending) {
     if (tc.name) {
-      // Synthesize a unique id if the server never provided one — otherwise
-      // multiple id-less calls would collide on the empty-string key in the
-      // provider's de-dup set and get reported as a single call.
       const id = tc.id || `call_${idx}_${tc.name}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       result.push({ id, name: tc.name, arguments: tc.args || '{}' });
     }
