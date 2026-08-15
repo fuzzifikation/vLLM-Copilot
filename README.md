@@ -8,13 +8,14 @@
 [![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot) [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
 
 **Run any vLLM model natively inside GitHub Copilot. No workarounds, no missing features.**
+llama.cpp, LM Studio, and Ollama are supported alongside vLLM with the core features — vLLM remains the primary target and gets the full feature set.
 </div>
 
 
-For anyone using AI models served on vLLM servers, self-hosted or professionally hosted within your company, this gets you:
+For anyone running AI models on a local or self-hosted server — vLLM first, with llama.cpp, LM Studio, and Ollama supported alongside — this gets you:
 
 - **Native Copilot integration**: your models show up in the Copilot model picker with chat, tools, vision, subagent capabilities and context-window stats, fully supported.
-- **Third-party backends**: llama.cpp, LM Studio, and Ollama are supported alongside vLLM, each with a per-model `serverType`. The extension never invents metadata — every backend's context window is read from its own documented endpoint, and a model that can't honestly report one is not served. Add vLLM Server & Model and Server Settings auto-detect the backend for you.
+- **Third-party backends**: llama.cpp, LM Studio, and Ollama are supported alongside vLLM, each with a per-model `serverType`. They cover the core features — chat, streaming, tools, personalities, per-server config, usage tracking — while vLLM keeps the full feature set (vLLM-specific request controls, per-request server metrics, auto-continue). The extension never invents metadata — every backend's context window is read from its own documented endpoint, and a model that can't honestly report one is not served. Add vLLM Server & Model and Server Settings auto-detect the backend for you.
 - **Live server dashboard**: at-a-glance metrics for every server right in the sidebar: queue status, KV-cache usage, TTFT, throughput, per-request token details, and a **cumulative token & cost tracker** (per model, Today / Overall, with optional per-1M cost rates). Non-vLLM servers are flagged as degraded (the vLLM-specific rows don't exist there), and throughput is still shown via client-side measurement (output tokens ÷ total time − time-to-first-token).
 - **Personality presets**: strip Microsoft's 21KB of system-prompt boilerplate, or give a model a character. Per model, no JSON editing.
 - **Per-server control**: each server carries its own endpoint, auth, sampling, token budget.
@@ -91,7 +92,7 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 
 ## Quick Start
 
-**Prerequisites:** A running vLLM server (any OpenAI-compatible endpoint) + GitHub Copilot.
+**Prerequisites:** A running model server + GitHub Copilot. **vLLM** is the primary target and fully supported; **llama.cpp**, **LM Studio**, and **Ollama** work as well (core features — see [Supported servers](#supported-servers)).
 
 > **💡 Tip:** Enable `extensions.autoUpdate` in VS Code settings to get automatic updates. (Auto-updates are disabled by default for extensions using proposed APIs like `chatProvider`.)
 
@@ -104,6 +105,25 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 > **Remote (SSH/WSL/Containers):** This extension runs on the remote host automatically when installed from the Marketplace. VS Code will install it on the remote extension host.
 
 > **Everything is per-model.** There is no global server or global sampling. Each model entry carries its own `serverUrl`, `requestHeaders`, and params. Settings take effect immediately; no reload needed.
+
+---
+
+## Supported servers
+
+**vLLM is the primary target and gets the full feature set.** llama.cpp, LM Studio, and Ollama are supported alongside it with the core features.
+
+| Backend | Status | Notes |
+|---------|--------|-------|
+| **vLLM** | ✅ Primary | Full feature set: vLLM request parameters, per-request server metrics, all dashboard rows |
+| **llama.cpp** | ✅ Core | OpenAI-compatible `/v1/chat/completions`; context window from `/v1/models` |
+| **LM Studio** | ✅ Core | Same as llama.cpp |
+| **Ollama** | ✅ Core | Same as llama.cpp; `tool_choice` values are dropped (the parameter isn't supported by Ollama's API), tool calling itself works |
+
+**Every backend gets:** native Copilot integration (chat, tools, vision, streaming), model modes, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue on empty responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
+
+**vLLM-only:** vLLM-specific request parameters (structured outputs, `chat_template_kwargs`, token budgets, …), per-request server metrics (TTFT/TPOT, KV cache, speculative decoding) — other backends show client-measured throughput instead, the full Dashboard/Deep-Dive row set (other backends are labeled `(degraded)`), and colon-truncation auto-continue.
+
+The backend is auto-detected on Add Server and Server Settings; it can also be set explicitly per model via `serverType`.
 
 ---
 
@@ -179,7 +199,7 @@ Replacements are exact substring matches, applied sequentially to every system m
 
 ### Server Dashboard
 
-A native Tree View sidebar shows live metrics for each configured vLLM server. No webviews, no extra ports.
+A native Tree View sidebar shows live metrics for each configured server. No webviews, no extra ports. vLLM servers show the full metric set; other backends are labeled `(degraded)` with the vLLM-only rows hidden, while throughput is measured client-side.
 
 - **At-a-glance queue status:** Each server shows running and waiting request counts (or *idle*)
 - **Expandable metrics:** Model IDs, vLLM version, context window, KV cache usage & hit rate, TTFT, throughput (tokens/sec)
@@ -219,7 +239,7 @@ Access via **View → vLLM-Copilot → Server Settings** or the sidebar section 
 
 ### Server Deep-Dive
 
-A per-server details webview that opens in the editor area with the full set of live server statistics, everything the dashboard sidebar aggregates, plus histogram breakdowns.
+A per-server details webview that opens in the editor area with live server statistics — the full vLLM set (including histogram breakdowns and the raw metric dump) for vLLM servers, or the available core metrics for other backends.
 
 - **Open from the Dashboard**: right-click any server node → **vLLM Deep-Dive** (or click the server row in a future release)
 - **Live polling**: refreshes at the same `vllm-copilot.dashboard.pollIntervalMs` interval as the sidebar
