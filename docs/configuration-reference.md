@@ -12,7 +12,8 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 
 | Field | Default | Description |
 |-------|:-------:|-------------|
-| `serverUrl` | — | **Required.** vLLM server URL (OpenAI-compatible). Each model targets its own server. |
+| `serverUrl` | — | **Required.** Server URL (OpenAI-compatible). Each model targets its own server. |
+| `serverType` | `vllm` | Backend protocol. `vllm` \| `lmstudio` \| `llamacpp` \| `ollama`. **Set automatically by Add Server**, and auto-detected in Server Settings for unconfigured models (from `/v1/models`, or a configured sibling's type). Missing always means `vllm`. Manual third-party entries must set this — the extension never probes at runtime. |
 | `requestHeaders` | `{}` | HTTP headers for this server (auth, routing). **Isolated** — never shared across servers. |
 | `id` | — | **Required.** Unique entry key. Add flow sets this to `"<model> on <host>"`. |
 | `vllmModelId` | same as `id` | Actual model ID on the vLLM server (for aliases). |
@@ -32,6 +33,19 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 | `cost` | — | Optional per-model cost rates for the dashboard **Token Usage** tracker (per 1,000,000 tokens). See [Token Usage & Cost](#token-usage--cost) below. |
 
 **Resolution chain (highest wins):** built-in defaults → model `defaultParams` → the selected `modelModes` entry.
+
+### Backend-specific context resolution
+
+The context window comes from the **backend's own documented endpoint** (never guessed, never fabricated — a model without one is refused):
+
+| `serverType` | Endpoint | Field |
+|---|---|---|
+| `vllm` | `GET /v1/models` | matching `data[].max_model_len` |
+| `lmstudio` | `GET /api/v1/models` | matching loaded instance `config.context_length`, else `max_context_length` |
+| `llamacpp` | `GET /props?model=<encoded id>` | `default_generation_settings.n_ctx` |
+| `ollama` | `GET /api/ps` | matching `models[].context_length` (model must be loaded) |
+
+`maxInputTokens` is computed from that window (`window − maxOutputTokens`) and can only clamp it further. A server that reports no valid window for the model is skipped with an error — there is no fallback budget.
 
 ---
 

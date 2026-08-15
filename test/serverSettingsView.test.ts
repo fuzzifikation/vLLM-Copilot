@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ServerSettingsViewProvider } from '../src/serverSettingsView.js';
+import { ServerSettingsViewProvider, resolveDetectedServerType } from '../src/serverSettingsView.js';
 import { ModelConfig } from '../src/config.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -523,5 +523,43 @@ describe('ServerSettingsViewProvider', () => {
         vscode.ConfigurationTarget.Global,
       );
     });
+  });
+});
+
+describe('resolveDetectedServerType', () => {
+  it('prefers the /v1/models signal over a sibling serverType', () => {
+    expect(
+      resolveDetectedServerType(
+        [{ owned_by: 'llamacpp' }, { owned_by: 'mystery' }],
+        [{ serverType: 'lmstudio' }],
+      )
+    ).toBe('llamacpp');
+  });
+
+  it('adopts a configured sibling serverType when /v1/models is inconclusive', () => {
+    // LM Studio / Ollama have no /v1/models signature → no vLLM/llamacpp signal.
+    expect(
+      resolveDetectedServerType(
+        [{ owned_by: 'mystery' }],
+        [{ serverType: 'lmstudio' }],
+      )
+    ).toBe('lmstudio');
+    expect(
+      resolveDetectedServerType(
+        [],
+        [{ serverType: 'ollama' }],
+      )
+    ).toBe('ollama');
+  });
+
+  it('returns undefined when neither the endpoint nor a sibling provides a type', () => {
+    expect(resolveDetectedServerType([{ owned_by: 'mystery' }], [])).toBeUndefined();
+    expect(
+      resolveDetectedServerType([{ owned_by: 'mystery' }], [{}])
+    ).toBeUndefined();
+  });
+
+  it('returns undefined for a fully inconclusive endpoint with no siblings at all', () => {
+    expect(resolveDetectedServerType([], [])).toBeUndefined();
   });
 });

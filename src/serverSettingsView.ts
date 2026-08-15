@@ -5,8 +5,9 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getConfig, buildEndpoint, findModelConfigIndex, type ModelConfig } from './config.js';
+import { getConfig, buildEndpoint, findModelConfigIndex, type ModelConfig, type ServerType } from './config.js';
 import { patchModelConfig, type ModelIdentity } from './configStore.js';
+import { detectServerTypeFromV1Models } from './vllmClient.js';
 import {
   discoverPersonalities,
   ensureGlobalPersonality,
@@ -57,6 +58,26 @@ interface ServerGroup {
   url: string;
   models: ModelConfig[];
   serverModelIds: string[];
+  /** Backend detected from the server's /v1/models data (undefined = unknown). */
+  detectedServerType?: ServerType;
+}
+
+/**
+ * Decide the backend type used to default `serverType` for a server group's
+ * unconfigured models. `/v1/models` can only identify vLLM (positive
+ * `max_model_len`) and llama.cpp (`owned_by: "llamacpp"`); LM Studio and Ollama
+ * expose their own endpoints and have no `/v1/models` signature. When the endpoint
+ * signal is inconclusive — no such entry, or the fetch failed — adopt the persisted
+ * `serverType` of a configured sibling on the same server instead of silently
+ * defaulting to vllm. Never guesses: absent both, returns undefined and the caller
+ * falls back to the vLLM policy default.
+ * @internal Exported for testing.
+ */
+export function resolveDetectedServerType(
+  entries: Array<{ owned_by?: string; max_model_len?: number }>,
+  siblings: ReadonlyArray<Pick<ModelConfig, 'serverType'>>
+): ServerType | undefined {
+  return detectServerTypeFromV1Models(entries) ?? siblings[0]?.serverType;
 }
 
 interface ReadyMessage {
@@ -206,19 +227,26 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     }
     const servers: ServerGroup[] = await Promise.all(
       Array.from(serverMap.entries()).map(async ([url, models]) => {
-        // Fetch server model IDs from /v1/models
+        // Fetch server model IDs from /v1/models (same endpoint Add Server probes).
+        // Also detect the backend from the response so unconfigured models can be
+        // added with the correct serverType instead of silently defaulting to vllm.
         const serverModelIds: string[] = [];
+        let entries: Array<{ id?: string; owned_by?: string; max_model_len?: number }> = [];
         try {
           const headers = models[0]?.requestHeaders ?? {};
           const resp = await fetch(buildEndpoint(url, 'v1/models'), { headers, signal: AbortSignal.timeout(5000) });
           if (resp.ok) {
-            const data = await resp.json() as { data?: Array<{ id?: string }> };
-            for (const m of data.data ?? []) {
-              if (m.id) serverModelIds.push(m.id);
-            }
+            entries = (await resp.json() as { data?: Array<{ id?: string; owned_by?: string; max_model_len?: number }> }).data ?? [];
           }
-        } catch { /* non-critical */ }
-        return { url, models, serverModelIds };
+        } catch { /* non-critical: no /v1/models signal */ }
+        for (const m of entries) {
+          if (m.id) serverModelIds.push(m.id);
+        }
+        // /v1/models can only identify vLLM and llama.cpp. LM Studio / Ollama have no
+        // /v1/models signature — when the endpoint signal is inconclusive (or unreachable),
+        // adopt the persisted serverType of a configured sibling on the same server.
+        const detectedServerType = resolveDetectedServerType(entries, models);
+        return { url, models, serverModelIds, detectedServerType };
       }),
     );
     const firstServer = servers[0];

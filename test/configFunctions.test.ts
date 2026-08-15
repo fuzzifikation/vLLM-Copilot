@@ -1,7 +1,24 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { buildAuthHeaders, validateConfig, buildModelId, resolveWorkspaceRelativePath, type VllmConfig } from '../src/config.js';
+import { buildAuthHeaders, validateConfig, resolveServerType, buildModelId, resolveWorkspaceRelativePath, type VllmConfig } from '../src/config.js';
+
+// ── resolveServerType ───────────────────────────────────────────────────
+
+describe('resolveServerType', () => {
+  it('always returns vllm when the field is missing (policy)', () => {
+    expect(resolveServerType(undefined)).toBe('vllm');
+    expect(resolveServerType({} as any)).toBe('vllm');
+    expect(resolveServerType({ serverType: undefined } as any)).toBe('vllm');
+  });
+
+  it('returns the explicit backend when set', () => {
+    expect(resolveServerType({ serverType: 'lmstudio' } as any)).toBe('lmstudio');
+    expect(resolveServerType({ serverType: 'llamacpp' } as any)).toBe('llamacpp');
+    expect(resolveServerType({ serverType: 'ollama' } as any)).toBe('ollama');
+    expect(resolveServerType({ serverType: 'vllm' } as any)).toBe('vllm');
+  });
+});
 
 // ── resolveWorkspaceRelativePath ──────────────────────────────────────────
 
@@ -100,6 +117,18 @@ describe('validateConfig', () => {
   it('warns when a model has no serverUrl', () => {
     const warnings = validateConfig({ ...makeValidConfig(), models: [{ id: 'm' }] });
     expect(warnings.some(w => w.includes('serverUrl'))).toBe(true);
+  });
+
+  it('accepts every known serverType without warning', () => {
+    for (const serverType of ['vllm', 'lmstudio', 'llamacpp', 'ollama']) {
+      const warnings = validateConfig(withModel({ serverType }));
+      expect(warnings.some(w => w.includes('serverType'))).toBe(false);
+    }
+  });
+
+  it('warns on an unknown serverType', () => {
+    const warnings = validateConfig(withModel({ serverType: 'anything' }));
+    expect(warnings.some(w => w.includes('serverType'))).toBe(true);
   });
 
   it('warns on maxOutputTokens <= 0', () => {

@@ -187,7 +187,7 @@ describe('DashboardTreeProvider', () => {
       serverUrl: normalizeServerUrl('http://s:8000/v1'),
       modelId: 'm1', timestamp: 1, promptTokens: 5, completionTokens: 7, totalTokens: 12,
       hasMetrics: false, hasCacheDetails: false, maxModelLen: 100, maxOutputTokens: 100,
-      firstTokenTimeMs: 10,
+      firstTokenTimeMs: 10, totalTimeMs: 50,
     });
 
     provider.setVisible(true);
@@ -224,7 +224,7 @@ describe('DashboardTreeProvider', () => {
       serverUrl: normalizeServerUrl('http://s:8000/v1'),
       modelId: 'm1', timestamp: 1, promptTokens: 1_000_000, completionTokens: 500_000, totalTokens: 1_500_000,
       cachedTokens: 200_000, hasMetrics: false, hasCacheDetails: true, maxModelLen: 1000, maxOutputTokens: 100,
-      firstTokenTimeMs: 10,
+      firstTokenTimeMs: 10, totalTimeMs: 50,
     });
 
     provider.setVisible(true);
@@ -272,7 +272,7 @@ describe('DashboardTreeProvider', () => {
       serverUrl: normalizeServerUrl('http://s:8000/v1'),
       modelId: 'm1', timestamp: 1, promptTokens: 5, completionTokens: 7, totalTokens: 12,
       cachedTokens: 0, hasMetrics: false, hasCacheDetails: true, maxModelLen: 1000, maxOutputTokens: 100,
-      firstTokenTimeMs: 10,
+      firstTokenTimeMs: 10, totalTimeMs: 50,
     });
 
     provider.setVisible(true);
@@ -299,7 +299,7 @@ describe('DashboardTreeProvider', () => {
       serverUrl: normalizeServerUrl('http://s:8000/v1'),
       modelId: 'm1', timestamp: 1, promptTokens: 3_700, completionTokens: 5_000, totalTokens: 8_700,
       cachedTokens: 1_200, hasMetrics: false, hasCacheDetails: true, maxModelLen: 1000, maxOutputTokens: 100,
-      firstTokenTimeMs: 10,
+      firstTokenTimeMs: 10, totalTimeMs: 50,
     });
 
     provider.setVisible(true);
@@ -316,6 +316,72 @@ describe('DashboardTreeProvider', () => {
       expect((input as any).description).toContain('3k in');
       expect((input as any).description).toContain('1k cached');
       expect((input as any).description).not.toContain('%');
+    });
+  });
+
+  it('flags a non-vLLM server as degraded, shows measured generation, and hides vLLM-only flag hints', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1', serverType: 'llamacpp' }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+    // Non-vLLM backends never report per-request metrics → measured path only.
+    recordRequest({
+      serverUrl: normalizeServerUrl('http://s:8000'),
+      modelId: 'm1', timestamp: 1, promptTokens: 10, completionTokens: 40, totalTokens: 50,
+      hasMetrics: false, hasCacheDetails: false, maxModelLen: 100, maxOutputTokens: 100,
+      firstTokenTimeMs: 10, totalTimeMs: 50,
+    });
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 's:8000');
+      expect(serverNode).toBeDefined();
+      expect((serverNode as any).description).toContain('llamacpp (degraded)');
+
+      const metrics = await provider.getChildren(serverNode as any);
+      const labels = metrics.map(m => (m as any).label as string);
+      // Degradation notice leads the server node.
+      expect(labels[0]).toBe('Backend');
+      expect((metrics[0] as any).description).toBe('llamacpp');
+
+      const last = metrics.find(m => (m as any).label === 'Last Request');
+      const rows = await provider.getChildren(last as any);
+      const rowLabels = rows.map(r => (r as any).label as string);
+      // Client-measured throughput: 40 tok / (50ms − 10ms) = 1000.0 tok/s.
+      const gen = rows.find(r => (r as any).label === 'Generation (measured)');
+      expect(gen).toBeDefined();
+      expect((gen as any).description).toContain('1000.0 tok/s');
+      // vLLM-only launch flags are meaningless here — no hint.
+      expect(rowLabels).not.toContain('⚡ More data with --enable-per-request-metrics');
+    });
+  });
+
+  it('shows measured generation for vLLM when --enable-per-request-metrics is off', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+    recordRequest({
+      serverUrl: normalizeServerUrl('http://s:8000'),
+      modelId: 'm1', timestamp: 1, promptTokens: 10, completionTokens: 20, totalTokens: 30,
+      hasMetrics: false, hasCacheDetails: true, maxModelLen: 100, maxOutputTokens: 100,
+      firstTokenTimeMs: 10, totalTimeMs: 50,
+    });
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 's:8000');
+      const metrics = await provider.getChildren(serverNode as any);
+      const last = metrics.find(m => (m as any).label === 'Last Request');
+      const rows = await provider.getChildren(last as any);
+      const rowLabels = rows.map(r => (r as any).label as string);
+      expect(rowLabels).toContain('Generation (measured)');
+      // It's vLLM, so the flag hint to enable server metrics still applies.
+      expect(rowLabels).toContain('⚡ More data with --enable-per-request-metrics');
     });
   });
 });

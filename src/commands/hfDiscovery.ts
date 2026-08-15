@@ -1,16 +1,17 @@
 import * as vscode from 'vscode';
-import type { ModelConfig } from '../config.js';
+import type { ModelConfig, ServerType } from '../config.js';
 import { buildEndpoint } from '../config.js';
 import { describeError } from '../messageConverter.js';
+import { resolveContextWindow } from '../vllmClient.js';
 import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig } from './presets.js';
 
 /**
- * Auto-configure a model by fetching metadata from HuggingFace and the vLLM server.
+ * Auto-configure a model by fetching metadata from HuggingFace and the server.
  *
  * Discovers:
  * - modelModes from chat_template Jinja2 kwargs (enable_thinking, preserve_thinking)
  * - imageInput capability from pipeline_tag
- * - max_model_len from vLLM /v1/models
+ * - context window from the shared backend-aware resolver (resolveContextWindow)
  * - generation defaults from generation_config.json on HuggingFace
  */
 
@@ -41,7 +42,6 @@ export interface HfGenerationConfig {
 
 interface VllmModelInfo {
   id: string;
-  max_model_len?: number;
   /** Underlying checkpoint id. vLLM sets this to the HF repo when the model is a
    *  `--served-model-name` alias, so it links aliases back to their real model. */
   root?: string;
@@ -63,7 +63,12 @@ export interface AutoConfigResult {
 }
 
 /**
- * Run auto-configuration for a model. Fetches from HuggingFace + vLLM server.
+ * Run auto-configuration for a model. Fetches from HuggingFace + the server.
+ *
+ * The context window comes from the SHARED backend-aware resolver
+ * (`resolveContextWindow`) — no independent context parsing here. `/v1/models` is
+ * read only for `root` (used to resolve the real HF repo when the served id is a
+ * quantized/aliased variant).
  *
  * When a model is served under a quantized or aliased name (e.g. `qwen3.6-27b-fp8`),
  * `vllmInfo.root` points to the base HuggingFace repo (`Qwen/Qwen3.6-27B`). HF lookups
@@ -72,31 +77,31 @@ export interface AutoConfigResult {
 export async function autoConfigureModel(
   modelId: string,
   serverUrl: string,
-  requestHeaders?: Record<string, string>
+  requestHeaders?: Record<string, string>,
+  serverType: ServerType = 'vllm',
 ): Promise<AutoConfigResult> {
   const summary: string[] = [];
   const modelConfig: ModelConfig = { id: modelId, vllmModelId: modelId };
 
-  // 1. Fetch from vLLM server.
+  // 1. Fetch served-model info for `root` (HF-repo link only — the context
+  //    window itself comes from the shared resolver below).
   let vllmInfo: VllmModelInfo | null = null;
   try {
     vllmInfo = await fetchVllmModelInfo(modelId, serverUrl, requestHeaders);
   } catch (err) {
-    summary.push(`⚠ Could not fetch model info from vLLM server: ${describeError(err)}`);
+    summary.push(`⚠ Could not fetch model info from server: ${describeError(err)}`);
   }
   let suggestedMaxOutputTokens: number | undefined;
-  if (vllmInfo) {
-    if (vllmInfo.max_model_len) {
-      // Context window comes from vLLM discovery — just inform the user here.
-      summary.push(`vLLM context window: ${vllmInfo.max_model_len.toLocaleString()} tokens`);
-      // Suggest output tokens as a factor of context window, capped at OUTPUT_TOKEN_CAP
-      suggestedMaxOutputTokens = Math.min(
-        Math.floor(vllmInfo.max_model_len * OUTPUT_TOKEN_FACTOR),
-        OUTPUT_TOKEN_CAP
-      );
-      summary.push(`Suggested max output tokens: ${suggestedMaxOutputTokens.toLocaleString()}`);
-    }
-  }
+  // Context resolution is MANDATORY — no context, no model (strict policy).
+  // The resolver THROWS a backend-specific message (endpoint, field, fix) when the
+  // model can't be served; propagating it prevents saving an unusable model.
+  const ctx = await resolveContextWindow(serverType, serverUrl, requestHeaders ?? {}, modelId);
+  summary.push(`Context window (${serverType}): ${ctx.toLocaleString()} tokens`);
+  suggestedMaxOutputTokens = Math.min(
+    Math.floor(ctx * OUTPUT_TOKEN_FACTOR),
+    OUTPUT_TOKEN_CAP
+  );
+  summary.push(`Suggested max output tokens: ${suggestedMaxOutputTokens.toLocaleString()}`);
 
   // Use the base HF repo (root) for HF lookups — quantized variants (e.g. `qwen3.6-27b-fp8`)
   // don't exist on HF; only the base model (`Qwen/Qwen3.6-27B`) does.
@@ -171,7 +176,9 @@ export async function autoConfigureModel(
         ? `pipeline: ${hfInfo.pipeline_tag}`
         : `model_type: ${modelType}`;
       summary.push(`Vision support detected (${detectedBy})`);
-      summary.push('  ⚠ Requires vLLM launched WITHOUT --language-model-only');
+      if (serverType === 'vllm') {
+        summary.push('  ⚠ Requires vLLM launched WITHOUT --language-model-only');
+      }
     }
 
     // Detect tool calling support from chat template (the only thing reliably discoverable)
@@ -182,7 +189,9 @@ export async function autoConfigureModel(
         modelConfig.capabilities ??= {};
         modelConfig.capabilities.toolCalling = true;
         summary.push('Tool calling support detected in chat template');
-        summary.push('  ⚠ Requires vLLM launched with --enable-auto-tool-choice --tool-call-parser <parser>');
+        if (serverType === 'vllm') {
+          summary.push('  ⚠ Requires vLLM launched with --enable-auto-tool-choice --tool-call-parser <parser>');
+        }
       } else {
         // The template is present but declares no tool support. Record the
         // detected absence explicitly — the step-4 fallback must NOT re-claim
@@ -213,12 +222,16 @@ export async function autoConfigureModel(
     modelConfig.capabilities.imageInput = false;
   }
 
-  // 5. Add vLLM launch requirements summary
+  // 5. Add launch requirements summary (vLLM-specific advice only for vLLM servers)
   summary.push('');
   summary.push('Note: These capabilities were detected from HuggingFace model metadata.');
-  summary.push('They only work if vLLM is launched with the required flags.');
+  if (serverType === 'vllm') {
+    summary.push('They only work if vLLM is launched with the required flags.');
+  }
   summary.push('Sampling parameters in a selected modelMode override the model\'s defaultParams.');
-  summary.push('If a feature does not work, check your vLLM server launch command.');
+  if (serverType === 'vllm') {
+    summary.push('If a feature does not work, check your vLLM server launch command.');
+  }
 
   return { modelConfig, summary, suggestedMaxOutputTokens };
 }
@@ -309,7 +322,8 @@ export async function resolveModelConfigForAdd(
   serverUrl: string,
   requestHeaders?: Record<string, string>,
   serverRoot?: string,
-  baseConfig?: ModelConfig
+  baseConfig?: ModelConfig,
+  serverType: ServerType = 'vllm',
 ): Promise<AutoConfigResult | null> {
   const presets = await loadModelPresets(context.extensionUri);
   const preset = findPresetForModel(presets, modelId, serverRoot);
@@ -325,9 +339,16 @@ export async function resolveModelConfigForAdd(
     if (choice === undefined) return null; // cancelled
     if (choice === 'Use Preset') {
       const userConfig = baseConfig ?? { id: modelId, vllmModelId: modelId };
+      // Strict policy: a preset config is only usable when the server reports a real
+      // context window. Resolve it HERE so the preset path cannot bypass the check —
+      // a failed resolution THROWS and the model is not saved.
+      const ctx = await resolveContextWindow(serverType, serverUrl, requestHeaders ?? {}, modelId);
       return {
         modelConfig: mergePresetWithUserConfig(preset.config, userConfig),
-        summary: [`Using preset ${preset.sourceFile}. Modes: ${modeNames}.`],
+        summary: [
+          `Using preset ${preset.sourceFile}. Modes: ${modeNames}.`,
+          `Context window (${serverType}): ${ctx.toLocaleString()} tokens`,
+        ],
       };
     }
   }
@@ -340,6 +361,36 @@ export async function resolveModelConfigForAdd(
       title: `Auto-configuring ${modelId}...`,
       cancellable: false,
     },
-    async () => autoConfigureModel(modelId, serverUrl, requestHeaders)
+    async () => autoConfigureModel(modelId, serverUrl, requestHeaders, serverType)
   );
+}
+
+/**
+ * Command-level boundary around {@link resolveModelConfigForAdd}. The resolver's strict
+ * checks THROW on purpose (e.g. a third-party entry with no resolvable context window —
+ * the model will not be served). Unwrapped, those throws surface as VS Code's generic
+ * contributed-command failure with nothing backend-specific in the output. This wrapper
+ * logs the actionable detail to the output channel and shows a real error message, then
+ * returns null (the caller treats null as "cancelled/not saved").
+ */
+export async function resolveModelConfigForAddSafely(
+  output: vscode.OutputChannel,
+  context: vscode.ExtensionContext,
+  modelId: string,
+  serverUrl: string,
+  requestHeaders?: Record<string, string>,
+  serverRoot?: string,
+  baseConfig?: ModelConfig,
+  serverType: ServerType = 'vllm',
+): Promise<AutoConfigResult | null> {
+  try {
+    return await resolveModelConfigForAdd(
+      context, modelId, serverUrl, requestHeaders, serverRoot, baseConfig, serverType
+    );
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[ERROR] Auto-configure failed for "${modelId}" on ${serverUrl}: ${detail}`);
+    vscode.window.showErrorMessage(`Auto-configure failed for "${modelId}": ${detail}`);
+    return null;
+  }
 }

@@ -26,6 +26,8 @@ const REQUEST_HEADERS: Record<string, string> = API_KEY ? { Authorization: `Bear
 const SERVER_CONFIG = {
   serverUrl: SERVER_URL,
   requestHeaders: REQUEST_HEADERS,
+  streamInactivityTimeout: 60000,
+  serverType: 'vllm' as const,
 };
 
 const d = ENABLED ? describe : describe.skip;
@@ -57,7 +59,7 @@ d('vLLM integration', () => {
   });
 
   it('can reach the server and get a context window', async () => {
-    const ctx = await client.getModelContextWindow(SERVER_URL, REQUEST_HEADERS, modelId);
+    const ctx = await client.getModelContextWindow('vllm', SERVER_URL, REQUEST_HEADERS, modelId);
     expect(ctx).toBeDefined();
     expect(typeof ctx).toBe('number');
   });

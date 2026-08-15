@@ -29,7 +29,7 @@
 //   - No Think:         Direct responses, no thinking tokens
 
 {
-  "vllmModelId": "InternScience/Agents-A1",
+  "vllmModelId": "Agents-A1",
   "displayName": "Agents-A1",
   "family": "qwen3_5_moe",
   "maxOutputTokens": 32768,

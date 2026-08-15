@@ -80,6 +80,14 @@ describe('processSSEChunk', () => {
     expect(event.reasoning_content).toBe('let me think...');
   });
 
+  it('extracts reasoning_content from delta.reasoning_content (llama.cpp / LM Studio)', () => {
+    const data = makeChunk({
+      choices: [{ delta: { reasoning_content: 'thinking...' }, finish_reason: null }],
+    });
+    const event = processSSEChunk(data, pending)!;
+    expect(event.reasoning_content).toBe('thinking...');
+  });
+
   it('accumulates tool call args across multiple chunks', () => {
     // Chunk 1: name arrives
     const chunk1 = makeChunk({

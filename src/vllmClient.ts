@@ -1,11 +1,213 @@
 import * as vscode from 'vscode';
-import { getConfig, buildEndpoint, DEFAULT_MODEL_SETTINGS, type VllmConfig } from './config.js';
+import { getConfig, buildEndpoint, DEFAULT_MODEL_SETTINGS, type VllmConfig, type ServerType } from './config.js';
 import { fetchWithRetry } from './fetchRetry.js';
 import { readSseStream } from './streamReader.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
-import type { StreamEvent, VllmChatOptions, OpenAIChatMessage, VllmModel } from './types.js';
+import type { ServerConfig } from './provider/requestBuilder.js';
+import type { StreamEvent, VllmChatOptions, OpenAIChatMessage, VllmModel, LmStudioModel } from './types.js';
 export type { StreamEvent, VllmChatOptions, OpenAIChatMessage, VllmModel } from './types.js';
+
+/**
+ * Timeout for metadata/detection GETs (context resolution, Add Server probes).
+ * Guards against an unresponsive endpoint blocking provider discovery or the
+ * Add Server flow indefinitely. An AbortError is NOT an "invalid signature" —
+ * it propagates immediately (never retried, never treated as "keep probing").
+ */
+const METADATA_TIMEOUT_MS = 10000;
+
+/**
+ * Overall budget for the initial chat POST to receive response headers.
+ * fetch and fetchWithRetry have no deadline of their own, so without this a server
+ * that accepts the connection but never answers would hang the request forever.
+ */
+const INITIAL_RESPONSE_TIMEOUT_MS = 60000;
+
+/**
+ * True when `err` is an HTTP 404 (probe "endpoint not served here" signal).
+ * fetchWithRetry throws `HTTP 404: <text> — <body>` for non-5xx statuses.
+ */
+function isHttp404(err: unknown): boolean {
+  return err instanceof Error && /^HTTP\s+404\b/.test(err.message);
+}
+
+/**
+ * True when a probe failed in a way that means "this signature is not served
+ * here" — HTTP 404 (no such route) or a non-JSON body (200 HTML, etc.).
+ * Both are invalid-signature signals: REJECT this signature and keep probing.
+ * Transport / auth / timeout / 5xx errors are NOT — they throw immediately.
+ */
+function isInvalidSignature(err: unknown): boolean {
+  return isHttp404(err) || err instanceof SyntaxError;
+}
+
+/**
+ * Resolve a model's runtime context window for a KNOWN backend (strict switch —
+ * never probes). Single source of truth; `VllmClient.getModelContextWindow`,
+ * auto-configure and test & refresh all call this.
+ *
+ * @throws Backend-specific, actionable error naming the backend, the endpoint+field
+ *   inspected, and the concrete fix. We NEVER fabricate a window.
+ */
+export async function resolveContextWindow(
+  serverType: ServerType,
+  serverUrl: string,
+  requestHeaders: Record<string, string> = {},
+  modelId: string,
+): Promise<number> {
+  switch (serverType) {
+    case 'vllm': {
+      const url = buildEndpoint(serverUrl, 'v1/models');
+      const data = await fetchJsonRaw<{ data?: VllmModel[] }>(url, requestHeaders);
+      // Exact wire-id matching only — the configured `vllmModelId` must be one of
+      // the server's served model ids. No quantization stripping, no cross-org
+      // keys, no root-alias forgiveness. The extension's own write paths always
+      // store the exact served id, so a mismatch is a hand-edited config that
+      // violates the contract — it must fail loudly, not be silently forgiven and
+      // replayed as a request the server will reject.
+      const model = (data.data || []).find((m) => m.id === modelId);
+      const ctx = model?.max_model_len;
+      if (typeof ctx === 'number' && ctx > 0) return ctx;
+      throw new Error(
+        `vLLM model "${modelId}" has no runtime context window: GET ${url} returned no matching ` +
+        `entry with max_model_len. Fix the served model id or server config. If this entry should ` +
+        `target a third-party backend, set "serverType" ('lmstudio' | 'llamacpp' | 'ollama') — ` +
+        `the model will not be served.`
+      );
+    }
+    case 'lmstudio': {
+      const url = buildEndpoint(serverUrl, 'api/v1/models');
+      const data = await fetchJsonRaw<{ models?: LmStudioModel[] }>(url, requestHeaders);
+      const lm = (data.models || []).find((m) => m.key === modelId || m.id === modelId);
+      const ctx = lm?.loaded_instances?.[0]?.config?.context_length ?? lm?.max_context_length;
+      if (typeof ctx === 'number' && ctx > 0) return ctx;
+      throw new Error(
+        `LM Studio model "${modelId}" has no context window: GET ${url} reported no loaded instance ` +
+        `with config.context_length (or max_context_length). Load the model in LM Studio — it will not be served.`
+      );
+    }
+    case 'llamacpp': {
+      const url = buildEndpoint(serverUrl, `props?model=${encodeURIComponent(modelId)}`);
+      const data = await fetchJsonRaw<{ default_generation_settings?: { n_ctx?: number } }>(url, requestHeaders);
+      const ctx = data.default_generation_settings?.n_ctx;
+      if (typeof ctx === 'number' && ctx > 0) return ctx;
+      throw new Error(
+        `llama.cpp model "${modelId}" has no context window: GET ${url} reported no ` +
+        `default_generation_settings.n_ctx. Check the server API key and model id — it will not be served.`
+      );
+    }
+    case 'ollama': {
+      const url = buildEndpoint(serverUrl, 'api/ps');
+      const data = await fetchJsonRaw<{ models?: Array<{ model?: string; name?: string; context_length?: number }> }>(url, requestHeaders);
+      const entry = (data.models || []).find((m) => m.model === modelId || m.name === modelId);
+      const ctx = entry?.context_length;
+      if (typeof ctx === 'number' && ctx > 0) return ctx;
+      throw new Error(
+        `Ollama model "${modelId}" is not loaded (or reports no context_length): GET ${url}. ` +
+        `Load the model with a context size in Ollama — it will not be served.`
+      );
+    }
+  }
+}
+
+/**
+ * Classify a server by probing its documented signatures, FIRST-MATCH-WINS in this order:
+ *
+ *   1. /v1/models   entry with positive max_model_len           → 'vllm'
+ *   2. /v1/models   entry with owned_by === 'llamacpp'      → 'llamacpp'
+ *   3. /api/v1/models  with models[].key shape                → 'lmstudio'
+ *   4. /api/ps        with models[] shape                      → 'ollama'
+ *
+ * Probing rules: 404 = endpoint not served here → continue. 200 with a structurally
+ * invalid shape = that signature is rejected → continue. 200 with a valid shape but the
+ * model not listed = continue. Auth / network / timeout / 5xx = throw immediately.
+ * No match anywhere = throw "unsupported server" naming every expected signature.
+ *
+ * Add Server ONLY. Never used at runtime — runtime uses {@link resolveContextWindow}.
+ */
+export async function detectServerType(
+  serverUrl: string,
+  requestHeaders: Record<string, string> = {},
+  modelId: string,
+): Promise<ServerType> {
+  // 1+2. OpenAI /v1/models (vLLM, llama.cpp, LM Studio all serve it).
+  let v1: { data?: VllmModel[] };
+  try {
+    v1 = await fetchJsonRaw<{ data?: VllmModel[] }>(buildEndpoint(serverUrl, 'v1/models'), requestHeaders);
+  } catch (err) {
+    if (!isInvalidSignature(err)) throw err;
+    v1 = {};
+  }
+  const model = (v1.data || []).find((m) => m.id === modelId || m.root === modelId);
+  if (model?.max_model_len) return 'vllm';
+  if (model?.owned_by === 'llamacpp') return 'llamacpp';
+
+  // 3. LM Studio metadata endpoint.
+  try {
+    const lm = await fetchJsonRaw<{ models?: LmStudioModel[] }>(buildEndpoint(serverUrl, 'api/v1/models'), requestHeaders);
+    if (Array.isArray(lm.models)) {
+      const entry = lm.models.find((m) => m.key === modelId || m.id === modelId);
+      if (entry) return 'lmstudio';
+      // Valid LM Studio shape but model not listed → not it; keep probing.
+    }
+    // 200 with a non-models shape → not LM Studio; keep probing.
+  } catch (err) {
+    if (!isInvalidSignature(err)) throw err;
+  }
+
+  // 4. Ollama loaded-models endpoint.
+  try {
+    const ps = await fetchJsonRaw<{ models?: Array<{ model?: string; name?: string }> }>(buildEndpoint(serverUrl, 'api/ps'), requestHeaders);
+    if (Array.isArray(ps.models)) {
+      const entry = ps.models.find((m) => m.model === modelId || m.name === modelId);
+      if (entry) return 'ollama';
+      // Valid Ollama shape but model not listed → not it; keep probing.
+    }
+    // 200 with a non-models shape → not Ollama.
+  } catch (err) {
+    if (!isInvalidSignature(err)) throw err;
+  }
+
+  throw new Error(
+    `Unsupported server at ${serverUrl}: expected vLLM (/v1/models with max_model_len), ` +
+    `llama.cpp (owned_by "llamacpp"), LM Studio (/api/v1/models with models[].key), or ` +
+    `Ollama (/api/ps with models[]). No documented signature matched model "${modelId}".`
+  );
+}
+
+/**
+ * Classify a server from an ALREADY-FETCHED `/v1/models` `data` array — no probing.
+ * FIRST-MATCH-WINS over the documented /v1/models signals only:
+ *   any entry with positive max_model_len → 'vllm'
+ *   any entry with owned_by === 'llamacpp' → 'llamacpp'
+ * Returns undefined when neither signal is present. LM Studio and Ollama expose
+ * their own endpoints; from /v1/models alone there is no honest signal for them,
+ * so we return nothing rather than guess.
+ *
+ * Used by the Server Settings add path to default `serverType` for unconfigured
+ * server models. Runtime never calls this — runtime uses {@link resolveContextWindow}.
+ */
+export function detectServerTypeFromV1Models(
+  entries: Array<{ owned_by?: string; max_model_len?: number }>
+): ServerType | undefined {
+  if (entries.some((m) => typeof m.max_model_len === 'number' && m.max_model_len > 0)) {
+    return 'vllm';
+  }
+  if (entries.some((m) => m.owned_by === 'llamacpp')) {
+    return 'llamacpp';
+  }
+  return undefined;
+}
+
+/** Bare JSON GET for the standalone resolver/detector (no logger, no retry callbacks). */
+async function fetchJsonRaw<T>(url: string, requestHeaders: Record<string, string>): Promise<T> {
+  const response = await fetchWithRetry(
+    url,
+    { method: 'GET', signal: AbortSignal.timeout(METADATA_TIMEOUT_MS) },
+    requestHeaders
+  );
+  return await response.json() as T;
+}
 
 /** Keys in the chat completion body that must not be overwritten by options spread. */
 const PROTECTED_BODY_KEYS = new Set(['model', 'messages', 'stream', 'stream_options']);
@@ -62,38 +264,49 @@ export class VllmClient {
   }
 
   /**
-   * Fetch the context window (max_model_len) for a specific model from a vLLM server.
-   * Returns undefined if the server is unavailable or the model is not found.
+   * Resolve a model's context window from its server, switching strictly on the
+   * configured `serverType` — never probing at runtime:
    *
-   * @param serverUrl - The server URL to query
-   * @param requestHeaders - Auth/routing headers for the server
-   * @param vllmModelId - The model ID to look up
+   *   vllm      → /v1/models            max_model_len
+   *   lmstudio  → /api/v1/models        loaded_instances[].config.context_length else max_context_length
+   *   llamacpp  → /props                default_generation_settings.n_ctx (router: ?model=<encoded>)
+   *   ollama    → /api/ps              models[].context_length (LOADED only)
+   *
+   * **Policy (user directive): we never fabricate metadata.** If the server is alive
+   * but the standard documented path for that backend does not yield a context window,
+   * this THROWS a clear, backend-specific error and discovery skips the model.
+   * There is no fallback window, no synthetic budget, no cross-backend cascade.
+   * Connection / auth / 5xx failures also propagate — a dead or misconfigured
+   * server must never surface as a crippled model.
+   *
+   * Wraps the standalone {@link resolveContextWindow} (single source of truth) so
+   * non-provider consumers (auto-configure, test & refresh) reuse the exact same
+   * implementation without a client instance.
+   *
+   * @throws Backend-specific, actionable error when the server is unreachable or the
+   *   standard path reports no window.
    */
   async getModelContextWindow(
+    serverType: ServerType,
     serverUrl: string,
     requestHeaders: Record<string, string> = {},
     vllmModelId: string
-  ): Promise<number | undefined> {
-    try {
-      const url = buildEndpoint(serverUrl, 'v1/models');
-      this.fileLogger?.logRequest('GET', url, requestHeaders);
+  ): Promise<number> {
+    return resolveContextWindow(serverType, serverUrl, requestHeaders, vllmModelId);
+  }
 
-      const response = await fetchWithRetry(url, {
-        method: 'GET',
-      }, requestHeaders, this.retryCallbacks.onRetry, this.retryCallbacks.onRetrySuccess);
-
-      const data = await response.json() as { data?: VllmModel[] };
-      this.fileLogger?.logResponse(response.status, url, this.getResponseHeaders(response), data);
-
-      const models = data.data || [];
-      const model = models.find((m: VllmModel) => m.id === vllmModelId || m.root === vllmModelId);
-      return model?.max_model_len;
-    } catch (err) {
-      // Log the specific failure so the user can see WHY discovery failed
-      // (DNS, TLS, 401, timeout, etc.) — not just "failed to connect".
-      this.output.appendLine(`[WARN] getModelContextWindow: ${describeError(err)}`);
-      return undefined;
-    }
+  /** GET a JSON endpoint with the shared log/retry plumbing. Errors propagate. */
+  private async fetchJson<T>(
+    url: string,
+    requestHeaders: Record<string, string>
+  ): Promise<T> {
+    this.fileLogger?.logRequest('GET', url, requestHeaders);
+    const response = await fetchWithRetry(url, {
+      method: 'GET',
+    }, requestHeaders, this.retryCallbacks.onRetry, this.retryCallbacks.onRetrySuccess);
+    const data = await response.json() as T;
+    this.fileLogger?.logResponse(response.status, url, this.getResponseHeaders(response), data);
+    return data;
   }
 
   /**
@@ -113,7 +326,7 @@ export class VllmClient {
     messages: OpenAIChatMessage[],
     options: VllmChatOptions,
     token: vscode.CancellationToken,
-    serverConfig?: { serverUrl?: string; requestHeaders?: Record<string, string>; streamInactivityTimeout?: number }
+    serverConfig?: ServerConfig
   ): AsyncGenerator<StreamEvent> {
     const url = buildEndpoint(serverConfig?.serverUrl ?? '', 'v1/chat/completions');
 
@@ -121,7 +334,7 @@ export class VllmClient {
     // Guard: never let options overwrite critical request fields.
     // modelOptions from Copilot can carry arbitrary keys — if one collides with
     // 'messages' it will corrupt the request (vLLM TextEncodeInput error).
-    const body = this.buildChatBody(model, messages, options);
+    const body = this.buildChatBody(model, messages, options, serverConfig?.serverType ?? 'vllm');
 
     const controller = new AbortController();
     const onCancellation = token.onCancellationRequested(() => {
@@ -146,6 +359,13 @@ export class VllmClient {
     // and starting the timer before fetchWithRetry would fire during that sleep,
     // aborting the retry. Start the timer only after fetchWithRetry returns successfully.
 
+    // Overall bound on the initial POST itself. Unlike the pre-fetch inactivity timer
+    // (which is disabled for inactivityMs=0 and must not fire during the 1.5s retry
+    // sleep), this is a fixed generous budget that starts before fetchWithRetry and is
+    // cleared the moment headers arrive; readSseStream then takes over for
+    // time-to-first-data. Cleared in finally on every path.
+    let initialResponseTimer: ReturnType<typeof setTimeout> | undefined;
+
     // Log request-relevant params for debugging
     const requestKeys = ['chat_template_kwargs', 'temperature', 'top_p', 'top_k', 'presence_penalty', 'bad_words', 'ignore_eos', 'repetition_detection', 'structured_outputs'];
     const requestParams = Object.fromEntries(requestKeys.filter(k => k in body).map(k => [k, body[k]]));
@@ -162,6 +382,10 @@ export class VllmClient {
     this.fileLogger?.logRequest('POST', url, allHeaders, body);
 
     try {
+      initialResponseTimer = setTimeout(() => {
+        controller.abort(`Initial request timed out after ${INITIAL_RESPONSE_TIMEOUT_MS}ms without a response`);
+      }, INITIAL_RESPONSE_TIMEOUT_MS);
+
       const response = await fetchWithRetry(
         url,
         {
@@ -175,6 +399,9 @@ export class VllmClient {
         this.retryCallbacks.onRetrySuccess
       );
 
+      // Headers arrived — the initial-response budget is spent; the inactivity
+      // timer now governs time-to-first-data.
+      clearTimeout(initialResponseTimer);
       // Now start the pre-fetch timer — fetch succeeded, so if the server doesn't
       // begin streaming data within inactivityMs, abort.
       resetPreFetchInactivity();
@@ -203,6 +430,7 @@ export class VllmClient {
       this.fileLogger?.logError('POST', url, status ? parseInt(status, 10) : 0, errMsg);
       throw err;
     } finally {
+      clearTimeout(initialResponseTimer);
       clearTimeout(inactivityTimer);
       onCancellation.dispose();
     }
@@ -212,13 +440,24 @@ export class VllmClient {
    * Build the chat completion request body, guarding protected keys from overwrite.
    *
    * This is the **moat seam** — every vLLM-specific sampling param (bad_words,
-   * repetition_detection, structured_outputs, …) enters the request here.
+   * repetition_detection, structured_outputs, …) enters the request here, and
+   * backend adaptation happens here so callers (streamOrchestrator) don't need
+   * per-backend branches:
+   *
+   *   - Secondary backends (lmstudio/llamacpp/ollama): drop vLLM-only
+   *     continuation controls (continue_final_message/add_generation_prompt) but KEEP
+   *     the assistant prefill message — the prefill is a normal message, the dropped
+   *     fields are just vLLM-only body flags.
+   *   - Ollama additionally: drop tool_choice with ONE [WARN] (tools stay).
+   *   - vLLM: unchanged (byte-identical request bodies — the F5 gate).
+   *
    * New params from Phase 1+ features are added to this method only.
    */
   private buildChatBody(
     model: string,
     messages: OpenAIChatMessage[],
-    options: VllmChatOptions
+    options: VllmChatOptions,
+    serverType: ServerType
   ): Record<string, unknown> {
     const body: Record<string, unknown> = {
       model,
@@ -228,6 +467,18 @@ export class VllmClient {
     };
     for (const [k, v] of Object.entries(options)) {
       if (v !== undefined && !PROTECTED_BODY_KEYS.has(k)) body[k] = v;
+    }
+    if (serverType !== 'vllm') {
+      // Continuation controls are vLLM-only. The assistant prefill message itself
+      // (in `messages`) is retained — only the body-level flags are stripped.
+      delete body.continue_final_message;
+      delete body.add_generation_prompt;
+    }
+    if (serverType === 'ollama' && 'tool_choice' in body) {
+      delete body.tool_choice;
+      this.output.appendLine(
+        `[WARN] Ollama does not support tool_choice — removed from request (tools preserved).`
+      );
     }
     return body;
   }

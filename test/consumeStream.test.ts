@@ -117,6 +117,9 @@ describe('consumeStream', () => {
     expect(last?.promptTokens).toBe(10);
     expect(last?.totalTokens).toBe(15);
     expect(last?.maxModelLen).toBe(1100);
+    // Client-measured total time is always recorded, so the dashboard can compute
+    // throughput even when the server reports no per-request metrics.
+    expect(last?.totalTimeMs).toBeTypeOf('number');
   });
 
   it('stops early when the token is cancelled before any part is reported', async () => {

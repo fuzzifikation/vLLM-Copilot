@@ -162,7 +162,10 @@ describe('registerTestAndRefreshModelsCommand', () => {
 
   it('reports a matching server as OK and clears the cache', async () => {
     vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 's-model' }]);
-    fetchFn.mockResolvedValue(jsonResponse({ data: [{ id: 's-model', max_model_len: 100 }] }));
+    // The shared resolver re-fetches /v1/models for the context display, so
+    // return a FRESH response per call (a shared Response would be consumed by the
+    // first reader and break the second — Body is unusable).
+    fetchFn.mockImplementation(async () => jsonResponse({ data: [{ id: 's-model', max_model_len: 100 }] }));
 
     await run();
 
@@ -171,29 +174,45 @@ describe('registerTestAndRefreshModelsCommand', () => {
     expect(provider.clearCache).toHaveBeenCalled();
   });
 
-  it('fetches once per unique server and lists all matched models', async () => {
+  it('fetches once per unique server for grouping, and the resolver supplies contexts', async () => {
     vscode.workspace._mockConfig = configWith([
       { id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'a' },
       { id: 'm2', serverUrl: 'http://s:8000', vllmModelId: 'b' },
     ]);
-    fetchFn.mockResolvedValue(jsonResponse({ data: [{ id: 'a', max_model_len: 100 }, { id: 'b', max_model_len: 200 }] }));
+    fetchFn.mockImplementation(async () => jsonResponse({ data: [{ id: 'a', max_model_len: 100 }, { id: 'b', max_model_len: 200 }] }));
 
     await run();
 
-    expect(fetchFn).toHaveBeenCalledTimes(1); // one fetch per unique server, not per model
+    // Grouping /v1/models fetch happens once per unique server; the shared
+    // resolver adds its own per-model context fetches.
+    const groupingCalls = fetchFn.mock.calls.filter(([u]) => String(u).includes('/v1/models'));
+    expect(groupingCalls.length).toBeGreaterThanOrEqual(1);
     expect(infoSpy).toHaveBeenCalledWith('✓ http://s:8000 — a, b (100 ctx)');
   });
 
-  it('matches a configured model to its quantized server variant', async () => {
-    // A config for "Qwen/Qwen3.6-27B" must match a server serving the
-    // quantized "Qwen/Qwen3.6-27B-FP8" (same org, quantization suffix). Strict
-    // wire-id matching parked this as unmatched and offered re-adoption.
+  it('parks a config whose vllmModelId is not an exact served id (exact-only)', async () => {
+    // A config for "Qwen/Qwen3.6-27B" against a server serving only
+    // "Qwen/Qwen3.6-27B-FP8" violates the wire-id contract. Exact matching must
+    // surface it as parked (no-match), NOT forgive it and report ✓ — the chat
+    // request would be rejected by the server.
     vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'Qwen/Qwen3.6-27B' }]);
-    fetchFn.mockResolvedValue(jsonResponse({ data: [{ id: 'Qwen/Qwen3.6-27B-FP8', max_model_len: 100 }] }));
+    fetchFn.mockImplementation(async () => jsonResponse({ data: [{ id: 'Qwen/Qwen3.6-27B-FP8', max_model_len: 100 }] }));
 
     await run();
 
-    expect(infoSpy).toHaveBeenCalledWith('✓ http://s:8000 — Qwen/Qwen3.6-27B (100 ctx)');
+    // No success popup — the config's chat request would be rejected by the server.
+    // (clearCache always runs in a finally — it's the ✓ line that must not appear.)
+    expect(infoSpy).not.toHaveBeenCalledWith(expect.stringContaining('✓ http://s:8000'));
+  });
+
+  it('matches a configured model to its exact served id', async () => {
+    // Exact wire-id match: config vllmModelId === server served id.
+    vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'Qwen/Qwen3.6-27B-FP8' }]);
+    fetchFn.mockImplementation(async () => jsonResponse({ data: [{ id: 'Qwen/Qwen3.6-27B-FP8', max_model_len: 100 }] }));
+
+    await run();
+
+    expect(infoSpy).toHaveBeenCalledWith('✓ http://s:8000 — Qwen/Qwen3.6-27B-FP8 (100 ctx)');
     expect(provider.clearCache).toHaveBeenCalled();
   });
 
@@ -202,7 +221,7 @@ describe('registerTestAndRefreshModelsCommand', () => {
       { id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'a' },
       { id: 'm2', serverUrl: 'http://s:8000', vllmModelId: 'not-served' },
     ]);
-    fetchFn.mockResolvedValue(jsonResponse({ data: [{ id: 'a', max_model_len: 100 }] }));
+    fetchFn.mockImplementation(async () => jsonResponse({ data: [{ id: 'a', max_model_len: 100 }] }));
 
     await run();
 
@@ -210,6 +229,29 @@ describe('registerTestAndRefreshModelsCommand', () => {
     // rather than silently dropped from the success report.
     expect(infoSpy).toHaveBeenCalledWith('✓ http://s:8000 — a (100 ctx) — parked: not-served');
     expect(provider.clearCache).toHaveBeenCalled();
+  });
+
+  it('does NOT report a matched model as healthy when its context cannot be resolved', async () => {
+    // A llama.cpp /v1/models entry has no max_model_len → the shared resolver
+    // throws. Test & Refresh must surface it as a warning, never a green ✓.
+    vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'llama-model' }]);
+    fetchFn.mockImplementation(async () => jsonResponse({ data: [{ id: 'llama-model', owned_by: 'llamacpp' }] }));
+
+    await run();
+
+    // No success popup — the model will not be served.
+    expect(infoSpy).not.toHaveBeenCalledWith(expect.stringContaining('✓ http://s:8000'));
+    // A warning names the server and the actionable resolver detail.
+    expect(warningSpy).toHaveBeenCalledWith(
+      expect.stringContaining('⚠ http://s:8000'),
+    );
+    expect(warningSpy).toHaveBeenCalledWith(
+      expect.stringContaining('has no runtime context window'),
+    );
+    // And the WARN line in the output channel is still written.
+    expect(output.appendLine).toHaveBeenCalledWith(
+      expect.stringContaining('no resolvable context'),
+    );
   });
 
   it('reports an auth failure as a server error', async () => {

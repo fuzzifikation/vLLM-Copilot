@@ -6,15 +6,23 @@ import {
   resolveServerConfig,
   resolveModelSettings,
   resolveRequestParams,
+  resolveServerType,
   type VllmConfig,
+  type ServerType,
 } from '../config.js';
 import type { OpenAIChatMessage } from '../types.js';
 
-/** Per-model server config resolved by {@link buildRequest} for the client call. */
+/**
+ * Per-model server config resolved by {@link buildRequest} for the client call.
+ * Single shared declaration (also used by `ProviderClient` and `VllmClient`) —
+ * never re-declare inline elsewhere.
+ */
 export interface ServerConfig {
   serverUrl: string;
   requestHeaders: Record<string, string>;
   streamInactivityTimeout: number;
+  /** Which backend's protocol to speak. Missing → 'vllm'. */
+  serverType: ServerType;
 }
 
 /** Result of request assembly: everything the stream call needs. */
@@ -121,11 +129,14 @@ export function buildRequest(
   // Resolve the vLLM server model ID: use vllmModelId from override if set, otherwise fall back to preset id
   const vllmModelId = resolveVllmModelId(override) || model.id;
 
-  // Resolve per-model server config (serverUrl + isolated request headers + transport).
+  // Resolve per-model server config (serverUrl + isolated request headers + transport
+  // + backend type). Missing serverType resolves to 'vllm' — zero behavior change
+  // for existing configs, while secondary backends get protocol-aware adaptation.
   const resolved = resolveServerConfig(override);
   const serverConfig: ServerConfig = {
     ...resolved,
     streamInactivityTimeout: resolveModelSettings(override).streamInactivityTimeout,
+    serverType: resolveServerType(override),
   };
 
   // Log which headers are being sent (keys only, not values) for diagnostics

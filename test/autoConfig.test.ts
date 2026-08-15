@@ -208,17 +208,23 @@ describe('mergePresetWithUserConfig', () => {
 
 describe('findPresetForModel', () => {
   const preset = {
-    config: { vllmModelId: 'zai-org/GLM-5.2' } as ModelConfig,
+    config: { vllmModelId: 'GLM-5.2' } as ModelConfig,
     sourceFile: 'glm-5.2-config.json',
   };
   const presets = [preset];
 
-  it('matches on exact model id', () => {
+  it('matches when the preset id is a case-insensitive substring of the served id', () => {
     expect(findPresetForModel(presets, 'zai-org/GLM-5.2')).toBe(preset);
+    expect(findPresetForModel(presets, 'glm-5.2-fp8')).toBe(preset);
   });
 
-  it('does not match a different id without a root', () => {
-    expect(findPresetForModel(presets, 'zai-glm-52')).toBeUndefined();
+  it('matches a llama.cpp full-path gguf served id by basename', () => {
+    // /srv/data/models/Qwen3.8-27B-Q6_K.gguf → preset "Qwen3.8-27B"
+    const pathPreset = {
+      config: { vllmModelId: 'Qwen3.8-27B' } as ModelConfig,
+      sourceFile: 'Qwen-Qwen3.8-27B.json',
+    };
+    expect(findPresetForModel([pathPreset], '/srv/data/models/Qwen3.8-27B-Q6_K.gguf')).toBe(pathPreset);
   });
 
   it('matches an alias via its server root', () => {
@@ -226,16 +232,15 @@ describe('findPresetForModel', () => {
     expect(findPresetForModel(presets, 'zai-glm-52', 'zai-org/GLM-5.2')).toBe(preset);
   });
 
-  it('returns undefined when neither id nor root matches', () => {
+  it('does not match when the preset id is not a substring', () => {
+    expect(findPresetForModel(presets, 'zai-glm-52')).toBeUndefined();
     expect(findPresetForModel(presets, 'other-model', 'other-root')).toBeUndefined();
   });
 
-  it('matches a cross-org quantized variant on model name only', () => {
-    // nvidia's NVFP4-served DeepSeek-V4-Flash resolves to the deepseek-ai preset:
-    // quantization only changes weight precision, and the serving org is
-    // irrelevant to inference parameters.
+  it('matches a cross-org quantized variant when the id is a substring', () => {
+    // "DeepSeek-V4-Flash" appears inside "nvidia/DeepSeek-V4-Flash-NVFP4".
     const dsPreset = {
-      config: { vllmModelId: 'deepseek-ai/DeepSeek-V4-Flash' } as ModelConfig,
+      config: { vllmModelId: 'DeepSeek-V4-Flash' } as ModelConfig,
       sourceFile: 'DeepSeek-V4-Flash.json',
     };
     expect(findPresetForModel([dsPreset], 'nvidia/DeepSeek-V4-Flash-NVFP4')).toBe(dsPreset);
@@ -243,10 +248,31 @@ describe('findPresetForModel', () => {
 
   it('does not cross-match a different model that shares a name token', () => {
     const chatPreset = {
-      config: { vllmModelId: 'deepseek-ai/DeepSeek-V4-Chat' } as ModelConfig,
+      config: { vllmModelId: 'DeepSeek-V4-Chat' } as ModelConfig,
       sourceFile: 'DeepSeek-V4-Chat.json',
     };
     expect(findPresetForModel([chatPreset], 'nvidia/DeepSeek-V4-Flash-NVFP4')).toBeUndefined();
+  });
+
+  it('prefers the most specific preset regardless of directory order (ambiguity regression)', () => {
+    // `DeepSeek-V4-Flash` is a substring of `DeepSeek-V4-Flash-0731`, so the
+    // generic and specific presets both match the 0731 served id. The longest
+    // vllmModelId must win — independent of readDirectory() ordering.
+    const generic = {
+      config: { vllmModelId: 'DeepSeek-V4-Flash' } as ModelConfig,
+      sourceFile: 'DeepSeek-V4-Flash.json',
+    };
+    const specific = {
+      config: { vllmModelId: 'DeepSeek-V4-Flash-0731' } as ModelConfig,
+      sourceFile: 'DeepSeek-V4-Flash-0731.json',
+    };
+    expect(findPresetForModel([generic, specific], 'DeepSeek-V4-Flash-0731')).toBe(specific);
+    expect(findPresetForModel([specific, generic], 'DeepSeek-V4-Flash-0731')).toBe(specific);
+  });
+
+  it('never matches a preset without a vllmModelId', () => {
+    const noId = { config: { id: 'x' } as ModelConfig, sourceFile: 'x.json' };
+    expect(findPresetForModel([noId], 'anything')).toBeUndefined();
   });
 });
 

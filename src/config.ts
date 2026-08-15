@@ -4,6 +4,17 @@ import type { WireStructuredOutputConfig } from './types.js';
 
 export type StructuredOutputConfig = WireStructuredOutputConfig;
 
+/**
+ * The backend that serves this model. Every model targets its own server; the
+ * backend determines which metadata endpoint yields its served context window
+ * and which request fields are adapted.
+ *
+ * Missing `serverType` ALWAYS means vLLM (intentional product policy — every
+ * released configuration is vLLM). Secondary backends are explicit opt-in via
+ * the Add Server flow or manual config.
+ */
+export type ServerType = 'vllm' | 'lmstudio' | 'llamacpp' | 'ollama';
+
 export interface ModelConfig {
   /**
    * Unique identifier for this model preset in VS Code.
@@ -44,6 +55,13 @@ export interface ModelConfig {
    * Every model targets its own server — there is no global server.
    */
   serverUrl?: string;
+  /**
+   * Backend serving this model: `vllm` (default), `lmstudio`, `llamacpp`, or
+   * `ollama`. Missing/omitted ALWAYS means `vllm`. Set by the Add Server
+   * flow after detection, or manually for a secondary backend. Used to select the
+   * required context endpoint and request adaptation — never guessed at runtime.
+   */
+  serverType?: ServerType;
   /**
    * HTTP headers sent with every request to this model's server (auth, routing).
    * Isolated: used only for this model's server, never shared with other servers.
@@ -181,6 +199,14 @@ export function resolveVllmModelId(override: ModelConfig | undefined): string | 
 }
 
 /**
+ * Resolve the backend type for a model. A missing field ALWAYS means `vllm` —
+ * every released configuration is vLLM; secondary backends must opt in.
+ */
+export function resolveServerType(model?: ModelConfig): ServerType {
+  return model?.serverType ?? 'vllm';
+}
+
+/**
  * Resolve a (possibly relative) file path against the first workspace folder.
  *
  * Single shared implementation for `systemMessageReplacementsFile` resolution
@@ -233,66 +259,6 @@ export function buildModelId(serverUrl: string, vllmModelId: string): string {
 }
 
 /**
- * Strip quantization/format suffixes from a model ID for fuzzy matching.
- * e.g. "Qwen/Qwen3.6-27B-FP8" → "Qwen/Qwen3.6-27B"
- *      "Qwen/Qwen3.6-27B-GGUF" → "Qwen/Qwen3.6-27B"
- *
- * Quantization format doesn't affect inference parameters (temperature, top_p, etc.),
- * so configs for the base model should match all quantized variants.
- *
- * NOTE: This keeps the org prefix. For cross-org matching (e.g. a `nvidia/`-served
- * quantized variant of a `deepseek-ai/` model), use {@link modelMatchKey} instead.
- */
-export function normalizeModelId(modelId: string): string {
-  // Common quantization/format suffixes (order matters: check longer suffixes first).
-  // Matching is case-insensitive — vLLM may serve "qwen3.6-27b-fp8" (lowercase)
-  // while presets use "Qwen/Qwen3.6-27B-FP8".
-  const suffixes = [
-    '-GGUF', '-GPTQ', '-AWQ', '-AQLM', '-EAGLE',
-    '-FP8', '-INT8', '-INT4', '-NF4',
-    '-NVFP4',
-    '-4bit', '-8bit',
-  ];
-  let normalized = modelId;
-  for (const suffix of suffixes) {
-    if (normalized.toLowerCase().endsWith(suffix.toLowerCase())) {
-      normalized = normalized.slice(0, -suffix.length);
-      break;
-    }
-  }
-  return normalized;
-}
-
-/**
- * Canonical comparison key for matching model configs across orgs and
- * quantization formats.
- *
- * Strips everything up to and including the first `/` (the org/company prefix),
- * then strips quantization suffixes, then lowercases. Two model ids that share
- * the same base model name — regardless of who served them or how they were
- * quantized — produce the same key.
- *
- * e.g. "nvidia/DeepSeek-V4-Flash-NVFP4" → "deepseek-v4-flash"
- *      "deepseek-ai/DeepSeek-V4-Flash"  → "deepseek-v4-flash"
- *
- * Quantization only changes weight precision, not inference parameters, so a
- * preset authored for one org's checkpoint applies to any other org's quantized
- * variant of the same model. We deliberately ignore the company that produced
- * the weights — matching on the model *name* only.
- *
- * Models without a `/` (e.g. a `--served-model-name` alias like `zai-glm-52`)
- * are left intact (minus quantization), so they only match presets whose base
- * name equals the alias.
- */
-export function modelMatchKey(modelId: string): string {
-  // Drop the org/company prefix: everything up to and including the first '/'.
-  // HF repo ids contain at most one '/', so this is safe.
-  const slashIndex = modelId.indexOf('/');
-  const withoutOrg = slashIndex >= 0 ? modelId.slice(slashIndex + 1) : modelId;
-  return normalizeModelId(withoutOrg).toLowerCase();
-}
-
-/**
  * Find the user override that produced a given VS Code model id.
  *
  * `buildModelInfo` sets a model's id to `override.id`, or — for id-less configs —
@@ -304,25 +270,25 @@ export function modelMatchKey(modelId: string): string {
  * vLLM model id too — matching on `o.id` alone would silently drop the model's
  * `modelModes`.
  *
+ * Matching is EXACT ONLY — no fuzzy tiers, no quantization stripping, no
+ * cross-org keys. `vllmModelId` is a wire identity: it must exactly equal one
+ * of the server's served model ids. The picker id is unique and deduped by
+ * construction, and every extension write path stores the exact served id, so
+ * exact matching always finds the config. A mismatch means the user hand-edited a
+ * config to violate the contract (pointing `vllmModelId` at a name the server
+ * does not serve) — that must fail loudly at discovery/T&R, not be silently
+ * forgiven and replayed as a request the server will reject.
+ *
  * Matching is in tiers:
  * 1. Exact: config key equals the model id.
  * 2. Composite round-trip: an id-less config whose derived `buildModelId` equals
  *    the model id. Only id-less configs participate, so an id'd config that shares
  *    the same wire id + server is never matched by another config's composite.
- * 3. Quantization-agnostic (org-aware): strips -FP8/-AWQ/-GGUF/etc. suffixes,
- *    so a config for "Qwen/Qwen3.6-27B" matches "Qwen/Qwen3.6-27B-FP8".
- * 4. Cross-org + quantization-agnostic: additionally strips the company prefix,
- *    so a config for "deepseek-ai/DeepSeek-V4-Flash" matches a server running
- *    "nvidia/DeepSeek-V4-Flash-NVFP4". Quantization only affects weight
- *    precision, not inference parameters, and the org that served the checkpoint
- *    is irrelevant to sampling config.
  */
 export function resolveOverrideForModel(
   overrides: ModelConfig[],
   modelId: string
 ): ModelConfig | undefined {
-  const normalized = normalizeModelId(modelId);
-  const matchKey = modelMatchKey(modelId);
   return overrides.find(o => {
     const oId = o.id || resolveVllmModelId(o);
     if (!oId) return false;
@@ -330,11 +296,7 @@ export function resolveOverrideForModel(
     if (oId === modelId) return true;
     // Composite round-trip: match a derived "<model> on <host>" id back to the
     // id-less config that discovery assigned it to.
-    if (!o.id && o.serverUrl && buildModelId(o.serverUrl, oId) === modelId) return true;
-    // Fuzzy match: quantization-agnostic (org-aware)
-    if (normalizeModelId(oId) === normalized) return true;
-    // Fuzzy match: cross-org + quantization-agnostic (model name only)
-    return modelMatchKey(oId) === matchKey;
+    return !o.id && o.serverUrl && buildModelId(o.serverUrl, oId) === modelId;
   });
 }
 
@@ -517,6 +479,14 @@ export function validateConfig(config: VllmConfig): string[] {
       }
     }
 
+    // serverType must be a known backend when present. Missing always means vLLM.
+    if (model.serverType !== undefined && !['vllm', 'lmstudio', 'llamacpp', 'ollama'].includes(model.serverType)) {
+      warnings.push(
+        `Model "${display}": serverType "${model.serverType}" is not a supported backend ` +
+        `(expected "vllm", "lmstudio", "llamacpp", or "ollama").`
+      );
+    }
+
     const settings = resolveModelSettings(model);
     if (settings.maxOutputTokens <= 0) {
       warnings.push(`Model "${display}": maxOutputTokens is ${settings.maxOutputTokens}; should be > 0.`);
@@ -636,6 +606,7 @@ export function findModelConfig(
  */
 const CLEARABLE_ON_EMPTY: readonly (keyof ModelConfig)[] = [
   'displayName',
+  'serverType',
   'maxOutputTokens',
   'maxInputTokens',
   'estimateCharsPerToken',

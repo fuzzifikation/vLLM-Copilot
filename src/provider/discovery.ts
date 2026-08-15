@@ -4,6 +4,7 @@ import {
   resolveOverrideForModel,
   resolveServerConfig,
   resolveModelSettings,
+  resolveServerType,
   type ModelConfig,
 } from '../config.js';
 import { buildModelInfo } from '../modelInfo.js';
@@ -18,6 +19,12 @@ import type { ProviderClient } from './contracts.js';
  * not sum. Pure w.r.t. the collaborator surfaces — the remote-install guard and
  * the cached-model set are the provider's (lifecycle/cache owner); this function
  * takes the overrides + client and returns the discovered models.
+ *
+ * Policy: a model is served ONLY when its server reports a context window on the
+ * standard documented path for its backend. A missing window or unreachable server
+ * THROWS from the resolver and the model is skipped with a clear warning — never
+ * a fabricated budget. The resolver's own message is preserved verbatim so the
+ * user sees the backend-specific cause, not a vague rewrite.
  */
 export async function discoverModels(
   modelOverrides: ModelConfig[],
@@ -38,24 +45,21 @@ export async function discoverModels(
     const settings = resolveModelSettings(override);
     const vllmModelId = resolveVllmModelId(override) || override.id || '';
     const serverConfig = resolveServerConfig(override);
+    const serverType = resolveServerType(override);
 
     try {
-      // Fetch context window from vLLM server — this is authoritative and cannot
-      // be set in settings. Also serves as a server availability check.
-      const maxModelLen = await client.getModelContextWindow(
+      // Resolve the context window as a bare number, switching strictly on the
+      // model's serverType. Connection/auth/5xx failures and a missing window
+      // all THROW from the resolver with a backend-specific message — no fabricated
+      // budget (user directive). The error message below preserves that detail.
+      const ctx = await client.getModelContextWindow(
+        serverType,
         serverConfig.serverUrl,
         serverConfig.requestHeaders,
         vllmModelId
       );
 
-      if (!maxModelLen) {
-        return {
-          model: null,
-          error: `[WARN] Model "${vllmModelId}" — server did not report max_model_len. Server may be offline or model not loaded.`,
-        };
-      }
-
-      const serverModel = { id: vllmModelId, max_model_len: maxModelLen };
+      const serverModel = { id: vllmModelId, max_model_len: ctx };
       return {
         model: buildModelInfo(serverModel, override, settings, serverConfig.serverUrl, (family, modelId) => {
           // Fires only when no preset-declared family was available AND
@@ -73,7 +77,7 @@ export async function discoverModels(
       const id = override.id || vllmModelId || '(unnamed model)';
       return {
         model: null,
-        error: `[WARN] Model "${id}" — failed to connect to server: ${describeError(err)}`,
+        error: `[WARN] Model "${id}" skipped: ${describeError(err)}`,
       };
     }
   });

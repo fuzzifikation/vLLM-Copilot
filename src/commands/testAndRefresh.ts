@@ -7,10 +7,11 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, normalizeModelId } from '../config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveServerType } from '../config.js';
 import type { ModelConfig } from '../config.js';
 import type { VllmModel } from '../types.js';
 import { describeError } from '../messageConverter.js';
+import { resolveContextWindow } from '../vllmClient.js';
 import { runDiagnostics, formatReport } from '../diagnostics.js';
 
 /**
@@ -20,11 +21,11 @@ import { runDiagnostics, formatReport } from '../diagnostics.js';
  */
 export interface ServerTestResult {
   serverUrl: string;
-  status: 'ok' | 'error' | 'no-match';
+  status: 'ok' | 'error' | 'no-match' | 'ctx-error';
   /** All model configs grouped under this server. */
   modelConfigs: ModelConfig[];
   /** Models whose vllmModelId matched a served model. */
-  matched: Array<{ config: ModelConfig; vllmModelId: string; maxModelLen?: number }>;
+  matched: Array<{ config: ModelConfig; vllmModelId: string; maxModelLen?: number; ctxError?: string }>;
   /** Models whose vllmModelId was NOT found on the server (parked). */
   parked: Array<{ config: ModelConfig; vllmModelId: string }>;
   errorMessage?: string;
@@ -208,12 +209,12 @@ export function registerTestAndRefreshModelsCommand(
         const serverModels: VllmModel[] = data.data || [];
 
         // Match each configured model against the server's loaded models.
-        // Matching is quantization-agnostic (org-aware), consistent with the rest
-        // of the extension (`resolveOverrideForModel`): a config for
-        // "Qwen/Qwen3.6-27B" must match a server serving "Qwen/Qwen3.6-27B-FP8".
-        // Strict wire-id matching here reported perfectly valid models as
-        // "parked" and steered users to re-adopt what they already configured.
-        const matched: Array<{ config: ModelConfig; vllmModelId: string; maxModelLen?: number }> = [];
+        // EXACT wire-id matching only — `vllmModelId` must be one of the server's
+        // served model ids. The extension's write paths always store the exact
+        // served id, so a config that doesn't match was hand-edited to point at a
+        // name the server does not serve — that must surface as "parked" loudly,
+        // not be forgiven here and replayed as a request the server will reject.
+        const matched: Array<{ config: ModelConfig; vllmModelId: string; maxModelLen?: number; ctxError?: string }> = [];
         const parked: Array<{ config: ModelConfig; vllmModelId: string }> = [];
 
         for (const model of group.models) {
@@ -222,22 +223,46 @@ export function registerTestAndRefreshModelsCommand(
             parked.push({ config: model, vllmModelId: '(unnamed)' });
             continue;
           }
-          const found = serverModels.find((m: VllmModel) => normalizeModelId(m.id) === normalizeModelId(vllmModelId));
+          const found = serverModels.find((m: VllmModel) => m.id === vllmModelId);
           if (found) {
-            matched.push({ config: model, vllmModelId, maxModelLen: found.max_model_len });
+            // Display-only context, resolved via the SHARED backend resolver
+            // (same code path as provider discovery). Independent parsing here would
+            // drift — a llama.cpp /v1/models entry has no max_model_len at all.
+            // A failure is NOT swallowed: the model discovery refuses to advertise
+            // must not display as healthy (no context, no model).
+            let maxModelLen: number | undefined;
+            let ctxError: string | undefined;
+            try {
+              maxModelLen = await resolveContextWindow(
+                resolveServerType(model),
+                group.serverUrl,
+                group.requestHeaders ?? {},
+                vllmModelId
+              );
+            } catch (err) {
+              ctxError = describeError(err);
+              outputChannel.appendLine(`[WARN] Model "${vllmModelId}" matched but has no resolvable context: ${ctxError} — it will not be served.`);
+            }
+            matched.push({ config: model, vllmModelId, maxModelLen, ctxError });
           } else {
             parked.push({ config: model, vllmModelId });
           }
         }
 
         if (matched.length > 0) {
+          // A server is only "OK" if at least one matched model actually has a
+          // resolvable context window — i.e. it will genuinely be served. A wire
+          // match whose context failed is NOT healthy (the model is refused), so a
+          // server where every match failed context must not render as a green ✓.
+          const healthy = matched.some((m) => m.maxModelLen !== undefined);
           return {
             serverUrl: group.serverUrl,
-            status: 'ok',
+            status: healthy ? 'ok' : 'ctx-error',
             modelConfigs: group.models,
             matched,
             parked,
             serverModelList: serverModels,
+            ...(healthy ? {} : { errorMessage: 'Models matched but have no resolvable context' }),
           };
         } else {
           return {
@@ -290,7 +315,9 @@ export function registerTestAndRefreshModelsCommand(
         const names = r.matched.map(m => m.vllmModelId).join(', ');
         const ctx = r.matched[0]?.maxModelLen
           ? ` (${r.matched[0].maxModelLen.toLocaleString()} ctx)`
-          : '';
+          : r.matched[0]?.ctxError
+            ? ' (⚠ no context — not served)'
+            : '';
         // A server with at least one match is "OK", but a configured model whose
         // wire id isn't served is silently dropped from the picker — surface it
         // rather than reporting unqualified success.
@@ -300,6 +327,22 @@ export function registerTestAndRefreshModelsCommand(
       });
       vscode.window.showInformationMessage(
         lines.length === 1 ? lines[0] : `Reachable servers:\n${lines.join('\n')}`
+      );
+    }
+
+    // 3a2. ONE warning for servers whose matched models ALL lack a resolvable
+    //    context window. Their wire ids matched, but nothing will be served — so
+    //    this is a ⚠, never the green ✓ reserved for servers that actually serve.
+    const ctxErrorResults = serverResults.filter(r => r.status === 'ctx-error');
+    if (ctxErrorResults.length > 0) {
+      const lines = ctxErrorResults.map(r => {
+        const details = r.matched
+          .map(m => `${m.vllmModelId}: ${m.ctxError ?? 'no resolvable context'}`)
+          .join('\n  ');
+        return `⚠ ${r.serverUrl} — matched but not served:\n  ${details}`;
+      });
+      vscode.window.showWarningMessage(
+        lines.length === 1 ? lines[0] : `Models matched but have no resolvable context:\n${lines.join('\n')}`
       );
     }
 

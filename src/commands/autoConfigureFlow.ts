@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { ModelConfig } from '../config.js';
 import { resolveConfigId, resolveVllmModelId, normalizeServerUrl, buildModelId } from '../config.js';
 import { replaceModelConfig, type IdentifiedModelConfig } from '../configStore.js';
-import { resolveModelConfigForAdd } from './hfDiscovery.js';
+import { resolveModelConfigForAddSafely } from './hfDiscovery.js';
 import { confirmAndSaveAddedModel, type ClearCacheProvider } from './addServerFlow.js';
 
 /**
@@ -49,8 +49,9 @@ export function registerAutoConfigureModelCommand(
           m => m.serverUrl && normalizeServerUrl(m.serverUrl) === argServerNorm
         );
         const serverUrl = normalizeServerUrl(sibling?.serverUrl ?? argServerUrl);
-        const discoveryResult = await resolveModelConfigForAdd(
-          context, vllmId, serverUrl, sibling?.requestHeaders
+        const discoveryResult = await resolveModelConfigForAddSafely(
+          output, context, vllmId, serverUrl, sibling?.requestHeaders,
+          undefined, undefined, sibling?.serverType
         );
         if (!discoveryResult) return;
 
@@ -59,6 +60,7 @@ export function registerAutoConfigureModelCommand(
           id: buildModelId(serverUrl, vllmId),
           vllmModelId: vllmId,
           serverUrl,
+          serverType: sibling?.serverType, // preserve the sibling's backend type — missing → vllm
           ...(sibling?.requestHeaders ? { requestHeaders: sibling.requestHeaders } : {}),
         };
         if (discoveryResult.suggestedMaxOutputTokens !== undefined && newConfig.maxOutputTokens === undefined) {
@@ -105,10 +107,11 @@ export function registerAutoConfigureModelCommand(
     }
 
     // 2. Shared resolution (preset check → dialog → preset or HuggingFace)
-    const discoveryResult = await resolveModelConfigForAdd(
-      context, vllmId, normalizeServerUrl(serverUrl), modelConfig.requestHeaders,
+    const discoveryResult = await resolveModelConfigForAddSafely(
+      output, context, vllmId, normalizeServerUrl(serverUrl), modelConfig.requestHeaders,
       undefined, // no server root for existing models
-      modelConfig // preserve identity
+      modelConfig, // preserve identity
+      modelConfig.serverType // persist the model's own backend type
     );
     if (!discoveryResult) return;
 
@@ -120,6 +123,7 @@ export function registerAutoConfigureModelCommand(
       vllmModelId: modelConfig.vllmModelId,
       serverUrl: modelConfig.serverUrl,
       requestHeaders: modelConfig.requestHeaders,
+      serverType: modelConfig.serverType, // preserve the model's own backend type — missing → vllm
       systemMessageReplacementsFile: modelConfig.systemMessageReplacementsFile,
       autoContinueRetries: modelConfig.autoContinueRetries,
       streamInactivityTimeout: modelConfig.streamInactivityTimeout,

@@ -4,7 +4,9 @@
 // Verified 2026-07-18.
 //
 // NOTE: These params work for ANY quantization variant (FP8, GGUF, AWQ, etc.).
-// The extension's model matcher strips quantization suffixes automatically.
+// Preset matching is substring-based, so a preset for the base model applies to
+// any served variant whose id contains it. The config's `vllmModelId` must still
+// be an EXACT served model id — the extension never strips or forgives mismatches.
 //
 // Chat template parameters (all Jinja template variables, passed via chat_template_kwargs):
 //   - `reasoning_effort: "no_think" / "low" / "high"` — controls chain-of-thought depth
@@ -34,7 +36,7 @@
 
 
 {
-  "vllmModelId": "tencent/Hy3",
+  "vllmModelId": "Hy3",
   "displayName": "Hy3",
   "family": "hy_v3",
   "maxOutputTokens": 32768,
@@ -48,21 +50,21 @@
         "reasoning_effort": "high"
       },
       "temperature": 0.9,
-      "topP": 1.0
+      "top_p": 1.0
     },
     "Think (Light)": {
       "chat_template_kwargs": {
         "reasoning_effort": "low"
       },
       "temperature": 0.9,
-      "topP": 1.0
+      "top_p": 1.0
     },
     "No Think": {
       "chat_template_kwargs": {
         "reasoning_effort": "no_think"
       },
       "temperature": 0.9,
-      "topP": 1.0
+      "top_p": 1.0
     }
   }
 }

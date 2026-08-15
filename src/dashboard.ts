@@ -4,7 +4,7 @@
  */
 
 import * as vscode from 'vscode';
-import { getConfig, resolveServerConfig, normalizeServerUrl, findModelConfig, type ModelConfig } from './config.js';
+import { getConfig, resolveServerConfig, normalizeServerUrl, findModelConfig, type ModelConfig, type ServerType } from './config.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import {
   getLastRequest, getServerUsage, hasServerUsage, onUsageStoreDidChange,
@@ -28,6 +28,7 @@ class ServerTreeItem extends vscode.TreeItem {
   constructor(
     public readonly serverUrl: string,
     public readonly metrics: ServerMetrics,
+    public readonly serverType?: ServerType,
   ) {
     const displayName = shortUrl(serverUrl);
     const statusIcon = metrics.online
@@ -37,8 +38,16 @@ class ServerTreeItem extends vscode.TreeItem {
     super(displayName, vscode.TreeItemCollapsibleState.Collapsed);
     this.iconPath = statusIcon;
     this.id = `server:${serverUrl}`;
-    this.description = metrics.online ? summaryLine(metrics) : 'Offline';
-    this.tooltip = new vscode.MarkdownString(`${serverUrl}\n*${metrics.models.join(', ') || 'no models'}*`);
+    const degraded = serverType !== undefined && serverType !== 'vllm';
+    this.description = metrics.online
+      ? degraded
+        ? `${summaryLine(metrics)}  ·  ${serverType} (degraded)`
+        : summaryLine(metrics)
+      : 'Offline';
+    this.tooltip = new vscode.MarkdownString(
+      `${serverUrl}\n*${metrics.models.join(', ') || 'no models'}*` +
+      (degraded ? `\n\n**${serverType} server — dashboard metrics are degraded.** Most metrics shown below (KV cache, throughput, TTFT, queue, speculative decoding) are vLLM-specific and unavailable for this backend. Token usage and cost are unaffected.` : '')
+    );
     this.contextValue = metrics.online ? 'serverOnline' : 'serverOffline';
   }
 }
@@ -125,6 +134,8 @@ class LastRequestTreeItem extends vscode.TreeItem {
     public readonly maxModelLen: number = 0,
     public readonly maxOutputTokens: number = 0,
     public readonly firstTokenTimeMs: number | null = null,
+    public readonly totalTimeMs: number | null = null,
+    public readonly serverType?: ServerType,
   ) {
     super('Last Request', vscode.TreeItemCollapsibleState.Collapsed);
     this.iconPath = new vscode.ThemeIcon('info');
@@ -222,6 +233,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
   /** Active engine subscriptions: serverUrl → { metrics, dispose } */
   private subscriptions: Array<{ serverUrl: string; metrics: ServerMetrics; dispose: () => void }> = [];
+  /** serverUrl → persisted serverType (first configured model wins). Used to flag
+   *  non-vLLM servers as degraded in the tree. */
+  private serverTypes = new Map<string, ServerType>();
   private outputChannel: vscode.OutputChannel;
   /** Flag to coalesce multiple per-server updates into one tree re-render. */
   private refreshScheduled = false;
@@ -297,11 +311,15 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       }
       // Group models by server URL
       const serverMap = new Map<string, Record<string, string>>();
+      this.serverTypes.clear();
       for (const model of config.models) {
         if (!model.serverUrl) continue;
         if (!serverMap.has(model.serverUrl)) {
           const serverConfig = resolveServerConfig(model);
           serverMap.set(model.serverUrl, serverConfig.requestHeaders);
+        }
+        if (!this.serverTypes.has(model.serverUrl) && model.serverType) {
+          this.serverTypes.set(model.serverUrl, model.serverType);
         }
       }
 
@@ -345,13 +363,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     if (!element) {
       const items: (ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem)[] = [this.getPollIntervalTreeItem()];
       const servers = this.subscriptions.map(sub =>
-        new ServerTreeItem(sub.serverUrl, sub.metrics),
+        new ServerTreeItem(sub.serverUrl, sub.metrics, this.serverTypes.get(sub.serverUrl)),
       );
       return [...items, ...servers, new AddServerTreeItem(), new TestRefreshTreeItem()];
     }
 
     if (element instanceof ServerTreeItem) {
-      return this.getServerMetricsChildren(element.metrics, element.serverUrl);
+      return this.getServerMetricsChildren(element.metrics, element.serverUrl, element.serverType);
     }
 
     if (element instanceof ModelsTreeItem) {
@@ -373,10 +391,22 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     return [];
   }
 
-  private getServerMetricsChildren(m: ServerMetrics, serverUrl?: string): (MetricTreeItem | ModelsTreeItem | LastRequestTreeItem | FlagHintTreeItem | TokenUsageTreeItem)[] {
+  private getServerMetricsChildren(m: ServerMetrics, serverUrl?: string, serverType?: ServerType): (MetricTreeItem | ModelsTreeItem | LastRequestTreeItem | FlagHintTreeItem | TokenUsageTreeItem)[] {
     const items: (MetricTreeItem | ModelsTreeItem | LastRequestTreeItem | FlagHintTreeItem | TokenUsageTreeItem)[] = [];
     if (!m.online) {
       return [new MetricTreeItem('Error', m.error || 'Connection failed', 'error')];
+    }
+
+    // Non-vLLM backend notice — the server is reachable and serving, but most
+    // of the rows below are vLLM-specific and will read "—". Say so up front
+    // instead of letting the user think the dashboard is broken.
+    if (serverType !== undefined && serverType !== 'vllm') {
+      items.push(new MetricTreeItem(
+        'Backend',
+        serverType,
+        'warning',
+        `This server runs ${serverType}, not vLLM. Dashboard metrics are severely degraded: KV cache, TTFT, throughput, queue, and speculative-decoding rows are vLLM-specific and unavailable here. Token usage and cost are tracked normally.`,
+      ));
     }
 
     // Basic info
@@ -502,6 +532,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
           lastRequest.maxModelLen,
           lastRequest.maxOutputTokens,
           lastRequest.firstTokenTimeMs,
+          lastRequest.totalTimeMs,
+          serverType,
         ));
       }
 
@@ -562,7 +594,11 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       ));
     }
 
-    // 4. Generation time + throughput (requires --enable-per-request-metrics)
+    // 4. Generation time + throughput.
+    //    Preferred: server-reported (requires --enable-per-request-metrics).
+    //    Fallback: measured client-side — output tokens / (total time − TTFT).
+    //    The fallback covers non-vLLM backends (no per-request metrics at all)
+    //    and vLLM servers without --enable-per-request-metrics.
     if (e.hasMetrics && e.generationMs != null && e.generationMs > 0) {
       const sec = (e.generationMs / 1000).toFixed(2);
       const tokPerSec = ((e.completionTokens / e.generationMs) * 1000).toFixed(1);
@@ -571,6 +607,16 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
         `${sec}s  ·  ${tokPerSec} tok/s`,
         'rocket',
         'Time to generate all output tokens. Throughput = output tokens / generation time.',
+      ));
+    } else if (e.completionTokens > 0 && e.firstTokenTimeMs != null && e.totalTimeMs != null && e.totalTimeMs > e.firstTokenTimeMs) {
+      const decodeMs = Math.max(e.totalTimeMs - e.firstTokenTimeMs, 1);
+      const sec = (decodeMs / 1000).toFixed(2);
+      const tokPerSec = ((e.completionTokens / decodeMs) * 1000).toFixed(1);
+      items.push(new RequestMetricTreeItem(
+        'Generation (measured)',
+        `${sec}s  ·  ${tokPerSec} tok/s`,
+        'rocket',
+        'Time to generate output, measured client-side (total request time minus time-to-first-token). Used when the server reports no per-request metrics (non-vLLM backend, or vLLM without --enable-per-request-metrics).',
       ));
     }
 
@@ -630,10 +676,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       ));
     }
 
-    // Hints for missing data
+    // Hints for missing data — vLLM-only launch flags are meaningless for non-vLLM
+    // backends, so only suggest them when the server is vLLM (or type unknown).
     const missingFlags: string[] = [];
-    if (!e.hasCacheDetails) missingFlags.push('--enable-prompt-tokens-details');
-    if (!e.hasMetrics) missingFlags.push('--enable-per-request-metrics');
+    if (e.serverType === undefined || e.serverType === 'vllm') {
+      if (!e.hasCacheDetails) missingFlags.push('--enable-prompt-tokens-details');
+      if (!e.hasMetrics) missingFlags.push('--enable-per-request-metrics');
+    }
     if (missingFlags.length > 0) {
       items.push(new FlagHintTreeItem(
         `⚡ More data with ${missingFlags.join(' & ')}`

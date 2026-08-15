@@ -95,6 +95,7 @@ describe('registerAutoConfigureModelCommand', () => {
         vllmModelId: 'wire',
         serverUrl: 'http://host:8000',
         requestHeaders: { 'X-Auth': 'keep' },
+        serverType: undefined, // missing → treated as vllm by policy
         autoContinueRetries: 3,
         streamInactivityTimeout: 60000,
         systemMessageReplacementsFile: '.vllm/spartan.json',
@@ -107,7 +108,7 @@ describe('registerAutoConfigureModelCommand', () => {
       update: chatUpdate,
       inspect: () => ({ defaultValue: 'none' }),
     };
-    resolveSpy = vi.spyOn(hfDiscovery, 'resolveModelConfigForAdd').mockResolvedValue({
+    resolveSpy = vi.spyOn(hfDiscovery, 'resolveModelConfigForAddSafely').mockResolvedValue({
       modelConfig: { id: 'existing-id', vllmModelId: 'wire', capabilities: { toolCalling: true, imageInput: false } },
       summary: ['discovered'],
     });
@@ -120,7 +121,10 @@ describe('registerAutoConfigureModelCommand', () => {
     });
 
     expect(resolveSpy).toHaveBeenCalledWith(
-      expect.anything(), 'wire', 'http://host:8000', { 'X-Auth': 'keep' }, undefined, existing[0],
+      expect.anything(), // output channel
+      expect.anything(), // extension context
+      'wire', 'http://host:8000', { 'X-Auth': 'keep' }, undefined, existing[0],
+      existing[0].serverType, // model's own persisted backend type (undefined → vllm)
     );
     // Infra/personal fields survive the discovery-result base merge.
     expect(replaceSpy).toHaveBeenCalledWith(
@@ -153,7 +157,7 @@ describe('registerAutoConfigureModelCommand', () => {
       update: chatUpdate,
       inspect: () => ({ defaultValue: 'none' }),
     };
-    resolveSpy = vi.spyOn(hfDiscovery, 'resolveModelConfigForAdd').mockResolvedValue({
+    resolveSpy = vi.spyOn(hfDiscovery, 'resolveModelConfigForAddSafely').mockResolvedValue({
       modelConfig: { id: 'new-model', vllmModelId: 'new-model', capabilities: { toolCalling: true, imageInput: false } },
       summary: ['discovered'],
     });

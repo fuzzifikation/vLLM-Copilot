@@ -47,7 +47,7 @@ function fakeClient(overrides: Partial<ProviderClient> = {}): ProviderClient {
   return {
     getConfigCached: async () => ({ models: [], enableFileLogging: false } as VllmConfig),
     invalidateConfigCache: vi.fn(),
-    getModelContextWindow: async () => undefined,
+    getModelContextWindow: async () => 0,
     chatCompletionStream: async function* () {},
     ...overrides,
   };
@@ -58,7 +58,7 @@ function fakeClient(overrides: Partial<ProviderClient> = {}): ProviderClient {
  * StreamEvents per `chatCompletionStream` call. The last entry is reused if the loop
  * makes more calls than provided.
  */
-function setupProvider(streams: StreamEvent[][], autoContinueRetries = 1) {
+function setupProvider(streams: StreamEvent[][], autoContinueRetries = 1, modelExtras: Record<string, unknown> = {}) {
   const captured: Captured[] = [];
   let call = 0;
   const spy = vi.fn((_modelId: string, messages: any[], options: Record<string, unknown>) => {
@@ -69,7 +69,7 @@ function setupProvider(streams: StreamEvent[][], autoContinueRetries = 1) {
   });
   const client = fakeClient({
     getConfigCached: async () => ({
-      models: [{ id: 'm', serverUrl: 'http://localhost:8000', autoContinueRetries }],
+      models: [{ id: 'm', serverUrl: 'http://localhost:8000', autoContinueRetries, ...modelExtras }],
     } as VllmConfig),
     chatCompletionStream: spy as any,
   });
@@ -148,6 +148,30 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
     expect(captured[1].options.continue_final_message).toBe(true);
     expect(captured[1].options.add_generation_prompt).toBe(false);
     // No duplication: the colon lead-in is streamed exactly once.
+    expect(reportedText(progress)).toBe('Here are the steps:\n1. Do it');
+  });
+
+  it('retries a colon-truncated response on a NON-vLLM backend as a nudge, never continuation (no duplicated output)', async () => {
+    // buildChatBody strips continuation flags for non-vLLM but KEEPS the prefill —
+    // so replaying the partial text as a completed assistant turn would make the server
+    // regenerate from scratch and the user would see the colon lead-in twice. The
+    // orchestrator must therefore retry in nudge mode (empty prefill, no flags).
+    const { provider, captured, spy } = setupProvider(
+      [
+        [ev({ content: 'Here are the steps:', finishReason: null as any }), ev({ finishReason: 'stop' })],
+        [ev({ content: '\n1. Do it', finishReason: null as any }), ev({ finishReason: 'stop' })],
+      ],
+      1,
+      { serverType: 'llamacpp' },
+    );
+    const progress = { report: vi.fn() };
+
+    await run(provider, progress);
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(captured[1].options.continue_final_message).toBeUndefined();
+    expect(captured[1].options.add_generation_prompt).toBeUndefined();
+    expect(lastMessage(captured[1])).toEqual({ role: 'assistant', content: '' });
     expect(reportedText(progress)).toBe('Here are the steps:\n1. Do it');
   });
 

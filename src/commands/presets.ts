@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from '../config.js';
-import { normalizeModelId, modelMatchKey } from '../config.js';
 import { jsonrepair } from 'jsonrepair';
 
 // ---- Local preset loading ----
@@ -121,24 +120,24 @@ export function parsePresetJson(text: string): ModelConfig | null {
 }
 
 /**
- * Find a preset that matches the given model. Matches a preset's `vllmModelId`
- * against the model id, and — when provided — against the server model's `root`
- * (the underlying checkpoint). The `root` match lets any `--served-model-name`
- * alias (e.g. `zai-glm-52`) resolve to the preset authored for its real repo id
- * (e.g. `zai-org/GLM-5.2`).
+ * Find a preset whose `vllmModelId` appears as a substring of the given model id
+ * (or of its server-reported `root`), case-insensitively.
  *
- * Presets only set `vllmModelId` (they never set `id` — that's the user's own
- * identifier in settings). Using `vllmModelId` for matching avoids any risk of
- * the preset's `id` leaking into the user's model config.
+ * Deliberately simple — no normalization, no org-stripping, no quantization-suffix
+ * parsing. Preset authors curate `vllmModelId` so it is a distinctive substring of
+ * whatever the server actually serves, e.g. `Qwen3.8-27B` matches a llama.cpp full
+ * path `/srv/data/models/Qwen3.8-27B-Q6_K.gguf`, an HF repo `Qwen/Qwen3.8-27B`,
+ * or a quantized served id `nvidia/DeepSeek-V4-Flash-NVFP4`. If the string shows
+ * up, the preset applies.
  *
- * Matching tiers (in order):
- * 1. Exact (case-sensitive) match on vllmModelId.
- * 2. Quantization-agnostic (org-aware): strip -FP8/-AWQ/-GGUF/etc., compare
- *    case-insensitively. "Qwen/Qwen3.6-27B" matches "Qwen/Qwen3.6-27B-FP8".
- * 3. Cross-org + quantization-agnostic: additionally drop the company prefix,
- *    so "deepseek-ai/DeepSeek-V4-Flash" matches "nvidia/DeepSeek-V4-Flash-NVFP4".
- *    Quantization only affects weight precision, not inference parameters, and
- *    the serving org is irrelevant to sampling config — we match on model name.
+ * When several presets match, the one with the LONGEST `vllmModelId` wins — an
+ * exact match is always the longest possible substring, and a specific id like
+ * `DeepSeek-V4-Flash-0731` beats the generic `DeepSeek-V4-Flash`. This keeps
+ * selection independent of `readDirectory()` ordering. Ties keep the first preset in
+ * array order (deterministic given a fixed array).
+ *
+ * Presets only set `vllmModelId` (never `id` — the user's own identifier in
+ * settings), so matching never leaks the preset's id into the user's config.
  *
  * @internal Exported for testing.
  */
@@ -147,25 +146,21 @@ export function findPresetForModel(
   modelId: string,
   root?: string
 ): ModelPreset | undefined {
-  const normalizedModel = normalizeModelId(modelId).toLowerCase();
-  const normalizedRoot = root !== undefined ? normalizeModelId(root).toLowerCase() : undefined;
-  const modelKey = modelMatchKey(modelId);
-  const rootKey = root !== undefined ? modelMatchKey(root) : undefined;
-
-  return presets.find(p => {
-    if (!p.config.vllmModelId) return false;
+  const modelL = modelId.toLowerCase();
+  const rootL = root !== undefined ? root.toLowerCase() : undefined;
+  let best: ModelPreset | undefined;
+  let bestLen = -1;
+  for (const p of presets) {
     const pid = p.config.vllmModelId;
-    // Exact match first (preserves case-sensitive matches)
-    if (pid === modelId) return true;
-    if (root !== undefined && pid === root) return true;
-    // Fuzzy match: strip quantization suffixes, then case-insensitive comparison
-    if (normalizeModelId(pid).toLowerCase() === normalizedModel) return true;
-    if (normalizedRoot !== undefined && normalizeModelId(pid).toLowerCase() === normalizedRoot) return true;
-    // Fuzzy match: cross-org + quantization-agnostic (model name only)
-    if (modelMatchKey(pid) === modelKey) return true;
-    if (rootKey !== undefined && modelMatchKey(pid) === rootKey) return true;
-    return false;
-  });
+    if (!pid) continue;
+    const pidL = pid.toLowerCase();
+    const matched = modelL.includes(pidL) || (rootL !== undefined && rootL.includes(pidL));
+    if (matched && pidL.length > bestLen) {
+      best = p;
+      bestLen = pidL.length;
+    }
+  }
+  return best;
 }
 
 /**

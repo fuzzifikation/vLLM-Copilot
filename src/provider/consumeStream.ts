@@ -145,6 +145,7 @@ export async function consumeStream(
       maxModelLen: (model.maxInputTokens || 0) + (model.maxOutputTokens || 0),
       maxOutputTokens: model.maxOutputTokens || 0,
       firstTokenTimeMs: outcome.firstTokenTime ?? null,
+      totalTimeMs: totalElapsedMs,
     };
     recordRequest(lastRequestData);
   }

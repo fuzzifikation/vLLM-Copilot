@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
-import type { ModelConfig } from '../config.js';
+import type { ModelConfig, ServerType } from '../config.js';
 import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId } from '../config.js';
 import { replaceModelConfig, type IdentifiedModelConfig } from '../configStore.js';
 import type { VllmModel } from '../types.js';
 import { describeError } from '../messageConverter.js';
+import { detectServerType } from '../vllmClient.js';
 import { ensureByokUtilityDefault } from './byok.js';
 import { promptForServerAuth } from './serverAuth.js';
-import { fetchWithTimeout, resolveModelConfigForAdd } from './hfDiscovery.js';
+import { fetchWithTimeout, resolveModelConfigForAddSafely } from './hfDiscovery.js';
 
 /**
  * Minimal provider surface the Add/Configure flows require: the flows only
@@ -254,6 +255,20 @@ export function registerAddServerModelCommand(
     const modelId = await pickModelFromServer(models, serverUrl, 'Add vLLM Server & Model (4/4)');
     if (!modelId) return;
 
+    // Detect the backend type by probing its documented signatures. Add Server
+    // ONLY — never at runtime (runtime uses the persisted serverType switch).
+    let detectedServerType: ServerType;
+    try {
+      detectedServerType = await detectServerType(serverUrl, hasHeaders ? requestHeaders : {}, modelId);
+      output.appendLine(`[INFO] Server type detected: ${detectedServerType}`);
+    } catch (err) {
+      output.appendLine(`[ERROR] Unsupported server: ${describeError(err)}`);
+      vscode.window.showErrorMessage(
+        `Unsupported server at ${serverUrl}: ${describeError(err)}`
+      );
+      return;
+    }
+
     // Check if this model already exists on this server
     const newVllmId = modelId;
     const sameModelEntries = existingServerModels.filter(m => resolveVllmModelId(m) === newVllmId);
@@ -296,9 +311,11 @@ export function registerAddServerModelCommand(
       replaceExistingId = resolveConfigId(target);
     }
 
-    const discoveryResult = await resolveModelConfigForAdd(
-      context, modelId, serverUrl, hasHeaders ? requestHeaders : undefined,
-      models.find((m: any) => m.id === modelId)?.root
+    const discoveryResult = await resolveModelConfigForAddSafely(
+      output, context, modelId, serverUrl, hasHeaders ? requestHeaders : undefined,
+      models.find((m: any) => m.id === modelId)?.root,
+      undefined,
+      detectedServerType,
     );
     if (!discoveryResult) return;
 
@@ -311,6 +328,7 @@ export function registerAddServerModelCommand(
       id: replaceExistingId ?? buildModelId(serverUrl, modelId),
       vllmModelId: modelId,
       serverUrl,
+      serverType: detectedServerType,
       ...(hasHeaders ? { requestHeaders } : {}),
     };
     if (discoveryResult.suggestedMaxOutputTokens !== undefined && finalConfig.maxOutputTokens === undefined) {
