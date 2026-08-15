@@ -302,7 +302,7 @@ Not required outside vLLM:
   `llamacpp` for `owned_by: "llamacpp"`, and `undefined` when no documented
   `/v1/models` signal exists (no guessing).
 - vLLM, LM Studio, and llama.cpp preserve request parameters.
-- Ollama drops `tool_choice`, keeps `tools`, and warns once per request.
+- Ollama drops `tool_choice`, keeps `tools`, and warns once per session.
 - Secondary backends omit `continue_final_message` and
   `add_generation_prompt` during auto-continue while retaining assistant prefill.
 - Existing vLLM request-body tests remain unchanged and green.

@@ -295,6 +295,52 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
     expect(last?.completionTokens).toBe(20);
     expect(last?.totalTokens).toBe(30);
   });
+
+  it('measures the final attempt timing from ITS OWN start, not the request start', async () => {
+    // Regression for the measured-timing bug: consumeStream computed TTFT and total
+    // time against the request-wide startTime, so on a retry the recorded
+    // firstTokenTimeMs/totalTimeMs were inflated by all PRIOR attempts + retry gap
+    // (a "First Token 8s" when the final attempt's true TTFT was milliseconds).
+    // Each attempt now passes its own start time.
+    vi.useFakeTimers({ now: 0 });
+    try {
+      let call = 0;
+      const client = fakeClient({
+        getConfigCached: async () => ({
+          models: [{ id: 'm', serverUrl: 'http://localhost:8000', autoContinueRetries: 1 }],
+        } as VllmConfig),
+        chatCompletionStream: vi.fn(async function* (): AsyncGenerator<StreamEvent> {
+          call++;
+          if (call === 1) {
+            yield ev({ content: 'partial:', finishReason: null as any });
+            yield ev({ finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } as any });
+            // First attempt took ~5s of wall clock (incl. its own decode + retry
+            // bookkeeping). Everything the FINAL attempt measures must be relative to
+            // its own start at ~5000ms, not the request start at 0.
+            vi.advanceTimersByTime(5000);
+          } else {
+            yield ev({ content: ' done', finishReason: null as any });
+            vi.advanceTimersByTime(200); // final attempt decode time
+            yield ev({ finishReason: 'stop', usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } as any });
+          }
+        }) as any,
+      });
+      const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+      const progress = { report: vi.fn() };
+
+      await run(provider, progress);
+
+      const last = getLastRequest('http://localhost:8000');
+      // TTFT and total are the final attempt's own — NOT inflated by the 5s first
+      // attempt (old behavior recorded ~5000ms+ for both).
+      expect(last?.firstTokenTimeMs).toBeLessThan(1000);
+      expect(last?.totalTimeMs).toBeLessThan(1000);
+      // Tokens still come from the final attempt.
+      expect(last?.completionTokens).toBe(20);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('remote-install guard', () => {

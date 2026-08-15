@@ -86,6 +86,13 @@ export async function runChatResponse(
     let attemptCount = 0;        // actual number of attempts made (for accurate diagnostics)
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       attemptCount++;
+      // Per-attempt timing: consumeStream computes TTFT and total time relative to
+      // this timestamp. A retried request must record only the FINAL attempt's
+      // duration (the one whose output the user actually saw) — using the request-wide
+      // startTime would make totalTimeMs span all attempts while firstTokenTime was the
+      // last attempt's, producing a garbage "Generation (measured)" row. The
+      // request-wide `startTime` still drives overall post-stream diagnostics.
+      const attemptStartTime = Date.now();
       // Continuation mode (continue_final_message) is a vLLM-only feature. For
       // secondary backends buildChatBody strips those flags but KEEPS the assistant
       // prefill — so a colon-continuation would send the partial text as a COMPLETE
@@ -103,7 +110,7 @@ export async function runChatResponse(
         token,
         serverConfig
       );
-      await consumeStream(stream, model, progress, token, startTime, outcome, serverConfig.serverUrl, vllmModelId, output, fileLogger);
+      await consumeStream(stream, model, progress, token, attemptStartTime, outcome, serverConfig.serverUrl, vllmModelId, output, fileLogger);
 
       // Retry when the model stopped (finish_reason: stop) either with no content at all,
       // or mid-sentence on a trailing colon. Use the full buffer (not the last chunk) so a

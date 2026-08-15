@@ -221,6 +221,9 @@ export class VllmClient {
    */
   private cachedConfigPromise: Promise<VllmConfig> | null = null;
 
+  /** Warn about the Ollama tool_choice drop only once per session, not per request. */
+  private warnedOllamaToolChoice = false;
+
   constructor(
     private context: vscode.ExtensionContext,
     private output: vscode.OutputChannel,
@@ -293,20 +296,6 @@ export class VllmClient {
     vllmModelId: string
   ): Promise<number> {
     return resolveContextWindow(serverType, serverUrl, requestHeaders, vllmModelId);
-  }
-
-  /** GET a JSON endpoint with the shared log/retry plumbing. Errors propagate. */
-  private async fetchJson<T>(
-    url: string,
-    requestHeaders: Record<string, string>
-  ): Promise<T> {
-    this.fileLogger?.logRequest('GET', url, requestHeaders);
-    const response = await fetchWithRetry(url, {
-      method: 'GET',
-    }, requestHeaders, this.retryCallbacks.onRetry, this.retryCallbacks.onRetrySuccess);
-    const data = await response.json() as T;
-    this.fileLogger?.logResponse(response.status, url, this.getResponseHeaders(response), data);
-    return data;
   }
 
   /**
@@ -448,7 +437,7 @@ export class VllmClient {
    *     continuation controls (continue_final_message/add_generation_prompt) but KEEP
    *     the assistant prefill message — the prefill is a normal message, the dropped
    *     fields are just vLLM-only body flags.
-   *   - Ollama additionally: drop tool_choice with ONE [WARN] (tools stay).
+   *   - Ollama additionally: drop tool_choice (tools stay), warning ONCE per session.
    *   - vLLM: unchanged (byte-identical request bodies — the F5 gate).
    *
    * New params from Phase 1+ features are added to this method only.
@@ -476,9 +465,12 @@ export class VllmClient {
     }
     if (serverType === 'ollama' && 'tool_choice' in body) {
       delete body.tool_choice;
-      this.output.appendLine(
-        `[WARN] Ollama does not support tool_choice — removed from request (tools preserved).`
-      );
+      if (!this.warnedOllamaToolChoice) {
+        this.warnedOllamaToolChoice = true;
+        this.output.appendLine(
+          `[WARN] Ollama does not support tool_choice — removed from request (tools preserved).`
+        );
+      }
     }
     return body;
   }
