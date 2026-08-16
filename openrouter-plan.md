@@ -1,237 +1,175 @@
-# OpenRouter — First-Class Backend Plan
+# OpenRouter First-Class Backend Plan
 
-**Status:** Research complete / implementation ready to start
+**Status:** Implementation ready; production work not started
 **Date:** 2026-08-16
-**Decisions:**
-- **Approach:** add OpenRouter as a first-class backend now.
-- **Backend-adapter extraction: DEFERRED (do it at backend #6+, NOT as part of this work).** The current two-switch + scattered-guard design is acceptable at 4 backends. Adding one more `case` in the same style is line-neutral vs. extracting now, and avoids churning `hfDiscovery`/`streamOrchestrator` while their guards are still few. Revisit the adapter refactor only if/when a 6th backend appears.
 
-**Goal:** Make OpenRouter (https://openrouter.ai) a first-class backend in vLLM-Copilot, on par with vLLM / llama.cpp / LM Studio / Ollama, so users can point any preset at `https://openrouter.ai/api` and pay per token instead of running their own GPUs.
+## Goal
+
+Let a user select OpenRouter, paste a model slug or model-page URL, and chat with correct limits, capabilities, errors, and cost reporting without editing JSON.
+
+This is a focused fifth-backend integration, not a transport rewrite.
+
+## Architecture Decisions
+
+- Use OpenAI Chat Completions. OpenRouter already matches the extension's message, tool, SSE, cancellation, and usage pipeline.
+- Keep every model self-contained: backend, URL, wire model ID, headers, parameters, modes, and rates remain per-model. There are no global credentials or server settings.
+- Add one OpenRouter-specific control-plane helper for input parsing and exact model metadata. Widen the existing context resolver to return runtime limits; keep the shared chat client.
+- Do **not** extract a backend registry now. The current switches are small and already express real differences. Revisit only when another backend adds repeated behavior that cannot stay in those existing boundaries.
+- Keep the runtime request body unchanged unless a contract test proves a difference. Current OpenRouter Chat supports `max_tokens`; the existing non-vLLM path already removes vLLM-only continuation flags.
+- Use OpenRouter's website for catalog browsing and its public exact-model API for validation. Do not recreate the catalog UI or copy catalog data into presets.
+- Keep credentials in per-model `requestHeaders`. They remain plaintext user settings and must never reach logs or webview state.
+- Reuse the current fetch/retry, `eventsource-parser`, SSE parser, malformed-JSON recovery, and message converter. Do not add `@openrouter/sdk` for one metadata GET.
+- Defer Responses and the Agent SDK. Copilot owns the agent loop; Responses is a separate item/event protocol and should be added only for a concrete user-facing capability.
+
+## Target Architecture
+
+```mermaid
+flowchart LR
+  U[OpenRouter Model Page] --> O[OpenRouter Onboarding]
+  O --> M[Exact Model Metadata]
+  M --> C[Per-Model Configuration]
+  C --> P[VS Code Chat Provider]
+  P --> B[Shared Chat Request Builder]
+  B --> H[Shared Fetch, Retry, and Cancellation]
+  H --> R[OpenRouter Chat Completions]
+  R --> S[Shared SSE Reader and Parser]
+  S --> P
+```
+
+The only vendor-specific path is onboarding and metadata normalization. Chat requests and responses continue through the same data plane as the existing OpenAI-compatible backends.
 
 ---
 
-## 1. What OpenRouter actually is (researched facts)
+## Verified API Contract
 
-OpenRouter is a **model router / aggregator**: one OpenAI-compatible endpoint, hundreds of models, automatic provider fallback, cost per request. From the official docs (`openrouter.ai/docs/api-reference/overview`, `/docs/quickstart`, `/docs/api-reference/streaming`) and the **live `GET https://openrouter.ai/api/v1/models`** response:
+The source of truth is OpenRouter's current OpenAPI specification and official documentation. Decode responses permissively because fields and enum values can be added within `v1`.
 
-### 1.1 Endpoints
-| Endpoint | Purpose |
+| Endpoint | Use |
 |---|---|
-| `POST /api/v1/chat/completions` | Chat completions (OpenAI Chat API shape) |
-| `GET /api/v1/models` | Model catalog (id, `context_length`, `top_provider.max_completion_tokens`, `pricing`, `supported_parameters`, `reasoning`, …) |
-| `GET /api/v1/generation?id=…` | Post-hoc usage/cost for a generation id |
+| `POST /api/v1/chat/completions` | Shared chat data plane |
+| `GET /api/v1/model/{author}/{slug}` | Public exact-model lookup for onboarding and refresh |
+| `GET /api/v1/generation?id=...` | Optional post-hoc generation diagnostics |
+| `GET /api/v1/key` | Optional key-limit diagnostics |
+| `POST /api/v1/responses` | Deferred separate protocol |
 
-> Because the base URL already ends in `/api`, the extension's existing `buildEndpoint(url, 'v1/chat/completions')` and `buildEndpoint(url, 'v1/models')` compose **exactly** the right URLs when `serverUrl = https://openrouter.ai/api`.
+`serverUrl = https://openrouter.ai/api` composes correctly with the existing `buildEndpoint()` helper.
 
-### 1.2 Request body
-OpenAI Chat API superset:
-- `model` — slug like `deepseek/deepseek-v4-flash-0731`, `anthropic/claude-opus-5`, `openrouter/auto`, or `~openai/gpt-latest` / `:free` variants.
-- `messages`, `tools`, `tool_choice`, `stream`, `max_tokens`, `temperature`, `top_p`, `top_k`, `seed`, penalties, `logit_bias`, `response_format`, `stop`.
-- **Unsupported params are silently ignored** per model (no 400) — e.g. `temperature` on Claude, `top_k` on OpenAI. Our merged options won't blow up.
-- Extra: `models[]`/`route` (fallback routing), `provider`, `plugins`, `reasoning`/`reasoning_effort`, `include_reasoning`.
+The existing Chat body is compatible. OpenRouter documents `max_tokens`, standard OpenAI messages and tools, reasoning fields, routing controls, and plugins. Do not translate or strip fields specifically for OpenRouter unless a contract test demonstrates a rejection.
 
-### 1.3 Auth headers
-```
-Authorization: Bearer sk-or-…
-HTTP-Referer: <site url>        # optional, leaderboard attribution
-X-OpenRouter-Title: <app name>  # optional, leaderboard attribution
-```
-Our per-model `requestHeaders` mechanism already supports arbitrary headers. **No new secret storage needed.**
+The exact-model response is normalized as follows:
 
-### 1.4 Streaming (SSE) — matches vLLM almost exactly
-- `data:` JSON chunks, `delta.content`, `delta.tool_calls` (with `index`), `delta.reasoning`, `finish_reason`.
-- Final chunk carries `usage` with **empty `choices`** — identical to vLLM's usage-only final chunk.
-- Terminates with `data: [DONE]`.
-- **Keep-alive comments** `: OPENROUTER PROCESSING` between chunks — spec-compliant, our `eventsource-parser`-based `streamReader.ts` already skips them.
-- **Mid-stream errors** arrive as a normal `data:` event with a top-level `error` object and `finish_reason: "error"` — the exact shape `sseParser.ts` already detects.
-- **Pre-stream errors** are plain JSON `{"error": {"code", "message"}}` with HTTP 400/401/402/429/5xx.
-- Stream cancellation via abort (works for most providers).
+- Keep the requested slug as the wire ID, including aliases and variants.
+- Require a positive `context_length`; use `top_provider.context_length` only as fallback. Reject dynamic routers without a fixed context instead of inventing a budget.
+- Compute the output ceiling from the smallest positive value among `top_provider.max_completion_tokens`, `per_request_limits.completion_tokens`, and the context-window safety bound.
+- Derive tools, image input, reasoning modes, defaults, and estimated per-million USD rates from the returned model fields. Ignore unknown fields and invalid optional numbers.
+- Treat `usage.cost` as the authoritative request charge; catalog pricing is only an estimate.
 
-### 1.5 Model catalog shape (`/v1/models` → `data[]`)
-```jsonc
-{
-  "id": "deepseek/deepseek-v4-flash-0731",
-  "name": "DeepSeek: DeepSeek V4 Flash 0731",
-  "context_length": 1048576,
-  "top_provider": {
-    "context_length": 1048576,
-    "max_completion_tokens": 393216,
-    "is_moderated": false
-  },
-  "pricing": { "prompt": "0.00000014", "completion": "0.00000028", "input_cache_read": "…" },
-  "supported_parameters": ["tools", "reasoning", "reasoning_effort", "…"],
-  "reasoning": { "default_effort": "high", "supported_efforts": ["max","high","low"] },
-  "architecture": { "input_modalities": ["text","image"], "output_modalities": ["text"] }
-}
-```
-**Key difference from vLLM: the context window is `context_length` (top-level and/or `top_provider.context_length`), NOT `max_model_len`.** Some entries have `null` context (e.g. `openrouter/auto`, `:batch`), and `top_provider.max_completion_tokens` caps output per model.
+Streaming already matches the shared parser: keep-alive comments, `[DONE]`, reasoning/content/tool deltas, an empty-choice final usage chunk, and top-level mid-stream errors. Preserve `error.metadata.error_type`, honor bounded `Retry-After` on pre-stream 429/503 responses, never retry after partial output, and retain `X-Generation-Id` for redacted diagnostics.
 
-### 1.6 Usage / cost
-- `usage` always includes `prompt_tokens`, `completion_tokens`, `total_tokens`, plus `prompt_tokens_details.cached_tokens`, `completion_tokens_details.reasoning_tokens`, and OpenRouter extras `cost`, `is_byok`, `cost_details`.
-- Per-model pricing is in the catalog (`pricing.prompt` / `pricing.completion` per token) — usable to drive the dashboard cost display.
+## Reuse Decision
+
+Reuse OpenRouter's model pages, API, OpenAPI contract, and this repository's fetch/SSE/message stack. The official TypeScript SDK is Apache-2.0 and legally usable, but the audited package duplicates transport, retries, SSE parsing, and validation for one GET in an unbundled extension. Reconsider it only if it replaces a complete subsystem; do not copy generated SDK source.
+
+Responses remains a future sibling protocol with its own converter and parser. The Agent SDK remains out because Copilot owns tool execution, approvals, and conversation state.
 
 ---
 
-## 2. Compatibility analysis (current code, file by file)
+## Minimal Change Set
 
-| Area | Verdict | Notes |
-|---|---|---|
-| URL composition (`buildEndpoint`) | ✅ works | `serverUrl = https://openrouter.ai/api` → correct paths |
-| SSE line parsing (`streamReader.ts`) | ✅ works | `eventsource-parser` handles comments + `[DONE]` |
-| SSE JSON + tool accumulation (`sseParser.ts`) | ✅ works | `error` objects, usage-only final chunk, `delta.reasoning`, `finish_reason` all already handled |
-| Request building (`provider/requestBuilder.ts`) | ✅ works | OpenAI messages, tools, merged params — all compatible |
-| Message conversion (`messageConverter.ts`) | ✅ works | OpenAI wire format |
-| Auth (`requestHeaders`) | ✅ works | per-model headers |
-| Cancellation / retry / logging | ✅ works | abort + `fetchWithRetry` |
-| Reasoning/thinking parts (`consumeStream.ts`) | ✅ works | `delta.reasoning` → `LanguageModelThinkingPart` |
-| Tool calling | ✅ works | standard `tool_calls` deltas |
-| **Server type detection** (`detectServerType`) | ❌ **blocker** | no `openrouter` branch; OpenRouter's `/v1/models` lacks `max_model_len` → misdetected or rejected |
-| **Context-window resolution** (`resolveContextWindow` vllm case) | ❌ **blocker** | reads `max_model_len` only → OpenRouter models skipped at discovery with "no runtime context window" |
-| **Output-token cap** (`modelInfo.ts` / `tokenBudget.ts`) | ⚠️ gap | needs `top_provider.max_completion_tokens` to avoid advertising impossible output budgets |
-| **Cost display** (`cost` in `ModelConfig`) | ⚠️ gap (nice-to-have) | could auto-fill from `pricing` |
-| Config validation (`config.ts` ~L483) | ❌ | `serverType` enum must accept `'openrouter'` |
-| Wire types (`types.ts`) | ⚠️ gap | `VllmModel` needs optional `context_length` / `top_provider` |
-| Add-Server flow (`addServerFlow.ts`, `serverSettingsView.ts`) | ⚠️ gap | needs OpenRouter signature in detection + a first-class "Add OpenRouter model" path |
+### Security First
 
----
+Fix two existing credential-boundary problems before adding another authenticated backend:
 
-## 2.5 Architecture assessment (decided: no extraction now)
+- `addServerFlow.ts` must not log a complete config containing `requestHeaders`.
+- `serverSettingsView.ts` must send a public model projection to the webview, never full `ModelConfig` objects containing headers.
+- Update Auth and server grouping must distinguish connections by normalized URL, backend, and the existing deterministic header fingerprint. Two OpenRouter keys at the same URL must remain isolated.
 
-### Why the current design is sound
-The load-bearing invariant: **every backend speaks the OpenAI chat-completions protocol.** vLLM, llama.cpp, LM Studio, Ollama, and OpenRouter all share the same request shape and SSE wire format. That is why the hot path — `requestBuilder.ts`, `sseParser.ts`, `consumeStream.ts`, `streamReader.ts` — has **zero** backend branching. That invariant is the architecture; it must not erode.
+### Configuration And Runtime Limits
 
-### Where branching actually lives (mapped)
-| Location | Kind | Today |
-|---|---|---|
-| `vllmClient.ts` `resolveContextWindow` | **switch** | 4 cases: URL + response shape + error message. The main zoo. |
-| `vllmClient.ts` `detectServerType` / `detectServerTypeFromV1Models` | ordered probes | first-match, additive |
-| `hfDiscovery.ts` (L179,192,228,232) | `serverType === 'vllm'` | scattered guards in auto-config |
-| `streamOrchestrator.ts` (L101,132) | `serverType === 'vllm'` | auto-continue prefill + empty-retry toggles |
-| `dashboard.ts` (L41) | `serverType !== 'vllm'` | "degraded metrics" flag |
-
-This is **not spaghetti yet** — two clean switches plus a handful of guards. The risk is the *pattern*, not the present state: each new backend adds a `case` **and** re-asks whether each scattered `=== 'vllm'` guard should cover it. Fine at 4; archaeology at 6+.
-
-### The deferred refactor (when the 6th backend appears)
-Extract what actually varies into a static backend registry + capability flags — **bounded, not a rewrite**:
+- Add `'openrouter'` to `ServerType`, validation, and the package configuration schema.
+- Continue using the existing `vllmModelId` field as the wire model ID. Its name is legacy, but adding a second field and migration would create more ambiguity than it removes.
+- Evolve the context-only runtime contract into a compact limits result:
 
 ```ts
-// src/backends/types.ts
-export interface BackendCapabilities {
-  autoContinue: boolean;   // assistant-prefill retry (vllm yes, ollama no)
-  richMetrics: boolean;    // vLLM-style TTFT/KV/throughput (drives dashboard "degraded")
-}
-
-export interface BackendAdapter {
-  serverType: ServerType;
-  capabilities: BackendCapabilities;
-  matchesV1Models(entries: unknown[]): boolean;   // detection signal
-  resolveMetadata(serverUrl, headers, modelId): Promise<{
-    contextLength: number;
-    maxCompletionTokens?: number;
-  }>;
+interface RuntimeModelLimits {
+  contextWindow: number;
+  maxOutputTokens?: number;
 }
 ```
 
-- `resolveContextWindow` → `registry[serverType].resolveMetadata(...)` — one lookup, no growing switch.
-- `detectServerTypeFromV1Models` → `backends.find(b => b.matchesV1Models(entries))` in priority order.
-- `streamOrchestrator`'s `=== 'vllm'` → `registry[serverType].capabilities.autoContinue`.
-- `dashboard`'s `!== 'vllm'` → `capabilities.richMetrics`. (Note: today's `!== 'vllm'` is a latent bug — a future non-vLLM backend *with* rich metrics would silently degrade.)
-- `hfDiscovery`'s guards → capability checks.
+Existing backends return their current context result and no output ceiling. The OpenRouter case calls the exact-model endpoint and returns both limits. `deriveTokenBudget()` clamps the configured output preference to the reported ceiling, preserving at least one input token. This is the only shared contract change required.
 
-**Anti-over-engineering line:** static registry, compile-time-enumerated, tiny surface (detection + metadata + 2 flags). No plugin system, no dynamic registration, no 20-method interface with no-op stubs. The hot path stays shared; a backend that breaks the OpenAI protocol is out of scope until one actually exists (then add `adaptRequest?`/`adaptChunk?` hooks — not before).
+### OpenRouter Control Plane
 
-**Why defer:** adding a 5th `case` in today's style is line-neutral vs. building the registry. Extracting now churns `hfDiscovery` and `streamOrchestrator` while they have only a handful of guards. Do the OpenRouter work in the established pattern; revisit extraction at backend #6.
+Keep OpenRouter-specific parsing and normalization in one small module:
 
----
+- Accept `author/model`, `author/model:variant`, `~author/family-latest`, or a verified `https://openrouter.ai/...` model-page URL.
+- Ignore query strings, fragments, and a trailing slash on verified OpenRouter URLs. Reject unrelated hosts, reserved paths, and malformed values instead of guessing.
+- Fetch `GET /api/v1/model/{author}/{slug}` with each path segment encoded and with the model's optional headers.
+- Preserve the requested ID for chat. The exact endpoint already reports current limits, pricing, and capabilities for `~latest` aliases; retain `alias_target` only for confirmation and diagnostics.
+- Normalize only fields the existing config consumes: display name, family, capabilities, reasoning modes, default parameters, estimated rates, expiration, and runtime limits.
+- Do not add a catalog cache. `VllmClient` remains the sole configuration cache owner.
 
-## 3. Implementation plan
+### Onboarding
 
-> **Scope note:** OpenRouter is added as a 5th `case` in the existing `serverType` switch — **no backend-adapter extraction in this PR** (see §2.5). If it turns into backend #6 work, execute the §2.5 extraction first.
+Add an explicit OpenRouter branch to the existing Add flow:
 
-### Phase 0 — Types (`src/types.ts`)
-- Extend `VllmModel`:
-  ```ts
-  context_length?: number;
-  top_provider?: {
-    context_length?: number | null;
-    max_completion_tokens?: number | null;
-  };
-  pricing?: { prompt?: string; completion?: string; input_cache_read?: string };
-  ```
-  (`pricing` values are numeric strings — keep as strings, parse at use site.)
+1. Open `https://openrouter.ai/models` or continue directly.
+2. Reuse an existing OpenRouter connection or enter an API key/custom headers.
+3. Paste a slug or model-page URL; clipboard reading happens only after an explicit button press.
+4. Resolve metadata and show a compact confirmation: requested/canonical ID, limits, capabilities, reasoning modes, rates, and expiration when present.
+5. Save `serverType: 'openrouter'`, `serverUrl: 'https://openrouter.ai/api'`, the requested wire ID, headers, and normalized config fields.
 
-### Phase 1 — Server type (`src/config.ts`)
-- `ServerType = 'vllm' | 'lmstudio' | 'llamacpp' | 'ollama' | 'openrouter'`.
-- Update validation array (line ~483) to include `'openrouter'`.
-- Update the doc comment on `serverType` in `ModelConfig`.
-- Consider a helper `isOpenRouterUrl(url)` / keep detection in `vllmClient.ts` — prefer detection in one place (vllmClient), config stays a dumb union.
+Generic local-server detection remains unchanged. No OpenRouter presets or internal catalog browser are added.
 
-### Phase 2 — Detection (`src/vllmClient.ts`)
-- `detectServerTypeFromV1Models(...)`: add OpenRouter signals **before** the vllm `max_model_len` check is *falsely* triggered. OpenRouter entries have `context_length` (a number) and/or a `top_provider` object and org-prefixed ids (`org/model`). Order: vllm (`max_model_len`) → llamacpp (`owned_by`) → **openrouter (`context_length` present / `top_provider` present)** → undefined.
-- `detectServerType(...)` probe: add `/v1/models` OpenRouter check alongside the existing vLLM probe.
-- Update the "unsupported server" error message to name the OpenRouter signature.
+### Chat, Errors, And Diagnostics
 
-### Phase 3 — Context window resolution (`src/vllmClient.ts`, `resolveContextWindow`)
-- Add `case 'openrouter':`
-  - `GET /v1/models` (already via `buildEndpoint(serverUrl, 'v1/models')`).
-  - Match `data.find(m => m.id === modelId)`.
-  - Read `context_length ?? top_provider?.context_length`.
-  - **Fail loudly** (match the vllm case's style) when missing/null — never fabricate. But give an OpenRouter-specific actionable message (e.g. `:batch` / `openrouter/auto` have no fixed window → point at a concrete model slug).
-- Add a sibling export, e.g. `resolveMaxCompletionTokens(modelId)` or fold output cap into the context resolver result, so `modelInfo.ts` can cap `maxOutputTokens` with `top_provider.max_completion_tokens`.
+- Use the existing request body and non-vLLM continuation behavior unchanged.
+- Preserve canonical `error.metadata.error_type` for pre-stream and mid-stream errors; unknown future values remain displayable.
+- Extend shared retry handling to honor a bounded `Retry-After` for pre-stream 429/503 responses. Never retry 401, 402, invalid 4xx responses, cancellation, or a stream after partial output.
+- Retain `X-Generation-Id` in redacted diagnostics. Router metadata remains optional and cannot be required because cache hits omit it.
 
-### Phase 4 — Model info / budget (`src/modelInfo.ts`, `src/tokenBudget.ts`)
-- `buildModelInfo` currently takes `{ id, max_model_len? }`. Generalize the server-model param (or add an optional second arg) to carry `context_length` / `top_provider.max_completion_tokens`.
-- In `discovery.ts`, when building `serverModel`, map OpenRouter's window into the field `deriveTokenBudget` reads, and clamp `maxOutputTokens = min(maxOutputTokens, top_provider.max_completion_tokens)` for OpenRouter models.
+### Exact Cost
 
-### Phase 5 — Add-Server flow (`src/commands/addServerFlow.ts`, `src/commands/hfDiscovery.ts`, `src/serverSettingsView.ts`)
-- Let the Add Server flow accept `https://openrouter.ai/api` and run `detectServerType` → `openrouter`.
-- `serverSettingsView.ts` lists server-reported models — verify the `/v1/models` render path tolerates the OpenRouter shape (it reads `id`; add `context_length` display).
-- **Do NOT add a "global OpenRouter server"** — architecture rule: every model keeps its own `serverUrl` + `requestHeaders`. A user adds N OpenRouter models, each pointing at `https://openrouter.ai/api` with their own key, or one key shared by pasting the same `requestHeaders`.
+- Extend `WireUsage` with optional `cost`, `is_byok`, and cost-detail fields.
+- Version the usage store. Existing v1/v2 token records migrate unchanged with no fabricated actual cost.
+- Store reported actual USD separately from token-derived estimates. Prefer actual cost when present and never add actual and estimated values together.
+- Preserve the current configured-rate behavior for vLLM and responses without `usage.cost`.
 
-### Phase 6 — Presets (`model-configs/`)
-- Add OpenRouter variants of existing presets, or a dedicated `OpenRouter-<model>.json` per popular model. The existing slugs (`deepseek/deepseek-v4-flash-0731`, `z-ai/glm-5.2`, `poolside/laguna-s-2.1`, `qwen/qwen3.6-27b`, `tencent/hy3`) all exist in the live catalog.
-- Example preset:
-  ```jsonc
-  {
-    "id": "openrouter-deepseek-v4-flash",
-    "vllmModelId": "deepseek/deepseek-v4-flash-0731",
-    "displayName": "OpenRouter: DeepSeek V4 Flash",
-    "serverUrl": "https://openrouter.ai/api",
-    "serverType": "openrouter",
-    "requestHeaders": { "Authorization": "Bearer sk-or-<YOUR_KEY>" },
-    "maxOutputTokens": 131072,
-    "family": "deepseek_v4",
-    "capabilities": { "toolCalling": true, "imageInput": false }
-  }
-  ```
+## Delivery
 
-### Phase 7 — Docs + README
-- `docs/` new page `openrouter.md`: config steps, key location, leaderboard headers, model catalog, `:free` / `~latest` notes, cost caveats.
-- Update `docs/configuration-reference.md` `serverType` table + README features list.
+Ship two reviewable changes:
 
----
+1. **Core OpenRouter support:** credential-boundary fixes, config/schema support, runtime limits, exact metadata, onboarding, chat/error fixtures, and estimated rates.
+2. **Exact cost and documentation:** usage-store migration, reported-cost UI, diagnostics, README/configuration/usage docs, and changelog.
 
-## 4. Testing
+Do not rename `VllmClient`, add a backend registry, or reorganize existing backends as part of this work. Those changes do not help the OpenRouter user path.
 
-- `config.test.ts` — `serverType` accepts `'openrouter'`.
-- `vllmClient`/context resolver tests — OpenRouter `/v1/models` fixture (context_length present, null window, `top_provider` shape), error path when window missing.
-- `discovery`/`modelInfo` tests — output-cap clamp from `top_provider.max_completion_tokens`.
-- `sseParser.test.ts` — already covered; add an OpenRouter fixture (comment lines + reasoning + mid-stream `error` + usage-only final chunk) to lock behavior.
-- `hfDiscovery`/`addServerFlow` tests — detection returns `openrouter`.
+## Focused Tests
 
-## 5. Nice-to-haves (defer, not required to run)
+- Existing backend request snapshots and tests remain unchanged.
+- Exact lookup normalizes context, both output-cap fields, capabilities, modes, and rates; malformed optional values stay undefined rather than becoming `NaN`.
+- Slugs, page URLs, aliases, and variants round-trip to the requested wire ID; invalid hosts and paths are rejected.
+- Dynamic routers without a fixed context fail with an actionable message.
+- OpenRouter streams cover comments, reasoning, content, tool calls, usage-only final chunks, `[DONE]`, pre-stream errors, and mid-stream errors.
+- Cancellation aborts immediately; 429/503 honor bounded `Retry-After`; auth, payment, and partial-output failures are not retried.
+- Header values appear in neither output/file logs nor webview messages; same-URL credentials remain separate.
+- Actual cost survives reload, BYOK/missing-cost responses do not invent charges, and estimates are never double-counted.
+- `npm run compile`, `npm run test:typecheck`, `npm test`, and `npm run validate-webview-js` pass.
 
-- **Cost in dashboard:** auto-map `usage.cost` / catalog `pricing` into `ModelConfig.cost` so the usage tracker shows real spend. OpenRouter pricing is per-token strings; convert to per-M tokens.
-- **BYOK:** `is_byok` already a concept in the codebase; OpenRouter BYOK just works via `requestHeaders`.
-- **`:free` / `~latest` handling:** filter or annotate free/alias variants in the picker.
-- **`plugins` / web-search models:** no code change needed — user sets them via `defaultParams`.
+## Acceptance Criteria
 
-## 6. Effort estimate
+- A user can add and chat with an OpenRouter model without editing JSON.
+- OpenRouter limits and capabilities come from its exact model API.
+- The existing Chat Completions transport and SSE pipeline serve OpenRouter without a fork.
+- Per-model credentials remain isolated and never leave trusted extension code.
+- Existing vLLM, LM Studio, llama.cpp, and Ollama behavior remains compatible.
+- Actual OpenRouter cost is recorded when supplied; configured rates remain estimates.
+- Responses and agent orchestration remain out of scope.
 
-**One focused PR, low-to-moderate.** ~200–400 lines of production code across Phases 0–4 (the core), plus detection wiring and presets. The architecture's existing multi-backend seams (`serverType` switch in `resolveContextWindow`, first-match detection) mean this is one more switch arm — not a rewrite.
+## Product Defaults
 
-## 7. Open questions
-
-1. Should OpenRouter models get their **own prefix/section** in the Add-Server UI, or reuse the generic server flow? (Prefer reuse — one flow, `serverType` decides.)
-2. Do we want `requestHeaders` presets with a placeholder key, or leave key entry to the Add Server prompt? (Prefer placeholder + clear docs; never hardcode a real key.)
-3. Should `:free` / `~latest` aliases be surfaced by default in the picker? (Recommend yes for `~latest`, filterable.)
+- Do not send `HTTP-Referer`, `X-OpenRouter-Title`, or `X-OpenRouter-Categories` automatically. Users may add them in per-model headers.
+- Leave provider data policy controlled by the user's OpenRouter account and request parameters; do not silently force ZDR or data-collection filters.
+- Leave `X-OpenRouter-Metadata` disabled by default. Users may opt in through per-model headers.
+- Do not send `session_id` until VS Code exposes a stable, appropriate conversation identifier.
