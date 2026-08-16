@@ -47,7 +47,7 @@ The source of truth is OpenRouter's current OpenAPI specification and official d
 | Endpoint | Use |
 |---|---|
 | `POST /api/v1/chat/completions` | Shared chat data plane |
-| `GET /api/v1/model/{author}/{slug}` | Public exact-model lookup for onboarding and refresh |
+| `GET /api/v1/model/{author}/{slug}` | Public exact-model lookup for onboarding and refresh — **singular `model`**, unauthenticated, returns `{ "data": { ...model fields... } }` (verified live) |
 | `GET /api/v1/generation?id=...` | Optional post-hoc generation diagnostics |
 | `GET /api/v1/key` | Optional key-limit diagnostics |
 | `POST /api/v1/responses` | Deferred separate protocol |
@@ -58,7 +58,8 @@ The existing Chat body is compatible. OpenRouter documents `max_tokens`, standar
 
 The exact-model response is normalized as follows:
 
-- Keep the requested slug as the wire ID, including aliases and variants.
+- Unwrap the top-level `data` object; ignore unknown fields and invalid optional numbers.
+- Keep the requested slug as the wire ID, including aliases and variants (`:free`, `~latest`, dated `canonical_slug`).
 - Require a positive `context_length`; use `top_provider.context_length` only as fallback. Reject dynamic routers without a fixed context instead of inventing a budget.
 - Compute the output ceiling from the smallest positive value among `top_provider.max_completion_tokens`, `per_request_limits.completion_tokens`, and the context-window safety bound.
 - Derive tools, image input, reasoning modes, defaults, and estimated per-million USD rates from the returned model fields. Ignore unknown fields and invalid optional numbers.
@@ -115,9 +116,9 @@ Keep OpenRouter-specific parsing and normalization in one small module:
 Add an explicit OpenRouter branch to the existing Add flow:
 
 1. Open `https://openrouter.ai/models` or continue directly.
-2. Reuse an existing OpenRouter connection or enter an API key/custom headers.
-3. Paste a slug or model-page URL; clipboard reading happens only after an explicit button press.
-4. Resolve metadata and show a compact confirmation: requested/canonical ID, limits, capabilities, reasoning modes, rates, and expiration when present.
+2. Paste a slug or model-page URL; clipboard reading happens only after an explicit button press.
+3. **Resolve metadata first — the exact-model GET is unauthenticated (verified live), so no key is needed yet.** Show a compact confirmation: requested/canonical ID, limits, capabilities, reasoning modes, rates, and expiration when present.
+4. Then prompt for an API key or reuse an existing OpenRouter connection (distinguished by URL + header fingerprint so two keys stay isolated).
 5. Save `serverType: 'openrouter'`, `serverUrl: 'https://openrouter.ai/api'`, the requested wire ID, headers, and normalized config fields.
 
 Generic local-server detection remains unchanged. No OpenRouter presets or internal catalog browser are added.
@@ -127,12 +128,13 @@ Generic local-server detection remains unchanged. No OpenRouter presets or inter
 - Use the existing request body and non-vLLM continuation behavior unchanged.
 - Preserve canonical `error.metadata.error_type` for pre-stream and mid-stream errors; unknown future values remain displayable.
 - Extend shared retry handling to honor a bounded `Retry-After` for pre-stream 429/503 responses. Never retry 401, 402, invalid 4xx responses, cancellation, or a stream after partial output.
-- Retain `X-Generation-Id` in redacted diagnostics. Router metadata remains optional and cannot be required because cache hits omit it.
+- Retain `X-Generation-Id` in redacted diagnostics. The current stream path never reads response headers, so this is small net-new plumbing — keep it optional. Router metadata likewise remains optional and cannot be required because cache hits omit it.
+- OpenRouter servers will show the dashboard's existing `serverType !== 'vllm'` → "degraded" flag. That is correct (no vLLM metrics exist for OpenRouter); document it so it is not reported as a bug later.
 
 ### Exact Cost
 
 - Extend `WireUsage` with optional `cost`, `is_byok`, and cost-detail fields.
-- Version the usage store. Existing v1/v2 token records migrate unchanged with no fabricated actual cost.
+- Add the reported-cost field to the usage store **additively first**; only version the store schema if the shape actually has to change. Existing v1/v2 token records must migrate unchanged with no fabricated actual cost.
 - Store reported actual USD separately from token-derived estimates. Prefer actual cost when present and never add actual and estimated values together.
 - Preserve the current configured-rate behavior for vLLM and responses without `usage.cost`.
 
