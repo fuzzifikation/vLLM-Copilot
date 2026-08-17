@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
+## v1.31.0 — Pooled output/prefill speed & hardened metrics parsing
 
 ### Added
 
 - **Dashboard Speed row** — pooled output & prefill throughput replacing the ITL-derived `Throughput` row. `Output` = Σ `request_generation_tokens` / Σ `request_decode_time_seconds`; `Prefill` = Σ `request_prompt_tokens` / Σ `request_prefill_time_seconds` (tok/s). The pooled ratios count every emitted token, so MTP/spec-decoded output rates are honest (ITL recorded one sample per engine step and undercounted); decode-time denominator excludes prefill. Falls back to TPOT inversion when the source metrics are absent.
+
+### Fixed
+
+- **Deep-dive histogram parsing** — `parseRawMetrics` misclassified every histogram family's `_sum` as a gauge and `_count` as a counter (string-suffix heuristics). The `# TYPE` line is now authoritative; `_sum`/`_count`/`_bucket` samples resolve to the histogram family correctly.
 
 ### Changed
 
