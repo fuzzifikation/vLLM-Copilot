@@ -97,14 +97,15 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 > **💡 Tip:** Enable `extensions.autoUpdate` in VS Code settings to get automatic updates. (Auto-updates are disabled by default for extensions using proposed APIs like `chatProvider`.)
 
 1. **Install** from the VS Code Marketplace
-2. **Add a model:** `Ctrl+Shift+P` → **Add vLLM Server & Model** → enter your server URL → pick a model → done. The extension auto-configures everything (model family, thinking modes, context window) from bundled presets or HuggingFace.
-3. **Edit settings:** Open the **Server Settings** sidebar to adjust displayName, params, model modes, and more. No `settings.json` editing required.
-4. **Change the personality (optional):** in the **vLLM Server Settings** sidebar, pick a model and choose a personality from the dropdown in its **General** section (or `Ctrl+Shift+P` → **Set Model Personality**). Pick **Default (no personality)** later to clear it.
-5. **Chat:** Open Copilot Chat, pick your model from the dropdown. Switch modes from the same picker.
+2. **Open the vLLM panel:** click the **vLLM** icon in the activity bar (left sidebar) — the **Dashboard** opens.
+3. **Add a server & model:** in the Dashboard, click **Add or Reconfigure Server/Model** at the bottom of the tree → enter your server URL → pick a model → done. The extension auto-configures everything (model family, thinking modes, context window) from bundled presets or HuggingFace.
+4. **Edit settings:** open the **Server Settings** view (below the Dashboard) to adjust displayName, params, model modes, and more. No `settings.json` editing required.
+5. **Change the personality (optional):** in **Server Settings**, pick a model and choose a personality from the dropdown in its **General** section (or `Ctrl+Shift+P` → **Set Model Personality**). Pick **Default (no personality)** later to clear it.
+6. **Chat:** Open Copilot Chat, pick your model from the dropdown. Switch modes from the same picker.
 
-> **Remote (SSH/WSL/Containers):** This extension runs on the remote host automatically when installed from the Marketplace. VS Code will install it on the remote extension host.
+> **Remote (SSH/WSL/Containers):** This extension runs on the remote host (`extensionKind: workspace`). Install it **while connected to the remote window** and VS Code places it on the remote extension host automatically. If you installed it locally first, the remote won't pick it up on its own — install it on the remote explicitly (Extensions view → *Install in SSH: … / WSL: … / Dev Container: …*).
 
-> **Everything is per-model.** There is no global server or global sampling. Each model entry carries its own `serverUrl`, `requestHeaders`, and params. Settings take effect immediately; no reload needed.
+> **Multi-server, multi-model:** add any number of servers (vLLM, llama.cpp, LM Studio, Ollama) and use their models interchangeably on the fly — each server and model keeps its own endpoint, auth, and settings. Point multiple model entries at one server if it swaps models around; the extension doesn't care. Changes take effect immediately; no reload needed.
 
 ---
 
