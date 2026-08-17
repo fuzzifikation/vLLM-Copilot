@@ -48,20 +48,21 @@ export async function discoverModels(
     const serverType = resolveServerType(override);
 
     try {
-      // Resolve the context window as a bare number, switching strictly on the
-      // model's serverType. Connection/auth/5xx failures and a missing window
-      // all THROW from the resolver with a backend-specific message — no fabricated
-      // budget (user directive). The error message below preserves that detail.
-      const ctx = await client.getModelContextWindow(
+      // Resolve runtime limits (context window + optional server-reported output
+      // ceiling), switching strictly on the model's serverType. Connection/auth/5xx
+      // failures and a missing window all THROW from the resolver with a
+      // backend-specific message — no fabricated budget (user directive). The error
+      // message below preserves that detail.
+      const limits = await client.getModelContextWindow(
         serverType,
         serverConfig.serverUrl,
         serverConfig.requestHeaders,
         vllmModelId
       );
 
-      const serverModel = { id: vllmModelId, max_model_len: ctx };
+      const serverModel = { id: vllmModelId, max_model_len: limits.contextWindow };
       return {
-        model: buildModelInfo(serverModel, override, settings, serverConfig.serverUrl, (family, modelId) => {
+        model: buildModelInfo(serverModel, override, settings, serverConfig.serverUrl, limits.maxOutputTokens, (family, modelId) => {
           // Fires only when no preset-declared family was available AND
           // HuggingFace auto-discovery did not provide one — the heuristic
           // fell through to the org-name guess. The family is just a sort key

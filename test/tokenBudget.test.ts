@@ -82,4 +82,38 @@ describe('deriveTokenBudget', () => {
     expect(b.maxInputTokens).toBe(7000); // clamped: min(8000, 10000 - 3000)
     expect(b.maxInputTokens + b.maxOutputTokens).toBeLessThanOrEqual(b.maxModelLen);
   });
+
+  it('clamps output to a server-reported ceiling when present', () => {
+    const b = deriveTokenBudget(32768, 8192, undefined, undefined, 4096);
+    expect(b.maxOutputTokens).toBe(4096);
+    expect(b.maxInputTokens + b.maxOutputTokens).toBeLessThanOrEqual(b.maxModelLen);
+  });
+
+  it('reported ceiling wins over a larger configured output budget', () => {
+    // Configured default 8192 but the backend reports a 2048 completion ceiling.
+    const b = deriveTokenBudget(32768, 8192, { maxOutputTokens: 8192 }, undefined, 2048);
+    expect(b.maxOutputTokens).toBe(2048);
+    expect(b.maxInputTokens + b.maxOutputTokens).toBeLessThanOrEqual(b.maxModelLen);
+  });
+
+  it('a 0/negative reported ceiling degrades to 1 token, never ignored', () => {
+    expect(deriveTokenBudget(10000, 4096, undefined, undefined, 0).maxOutputTokens).toBeGreaterThanOrEqual(1);
+    expect(deriveTokenBudget(10000, 4096, undefined, undefined, -5).maxOutputTokens).toBeGreaterThanOrEqual(1);
+  });
+
+  it('undefined reported ceiling leaves the derived budget unchanged', () => {
+    const withCeiling = deriveTokenBudget(10000, 3000, undefined, undefined, 8000);
+    const withoutCeiling = deriveTokenBudget(10000, 3000, undefined, undefined, undefined);
+    expect(withCeiling.maxOutputTokens).toBe(3000);
+    expect(withCeiling.maxOutputTokens).toBe(withoutCeiling.maxOutputTokens);
+  });
+
+  it('a NaN reported ceiling is ignored, never poisoning the budget', () => {
+    const b = deriveTokenBudget(10000, 4096, undefined, undefined, NaN);
+    expect(b.maxOutputTokens).toBe(4096);
+    expect(Number.isNaN(b.maxOutputTokens)).toBe(false);
+    expect(Number.isNaN(b.maxInputTokens)).toBe(false);
+    expect(Number.isNaN(b.maxModelLen)).toBe(false);
+    expect(b.maxInputTokens + b.maxOutputTokens).toBeLessThanOrEqual(b.maxModelLen);
+  });
 });

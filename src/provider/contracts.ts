@@ -1,6 +1,6 @@
 import type * as vscode from 'vscode';
 import type { VllmConfig, ServerType } from '../config.js';
-import type { OpenAIChatMessage, StreamEvent, VllmChatOptions } from '../types.js';
+import type { OpenAIChatMessage, StreamEvent, VllmChatOptions, RuntimeModelLimits } from '../types.js';
 import type { ServerConfig } from './requestBuilder.js';
 
 /**
@@ -23,17 +23,19 @@ export interface ProviderClient {
   getConfigCached(): Promise<VllmConfig>;
   invalidateConfigCache(): void;
   /**
-   * Resolve the model's context window as a bare number, switching strictly on
-   * `serverType`. THROWS when the server is unreachable OR the standard
-   * documented path for that backend reports no window — we never fabricate
-   * metadata (user directive). Callers skip the model on throw.
+   * Resolve the model's runtime limits — context window plus an optional
+   * server-reported output ceiling — switching strictly on `serverType`. THROWS
+   * when the server is unreachable OR the standard documented path for that
+   * backend reports no window — we never fabricate metadata (user directive).
+   * Callers skip the model on throw. Backends that report no output ceiling
+   * leave `maxOutputTokens` undefined.
    */
   getModelContextWindow(
     serverType: ServerType,
     serverUrl: string,
     requestHeaders?: Record<string, string>,
     vllmModelId?: string
-  ): Promise<number>;
+  ): Promise<RuntimeModelLimits>;
   chatCompletionStream(
     model: string,
     messages: OpenAIChatMessage[],

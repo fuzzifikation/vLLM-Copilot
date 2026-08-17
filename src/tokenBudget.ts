@@ -25,13 +25,16 @@ export interface TokenBudget {
  *   - `maxModelLen` comes from the server `max_model_len` (fetched during discovery).
  *     If missing, throws — the server is authoritative and there is no fallback.
  *   - `maxOutputTokens` priority: per-model override > the resolved `configMaxOutputTokens`.
+ *   - A server-reported output ceiling (`reportedMaxOutputTokens`) clamps the output
+ *     budget when present (used by backends that report an explicit completion limit).
  *   - `maxInputTokens` computed as `maxModelLen - maxOutputTokens` (unless overridden).
  */
 export function deriveTokenBudget(
   serverMaxModelLen: number | undefined,
   configMaxOutputTokens: number,
   override?: ModelOverride,
-  modelId?: string
+  modelId?: string,
+  reportedMaxOutputTokens?: number
 ): TokenBudget {
   if (!serverMaxModelLen || serverMaxModelLen < 0) {
     throw new Error(
@@ -52,6 +55,16 @@ export function deriveTokenBudget(
   // at all, i.e. unusable. The output budget is reduced instead so a minimum
   // input capacity always survives.
   maxOutputTokens = Math.min(maxOutputTokens, Math.max(1, maxModelLen - 1));
+  // Clamp to the server-reported output ceiling when present (e.g. OpenRouter's
+  // per-request completion limit). A 0/negative ceiling degrades to a minimal
+  // 1-token output instead of being ignored — same floor as the overrides above.
+  // A NaN ceiling is garbage, not a bound: NaN would propagate through
+  // Math.min/Math.max and poison the whole budget, so it is ignored. Callers are
+  // expected to normalize malformed values to undefined (per the plan), but the
+  // shared function defends itself.
+  if (reportedMaxOutputTokens !== undefined && !Number.isNaN(reportedMaxOutputTokens)) {
+    maxOutputTokens = Math.min(maxOutputTokens, Math.max(1, reportedMaxOutputTokens));
+  }
   // Clamp maxInputTokens so input + output never exceeds maxModelLen.
   // When the user overrides maxInputTokens but it conflicts with maxOutputTokens,
   // output wins (the server will enforce it) and input is clamped down. A 0/

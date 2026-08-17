@@ -5,7 +5,7 @@ import { readSseStream } from './streamReader.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
 import type { ServerConfig } from './provider/requestBuilder.js';
-import type { StreamEvent, VllmChatOptions, OpenAIChatMessage, VllmModel, LmStudioModel } from './types.js';
+import type { StreamEvent, VllmChatOptions, OpenAIChatMessage, VllmModel, LmStudioModel, RuntimeModelLimits } from './types.js';
 export type { StreamEvent, VllmChatOptions, OpenAIChatMessage, VllmModel } from './types.js';
 
 /**
@@ -42,19 +42,20 @@ function isInvalidSignature(err: unknown): boolean {
 }
 
 /**
- * Resolve a model's runtime context window for a KNOWN backend (strict switch —
- * never probes). Single source of truth; `VllmClient.getModelContextWindow`,
- * auto-configure and test & refresh all call this.
+ * Resolve a model's runtime limits for a KNOWN backend (strict switch — never
+ * probes). Single source of truth; `VllmClient.getModelContextWindow`,
+ * auto-configure and test & refresh all call this. Backends that report only a
+ * context window leave `maxOutputTokens` undefined.
  *
  * @throws Backend-specific, actionable error naming the backend, the endpoint+field
  *   inspected, and the concrete fix. We NEVER fabricate a window.
  */
-export async function resolveContextWindow(
+export async function resolveRuntimeLimits(
   serverType: ServerType,
   serverUrl: string,
   requestHeaders: Record<string, string> = {},
   modelId: string,
-): Promise<number> {
+): Promise<RuntimeModelLimits> {
   switch (serverType) {
     case 'vllm': {
       const url = buildEndpoint(serverUrl, 'v1/models');
@@ -67,7 +68,7 @@ export async function resolveContextWindow(
       // replayed as a request the server will reject.
       const model = (data.data || []).find((m) => m.id === modelId);
       const ctx = model?.max_model_len;
-      if (typeof ctx === 'number' && ctx > 0) return ctx;
+      if (typeof ctx === 'number' && ctx > 0) return { contextWindow: ctx };
       throw new Error(
         `vLLM model "${modelId}" has no runtime context window: GET ${url} returned no matching ` +
         `entry with max_model_len. Fix the served model id or server config. If this entry should ` +
@@ -80,7 +81,7 @@ export async function resolveContextWindow(
       const data = await fetchJsonRaw<{ models?: LmStudioModel[] }>(url, requestHeaders);
       const lm = (data.models || []).find((m) => m.key === modelId || m.id === modelId);
       const ctx = lm?.loaded_instances?.[0]?.config?.context_length ?? lm?.max_context_length;
-      if (typeof ctx === 'number' && ctx > 0) return ctx;
+      if (typeof ctx === 'number' && ctx > 0) return { contextWindow: ctx };
       throw new Error(
         `LM Studio model "${modelId}" has no context window: GET ${url} reported no loaded instance ` +
         `with config.context_length (or max_context_length). Load the model in LM Studio — it will not be served.`
@@ -90,7 +91,7 @@ export async function resolveContextWindow(
       const url = buildEndpoint(serverUrl, `props?model=${encodeURIComponent(modelId)}`);
       const data = await fetchJsonRaw<{ default_generation_settings?: { n_ctx?: number } }>(url, requestHeaders);
       const ctx = data.default_generation_settings?.n_ctx;
-      if (typeof ctx === 'number' && ctx > 0) return ctx;
+      if (typeof ctx === 'number' && ctx > 0) return { contextWindow: ctx };
       throw new Error(
         `llama.cpp model "${modelId}" has no context window: GET ${url} reported no ` +
         `default_generation_settings.n_ctx. Check the server API key and model id — it will not be served.`
@@ -101,7 +102,7 @@ export async function resolveContextWindow(
       const data = await fetchJsonRaw<{ models?: Array<{ model?: string; name?: string; context_length?: number }> }>(url, requestHeaders);
       const entry = (data.models || []).find((m) => m.model === modelId || m.name === modelId);
       const ctx = entry?.context_length;
-      if (typeof ctx === 'number' && ctx > 0) return ctx;
+      if (typeof ctx === 'number' && ctx > 0) return { contextWindow: ctx };
       throw new Error(
         `Ollama model "${modelId}" is not loaded (or reports no context_length): GET ${url}. ` +
         `Load the model with a context size in Ollama — it will not be served.`
@@ -123,7 +124,7 @@ export async function resolveContextWindow(
  * model not listed = continue. Auth / network / timeout / 5xx = throw immediately.
  * No match anywhere = throw "unsupported server" naming every expected signature.
  *
- * Add Server ONLY. Never used at runtime — runtime uses {@link resolveContextWindow}.
+ * Add Server ONLY. Never used at runtime — runtime uses {@link resolveRuntimeLimits}.
  */
 export async function detectServerType(
   serverUrl: string,
@@ -185,7 +186,7 @@ export async function detectServerType(
  * so we return nothing rather than guess.
  *
  * Used by the Server Settings add path to default `serverType` for unconfigured
- * server models. Runtime never calls this — runtime uses {@link resolveContextWindow}.
+ * server models. Runtime never calls this — runtime uses {@link resolveRuntimeLimits}.
  */
 export function detectServerTypeFromV1Models(
   entries: Array<{ owned_by?: string; max_model_len?: number }>
@@ -267,8 +268,9 @@ export class VllmClient {
   }
 
   /**
-   * Resolve a model's context window from its server, switching strictly on the
-   * configured `serverType` — never probing at runtime:
+   * Resolve a model's runtime limits (context window + optional output ceiling)
+   * from its server, switching strictly on the configured `serverType` — never
+   * probing at runtime:
    *
    *   vllm      → /v1/models            max_model_len
    *   lmstudio  → /api/v1/models        loaded_instances[].config.context_length else max_context_length
@@ -282,7 +284,7 @@ export class VllmClient {
    * Connection / auth / 5xx failures also propagate — a dead or misconfigured
    * server must never surface as a crippled model.
    *
-   * Wraps the standalone {@link resolveContextWindow} (single source of truth) so
+   * Wraps the standalone {@link resolveRuntimeLimits} (single source of truth) so
    * non-provider consumers (auto-configure, test & refresh) reuse the exact same
    * implementation without a client instance.
    *
@@ -294,8 +296,8 @@ export class VllmClient {
     serverUrl: string,
     requestHeaders: Record<string, string> = {},
     vllmModelId: string
-  ): Promise<number> {
-    return resolveContextWindow(serverType, serverUrl, requestHeaders, vllmModelId);
+  ): Promise<RuntimeModelLimits> {
+    return resolveRuntimeLimits(serverType, serverUrl, requestHeaders, vllmModelId);
   }
 
   /**

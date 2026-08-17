@@ -59,9 +59,9 @@ d('vLLM integration', () => {
   });
 
   it('can reach the server and get a context window', async () => {
-    const ctx = await client.getModelContextWindow('vllm', SERVER_URL, REQUEST_HEADERS, modelId);
-    expect(ctx).toBeDefined();
-    expect(typeof ctx).toBe('number');
+    const limits = await client.getModelContextWindow('vllm', SERVER_URL, REQUEST_HEADERS, modelId);
+    expect(limits.contextWindow).toBeDefined();
+    expect(typeof limits.contextWindow).toBe('number');
   });
 
   it('streams a short completion end-to-end', async () => {
