@@ -1,6 +1,6 @@
 # Third-Party Backend Compatibility Plan
 
-Status: **Implemented — compile clean, 662 tests passing (3 skipped). Live-verified against `llm.unifiedmixers.org` (llama.cpp) and `vllm.unifiedmixers.org` (vLLM). Dashboard flags non-vLLM servers as degraded and shows client-measured throughput when the server reports no per-request metrics. Pending live LM Studio/Ollama verification and the F5 vLLM byte-identical gate.**
+Status: **Implemented — compile clean, 673 tests passing (3 skipped). Live-verified against `llm.unifiedmixers.org` (llama.cpp) and `vllm.unifiedmixers.org` (vLLM). Dashboard flags non-vLLM servers as degraded, shows client-measured throughput when the server reports no per-request metrics, and renders pooled output/prefill speed (`Output x tok/s · Prefill y tok/s`) for vLLM. Pending live LM Studio/Ollama verification and the F5 vLLM byte-identical gate.**
 
 ## 1. Objective
 
@@ -135,12 +135,14 @@ getModelContextWindow(
   serverUrl: string,
   requestHeaders: Record<string, string>,
   modelId: string,
-): Promise<number>
+): Promise<RuntimeModelLimits>
 ```
 
 It switches on `serverType`, calls exactly the endpoint in section 2.3, validates
-the response, and returns a positive integer. It does not probe unrelated
-endpoints or cascade across backend formats.
+the response, and returns a positive integer context window. `RuntimeModelLimits
+{ contextWindow: number; maxOutputTokens?: number }` leaves `maxOutputTokens`
+undefined for backends that report no completion ceiling. It does not probe
+unrelated endpoints or cascade across backend formats.
 
 `serverType` is a **required** parameter on the resolver, not optional. The compile
 time contract is what enforces "no runtime detection": a caller must already know

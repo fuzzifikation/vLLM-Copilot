@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Dashboard Speed row** — pooled output & prefill throughput replacing the ITL-derived `Throughput` row. `Output` = Σ `request_generation_tokens` / Σ `request_decode_time_seconds`; `Prefill` = Σ `request_prompt_tokens` / Σ `request_prefill_time_seconds` (tok/s). The pooled ratios count every emitted token, so MTP/spec-decoded output rates are honest (ITL recorded one sample per engine step and undercounted); decode-time denominator excludes prefill. Falls back to TPOT inversion when the source metrics are absent.
+
+### Changed
+
+- **OpenRouter prep (no behavior change):** the shared context resolver was widened — `resolveContextWindow(): Promise<number>` became `resolveRuntimeLimits(): Promise<RuntimeModelLimits>` (`{ contextWindow; maxOutputTokens? }`, `src/types.ts`). All four existing backends return `{ contextWindow }` with no output ceiling. `deriveTokenBudget()` gained an optional `reportedMaxOutputTokens` clamp (0/negative degrades to 1 token; `NaN` ignored); `buildModelInfo()` threads it through. Existing backends pass `undefined`, so budgets are bit-identical. Call sites consume `limits.contextWindow`.
+
 ## v1.30.0 — Third-party backends, measured throughput & hardened auto-config
 
 ### Added

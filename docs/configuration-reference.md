@@ -98,7 +98,7 @@ The **vLLM Dashboard** sidebar shows live metrics for each configured vLLM serve
 | **KV Cache** | Prometheus `kv_cache_usage_perc` | GPU KV cache utilization (0–100%) |
 | **KV Cache Hit** | Prometheus `prompt_tokens_total` vs `prompt_tokens_cached_total` | Percentage of tokens served from KV cache |
 | **Avg TTFT** | Prometheus `time_to_first_token_seconds` | Time to first token (ms) |
-| **Throughput** | Derived from TPOT | Tokens/second (`1000 / avgTPOTms`) |
+| **Speed** | Prometheus `request_generation_tokens` ÷ `request_decode_time_seconds`, and `request_prompt_tokens` ÷ `request_prefill_time_seconds` | `Output` = Σ generation tokens / Σ decode time (tok/s, output-only — excludes prefill). `Prefill` = Σ prompt tokens / Σ prefill time (tok/s, includes cache-served tokens). Falls back to TPOT inversion when the pooled metric is absent |
 | **Running** | Prometheus `num_requests_running` | Active requests being processed |
 | **Waiting** | Prometheus `num_requests_waiting` | Requests queued, waiting for GPU |
 | **MTP** | Prometheus `spec_decode_*` | Speculative decoding: acceptance %, draft depth, total proposals (only when active) |

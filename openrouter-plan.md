@@ -75,21 +75,34 @@ Responses remains a future sibling protocol with its own converter and parser. T
 
 ---
 
+## Preparation — Step 1 (LANDED, no behavior change)
+
+The shared context contract was widened in isolation, before any OpenRouter code, with the existing test suite as proof:
+
+- New `RuntimeModelLimits { contextWindow: number; maxOutputTokens?: number }` in `src/types.ts`.
+- The standalone resolver `resolveContextWindow(): Promise<number>` became `resolveRuntimeLimits(): Promise<RuntimeModelLimits>`. All four existing backends return `{ contextWindow }` with no output ceiling — identical numbers, zero behavior change.
+- `VllmClient.getModelContextWindow()` keeps its name (stable `ProviderClient` interface) but now returns `Promise<RuntimeModelLimits>`.
+- `deriveTokenBudget()` gained an optional `reportedMaxOutputTokens` clamp (0/negative degrades to 1 token; `NaN` is ignored rather than poisoning the budget); `buildModelInfo()` threads it through. Existing backends pass `undefined`, so budgets are bit-identical.
+- Call sites (`discovery.ts`, `hfDiscovery.ts`, `testAndRefresh.ts`) consume `limits.contextWindow`.
+
+OpenRouter is now just a 5th arm of an already-widened contract: its control-plane module returns both limits and discovery clamps output to the reported ceiling. No special-cased wrapper needed.
+
 ## Minimal Change Set
 
-### Security First
+### Credential Hygiene (non-blocking, do before ship)
 
-Fix two existing credential-boundary problems before adding another authenticated backend:
+Credentials stay in per-model `requestHeaders` — plaintext user settings, and never in logs or webview state by construction. Two low-severity hygiene fixes land as a quick chore alongside onboarding, not as a gated prerequisite:
 
-- `addServerFlow.ts` must not log a complete config containing `requestHeaders`.
-- `serverSettingsView.ts` must send a public model projection to the webview, never full `ModelConfig` objects containing headers.
-- Update Auth and server grouping must distinguish connections by normalized URL, backend, and the existing deterministic header fingerprint. Two OpenRouter keys at the same URL must remain isolated.
+- `addServerFlow.ts` logs the complete config — including `requestHeaders` — to the output channel. That channel is the user's own machine, so this is not a vulnerability; but the extension tells users to copy the channel and share it when reporting issues, so a key can end up in a shared paste. Log a redacted projection (headers as `[REDACTED]`) so the "key never leaves trusted extension code" claim made during onboarding is actually true.
+- `serverSettingsView.ts` posts full `ModelConfig[]` objects (including `requestHeaders`) to the webview. Same low severity — same-machine DOM — but defense-in-depth: send a public model projection to the webview.
+
+Neither fix needs new ceremony. Connection identity reuses the existing normalized-URL + backend + deterministic header fingerprint. Do not add multi-key isolation logic for OpenRouter — one key per user is the norm, and the existing fingerprint already keeps distinct keys separate at the same URL.
 
 ### Configuration And Runtime Limits
 
 - Add `'openrouter'` to `ServerType`, validation, and the package configuration schema.
 - Continue using the existing `vllmModelId` field as the wire model ID. Its name is legacy, but adding a second field and migration would create more ambiguity than it removes.
-- Evolve the context-only runtime contract into a compact limits result:
+- ✔ LANDED (Step 1): the context-only runtime contract is now a compact limits result:
 
 ```ts
 interface RuntimeModelLimits {
@@ -98,7 +111,7 @@ interface RuntimeModelLimits {
 }
 ```
 
-Existing backends return their current context result and no output ceiling. The OpenRouter case calls the exact-model endpoint and returns both limits. `deriveTokenBudget()` clamps the configured output preference to the reported ceiling, preserving at least one input token. This is the only shared contract change required.
+Existing backends return their current context result and no output ceiling. The OpenRouter case calls the exact-model endpoint and returns both limits. `deriveTokenBudget()` clamps the configured output preference to the reported ceiling, preserving at least one input token. Only the OpenRouter arm remains — the contract itself is done.
 
 ### OpenRouter Control Plane
 
@@ -118,7 +131,7 @@ Add an explicit OpenRouter branch to the existing Add flow:
 1. Open `https://openrouter.ai/models` or continue directly.
 2. Paste a slug or model-page URL; clipboard reading happens only after an explicit button press.
 3. **Resolve metadata first — the exact-model GET is unauthenticated (verified live), so no key is needed yet.** Show a compact confirmation: requested/canonical ID, limits, capabilities, reasoning modes, rates, and expiration when present.
-4. Then prompt for an API key or reuse an existing OpenRouter connection (distinguished by URL + header fingerprint so two keys stay isolated).
+4. Then prompt for an API key or reuse an existing OpenRouter connection (distinguished by URL + header fingerprint).
 5. Save `serverType: 'openrouter'`, `serverUrl: 'https://openrouter.ai/api'`, the requested wire ID, headers, and normalized config fields.
 
 Generic local-server detection remains unchanged. No OpenRouter presets or internal catalog browser are added.
@@ -142,7 +155,7 @@ Generic local-server detection remains unchanged. No OpenRouter presets or inter
 
 Ship two reviewable changes:
 
-1. **Core OpenRouter support:** credential-boundary fixes, config/schema support, runtime limits, exact metadata, onboarding, chat/error fixtures, and estimated rates.
+1. **Core OpenRouter support:** credential hygiene (redacted config log + webview projection), config/schema support, runtime limits, exact metadata, onboarding, chat/error fixtures, and estimated rates.
 2. **Exact cost and documentation:** usage-store migration, reported-cost UI, diagnostics, README/configuration/usage docs, and changelog.
 
 Do not rename `VllmClient`, add a backend registry, or reorganize existing backends as part of this work. Those changes do not help the OpenRouter user path.
@@ -155,7 +168,7 @@ Do not rename `VllmClient`, add a backend registry, or reorganize existing backe
 - Dynamic routers without a fixed context fail with an actionable message.
 - OpenRouter streams cover comments, reasoning, content, tool calls, usage-only final chunks, `[DONE]`, pre-stream errors, and mid-stream errors.
 - Cancellation aborts immediately; 429/503 honor bounded `Retry-After`; auth, payment, and partial-output failures are not retried.
-- Header values appear in neither output/file logs nor webview messages; same-URL credentials remain separate.
+- The config log shows headers as `[REDACTED]`; the webview receives a public model projection with no header fields; same-URL credentials remain separate via the existing fingerprint.
 - Actual cost survives reload, BYOK/missing-cost responses do not invent charges, and estimates are never double-counted.
 - `npm run compile`, `npm run test:typecheck`, `npm test`, and `npm run validate-webview-js` pass.
 
