@@ -627,18 +627,33 @@ export function parseRawMetrics(rawText: string, metrics: ServerRawData['metrics
   const typeHints: Record<string, 'gauge' | 'counter' | 'histogram'> = {};
   const helpDesc: Record<string, string> = {};
 
-  // First pass: detect types + descriptions from HELP lines
+  // First pass: detect types from TYPE lines (authoritative) + descriptions from HELP lines.
+  // Prometheus emits `# TYPE <name> <gauge|counter|histogram>` before the samples. Rely on it
+  // rather than string-matching suffixes: the histogram family emits `_bucket`, `_sum`, and
+  // `_count` lines, and suffix matching misclassifies `_sum` as a gauge and `_count` as a counter.
   for (const line of rawText.split('\n')) {
     const trimmed = line.trim();
-    const helpMatch = trimmed.match(/^# HELP ([a-zA-Z_:][a-zA-Z0-9_:]*)\s+(.+)/);
-    if (helpMatch) {
-      const name = helpMatch[1];
-      helpDesc[name] = helpMatch[2].trim();
-      if (name.includes('_total') || name.includes('count')) typeHints[name] = 'counter';
-      else if (name.includes('_bucket')) typeHints[name] = 'histogram';
-      else typeHints[name] = 'gauge';
+    const typeMatch = trimmed.match(/^# TYPE ([a-zA-Z_:][a-zA-Z0-9_:]*)\s+(gauge|counter|histogram)\s*$/);
+    if (typeMatch) {
+      typeHints[typeMatch[1]] = typeMatch[2] as 'gauge' | 'counter' | 'histogram';
+      continue;
     }
+    const helpMatch = trimmed.match(/^# HELP ([a-zA-Z_:][a-zA-Z0-9_:]*)\s+(.+)/);
+    if (helpMatch) helpDesc[helpMatch[1]] = helpMatch[2].trim();
   }
+
+  /**
+   * Classify a sample by its family type. Histogram families emit `_bucket`/`_sum`/`_count`
+   * suffixes on the same family — strip the suffix and look up the base name. Falls back to
+   * string heuristics only when no `# TYPE` line is present (process_/http_/cache_config paths).
+   */
+  const classify = (name: string): 'gauge' | 'counter' | 'histogram' => {
+    const family = typeHints[name] ?? typeHints[name.replace(/_bucket$/, '').replace(/_sum$/, '').replace(/_count$/, '')];
+    if (family) return family;
+    if (name.includes('_bucket')) return 'histogram';
+    if (name.includes('_total') || name.includes('_count')) return 'counter';
+    return 'gauge';
+  };
 
   // Second pass: parse data lines
   for (const line of rawText.split('\n')) {
@@ -657,9 +672,7 @@ export function parseRawMetrics(rawText: string, metrics: ServerRawData['metrics
     if (name.endsWith('_created')) continue;
 
     const entry: RawMetricEntry = { name, labels, value };
-    const bucket = typeHints[name] ?? (name.includes('_bucket') ? 'histogram'
-      : name.includes('_total') || name.includes('count') ? 'counter'
-      : 'gauge');
+    const bucket = classify(name);
 
     entry.type = bucket;
 
