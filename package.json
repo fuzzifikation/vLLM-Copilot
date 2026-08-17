@@ -209,9 +209,9 @@
                 },
                 "serverType": {
                   "type": "string",
-                  "enum": ["vllm", "lmstudio", "llamacpp", "ollama"],
+                  "enum": ["vllm", "lmstudio", "llamacpp", "ollama", "openrouter"],
                   "default": "vllm",
-                  "markdownDescription": "Backend serving this model. **Default: `vllm`.** Missing/omitted always means `vllm`. Secondary backends (LM Studio, llama.cpp, Ollama) must be added via the **Add vLLM Server & Model** command or set `serverType` explicitly."
+                  "markdownDescription": "Backend serving this model. **Default: `vllm`.** Missing/omitted always means `vllm`. Secondary backends (LM Studio, llama.cpp, Ollama, OpenRouter) must be added via the **Add vLLM Server & Model** command or set `serverType` explicitly."
                 },
                 "requestHeaders": {
                   "type": "object",

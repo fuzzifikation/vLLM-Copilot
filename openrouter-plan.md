@@ -59,11 +59,13 @@ The existing Chat body is compatible. OpenRouter documents `max_tokens`, standar
 The exact-model response is normalized as follows:
 
 - Unwrap the top-level `data` object; ignore unknown fields and invalid optional numbers.
-- Keep the requested slug as the wire ID, including aliases and variants (`:free`, `~latest`, dated `canonical_slug`).
-- Require a positive `context_length`; use `top_provider.context_length` only as fallback. Reject dynamic routers without a fixed context instead of inventing a budget.
+- Keep the requested slug as the wire ID, including aliases and variants (`:free`, dated `canonical_slug`).
+- Resolve the runtime context from `per_request_limits.context_tokens` first — it is the API's enforceable per-request bound, not an invented budget — falling back to `context_length`, then `top_provider.context_length`. Reject only when **no** positive bound is reported. **Live verification (2026-08-17): `per_request_limits` is `null` for every sampled catalog model including the auto router — the field is a defensive nicety, the real chain is `context_length` → `top_provider.context_length`.**
 - Compute the output ceiling from the smallest positive value among `top_provider.max_completion_tokens`, `per_request_limits.completion_tokens`, and the context-window safety bound.
-- Derive tools, image input, reasoning modes, defaults, and estimated per-million USD rates from the returned model fields. Ignore unknown fields and invalid optional numbers.
+- Derive tools, image input, reasoning modes, defaults, and estimated per-million USD rates from the returned model fields. Ignore unknown fields and invalid optional numbers. **Live: `pricing.prompt`/`completion` are per-token USD strings; `-1` means unknown (dynamic routers) and must not become a rate.**
 - Treat `usage.cost` as the authoritative request charge; catalog pricing is only an estimate.
+
+**Variants 404 on the exact-model endpoint — lookup uses the base slug, chat keeps the full id.** Despite the OpenAPI claiming variant support (`gpt-4:free`), the live endpoint 404s every variant/alias suffix tested (`:free` on llama-3.3 and solar-pro-3, `~latest`, `~author/...` prefix, and even some dated `canonical_slug`s) while the base slug always resolves. `:free` ids ARE valid chat ids (free-router responses echo `model: "...:free"`), so: strip the suffix for the metadata lookup (`/api/v1/model/{author}/{slug}` with the base slug) and preserve the full requested id for chat. This is implemented in `src/openRouter.ts` (`parseOpenRouterModelRef`).
 
 Streaming already matches the shared parser: keep-alive comments, `[DONE]`, reasoning/content/tool deltas, an empty-choice final usage chunk, and top-level mid-stream errors. Preserve `error.metadata.error_type`, honor bounded `Retry-After` on pre-stream 429/503 responses, never retry after partial output, and retain `X-Generation-Id` for redacted diagnostics.
 
@@ -89,14 +91,16 @@ OpenRouter is now just a 5th arm of an already-widened contract: its control-pla
 
 ## Minimal Change Set
 
-### Credential Hygiene (non-blocking, do before ship)
+### Credential Hygiene (LANDED — done before this delivery, no behavior change)
 
-Credentials stay in per-model `requestHeaders` — plaintext user settings, and never in logs or webview state by construction. Two low-severity hygiene fixes land as a quick chore alongside onboarding, not as a gated prerequisite:
+Credentials stay in per-model `requestHeaders` — plaintext user settings, and never in logs or webview state by construction. Two low-severity hygiene fixes landed as a quick chore ahead of onboarding:
 
 - `addServerFlow.ts` logs the complete config — including `requestHeaders` — to the output channel. That channel is the user's own machine, so this is not a vulnerability; but the extension tells users to copy the channel and share it when reporting issues, so a key can end up in a shared paste. Log a redacted projection (headers as `[REDACTED]`) so the "key never leaves trusted extension code" claim made during onboarding is actually true.
 - `serverSettingsView.ts` posts full `ModelConfig[]` objects (including `requestHeaders`) to the webview. Same low severity — same-machine DOM — but defense-in-depth: send a public model projection to the webview.
 
-Neither fix needs new ceremony. Connection identity reuses the existing normalized-URL + backend + deterministic header fingerprint. Do not add multi-key isolation logic for OpenRouter — one key per user is the norm, and the existing fingerprint already keeps distinct keys separate at the same URL.
+Shared helper: `toPublicModelConfig` (`src/config.ts`) — `[REDACTED]`-values mode for the output channel, `{ strip: true }` for the webview. Covered in `test/configFunctions.test.ts`.
+
+Connection identity reuses the existing normalized-URL + backend + deterministic header fingerprint. Do not add multi-key isolation logic for OpenRouter — one key per user is the norm, and the existing fingerprint already keeps distinct keys separate at the same URL.
 
 ### Configuration And Runtime Limits
 
@@ -115,14 +119,15 @@ Existing backends return their current context result and no output ceiling. The
 
 ### OpenRouter Control Plane
 
-Keep OpenRouter-specific parsing and normalization in one small module:
+Keep OpenRouter-specific parsing and normalization in one small module — **LANDED in `src/openRouter.ts`** (see the variant-404 correction above):
 
 - Accept `author/model`, `author/model:variant`, `~author/family-latest`, or a verified `https://openrouter.ai/...` model-page URL.
 - Ignore query strings, fragments, and a trailing slash on verified OpenRouter URLs. Reject unrelated hosts, reserved paths, and malformed values instead of guessing.
 - Fetch `GET /api/v1/model/{author}/{slug}` with each path segment encoded and with the model's optional headers.
-- Preserve the requested ID for chat. The exact endpoint already reports current limits, pricing, and capabilities for `~latest` aliases; retain `alias_target` only for confirmation and diagnostics.
+- Preserve the requested ID for chat. The exact endpoint 404s on variant/alias suffixes (verified live), so the LOOKUP uses the base slug while `requestedId` keeps the full input for chat. (`alias_target` is not consumed — the wire type only carries the fields the normalizer reads.)
 - Normalize only fields the existing config consumes: display name, family, capabilities, reasoning modes, default parameters, estimated rates, expiration, and runtime limits.
 - Do not add a catalog cache. `VllmClient` remains the sole configuration cache owner.
+- Exports: `parseOpenRouterModelRef`, `normalizeOpenRouterModel`, `fetchOpenRouterModel`, `resolveOpenRouterRuntimeLimits`. The last is the arm the shared `resolveRuntimeLimits` switch will call. Coverage: `test/openRouter.test.ts` (26 tests).
 
 ### Onboarding
 
@@ -140,14 +145,14 @@ Generic local-server detection remains unchanged. No OpenRouter presets or inter
 
 - Use the existing request body and non-vLLM continuation behavior unchanged.
 - Preserve canonical `error.metadata.error_type` for pre-stream and mid-stream errors; unknown future values remain displayable.
-- Extend shared retry handling to honor a bounded `Retry-After` for pre-stream 429/503 responses. Never retry 401, 402, invalid 4xx responses, cancellation, or a stream after partial output.
-- Retain `X-Generation-Id` in redacted diagnostics. The current stream path never reads response headers, so this is small net-new plumbing — keep it optional. Router metadata likewise remains optional and cannot be required because cache hits omit it.
-- OpenRouter servers will show the dashboard's existing `serverType !== 'vllm'` → "degraded" flag. That is correct (no vLLM metrics exist for OpenRouter); document it so it is not reported as a bug later.
+- Extend the shared pre-stream retry — `fetchWithRetry` today does one 1.5s retry on 5xx and none on 429 — to honor a bounded `Retry-After` on pre-stream 429/503 responses. Never retry 401, 402, invalid 4xx responses, cancellation, or a stream after partial output.
+- Do **not** retain `X-Generation-Id`. The stream path never reads response headers, so it would thread a header-read through four layers for a diagnostic nicety; router metadata is out for the same reason (cache hits omit it). No new stream plumbing.
+- OpenRouter is **not** "degraded". Replace the dashboard's blanket `serverType !== 'vllm'` → degraded flag with per-backend classification: OpenRouter renders as a managed remote backend — suppress the vLLM-only metric rows as today, but label it accurately and surface token usage + actual cost. The actual-cost display becomes the headline, not a "degraded" footnote.
 
 ### Exact Cost
 
 - Extend `WireUsage` with optional `cost`, `is_byok`, and cost-detail fields.
-- Add the reported-cost field to the usage store **additively first**; only version the store schema if the shape actually has to change. Existing v1/v2 token records must migrate unchanged with no fabricated actual cost.
+- Add the reported-cost field to the usage store with a **single additive migration (v2 → v3) in delivery 1** — one store touch, not two, so cost flows end-to-end from the first OpenRouter request. Existing v1/v2 token records migrate unchanged with no fabricated actual cost.
 - Store reported actual USD separately from token-derived estimates. Prefer actual cost when present and never add actual and estimated values together.
 - Preserve the current configured-rate behavior for vLLM and responses without `usage.cost`.
 
@@ -155,8 +160,8 @@ Generic local-server detection remains unchanged. No OpenRouter presets or inter
 
 Ship two reviewable changes:
 
-1. **Core OpenRouter support:** credential hygiene (redacted config log + webview projection), config/schema support, runtime limits, exact metadata, onboarding, chat/error fixtures, and estimated rates.
-2. **Exact cost and documentation:** usage-store migration, reported-cost UI, diagnostics, README/configuration/usage docs, and changelog.
+1. **Core OpenRouter support + cost data plane:** credential hygiene (redacted config log + webview projection), config/schema support, runtime limits, exact metadata, onboarding, chat/error fixtures, estimated rates, `WireUsage.cost` extension, LastRequest actual-cost capture, and the single usage-store migration (v2 → v3, additive). One migration, one delivery — cost is recorded from day one.
+2. **UI and documentation:** dashboard actual-cost display + per-backend classification, diagnostics, README/configuration/usage docs, and changelog.
 
 Do not rename `VllmClient`, add a backend registry, or reorganize existing backends as part of this work. Those changes do not help the OpenRouter user path.
 
@@ -165,8 +170,9 @@ Do not rename `VllmClient`, add a backend registry, or reorganize existing backe
 - Existing backend request snapshots and tests remain unchanged.
 - Exact lookup normalizes context, both output-cap fields, capabilities, modes, and rates; malformed optional values stay undefined rather than becoming `NaN`.
 - Slugs, page URLs, aliases, and variants round-trip to the requested wire ID; invalid hosts and paths are rejected.
-- Dynamic routers without a fixed context fail with an actionable message.
+- Dynamic routers with an enforceable `per_request_limits` bound resolve a real window (defensive: null in practice); models with no positive bound at all fail with an actionable message.
 - OpenRouter streams cover comments, reasoning, content, tool calls, usage-only final chunks, `[DONE]`, pre-stream errors, and mid-stream errors.
+- The dashboard classifies OpenRouter as a managed remote backend (not "degraded") and shows actual cost when present.
 - Cancellation aborts immediately; 429/503 honor bounded `Retry-After`; auth, payment, and partial-output failures are not retried.
 - The config log shows headers as `[REDACTED]`; the webview receives a public model projection with no header fields; same-URL credentials remain separate via the existing fingerprint.
 - Actual cost survives reload, BYOK/missing-cost responses do not invent charges, and estimates are never double-counted.
@@ -180,7 +186,8 @@ Do not rename `VllmClient`, add a backend registry, or reorganize existing backe
 - Per-model credentials remain isolated and never leave trusted extension code.
 - Existing vLLM, LM Studio, llama.cpp, and Ollama behavior remains compatible.
 - Actual OpenRouter cost is recorded when supplied; configured rates remain estimates.
-- Responses and agent orchestration remain out of scope.
+- OpenRouter renders as a managed remote backend in the dashboard (not "degraded"), with token usage and actual cost tracked.
+- Responses, agent orchestration, and `X-Generation-Id` diagnostics remain out of scope.
 
 ## Product Defaults
 

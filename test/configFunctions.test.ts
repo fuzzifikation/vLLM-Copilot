@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { buildAuthHeaders, validateConfig, resolveServerType, buildModelId, resolveWorkspaceRelativePath, type VllmConfig } from '../src/config.js';
+import { buildAuthHeaders, validateConfig, resolveServerType, buildModelId, resolveWorkspaceRelativePath, toPublicModelConfig, type VllmConfig } from '../src/config.js';
 
 // ── resolveServerType ───────────────────────────────────────────────────
 
@@ -17,6 +17,38 @@ describe('resolveServerType', () => {
     expect(resolveServerType({ serverType: 'llamacpp' } as any)).toBe('llamacpp');
     expect(resolveServerType({ serverType: 'ollama' } as any)).toBe('ollama');
     expect(resolveServerType({ serverType: 'vllm' } as any)).toBe('vllm');
+  });
+});
+
+// ── toPublicModelConfig ───────────────────────────────────────────────────
+
+describe('toPublicModelConfig', () => {
+  const base = { id: 'm', vllmModelId: 'wire', serverUrl: 'http://h:8000' } as any;
+
+  it('returns a copy unchanged when there are no credentials', () => {
+    expect(toPublicModelConfig(base)).toEqual(base);
+    expect(toPublicModelConfig(base)).not.toBe(base);
+  });
+
+  it('redacts header values but keeps key names (output-channel log)', () => {
+    const out = toPublicModelConfig({ ...base, requestHeaders: { Authorization: 'Bearer sekrit', 'X-Key': 'abc' } });
+    expect(out.requestHeaders).toEqual({ Authorization: '[REDACTED]', 'X-Key': '[REDACTED]' });
+    expect(JSON.stringify(out)).not.toContain('sekrit');
+    expect(JSON.stringify(out)).not.toContain('abc');
+  });
+
+  it('drops the requestHeaders field entirely when strip is set (webview)', () => {
+    const out = toPublicModelConfig({ ...base, requestHeaders: { Authorization: 'Bearer sekrit' } }, { strip: true });
+    expect('requestHeaders' in out).toBe(false);
+    expect(JSON.stringify(out)).not.toContain('sekrit');
+  });
+
+  it('keeps all non-credential fields', () => {
+    const cfg = { ...base, displayName: 'Model', serverType: 'vllm', defaultParams: { temperature: 0.7 } };
+    const out = toPublicModelConfig(cfg);
+    expect(out.displayName).toBe('Model');
+    expect(out.serverType).toBe('vllm');
+    expect(out.defaultParams).toEqual({ temperature: 0.7 });
   });
 });
 
@@ -120,7 +152,7 @@ describe('validateConfig', () => {
   });
 
   it('accepts every known serverType without warning', () => {
-    for (const serverType of ['vllm', 'lmstudio', 'llamacpp', 'ollama']) {
+    for (const serverType of ['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter']) {
       const warnings = validateConfig(withModel({ serverType }));
       expect(warnings.some(w => w.includes('serverType'))).toBe(false);
     }

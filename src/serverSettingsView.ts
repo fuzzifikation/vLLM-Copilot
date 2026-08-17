@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getConfig, buildEndpoint, findModelConfigIndex, type ModelConfig, type ServerType } from './config.js';
+import { getConfig, buildEndpoint, findModelConfigIndex, toPublicModelConfig, type ModelConfig, type ServerType } from './config.js';
 import { patchModelConfig, type ModelIdentity } from './configStore.js';
 import { detectServerTypeFromV1Models } from './vllmClient.js';
 import {
@@ -223,7 +223,8 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       if (!model.serverUrl) continue;
       let existing = serverMap.get(model.serverUrl);
       if (!existing) { existing = []; serverMap.set(model.serverUrl, existing); }
-      existing.push(model);
+      // Public projection: header values never reach the webview DOM.
+      existing.push(toPublicModelConfig(model, { strip: true }));
     }
     const servers: ServerGroup[] = await Promise.all(
       Array.from(serverMap.entries()).map(async ([url, models]) => {

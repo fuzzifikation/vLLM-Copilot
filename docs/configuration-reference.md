@@ -13,7 +13,7 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 | Field | Default | Description |
 |-------|:-------:|-------------|
 | `serverUrl` | — | **Required.** Server URL (OpenAI-compatible). Each model targets its own server. |
-| `serverType` | `vllm` | Backend protocol. `vllm` \| `lmstudio` \| `llamacpp` \| `ollama`. **Set automatically by Add Server**, and auto-detected in Server Settings for unconfigured models (from `/v1/models`, or a configured sibling's type). Missing always means `vllm`. Manual third-party entries must set this — the extension never probes at runtime. |
+| `serverType` | `vllm` | Backend protocol. `vllm` \| `lmstudio` \| `llamacpp` \| `ollama` \| `openrouter`. **Set automatically by Add Server**, and auto-detected in Server Settings for unconfigured models (from `/v1/models`, or a configured sibling's type). Missing always means `vllm`. Manual third-party entries must set this — the extension never probes at runtime. |
 | `requestHeaders` | `{}` | HTTP headers for this server (auth, routing). **Isolated** — never shared across servers. |
 | `id` | — | **Required.** Unique entry key. Add flow sets this to `"<model> on <host>"`. |
 | `vllmModelId` | same as `id` | Actual model ID on the vLLM server (for aliases). |
@@ -44,6 +44,7 @@ The context window comes from the **backend's own documented endpoint** (never g
 | `lmstudio` | `GET /api/v1/models` | matching loaded instance `config.context_length`, else `max_context_length` |
 | `llamacpp` | `GET /props?model=<encoded id>` | `default_generation_settings.n_ctx` |
 | `ollama` | `GET /api/ps` | matching `models[].context_length` (model must be loaded) |
+| `openrouter` | `GET https://openrouter.ai/api/v1/model/{author}/{slug}` | `context_length` → `top_provider.context_length` (smallest positive wins); output ceiling from `top_provider.max_completion_tokens` |
 
 `maxInputTokens` is computed from that window (`window − maxOutputTokens`) and can only clamp it further. A server that reports no valid window for the model is skipped with an error — there is no fallback budget.
 
