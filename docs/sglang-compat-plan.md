@@ -63,8 +63,8 @@ Source of truth: `sgl-project/sglang` (Python `python/sglang/srt/entrypoints/htt
 | `owned_by` | ✅ `"sglang"` on every model card | `protocol.py` default; `openai/models.rs`; router |
 | `GET /health` | ✅ 200 ready, 503 starting/shutdown | `http_server.py`; rust health routes |
 | `GET /health_generate` | ✅ deep probe (runs a 1-token generate) | `http_server.py`; rust `native_api.rs` |
-| Version | `GET /server_info` → `version` (Python `__version__`, Rust `server_args.version`). **No `/version` endpoint** (current fetch 404s → `version` undefined, harmless) | `http_server.py`; rust `common.rs` |
-| Load | `GET /v1/loads` (not `/load`). Current `/load` fetch 404s → `serverLoad` undefined, harmless | `v1_loads.py` |
+| Version | `GET /server_info` → `version` (Python `__version__`, Rust `server_args.version`). **No `/version` endpoint** — the current unconditional `/version` fetch 404s (see §6: gate `/version` + `/load` by backend instead of tolerating permanent 404s) | `http_server.py`; rust `common.rs` |
+| Load | `GET /v1/loads` (not `/load`). Same gating note as `/version` | `v1_loads.py` |
 | `GET /metrics` | ✅ Prometheus, **`sglang:*` prefix, requires `--enable-metrics`** | `metrics_collector.py`; `production_metrics.mdx` |
 | Default port | **30000** (vLLM is 8000) | `server_args.py`; rust `default_port()` |
 
@@ -97,7 +97,7 @@ The classic router is the one case that cannot be rescued. Same policy as every 
 | `avgTPOTMs` | `sglang:time_per_output_token_seconds` OR `sglang:inter_token_latency_seconds` | **verify** which the target version serves; both appear in source/docs |
 | `avgTputTokPerSec` | `sglang:gen_throughput` (gauge, tok/s) | simpler than vLLM's pooled sum/sum |
 | `avgPrefillTputTokPerSec` | — | no verified prefill-time histogram; fall back to client-measured rendering (existing non-vLLM path) |
-| `preemptions` | `sglang:num_retracted_requests_total` (counter) | SGLang "retracts" ≈ preemptions; decide whether to surface as-is |
+| `preemptions` | `sglang:num_retracted_requests_total` (counter) | **DECIDED: label it "Retractions"**, not "Preemptions". SGLang "retracts" (evicts to reclaim KV slots) ≠ vLLM preemption. Surface the honest name; do not rename vLLM's "Preemptions" row for the SGLang path, and don't label a retraction count as preemptions. Add a footnote that retraction ≈ preemption but is not identical. |
 | `evictions` | — | no direct analog verified; leave empty |
 | spec decode | `sglang:spec_verify_calls_total`, `sglang:spec_num_draft_tokens` | partial; **verify** cumulative names |
 | `version` | `/server_info.version` | not `/version` |
@@ -108,6 +108,11 @@ The classic router is the one case that cannot be rescued. Same policy as every 
 Labels: SGLang metrics carry `model_name` labels (and `is_streaming` on token histograms). The mapper must sum across model labels like the vLLM parser does.
 
 ## 6. Minimal Change Set
+
+> **Implementation preconditions (from code review 2026-08-17):**
+> 1. Gate `/version` + `/load` by backend in `fetchAllEndpoints` (no permanent-404 crutch).
+> 2. Surface SGLang retractions under the label **"Retractions"** (not "Preemptions") — locked decision, see §5.
+> 3. Resolve the two `**verify**` metrics against the actual target (newest) SGLang version before writing the mapper.
 
 ### Configuration (`src/config.ts` + package schema)
 - Add `'sglang'` to `ServerType` (`'vllm' | 'lmstudio' | 'llamacpp' | 'ollama' | 'openrouter' | 'sglang'`).
@@ -123,7 +128,9 @@ Labels: SGLang metrics carry `model_name` labels (and `is_streaming` on token hi
 
 ### Metrics + version (`src/vllmMetrics.ts`)
 - `fetchAllEndpoints`: version from `/server_info` (parse `version`) when `serverType === 'sglang'`; online probe stays `/health` (SGLang serves it — unlike LM Studio/llama.cpp/Ollama).
+- **Gate `/version` and `/load` by backend.** Today `fetchAllEndpoints` unconditionally fires both for every backend and tolerates a 404. On SGLang they 404 on every poll tick forever — 2 wasted round-trips per server per interval, and correctness depends on 404-silence. Fix: fetch `/version` only for vLLM (and `/server_info` for SGLang), and `/load` only for vLLM; drop the 404-tolerance crutch. This is a small `fetchAllEndpoints` change, not a rewrite.
 - Add the `sglang:*` mapping from §5 alongside the `vllm:*` parser (single `MetricsParser` entry point, prefix-dispatch).
+- **Hard gate before writing the mapper: resolve the two `**verify**` metrics against the actual target SGLang version.** Target newest SGLang only (repo policy). Before implementation, pin "newest SGLang serves `time_per_output_token_seconds` XOR `inter_token_latency_seconds`" (and the spec-decode counter names) by reading that version's source. Do not write the mapper on a guess; the plan's `**verify**` flags are resolved at implementation time, not discovered at runtime.
 
 ### Dashboard / deep-dive (`src/dashboard.ts`, `deepDiveView.ts`)
 - Part of OpenRouter's per-backend classification work (§0). SGLang renders as a local server **with** metrics (not `(degraded)`).
