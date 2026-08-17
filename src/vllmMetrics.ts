@@ -35,6 +35,10 @@ interface ModelAccumulator {
   ttftCount: number;
   tpotSum: number;
   tpotCount: number;
+  genTokensSum: number;
+  decodeTimeSum: number;
+  promptTokensSum: number;
+  prefillTimeSum: number;
 }
 
 export interface ServerMetrics {
@@ -51,6 +55,10 @@ export interface ServerMetrics {
   specDraftDepth: number | null;
   avgTTFTMs: number | null;
   avgTPOTMs: number | null;
+  /** Pooled output throughput (tokens/sec) = Σ generation tokens / Σ decode time. */
+  avgTputTokPerSec: number | null;
+  /** Pooled prefill throughput (tokens/sec) = Σ prompt tokens / Σ prefill time. */
+  avgPrefillTputTokPerSec: number | null;
   preemptions: number | null;
   evictions: number | null;
   error?: string;
@@ -103,6 +111,10 @@ export class MetricsParser {
         ttftCount: 0,
         tpotSum: 0,
         tpotCount: 0,
+        genTokensSum: 0,
+        decodeTimeSum: 0,
+        promptTokensSum: 0,
+        prefillTimeSum: 0,
       };
       this.models.set(model, acc);
     }
@@ -161,6 +173,14 @@ export class MetricsParser {
       acc.tpotSum += value;
     } else if (name === 'vllm:inter_token_latency_seconds_count') {
       acc.tpotCount += value;
+    } else if (name === 'vllm:request_generation_tokens_sum') {
+      acc.genTokensSum += value;
+    } else if (name === 'vllm:request_decode_time_seconds_sum') {
+      acc.decodeTimeSum += value;
+    } else if (name === 'vllm:request_prompt_tokens_sum') {
+      acc.promptTokensSum += value;
+    } else if (name === 'vllm:request_prefill_time_seconds_sum') {
+      acc.prefillTimeSum += value;
     }
   }
 
@@ -212,15 +232,36 @@ export class MetricsParser {
 
     let ttftSum = 0, ttftCount = 0;
     let tpotSum = 0, tpotCount = 0;
+    let genTokensSum = 0, decodeTimeSum = 0;
+    let promptTokensSum = 0, prefillTimeSum = 0;
     for (const m of modelNames) {
       const a = this.models.get(m)!;
       ttftSum += a.ttftSum;
       ttftCount += a.ttftCount;
       tpotSum += a.tpotSum;
       tpotCount += a.tpotCount;
+      genTokensSum += a.genTokensSum;
+      decodeTimeSum += a.decodeTimeSum;
+      promptTokensSum += a.promptTokensSum;
+      prefillTimeSum += a.prefillTimeSum;
     }
     const avgTTFTMs = ttftCount > 0 ? (ttftSum / ttftCount) * 1000 : null;
     const avgTPOTMs = tpotCount > 0 ? (tpotSum / tpotCount) * 1000 : null;
+    // Pooled output throughput: Σ generation tokens across all finished
+    // requests ÷ Σ decode time (first output token → last output token). Unlike
+    // TPOT — which records one sample per engine step and undercounts when
+    // MTP/spec-decode emits several tokens per step — the generation-token
+    // count includes every emitted token, so the rate is honest under
+    // speculative decoding. Decode time (not inference time) so long-prompt
+    // prefill isn't charged against the output-token numerator.
+    const avgTputTokPerSec =
+      decodeTimeSum > 0 ? genTokensSum / decodeTimeSum : null;
+    // Pooled prefill throughput: Σ prompt tokens ÷ Σ prefill phase time.
+    // Symmetric to output. Note: the prompt-token count includes cache-served
+    // tokens, so with heavy prefix caching this reads higher than the raw
+    // compute rate — the KV Cache Hit row explains the gap.
+    const avgPrefillTputTokPerSec =
+      prefillTimeSum > 0 ? promptTokensSum / prefillTimeSum : null;
 
     return {
       models: modelNames.filter(m => m !== 'unknown'),
@@ -234,6 +275,8 @@ export class MetricsParser {
       specDraftDepth,
       avgTTFTMs,
       avgTPOTMs,
+      avgTputTokPerSec,
+      avgPrefillTputTokPerSec,
       preemptions: preemptions > 0 ? preemptions : null,
       evictions: evictions > 0 ? evictions : null,
     };
@@ -571,7 +614,7 @@ function emptyMetrics(error: string): ServerMetrics {
     online: false, error,
     models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
     cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
-    avgTTFTMs: null, avgTPOTMs: null, preemptions: null, evictions: null,
+    avgTTFTMs: null, avgTPOTMs: null, avgTputTokPerSec: null, avgPrefillTputTokPerSec: null, preemptions: null, evictions: null,
   };
 }
 
@@ -677,7 +720,12 @@ export function fmtN(v: number | null): string {
 
 export function fmtThroughput(avgTPOTms: number | null): string {
   if (avgTPOTms == null || avgTPOTms <= 0) return '—';
-  const tokPerSec = 1000 / avgTPOTms;
+  return fmtTokPerSec(1000 / avgTPOTms);
+}
+
+/** Format a directly-computed tokens/sec value (pooled throughput ratio). */
+export function fmtTokPerSec(tokPerSec: number | null): string {
+  if (tokPerSec == null || tokPerSec <= 0) return '—';
   return tokPerSec >= 100
     ? `${Math.round(tokPerSec)} tok/s`
     : `${tokPerSec.toFixed(1)} tok/s`;

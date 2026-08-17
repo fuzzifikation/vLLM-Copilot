@@ -7,6 +7,7 @@ import {
   fmtMs,
   fmtN,
   fmtThroughput,
+  fmtTokPerSec,
   shortUrl,
   getMetricsEngine,
   type ModelAccumulator,
@@ -132,6 +133,58 @@ describe('MetricsParser', () => {
     const agg = p.aggregate();
     // avg = 2.0 / 100 = 0.02s = 20ms
     expect(agg.avgTPOTMs).toBeCloseTo(20, 4);
+  });
+
+  it('parses pooled throughput from generation tokens / decode time', () => {
+    const p = new MetricsParser();
+    p.parse(`
+      vllm:request_generation_tokens_sum{model_name="llama"} 500
+      vllm:request_generation_tokens_count{model_name="llama"} 5
+      vllm:request_decode_time_seconds_sum{model_name="llama"} 10
+      vllm:request_decode_time_seconds_count{model_name="llama"} 5
+    `);
+    const agg = p.aggregate();
+    // 500 tokens / 10s = 50 tok/s
+    expect(agg.avgTputTokPerSec).toBeCloseTo(50, 4);
+  });
+
+  it('aggregates pooled throughput across models', () => {
+    const p = new MetricsParser();
+    p.parse(`
+      vllm:request_generation_tokens_sum{model_name="m1"} 300
+      vllm:request_decode_time_seconds_sum{model_name="m1"} 6
+      vllm:request_generation_tokens_sum{model_name="m2"} 700
+      vllm:request_decode_time_seconds_sum{model_name="m2"} 14
+    `);
+    const agg = p.aggregate();
+    // (300+700) / (6+14) = 1000 / 20 = 50 tok/s
+    expect(agg.avgTputTokPerSec).toBeCloseTo(50, 4);
+  });
+
+  it('parses pooled prefill throughput from prompt tokens / prefill time', () => {
+    const p = new MetricsParser();
+    p.parse(`
+      vllm:request_prompt_tokens_sum{model_name="llama"} 2000
+      vllm:request_prompt_tokens_count{model_name="llama"} 4
+      vllm:request_prefill_time_seconds_sum{model_name="llama"} 0.4
+      vllm:request_prefill_time_seconds_count{model_name="llama"} 4
+    `);
+    const agg = p.aggregate();
+    // 2000 tokens / 0.4s = 5000 tok/s
+    expect(agg.avgPrefillTputTokPerSec).toBeCloseTo(5000, 4);
+  });
+
+  it('aggregates pooled prefill throughput across models', () => {
+    const p = new MetricsParser();
+    p.parse(`
+      vllm:request_prompt_tokens_sum{model_name="m1"} 1500
+      vllm:request_prefill_time_seconds_sum{model_name="m1"} 0.5
+      vllm:request_prompt_tokens_sum{model_name="m2"} 3500
+      vllm:request_prefill_time_seconds_sum{model_name="m2"} 0.5
+    `);
+    const agg = p.aggregate();
+    // (1500+3500) / (0.5+0.5) = 5000 / 1 = 5000 tok/s
+    expect(agg.avgPrefillTputTokPerSec).toBeCloseTo(5000, 4);
   });
 
   it('returns null for metrics with no data', () => {
@@ -319,6 +372,17 @@ describe('fmtThroughput', () => {
   it('formats tokens per second', () => {
     expect(fmtThroughput(20)).toBe('50.0 tok/s');  // < 100 tok/s → 1 decimal
     expect(fmtThroughput(3.333)).toBe('300 tok/s'); // >= 100 tok/s → rounded
+  });
+});
+
+describe('fmtTokPerSec', () => {
+  it('formats null/non-positive as dash', () => {
+    expect(fmtTokPerSec(null)).toBe('—');
+    expect(fmtTokPerSec(0)).toBe('—');
+  });
+  it('formats tokens per second', () => {
+    expect(fmtTokPerSec(50)).toBe('50.0 tok/s');   // < 100 tok/s → 1 decimal
+    expect(fmtTokPerSec(300)).toBe('300 tok/s');   // >= 100 tok/s → rounded
   });
 });
 

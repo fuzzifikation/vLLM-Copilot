@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import { getConfig, resolveServerConfig, normalizeServerUrl, findModelConfig, type ModelConfig, type ServerType } from './config.js';
-import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, shortUrl, getMetricsEngine } from './vllmMetrics.js';
+import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import {
   getLastRequest, getServerUsage, hasServerUsage, onUsageStoreDidChange,
   computeCost, findModelCost, formatCostFine, formatCostSummary, fmtCount, emptyCounts,
@@ -444,11 +444,15 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       'clock',
       'Average time to first token across recent requests (queue + prompt processing).',
     ));
+    const outSpeed = m.avgTputTokPerSec != null ? fmtTokPerSec(m.avgTputTokPerSec) : fmtThroughput(m.avgTPOTMs);
+    const prefillSpeed = m.avgPrefillTputTokPerSec != null ? fmtTokPerSec(m.avgPrefillTputTokPerSec) : null;
     items.push(new MetricTreeItem(
-      'Throughput',
-      fmtThroughput(m.avgTPOTMs),
+      'Speed',
+      prefillSpeed != null ? `Output ${outSpeed} · Prefill ${prefillSpeed}` : `Output ${outSpeed}`,
       'rocket',
-      'Average token generation throughput (inverse of time per output token).',
+      m.avgTputTokPerSec != null
+        ? 'Pooled throughput across requests. Output = Σ generation tokens ÷ Σ decode time (output-only; counts every emitted token, so MTP/spec-decode stays honest). Prefill = Σ prompt tokens ÷ Σ prefill time (includes cache-served tokens).'
+        : 'Average token generation throughput (inverse of time per output token).',
     ));
 
     // Queue position
@@ -765,6 +769,6 @@ function emptyFallbackMetrics(): ServerMetrics {
     online: false, error: 'Loading…',
     models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
     cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
-    avgTTFTMs: null, avgTPOTMs: null, preemptions: null, evictions: null,
+    avgTTFTMs: null, avgTPOTMs: null, avgTputTokPerSec: null, avgPrefillTputTokPerSec: null, preemptions: null, evictions: null,
   };
 }
