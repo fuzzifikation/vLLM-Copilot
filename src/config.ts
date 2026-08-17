@@ -13,7 +13,7 @@ export type StructuredOutputConfig = WireStructuredOutputConfig;
  * released configuration is vLLM). Secondary backends are explicit opt-in via
  * the Add Server flow or manual config.
  */
-export type ServerType = 'vllm' | 'lmstudio' | 'llamacpp' | 'ollama';
+export type ServerType = 'vllm' | 'lmstudio' | 'llamacpp' | 'ollama' | 'openrouter';
 
 export interface ModelConfig {
   /**
@@ -318,6 +318,26 @@ export function resolveServerConfig(
 }
 
 /**
+ * Copy of a model config that is safe for non-trusted surfaces — the output
+ * channel and webview state. Credentials (request header *values*) never leave
+ * trusted extension code: by default they are replaced with `[REDACTED]` while
+ * key names are kept (header names are not secret and keep a log informative);
+ * pass `{ strip: true }` to drop the field entirely (webview projection). Used
+ * by the Add Server log and the Server Settings webview.
+ */
+export function toPublicModelConfig(
+  config: ModelConfig,
+  opts: { strip?: boolean } = {}
+): ModelConfig {
+  const { requestHeaders, ...rest } = config;
+  if (!requestHeaders || Object.keys(requestHeaders).length === 0) return rest;
+  if (opts.strip) return rest;
+  const redacted: Record<string, string> = {};
+  for (const key of Object.keys(requestHeaders)) redacted[key] = '[REDACTED]';
+  return { ...rest, requestHeaders: redacted };
+}
+
+/**
  * Ensure the server URL has a valid scheme. If the user types `localhost:8000`
  * instead of `http://localhost:8000`, prepend a scheme so `fetch()` doesn't
  * throw `TypeError: fetch failed` on an invalid URL.
@@ -480,10 +500,10 @@ export function validateConfig(config: VllmConfig): string[] {
     }
 
     // serverType must be a known backend when present. Missing always means vLLM.
-    if (model.serverType !== undefined && !['vllm', 'lmstudio', 'llamacpp', 'ollama'].includes(model.serverType)) {
+    if (model.serverType !== undefined && !['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter'].includes(model.serverType)) {
       warnings.push(
         `Model "${display}": serverType "${model.serverType}" is not a supported backend ` +
-        `(expected "vllm", "lmstudio", "llamacpp", or "ollama").`
+        `(expected "vllm", "lmstudio", "llamacpp", "ollama", or "openrouter").`
       );
     }
 

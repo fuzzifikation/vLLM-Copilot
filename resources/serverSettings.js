@@ -189,7 +189,7 @@
     // auto-detected via /v1/models (max_model_len → vllm, owned_by "llamacpp" → llamacpp).
     h += '<div class="field"><label>serverType</label>' +
       '<select data-f="serverType">' +
-      ['vllm', 'lmstudio', 'llamacpp', 'ollama'].map(t =>
+      ['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter'].map(t =>
         '<option value="' + t + '"' + (mc.serverType === t ? ' selected' : '') + '>' + t + '</option>').join('') +
       '</select>' +
       '<div class="field-hint">Backend serving this model. Auto-detected from /v1/models for unconfigured models; default vllm.</div></div>';

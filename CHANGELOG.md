@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **OpenRouter as a first-class backend (prep wiring)** — `'openrouter'` is now a valid `serverType` (`vllm` | `lmstudio` | `llamacpp` | `ollama` | `openrouter`), accepted by validation, the Server Settings webview dropdown, and the configuration schema. The shared `resolveRuntimeLimits` switch gained an `openrouter` arm that resolves runtime limits from OpenRouter's exact-model endpoint (via the new `src/openRouter.ts` control plane; variant/alias suffixes are stripped for the metadata lookup but preserved for chat). No user-facing onboarding yet — a model can only be configured by hand-editing `serverType`.
+
+- **OpenRouter control-plane module (prep, no behavior change)** — new `src/openRouter.ts` with `parseOpenRouterModelRef`, `normalizeOpenRouterModel`, `fetchOpenRouterModel`, and `resolveOpenRouterRuntimeLimits`. Parses slugs/variants/`~`-aliases/verified model-page URLs; fetches the exact-model endpoint with the base slug; normalizes runtime limits, capabilities, reasoning modes, defaults, and estimated per-million USD rates. Live-verified against the OpenRouter API: `per_request_limits` is null in practice (fallback chain `context_length` → `top_provider.context_length`), and variant suffixes (`:free` etc.) 404 on the metadata endpoint, so the lookup strips the suffix while chat keeps the full requested id.
+
+### Fixed
+
+- **Credential hygiene (OpenRouter prep, no behavior change)** — request header *values* no longer leave trusted extension code: the Add Server output-channel log now shows headers as `[REDACTED]` (key names kept), and the Server Settings webview receives a public model projection with the `requestHeaders` field stripped entirely. The webview never reads headers, and the patch-save path preserves stored headers on save, so no behavior change.
+
 ## v1.31.0 — Pooled output/prefill speed & hardened metrics parsing
 
 ### Added

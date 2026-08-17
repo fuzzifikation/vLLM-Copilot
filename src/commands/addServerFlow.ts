@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ModelConfig, ServerType } from '../config.js';
-import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId } from '../config.js';
+import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, toPublicModelConfig } from '../config.js';
 import { replaceModelConfig, type IdentifiedModelConfig } from '../configStore.js';
 import type { VllmModel } from '../types.js';
 import { describeError } from '../messageConverter.js';
@@ -93,7 +93,7 @@ export async function confirmAndSaveAddedModel(
 ): Promise<boolean> {
   output.appendLine(`[INFO] Add server ${serverUrl} → ${modelId}:`);
   output.appendLine(detail);
-  output.appendLine(`Config: ${JSON.stringify(finalConfig, null, 2)}`);
+  output.appendLine(`Config: ${JSON.stringify(toPublicModelConfig(finalConfig), null, 2)}`);
 
   const action = await vscode.window.showInformationMessage(
     `Add "${modelId}" from ${serverUrl}?\n\n${detail}`,

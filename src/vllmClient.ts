@@ -4,6 +4,7 @@ import { fetchWithRetry } from './fetchRetry.js';
 import { readSseStream } from './streamReader.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
+import { resolveOpenRouterRuntimeLimits } from './openRouter.js';
 import type { ServerConfig } from './provider/requestBuilder.js';
 import type { StreamEvent, VllmChatOptions, OpenAIChatMessage, VllmModel, LmStudioModel, RuntimeModelLimits } from './types.js';
 export type { StreamEvent, VllmChatOptions, OpenAIChatMessage, VllmModel } from './types.js';
@@ -72,7 +73,7 @@ export async function resolveRuntimeLimits(
       throw new Error(
         `vLLM model "${modelId}" has no runtime context window: GET ${url} returned no matching ` +
         `entry with max_model_len. Fix the served model id or server config. If this entry should ` +
-        `target a third-party backend, set "serverType" ('lmstudio' | 'llamacpp' | 'ollama') — ` +
+        `target a third-party backend, set "serverType" ('lmstudio' | 'llamacpp' | 'ollama' | 'openrouter') — ` +
         `the model will not be served.`
       );
     }
@@ -107,6 +108,13 @@ export async function resolveRuntimeLimits(
         `Ollama model "${modelId}" is not loaded (or reports no context_length): GET ${url}. ` +
         `Load the model with a context size in Ollama — it will not be served.`
       );
+    }
+    case 'openrouter': {
+      // OpenRouter is a fixed managed remote — the module owns the API base, so
+      // `serverUrl` is deliberately ignored here. `modelId` is the full requested
+      // wire id (variants like `:free` preserved); the module strips the variant
+      // for the metadata lookup and keeps it for chat.
+      return resolveOpenRouterRuntimeLimits(modelId, requestHeaders);
     }
   }
 }
