@@ -309,19 +309,63 @@ vllm:prompt_tokens_total{model_name="llama"} 1000`,
     expect('vllm:kv_cache_usage_perc' in m.gauges).toBe(false);
   });
 
-  it('attaches description from HELP to histogram suffixes', () => {
+  it('classifies histogram _sum and _count with the histogram family (not gauge/counter)', () => {
     const m = emptyMetrics();
     parseRawMetrics(
       `# HELP vllm:time_to_first_token_seconds Latency in seconds
+# TYPE vllm:time_to_first_token_seconds histogram
 vllm:time_to_first_token_seconds_sum{model_name="foo"} 3.5
-vllm:time_to_first_token_seconds_count{model_name="foo"} 7`,
+vllm:time_to_first_token_seconds_count{model_name="foo"} 7
+vllm:time_to_first_token_seconds_bucket{le="0.1",model_name="foo"} 1`,
       m,
     );
-    // _count → counter (includes 'count'), _sum → gauge
-    const countEntry = m.counters['time_to_first_token_seconds_count']![0];
-    expect(countEntry.description).toBe('Latency in seconds');
-    const sumEntry = m.gauges['time_to_first_token_seconds_sum']![0];
-    expect(sumEntry.description).toBe('Latency in seconds');
+    // _sum and _count belong to the histogram family, not gauges/counters.
+    // Each is stored under its own vllm:-stripped, suffix-retained key.
+    expect(m.gauges['time_to_first_token_seconds_sum']).toBeUndefined();
+    expect(m.counters['time_to_first_token_seconds_count']).toBeUndefined();
+    const sumHist = m.histograms['time_to_first_token_seconds_sum'];
+    expect(sumHist).toBeDefined();
+    expect(sumHist!.length).toBe(1);
+    expect(sumHist![0].value).toBe(3.5);
+    const countHist = m.histograms['time_to_first_token_seconds_count'];
+    expect(countHist).toBeDefined();
+    expect(countHist!.length).toBe(1);
+    expect(countHist![0].value).toBe(7);
+    const bucketHist = m.histograms['time_to_first_token_seconds_bucket'];
+    expect(bucketHist).toBeDefined();
+    expect(bucketHist!.length).toBe(1);
+    // Description still attaches via the base name.
+    expect(sumHist![0].description).toBe('Latency in seconds');
+    expect(countHist![0].description).toBe('Latency in seconds');
+  });
+
+  it('classifies _sum/_count via TYPE line even when HELP is absent', () => {
+    const m = emptyMetrics();
+    parseRawMetrics(
+      `# TYPE vllm:inter_token_latency_seconds histogram
+vllm:inter_token_latency_seconds_sum{model_name="foo"} 2.0
+vllm:inter_token_latency_seconds_count{model_name="foo"} 100`,
+      m,
+    );
+    expect(m.gauges['inter_token_latency_seconds_sum']).toBeUndefined();
+    expect(m.counters['inter_token_latency_seconds_count']).toBeUndefined();
+    const sumHist = m.histograms['inter_token_latency_seconds_sum'];
+    expect(sumHist).toBeDefined();
+    expect(sumHist![0].value).toBe(2.0);
+    const countHist = m.histograms['inter_token_latency_seconds_count'];
+    expect(countHist).toBeDefined();
+    expect(countHist![0].value).toBe(100);
+  });
+
+  it('keeps string-heuristic fallback when no TYPE line is present', () => {
+    const m = emptyMetrics();
+    parseRawMetrics(
+      'vllm:prompt_tokens_total{model_name="x"} 5\nvllm:kv_cache_usage_perc{model_name="x"} 0.5',
+      m,
+    );
+    // No TYPE lines → falls back to suffix heuristics (_total → counter, else gauge).
+    expect(m.counters['prompt_tokens_total']?.length).toBe(1);
+    expect(m.gauges['kv_cache_usage_perc']?.length).toBe(1);
   });
 
   it('handles empty input', () => {
