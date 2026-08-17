@@ -84,7 +84,8 @@ describe('VllmClient retry logic (via getModelContextWindow)', () => {
     );
     const client = new VllmClient(makeContext(), makeOutput());
     const ctx = await client.getModelContextWindow('vllm', 'http://test', {}, 'm1');
-    expect(ctx).toBe(4096);
+    expect(ctx.contextWindow).toBe(4096);
+    expect(ctx.maxOutputTokens).toBeUndefined();
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
@@ -99,7 +100,8 @@ describe('VllmClient retry logic (via getModelContextWindow)', () => {
     });
     const client = new VllmClient(makeContext(), makeOutput());
     const ctx = await client.getModelContextWindow('vllm', 'http://test', {}, 'test-model');
-    expect(ctx).toBe(4096);
+    expect(ctx.contextWindow).toBe(4096);
+    expect(ctx.maxOutputTokens).toBeUndefined();
     expect(calls).toEqual(['http://test/v1/models']);
   });
 
@@ -131,7 +133,7 @@ describe('VllmClient retry logic (via getModelContextWindow)', () => {
     });
     const client = new VllmClient(makeContext(), makeOutput());
     const ctx = await client.getModelContextWindow('lmstudio', 'http://test', {}, 'lm-model');
-    expect(ctx).toBe(65536); // live loaded-instance window preferred over configured
+    expect(ctx.contextWindow).toBe(65536); // live loaded-instance window preferred over configured
     expect(calls).toEqual(['http://test/api/v1/models']); // strict switch — no /v1/models probe
   });
 
@@ -155,7 +157,7 @@ describe('VllmClient retry logic (via getModelContextWindow)', () => {
     });
     const client = new VllmClient(makeContext(), makeOutput());
     const ctx = await client.getModelContextWindow('llamacpp', 'http://test', {}, 'my model/name');
-    expect(ctx).toBe(8192);
+    expect(ctx.contextWindow).toBe(8192);
     expect(calls).toEqual(['http://test/props?model=my%20model%2Fname']);
   });
 
@@ -179,7 +181,7 @@ describe('VllmClient retry logic (via getModelContextWindow)', () => {
     });
     const client = new VllmClient(makeContext(), makeOutput());
     const ctx = await client.getModelContextWindow('ollama', 'http://test', {}, 'qwen');
-    expect(ctx).toBe(32768);
+    expect(ctx.contextWindow).toBe(32768);
     expect(calls).toEqual(['http://test/api/ps']);
   });
 
@@ -225,7 +227,7 @@ describe('VllmClient retry logic (via getModelContextWindow)', () => {
     );
     const client = new VllmClient(makeContext(), makeOutput());
     const ctx = await client.getModelContextWindow('vllm', 'http://test', {}, 'm1');
-    expect(ctx).toBe(4096);
+    expect(ctx.contextWindow).toBe(4096);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 

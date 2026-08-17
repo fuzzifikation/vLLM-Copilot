@@ -60,6 +60,11 @@ export function buildModelInfo(
   config: { maxOutputTokens: number },
   serverUrl: string,
   /**
+   * Server-reported output ceiling (e.g. OpenRouter per-request completion
+   * limit). Clamps the derived output budget; undefined leaves it unchanged.
+   */
+  reportedMaxOutputTokens?: number,
+  /**
    * Invoked once with `(family, modelId)` when no preset/HuggingFace family was
    * available and the family had to be estimated from the model id via the
    * org-name fallback. Callers with an OutputChannel can route this to a
@@ -67,7 +72,7 @@ export function buildModelInfo(
    */
   onFamilyFallback?: (family: string, modelId: string) => void,
 ): vscode.LanguageModelChatInformation {
-  const budget = deriveTokenBudget(serverModel.max_model_len, config.maxOutputTokens, override, serverModel.id);
+  const budget = deriveTokenBudget(serverModel.max_model_len, config.maxOutputTokens, override, serverModel.id, reportedMaxOutputTokens);
 
   // Resolve family: preset-declared family is authoritative; otherwise fall back
   // to the heuristic. When the heuristic itself falls through to the org-name

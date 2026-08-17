@@ -23,7 +23,7 @@ function lines(output: { appendLine: ReturnType<typeof vi.fn> }): string {
 function makeClient(
   overrides: Partial<Pick<ProviderClient, 'getModelContextWindow'>> = {}
 ): Pick<ProviderClient, 'getModelContextWindow'> {
-  return { getModelContextWindow: async () => 4096, ...overrides };
+  return { getModelContextWindow: async () => ({ contextWindow: 4096 }), ...overrides };
 }
 
 const server = 'http://localhost:8000';
@@ -75,7 +75,7 @@ describe('discoverModels', () => {
 
   it('passes the resolved serverType into the resolver and builds model info', async () => {
     const output = makeOutput();
-    const spy = vi.fn(async () => 8192);
+    const spy = vi.fn(async () => ({ contextWindow: 8192 }));
     const models = await discoverModels(
       [{ id: 'm1', serverUrl: server, family: 'test-family' }],
       { getModelContextWindow: spy },
@@ -95,7 +95,7 @@ describe('discoverModels', () => {
     const output = makeOutput();
     const client = makeClient({
       getModelContextWindow: async (serverType: string, url: string) => {
-        if (url === server) return 4096;
+        if (url === server) return { contextWindow: 4096 };
         throw new Error('no context window');
       },
     });

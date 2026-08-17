@@ -53,6 +53,16 @@ export interface WireUsage {
   completion_tokens_details?: Record<string, number>;
 }
 
+/**
+ * Runtime limits a backend reports for a model, resolved by the shared
+ * backend-aware resolver (`resolveRuntimeLimits`). `maxOutputTokens` is
+ * optional: backends that report only a context window leave it undefined.
+ */
+export interface RuntimeModelLimits {
+  contextWindow: number;
+  maxOutputTokens?: number;
+}
+
 /** A partial tool call as it arrives across streaming chunks. */
 export interface WireToolCallDelta {
   index?: number;

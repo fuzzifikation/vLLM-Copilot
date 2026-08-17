@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { ModelConfig, ServerType } from '../config.js';
 import { buildEndpoint } from '../config.js';
 import { describeError } from '../messageConverter.js';
-import { resolveContextWindow } from '../vllmClient.js';
+import { resolveRuntimeLimits } from '../vllmClient.js';
 import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig } from './presets.js';
 
 /**
@@ -11,7 +11,7 @@ import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig } from 
  * Discovers:
  * - modelModes from chat_template Jinja2 kwargs (enable_thinking, preserve_thinking)
  * - imageInput capability from pipeline_tag
- * - context window from the shared backend-aware resolver (resolveContextWindow)
+ * - context window from the shared backend-aware resolver (resolveRuntimeLimits)
  * - generation defaults from generation_config.json on HuggingFace
  */
 
@@ -66,7 +66,7 @@ export interface AutoConfigResult {
  * Run auto-configuration for a model. Fetches from HuggingFace + the server.
  *
  * The context window comes from the SHARED backend-aware resolver
- * (`resolveContextWindow`) — no independent context parsing here. `/v1/models` is
+ * (`resolveRuntimeLimits`) — no independent context parsing here. `/v1/models` is
  * read only for `root` (used to resolve the real HF repo when the served id is a
  * quantized/aliased variant).
  *
@@ -95,10 +95,10 @@ export async function autoConfigureModel(
   // Context resolution is MANDATORY — no context, no model (strict policy).
   // The resolver THROWS a backend-specific message (endpoint, field, fix) when the
   // model can't be served; propagating it prevents saving an unusable model.
-  const ctx = await resolveContextWindow(serverType, serverUrl, requestHeaders ?? {}, modelId);
-  summary.push(`Context window (${serverType}): ${ctx.toLocaleString()} tokens`);
+  const limits = await resolveRuntimeLimits(serverType, serverUrl, requestHeaders ?? {}, modelId);
+  summary.push(`Context window (${serverType}): ${limits.contextWindow.toLocaleString()} tokens`);
   suggestedMaxOutputTokens = Math.min(
-    Math.floor(ctx * OUTPUT_TOKEN_FACTOR),
+    Math.floor(limits.contextWindow * OUTPUT_TOKEN_FACTOR),
     OUTPUT_TOKEN_CAP
   );
   summary.push(`Suggested max output tokens: ${suggestedMaxOutputTokens.toLocaleString()}`);
@@ -342,12 +342,12 @@ export async function resolveModelConfigForAdd(
       // Strict policy: a preset config is only usable when the server reports a real
       // context window. Resolve it HERE so the preset path cannot bypass the check —
       // a failed resolution THROWS and the model is not saved.
-      const ctx = await resolveContextWindow(serverType, serverUrl, requestHeaders ?? {}, modelId);
+      const limits = await resolveRuntimeLimits(serverType, serverUrl, requestHeaders ?? {}, modelId);
       return {
         modelConfig: mergePresetWithUserConfig(preset.config, userConfig),
         summary: [
           `Using preset ${preset.sourceFile}. Modes: ${modeNames}.`,
-          `Context window (${serverType}): ${ctx.toLocaleString()} tokens`,
+          `Context window (${serverType}): ${limits.contextWindow.toLocaleString()} tokens`,
         ],
       };
     }

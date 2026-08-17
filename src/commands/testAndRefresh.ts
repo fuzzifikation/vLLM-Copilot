@@ -11,7 +11,7 @@ import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, reso
 import type { ModelConfig } from '../config.js';
 import type { VllmModel } from '../types.js';
 import { describeError } from '../messageConverter.js';
-import { resolveContextWindow } from '../vllmClient.js';
+import { resolveRuntimeLimits } from '../vllmClient.js';
 import { runDiagnostics, formatReport } from '../diagnostics.js';
 
 /**
@@ -233,12 +233,13 @@ export function registerTestAndRefreshModelsCommand(
             let maxModelLen: number | undefined;
             let ctxError: string | undefined;
             try {
-              maxModelLen = await resolveContextWindow(
+              const limits = await resolveRuntimeLimits(
                 resolveServerType(model),
                 group.serverUrl,
                 group.requestHeaders ?? {},
                 vllmModelId
               );
+              maxModelLen = limits.contextWindow;
             } catch (err) {
               ctxError = describeError(err);
               outputChannel.appendLine(`[WARN] Model "${vllmModelId}" matched but has no resolvable context: ${ctxError} — it will not be served.`);

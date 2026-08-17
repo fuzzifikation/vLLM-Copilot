@@ -47,7 +47,7 @@ function fakeClient(overrides: Partial<ProviderClient> = {}): ProviderClient {
   return {
     getConfigCached: async () => ({ models: [], enableFileLogging: false } as VllmConfig),
     invalidateConfigCache: vi.fn(),
-    getModelContextWindow: async () => 0,
+    getModelContextWindow: async () => ({ contextWindow: 0 }),
     chatCompletionStream: async function* () {},
     ...overrides,
   };
