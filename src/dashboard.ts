@@ -286,8 +286,8 @@ function usageLine(counts: UsageCounts, since?: number): string {
 
 // ─── Tree Data Provider ──────────────────────────────────────────────
 
-export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem | OpenRouterAccountTreeItem | ModelCollectionTreeItem | OpenRouterModelTreeItem> {
-  private _onDidChangeTreeData = new vscode.EventEmitter<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem | OpenRouterAccountTreeItem | ModelCollectionTreeItem | OpenRouterModelTreeItem | undefined | void>();
+export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<vscode.TreeItem | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   /** Active engine subscriptions: serverUrl → { metrics, dispose } */
@@ -393,7 +393,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
       for (const [url, headers] of serverMap) {
         const modelIds = serverModelIds.get(url);
-        const engine = getMetricsEngine(url, headers, this.serverTypes.get(url) ?? 'vllm', undefined, modelIds);
+        const engine = getMetricsEngine(url, headers, this.serverTypes.get(url) ?? 'vllm', modelIds);
         const sub = engine.subscribe((aggregated) => {
           // Update cached metrics and schedule a single re-render
           const entry = this.subscriptions.find(s => s.serverUrl === url);
@@ -424,13 +424,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     return new PollIntervalTreeItem(label);
   }
 
-  getTreeItem(element: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem | OpenRouterAccountTreeItem | ModelCollectionTreeItem | OpenRouterModelTreeItem): vscode.TreeItem {
+  getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
     return element;
   }
 
-  async getChildren(element?: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem | OpenRouterAccountTreeItem | ModelCollectionTreeItem | OpenRouterModelTreeItem): Promise<(ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem | OpenRouterAccountTreeItem | ModelCollectionTreeItem | OpenRouterModelTreeItem)[]> {
+  async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
     if (!element) {
-      const items: (ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem)[] = [this.getPollIntervalTreeItem()];
+      const items: vscode.TreeItem[] = [this.getPollIntervalTreeItem()];
       const servers = this.subscriptions.map(sub =>
         new ServerTreeItem(sub.serverUrl, sub.metrics, this.serverTypes.get(sub.serverUrl)),
       );
@@ -472,8 +472,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     return [];
   }
 
-  private getServerMetricsChildren(m: ServerMetrics, serverUrl?: string, serverType?: ServerType): (MetricTreeItem | ModelsTreeItem | LastRequestTreeItem | FlagHintTreeItem | TokenUsageTreeItem)[] {
-    const items: (MetricTreeItem | ModelsTreeItem | LastRequestTreeItem | FlagHintTreeItem | TokenUsageTreeItem)[] = [];
+  private getServerMetricsChildren(m: ServerMetrics, serverUrl?: string, serverType?: ServerType): vscode.TreeItem[] {
+    const items: vscode.TreeItem[] = [];
     if (!m.online) {
       return [new MetricTreeItem('Error', m.error || 'Connection failed', 'error')];
     }
@@ -752,16 +752,14 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
         getModelStartedAt(normalizeServerUrl(e.serverUrl), e.modelId),
       );
       // Honest fallback: show whichever slot has a value, never a fabricated $0.
-      const value = summary
-        ?? (todayCost !== undefined ? formatCostFine(todayCost, currency)
-          : overallCost !== undefined ? formatCostFine(overallCost, currency)
-          : '');
+      // Inside the guard above at least one slot is a number, so this is total.
+      const value = summary ?? formatCostFine(todayCost ?? overallCost!, currency);
       items.push(new MetricTreeItem(
         'Cost',
         value,
         'credit-card',
         hasActual
-          ? 'Actual cost reported by OpenRouter (usage.cost). The authoritative spend — not the per-1M estimate.'
+          ? 'Actual OpenRouter cost (usage.cost) where reported; per-1M estimate for slots without reported spend.'
           : 'Estimated cost from the model\'s configured per-1M rates.',
       ));
     }
@@ -997,7 +995,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   private getRelayModels(serverUrl: string): ModelConfig[] {
     const key = normalizeServerUrl(serverUrl);
     return this.readConfiguredModels()
-      .filter(m => (m.serverType ?? 'vllm') === 'openrouter')
+      .filter(m => m.serverType === 'openrouter')
       .filter(m => normalizeServerUrl(m.serverUrl ?? '') === key);
   }
 

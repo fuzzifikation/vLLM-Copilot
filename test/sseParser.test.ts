@@ -156,7 +156,7 @@ describe('processSSEChunk', () => {
     expect(event.usage?.prompt_tokens).toBe(20);
   });
 
-  it('maps OpenRouter is_byok to usedByok on the wire usage', () => {
+  it('maps OpenRouter is_byok to usedByok on the wire usage (raw name stripped)', () => {
     const data = makeChunk({
       choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 20, completion_tokens: 3, total_tokens: 23, cost: 0.0012, is_byok: true },
@@ -164,6 +164,19 @@ describe('processSSEChunk', () => {
     const event = processSSEChunk(data, pending)!;
     expect(event.usage?.usedByok).toBe(true);
     expect(event.usage?.cost).toBe(0.0012);
+    // The raw wire name must not survive — the file logger stringifies usage,
+    // and the whole point of the rename was to keep ONE name in the pipeline.
+    expect('is_byok' in (event.usage ?? {})).toBe(false);
+  });
+
+  it('maps is_byok: false to usedByok: false (not a real flag)', () => {
+    const data = makeChunk({
+      choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 20, completion_tokens: 3, total_tokens: 23, is_byok: false },
+    });
+    const event = processSSEChunk(data, pending)!;
+    expect(event.usage?.usedByok).toBe(false);
+    expect('is_byok' in (event.usage ?? {})).toBe(false);
   });
 
   it('leaves usedByok undefined when the server reports no is_byok', () => {

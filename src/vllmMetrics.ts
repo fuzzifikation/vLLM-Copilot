@@ -18,7 +18,7 @@ import * as vscode from 'vscode';
 import { buildEndpoint, normalizeServerUrl, type ServerType } from './config.js';
 import { buildRequestHeaders } from './fetchRetry.js';
 import { resolveRuntimeLimits } from './vllmClient.js';
-import { fetchOpenRouterAccount, type OpenRouterAccount } from './openRouter.js';
+import { fetchOpenRouterAccount, PermanentContextError, type OpenRouterAccount } from './openRouter.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -346,9 +346,9 @@ export class ServerMetricsEngine {
     private serverUrl: string,
     private requestHeaders: Record<string, string>,
     private serverType: ServerType = 'vllm',
-    modelId?: string,
+    modelIds: string[] = [],
   ) {
-    this.modelIds = modelId ? [modelId] : [];
+    this.modelIds = [...modelIds];
   }
 
   /** Latest aggregated metrics (synchronous, may be null before first poll). */
@@ -385,10 +385,19 @@ export class ServerMetricsEngine {
   /**
    * Update the full set of wire model ids for this server (relay model
    * collection). Each configured model's context window resolves independently
-   * (OpenRouter models can have different windows).
+   * (OpenRouter models can have different windows). Prunes the per-model caches
+   * of ids that are no longer configured, so a REMOVED model stops being
+   * resolved (and a permanent `null` cache can't stick to a re-added id).
    */
   setModelIds(modelIds: string[]): void {
     this.modelIds = [...modelIds];
+    const active = new Set(this.modelIds);
+    for (const key of [...this.resolvedContextByModel.keys()]) {
+      if (!active.has(key)) this.resolvedContextByModel.delete(key);
+    }
+    for (const key of [...this.contextRetryAtByModel.keys()]) {
+      if (!active.has(key)) this.contextRetryAtByModel.delete(key);
+    }
   }
 
   dispose(): void {
@@ -447,7 +456,14 @@ export class ServerMetricsEngine {
             if (!aggregated.online || Date.now() < retryAt) continue;
             try {
               resolved = (await resolveRuntimeLimits(this.serverType, this.serverUrl, this.requestHeaders, modelId)).contextWindow;
-              this.resolvedContextByModel.set(modelId, resolved);
+              // Defend the cache against a resolver that returns a non-number
+              // without throwing: storing `undefined` would look like "not
+              // attempted" and re-fire every tick, skipping the backoff.
+              if (typeof resolved === 'number' && resolved > 0) {
+                this.resolvedContextByModel.set(modelId, resolved);
+              } else {
+                this.resolvedContextByModel.set(modelId, null);
+              }
             } catch (err) {
               if (isPermanentContextError(err)) {
                 this.resolvedContextByModel.set(modelId, null); // unresolvable — stop retrying
@@ -521,7 +537,6 @@ export function getMetricsEngine(
   serverUrl: string,
   requestHeaders?: Record<string, string>,
   serverType: ServerType = 'vllm',
-  modelId?: string,
   modelIds?: string[],
 ): ServerMetricsEngine {
   // Key engines by the canonical server URL (scheme added, trailing slash and
@@ -531,12 +546,9 @@ export function getMetricsEngine(
   // vLLM process. The engine stores the canonical URL too, so endpoint fetch
   // and the registry removal in dispose() agree on identity.
   const key = normalizeServerUrl(serverUrl);
-  // One id list is the source of truth: the explicit set when given, else the
-  // single legacy modelId (back-compat with callers that only know one model).
-  const effective = modelIds && modelIds.length > 0 ? modelIds : (modelId ? [modelId] : []);
   let engine = engineRegistry.get(key);
   if (!engine) {
-    engine = new ServerMetricsEngine(key, requestHeaders ?? {}, serverType, modelId);
+    engine = new ServerMetricsEngine(key, requestHeaders ?? {}, serverType, modelIds);
     engineRegistry.set(key, engine);
   } else {
     if (requestHeaders && Object.keys(requestHeaders).length > 0) {
@@ -548,8 +560,10 @@ export function getMetricsEngine(
     // engine was first created before the type was known.
     engine.setServerType(serverType);
   }
-  if (effective.length > 0) {
-    engine.setModelIds(effective);
+  // modelIds is the sole source of truth; `undefined` = caller doesn't manage
+  // the set (leave as-is), an explicit [] = clear.
+  if (modelIds !== undefined) {
+    engine.setModelIds(modelIds);
   }
   return engine;
 }
@@ -665,8 +679,14 @@ async function fetchAllEndpoints(
   const healthBody = online && healthRes.ok ? await healthRes.text() : undefined;
 
   // ── OpenRouter relay: account/key health (awaited here so the endpoint
-  // ── fetches above ran in parallel — never a serial stall).
-  const account = await accountPromise;
+  // ── fetches above ran in parallel — never a serial stall). The probe is
+  // display-only and re-runs every tick, so a late/slow result is worthless:
+  // bound it below the poll interval so a hung /api/v1/key can't stretch the
+  // cadence. (The probe never rejects — it returns undefined on failure.)
+  const account = await Promise.race([
+    accountPromise,
+    new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
+  ]);
 
   // ── Build ServerMetrics (aggregated, for dashboard) ──
   const parser = new MetricsParser();
@@ -726,10 +746,12 @@ const CONTEXT_RESOLVE_RETRY_MS = 60_000;
  * True when a context-resolve error is a PERMANENT validation failure — the
  * backend reported a response but the model genuinely has no usable context
  * bound (retrying can never change that). Everything else (network errors,
- * HTTP 429/5xx, timeouts) is transient and retryable. The permanent markers are
- * the backend-specific actionable messages thrown by `resolveRuntimeLimits`.
+ * HTTP 429/5xx, timeouts) is transient and retryable. The OpenRouter resolver
+ * throws a typed {@link PermanentContextError}; the other backends' resolvers
+ * throw plain Errors whose messages carry the marker strings below.
  */
 function isPermanentContextError(err: unknown): boolean {
+  if (err instanceof PermanentContextError) return true;
   const msg = err instanceof Error ? err.message : String(err);
   return (
     msg.includes('has no runtime context window') ||

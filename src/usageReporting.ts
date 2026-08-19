@@ -8,6 +8,7 @@
 
 import * as vscode from 'vscode';
 import type { WireUsage } from './types.js';
+import { formatCostFine } from './usageStore.js';
 
 /**
  * Build a LanguageModelDataPart with the exact shape VS Code's isApiUsage() guard expects.
@@ -88,10 +89,8 @@ export function logTokenUsage(
   out.push(`  output: ${usage.completion_tokens.toLocaleString()}${specAcceptPct ? ` (spec: ${accepted}/${specTotal} = ${specAcceptPct}%)` : ''}${outputTokPerSec ? `, ${outputTokPerSec} tok/s` : ''})`);
   out.push(`  total: ${usage.total_tokens.toLocaleString()}`);
   if (usage.cost !== undefined && usage.cost !== null) {
-    const costStr = usage.cost < 0.01
-      ? `$${usage.cost.toFixed(6).replace(/\.?0+$/, '')}`
-      : `$${usage.cost.toFixed(4).replace(/\.?0+$/, '')}`;
-    out.push(`  cost: ${costStr}${usage.usedByok ? ' (BYOK)' : ''}`);
+    // One money formatter, one convention (matches the dashboard's fine cost).
+    out.push(`  cost: ${formatCostFine(usage.cost, 'USD')}${usage.usedByok ? ' (BYOK)' : ''}`);
   }
   if (totalElapsedMs !== undefined) {
     out.push(`  elapsed: ${(totalElapsedMs / 1000).toFixed(2)}s${firstTokenMs !== undefined ? ` (TTFT: ${(firstTokenMs / 1000).toFixed(2)}s)` : ''}`);

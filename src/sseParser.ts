@@ -51,12 +51,16 @@ export function processSSEChunk(
   if (parsed.usage) {
     // OpenRouter sends the BYOK flag as `is_byok`; the wire type carries it as
     // `usedByok` (distinct from VS Code's `isBYOK` — see types.ts). Remap so the
-    // rest of the pipeline reads one name. Non-OpenRouter chunks have no field,
-    // so this is a no-op for vLLM/local.
+    // rest of the pipeline reads one name AND the raw wire name doesn't leak
+    // into logs (the file logger stringifies the usage object). Non-OpenRouter
+    // chunks have no field, so this is a no-op for vLLM/local.
     const rawUsage = parsed.usage as WireUsage & { is_byok?: boolean };
-    event.usage = rawUsage.is_byok !== undefined
-      ? { ...rawUsage, usedByok: rawUsage.is_byok }
-      : rawUsage;
+    if (rawUsage.is_byok !== undefined) {
+      const { is_byok: _raw, ...rest } = rawUsage;
+      event.usage = { ...rest, usedByok: rawUsage.is_byok };
+    } else {
+      event.usage = rawUsage;
+    }
   }
   if (parsed.metrics) event.metrics = parsed.metrics;
 

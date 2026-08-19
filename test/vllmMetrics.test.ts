@@ -469,7 +469,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     }));
 
     const url = 'http://or-test:8000';
-    const engine = getMetricsEngine(url, {}, 'openrouter', 'nvidia/nemotron-3.5-lightning:free');
+    const engine = getMetricsEngine(url, {}, 'openrouter', ['nvidia/nemotron-3.5-lightning:free']);
     const aggregated = await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
       const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
       setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
@@ -501,11 +501,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     }));
 
     const url = 'http://or-relay:8000';
-    const engine = getMetricsEngine(
-      url, {}, 'openrouter',
-      'nvidia/nemotron-3.5-lightning:free',
-      ['nvidia/nemotron-3.5-lightning:free', 'deepseek/deepseek-chat'],
-    );
+    const engine = getMetricsEngine(url, {}, 'openrouter', ['nvidia/nemotron-3.5-lightning:free', 'deepseek/deepseek-chat']);
     const aggregated = await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
       const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
       setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
@@ -535,7 +531,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     }));
 
     const url = 'http://or-account:8000';
-    const engine = getMetricsEngine(url, { Authorization: 'Bearer sk-test' }, 'openrouter', 'm1');
+    const engine = getMetricsEngine(url, { Authorization: 'Bearer sk-test' }, 'openrouter', ['m1']);
     const aggregated = await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
       const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
       setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
@@ -557,7 +553,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     }));
 
     const url = 'http://or-badkey:8000';
-    const engine = getMetricsEngine(url, { Authorization: 'Bearer bad' }, 'openrouter', 'm1');
+    const engine = getMetricsEngine(url, { Authorization: 'Bearer bad' }, 'openrouter', ['m1']);
     const aggregated = await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
       const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
       setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
@@ -577,7 +573,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     }));
 
     const url = 'http://or-fail:8000';
-    const engine = getMetricsEngine(url, {}, 'openrouter', 'nvidia/nemotron-3.5-lightning:free');
+    const engine = getMetricsEngine(url, {}, 'openrouter', ['nvidia/nemotron-3.5-lightning:free']);
     const aggregated = await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
       const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
       setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
@@ -611,7 +607,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     }));
 
     const url = 'http://or-transient:8000';
-    const engine = getMetricsEngine(url, {}, 'openrouter', 'nvidia/nemotron-3.5-lightning:free');
+    const engine = getMetricsEngine(url, {}, 'openrouter', ['nvidia/nemotron-3.5-lightning:free']);
     // One subscription stays alive across both polls so the engine isn't
     // disposed between them.
     const polls: Array<ReturnType<ServerMetricsEngine['getCachedAggregated']>> = [];
@@ -648,7 +644,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     }));
 
     const url = 'http://or-permanent:8000';
-    const engine = getMetricsEngine(url, {}, 'openrouter', 'nvidia/nemotron-3.5-lightning:free');
+    const engine = getMetricsEngine(url, {}, 'openrouter', ['nvidia/nemotron-3.5-lightning:free']);
     await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
       const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
       setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
@@ -658,6 +654,114 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     // must NOT be hit again (permanent failures are never retried).
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     expect(resolverHits).toBe(1);
+    vi.useRealTimers();
+  });
+
+  it('does NOT retry a 404 from the exact-model endpoint (wrong slug — permanent)', async () => {
+    // Regression: a bad/retired OpenRouter slug returns 404, which used to be
+    // classified transient and re-probed every 60s forever. It is permanent.
+    vi.useFakeTimers();
+    let resolverHits = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+      }
+      if (u.includes('/v1/model/')) {
+        resolverHits++;
+        // fetchWithRetry retries once on 5xx, but 404 is non-retryable → throws
+        // immediately with "HTTP 404" → PermanentContextError.
+        return new Response(null, { status: 404 });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const url = 'http://or-404:8000';
+    const engine = getMetricsEngine(url, {}, 'openrouter', ['bad/not-a-real-model']);
+    await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
+      const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
+      setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
+    });
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(resolverHits).toBe(1); // never re-probed
+    vi.useRealTimers();
+  });
+
+  it('never re-fetches a successfully resolved context window on later ticks', async () => {
+    // The whole point of the cache: a loaded model's window is static, so the
+    // exact-model API must be hit exactly once, not every poll.
+    vi.useFakeTimers();
+    let resolverHits = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+      }
+      if (u.includes('/v1/model/')) {
+        resolverHits++;
+        return new Response(JSON.stringify({ data: { context_length: 1000000 } }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const url = 'http://or-cache:8000';
+    const engine = getMetricsEngine(url, {}, 'openrouter', ['nvidia/nemotron-3.5-lightning:free']);
+    const polls: Array<ReturnType<ServerMetricsEngine['getCachedAggregated']>> = [];
+    const sub = engine.subscribe((agg) => { polls.push(agg); });
+
+    await vi.advanceTimersByTimeAsync(0); // initial tick resolves
+    expect(polls[0]?.maxModelLen).toBe(1000000);
+    expect(resolverHits).toBe(1);
+
+    // Several poll intervals later the window is cached — the resolver must not
+    // be hit again.
+    await vi.advanceTimersByTimeAsync(3 * 16_000);
+    expect(resolverHits).toBe(1);
+    sub.dispose();
+    vi.useRealTimers();
+  });
+
+  it('prunes per-model caches when the model set changes (setModelIds)', async () => {
+    vi.useFakeTimers();
+    const resolved: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+      }
+      const match = u.match(/\/v1\/model\/([^/]+)\/([^/]+)/);
+      if (match) {
+        const modelId = `${match[1]}/${match[2]}`;
+        resolved.push(modelId);
+        return new Response(JSON.stringify({ data: { context_length: 1000000 } }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const url = 'http://or-set:8000';
+    const engine = getMetricsEngine(url, {}, 'openrouter', ['a/model-a']);
+    const sub = engine.subscribe(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resolved).toContain('a/model-a');
+
+    // Add a model — it resolves on the next tick.
+    engine.setModelIds(['a/model-a', 'b/model-b']);
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(resolved).toContain('b/model-b');
+
+    // Remove a model — it stops being resolved and its cache is pruned.
+    engine.setModelIds(['a/model-a']);
+    const countBefore = resolved.length;
+    await vi.advanceTimersByTimeAsync(3 * 16_000);
+    expect(resolved.length).toBe(countBefore); // no re-resolves of anything
+
+    // Re-adding the removed model re-resolves (its cache was pruned, not stale).
+    engine.setModelIds(['a/model-a', 'b/model-b']);
+    await vi.advanceTimersByTimeAsync(16_000);
+    const bHits = resolved.filter(m => m === 'b/model-b').length;
+    expect(bHits).toBe(2); // first add + re-add after prune
+    sub.dispose();
     vi.useRealTimers();
   });
 
