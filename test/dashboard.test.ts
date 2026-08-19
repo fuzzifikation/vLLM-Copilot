@@ -45,6 +45,19 @@ const nonVllmOnlineFetch = vi.fn(async (url: unknown) => {
   return new Response(null, { status: 404 });
 });
 
+/**
+ * Fetch stub for an OpenRouter relay: /v1/models serves the catalog, /v1/key
+ * serves account health, and the exact-model endpoint serves per-model context.
+ */
+const openRouterFetch = vi.fn(async (url: unknown) => {
+  const u = String(url);
+  if (u.endsWith('/v1/models')) return jsonResponse({ data: [{ id: 'catalog-model-a' }] });
+  if (u.endsWith('/v1/key')) return jsonResponse({ data: { label: 'my-key', limit: 10, limit_remaining: 3.5, usage: 100, is_free_tier: false } });
+  if (u.includes('/v1/model/nvidia/nemotron-3.5-lightning')) return jsonResponse({ data: { context_length: 1000000 } });
+  if (u.includes('/v1/model/deepseek/deepseek-chat')) return jsonResponse({ data: { context_length: 163840 } });
+  return new Response(null, { status: 404 });
+});
+
 /** Let the async refreshSubscriptions + first engine tick settle. */
 const settle = () => new Promise<void>(r => setTimeout(r, 0));
 
@@ -190,14 +203,26 @@ describe('DashboardTreeProvider', () => {
     });
   });
 
-  it('suppresses Models + Context Window for an OpenRouter relay (wrong scope, interim)', async () => {
-    // OpenRouter is a relay: /v1/models is the whole catalog and a single
-    // configured model's context isn't "the server's". Until the model-collection
-    // restructure (Phase 2), both are hidden on the relay node.
+  it('renders an OpenRouter relay as a model collection with account health', async () => {
+    // OpenRouter is a relay: /v1/models is the whole catalog and each configured
+    // model has its own context. Phase 2 renders the relay as a model collection
+    // — an Account node (from /api/v1/key) + one node per configured model with
+    // model-level rows — instead of the vLLM "Model IDs" list.
     (vscode as any).workspace._mockConfig = {
-      models: [{ id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', serverType: 'openrouter' }],
+      models: [
+        {
+          id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', serverType: 'openrouter', displayName: 'Nemotron',
+          capabilities: { toolCalling: true, imageInput: false }, maxOutputTokens: 4096,
+          modelModes: { 'Think (High)': { reasoning: { enabled: true, effort: 'high' } }, 'No Think': { reasoning: { enabled: false } } },
+          cost: { input: 0.2, output: 0.4 },
+        },
+        {
+          id: 'm2', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-chat', serverType: 'openrouter', displayName: 'DeepSeek',
+          capabilities: { toolCalling: true, imageInput: true }, maxOutputTokens: 16000,
+        },
+      ],
     };
-    vi.stubGlobal('fetch', onlineFetch);
+    vi.stubGlobal('fetch', openRouterFetch);
 
     provider.setVisible(true);
 
@@ -207,10 +232,58 @@ describe('DashboardTreeProvider', () => {
       expect(serverNode).toBeDefined();
       const metrics = await provider.getChildren(serverNode as any);
       const labels = metrics.map(m => (m as any).label as string);
+      // No vLLM-style server rows (catalog is not "the server's models").
       expect(labels).not.toContain('Model IDs');
       expect(labels).not.toContain('Context Window');
+      // Account health + model collection rendered instead.
+      expect(labels).toContain('Account');
+      expect(labels).toContain('Model Collection');
       // The server is still online and usable.
       expect((serverNode as any).description).not.toContain('Offline');
+
+      // Account node shows credits remaining.
+      const accountNode = metrics.find(m => (m as any).label === 'Account');
+      const accountRows = await provider.getChildren(accountNode as any);
+      expect(accountRows.some(r => (r as any).label === 'Credits Remaining')).toBe(true);
+      expect((accountRows.find(r => (r as any).label === 'Credits Remaining') as any).description).toBe('$3.50');
+
+      // Model Collection has one child per configured model, each labeled by displayName.
+      const collectionNode = metrics.find(m => (m as any).label === 'Model Collection');
+      const modelNodes = await provider.getChildren(collectionNode as any);
+      const modelLabels = modelNodes.map(m => (m as any).label as string);
+      expect(modelLabels).toEqual(['Nemotron', 'DeepSeek']);
+
+      // Each model node has its OWN context window from the per-model resolve.
+      const nemotron = modelNodes.find(m => (m as any).label === 'Nemotron');
+      expect((nemotron as any).description).toBe('1M'); // fmtCount(1000000)
+      const deepseek = modelNodes.find(m => (m as any).label === 'DeepSeek');
+      expect((deepseek as any).description).toBe('164k'); // fmtCount(163840)
+
+      // Expand a model node — model-level rows (context, output, caps, modes).
+      const nemotronRows = await provider.getChildren(nemotron as any);
+      const rowLabels = nemotronRows.map(r => (r as any).label as string);
+      expect(rowLabels).toContain('Context Window');
+      expect(rowLabels).toContain('Capabilities');
+    });
+  });
+
+  it('hides Account + Model Collection when no OpenRouter models are configured on a server', async () => {
+    // A non-OpenRouter server must not show relay nodes.
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 's:8000');
+      const metrics = await provider.getChildren(serverNode as any);
+      const labels = metrics.map(m => (m as any).label as string);
+      expect(labels).not.toContain('Account');
+      expect(labels).not.toContain('Model Collection');
+      expect(labels).toContain('Model IDs'); // vLLM path unchanged
     });
   });
 

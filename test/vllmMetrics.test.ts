@@ -483,6 +483,90 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     expect(urls.some(u => u.endsWith('/metrics') || u.endsWith('/version') || u.endsWith('/load'))).toBe(false);
   });
 
+  it('resolves a context window PER MODEL for an OpenRouter relay collection', async () => {
+    // OpenRouter is a relay: each configured model has its OWN context window.
+    // The engine must resolve one per model id and expose them via contextByModel.
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+      }
+      if (u.includes('/v1/model/nvidia/nemotron-3.5-lightning')) {
+        return new Response(JSON.stringify({ data: { context_length: 1000000 } }), { status: 200 });
+      }
+      if (u.includes('/v1/model/deepseek/deepseek-chat')) {
+        return new Response(JSON.stringify({ data: { context_length: 163840 } }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const url = 'http://or-relay:8000';
+    const engine = getMetricsEngine(
+      url, {}, 'openrouter',
+      'nvidia/nemotron-3.5-lightning:free',
+      ['nvidia/nemotron-3.5-lightning:free', 'deepseek/deepseek-chat'],
+    );
+    const aggregated = await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
+      const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
+      setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
+    });
+
+    // Both configured models resolve their own windows; the server-level
+    // maxModelLen reflects the first model.
+    expect(aggregated?.contextByModel).toEqual({
+      'nvidia/nemotron-3.5-lightning:free': 1000000,
+      'deepseek/deepseek-chat': 163840,
+    });
+    expect(aggregated?.maxModelLen).toBe(1000000);
+  });
+
+  it('captures OpenRouter account health from /api/v1/key', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+      }
+      if (u.endsWith('/v1/key')) {
+        return new Response(JSON.stringify({
+          data: { label: 'my-key', limit: 10, limit_remaining: 3.5, usage: 100, is_free_tier: false },
+        }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const url = 'http://or-account:8000';
+    const engine = getMetricsEngine(url, { Authorization: 'Bearer sk-test' }, 'openrouter', 'm1');
+    const aggregated = await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
+      const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
+      setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
+    });
+
+    expect(aggregated?.account).toEqual({ label: 'my-key', limit: 10, limit_remaining: 3.5, usage: 100, is_free_tier: false });
+  });
+
+  it('degrades account health to undefined on a bad key (no fabricated credits)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+      }
+      if (u.endsWith('/v1/key')) {
+        return new Response(null, { status: 401 });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const url = 'http://or-badkey:8000';
+    const engine = getMetricsEngine(url, { Authorization: 'Bearer bad' }, 'openrouter', 'm1');
+    const aggregated = await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
+      const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
+      setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
+    });
+
+    expect(aggregated?.online).toBe(true); // chat works even with a bad key path
+    expect(aggregated?.account).toBeUndefined(); // no credits invented
+  });
+
   it('leaves the context window null when the per-backend resolver fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
       const u = String(url);
