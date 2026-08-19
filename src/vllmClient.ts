@@ -21,7 +21,7 @@ const METADATA_TIMEOUT_MS = 10000;
  * Overall budget for the initial chat POST to receive response headers.
  * fetch and fetchWithRetry have no deadline of their own, so without this a server
  * that accepts the connection but never answers would hang the request forever.
- * Default is 180000ms, overridable per model via `initialResponseTimeoutMs`
+ * Default is 600000ms, overridable per model via `initialResponseTimeoutMs`
  * (0 = disabled). Resolved at request time in {@link chatCompletionStream}.
  */
 

@@ -224,7 +224,7 @@
         '<div class="checkbox-row"><input type="checkbox" data-k="caps.imageInput" ' + (!!m.capabilities?.imageInput ? 'checked' : '') + '><label>Image Input (Vision)</label></div>');
       h += sec('Request Params', '<div class="field-hint">Baseline parameters — overridden by Model Modes</div>' + dpSection(m));
       h += sec('Transport', fields([{ k: 'streamInactivityTimeout', t: 'number', v: m.streamInactivityTimeout ?? 0, h: 'SSE timeout in ms (0 = infinite)' },
-        { k: 'initialResponseTimeoutMs', t: 'number', v: m.initialResponseTimeoutMs ?? 180000, h: 'First-response-header timeout in ms (0 = infinite)' },
+        { k: 'initialResponseTimeoutMs', t: 'number', v: m.initialResponseTimeoutMs ?? 600000, h: 'First-response-header timeout in ms (0 = infinite)' },
         { k: 'autoContinueRetries', t: 'number', v: m.autoContinueRetries ?? 1, h: 'Auto-retry count (default: 1)' }]));
       h += sec('Model Modes', modesSection(m));
     }

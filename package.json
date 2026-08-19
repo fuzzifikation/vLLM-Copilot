@@ -290,9 +290,9 @@
                 },
                 "initialResponseTimeoutMs": {
                   "type": "number",
-                  "default": 180000,
+                  "default": 600000,
                   "minimum": 0,
-                  "markdownDescription": "Budget in ms for this model's server to send the **first response headers**. If the server accepts the connection but never responds (e.g. the model is still loading, or the queue is backed up), the request is aborted. **Default: 180000 (3 minutes).** Set to 0 to wait indefinitely."
+                  "markdownDescription": "Budget in ms for this model's server to send the **first response headers**. If the server accepts the connection but never responds (e.g. the model is still loading, or the queue is backed up), the request is aborted. **Default: 600000 (10 minutes).** Set to 0 to wait indefinitely."
                 },
                 "autoContinueRetries": {
                   "type": "number",

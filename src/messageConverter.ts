@@ -467,7 +467,7 @@ function _classifyMessage(msg: string): string {
     return `Stream timed out due to inactivity. The server stopped sending data. Increase streamInactivityTimeout setting or check server health. See Output for details.`;
   }
   if (msg.includes('Initial request timed out')) {
-    // The abort string carries the ACTUAL configured value (e.g. "after 180000ms").
+    // The abort string carries the ACTUAL configured value (e.g. "after 600000ms").
     const m = msg.match(/after (\d+)ms/);
     return `The server did not respond within ${m ? `${m[1]}ms` : 'the configured timeout'} — the model may still be loading or the server busy/queued. To allow more time, set the per-model "initialResponseTimeoutMs" setting in vllm-copilot.models to a higher value (milliseconds; 0 = wait indefinitely). See Output for details.`;
   }
