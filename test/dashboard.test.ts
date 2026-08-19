@@ -334,7 +334,7 @@ describe('DashboardTreeProvider', () => {
     });
   });
 
-  it('flags a non-vLLM server as degraded, shows measured generation, and hides vLLM-only flag hints', async () => {
+  it('renders a non-vLLM server cleanly: no degraded label, hides absent vLLM-only rows', async () => {
     (vscode as any).workspace._mockConfig = {
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1', serverType: 'llamacpp' }],
     };
@@ -353,13 +353,18 @@ describe('DashboardTreeProvider', () => {
       const children = await provider.getChildren();
       const serverNode = children.find(c => (c as any).label === 's:8000');
       expect(serverNode).toBeDefined();
-      expect((serverNode as any).description).toContain('llamacpp (degraded)');
+      // No "(degraded)" label anymore — every backend is first-class.
+      expect((serverNode as any).description).not.toContain('degraded');
 
       const metrics = await provider.getChildren(serverNode as any);
       const labels = metrics.map(m => (m as any).label as string);
-      // Degradation notice leads the server node.
-      expect(labels[0]).toBe('Backend');
-      expect((metrics[0] as any).description).toBe('llamacpp');
+      // No "Backend" warning row (removed with the degraded cleanup).
+      expect(labels).not.toContain('Backend');
+      // vLLM-only metric rows are absent (not "—") for a non-vLLM backend:
+      // the engine only probes /v1/models, so KV cache / running / TTFT have no data.
+      expect(labels).not.toContain('KV Cache');
+      expect(labels).not.toContain('Running');
+      expect(labels).not.toContain('Avg TTFT');
 
       const last = metrics.find(m => (m as any).label === 'Last Request');
       const rows = await provider.getChildren(last as any);
@@ -396,9 +401,9 @@ describe('DashboardTreeProvider', () => {
       const children = await provider.getChildren();
       const serverNode = children.find(c => (c as any).label === 's:8000');
       expect(serverNode).toBeDefined();
-      // Not "Offline" — the degraded notice proves the server is considered online.
+      // Not "Offline" — online via /v1/models for non-vLLM backends.
       expect((serverNode as any).description).not.toContain('Offline');
-      expect((serverNode as any).description).toContain('ollama (degraded)');
+      expect((serverNode as any).description).not.toContain('degraded');
 
       const metrics = await provider.getChildren(serverNode as any);
       const labels = metrics.map(m => (m as any).label as string);

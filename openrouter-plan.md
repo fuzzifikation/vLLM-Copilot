@@ -1,6 +1,6 @@
 # OpenRouter First-Class Backend Plan
 
-**Status:** Implementation ready; production work not started
+**Status:** Onboarding + dashboard cleanup shipped (v1.32.0 + Unreleased). Dashboard data research done → [docs/openrouter-api-research.md](./docs/openrouter-api-research.md). **Dashboard approach decided: Option A — model collection** (see below). Next: Phase 1 cost data plane, then Phase 2 dashboard restructure.
 **Date:** 2026-08-16
 
 ## Goal
@@ -151,17 +151,49 @@ Generic local-server detection remains unchanged. No OpenRouter presets or inter
 
 ### Exact Cost
 
-- Extend `WireUsage` with optional `cost`, `is_byok`, and cost-detail fields.
+- Extend `WireUsage` with optional `cost`, `usedByok`, and cost-detail fields.
 - Add the reported-cost field to the usage store with a **single additive migration (v2 → v3) in delivery 1** — one store touch, not two, so cost flows end-to-end from the first OpenRouter request. Existing v1/v2 token records migrate unchanged with no fabricated actual cost.
 - Store reported actual USD separately from token-derived estimates. Prefer actual cost when present and never add actual and estimated values together.
 - Preserve the current configured-rate behavior for vLLM and responses without `usage.cost`.
 
+> **BYOK naming (2026-08-19):** OpenRouter's `is_byok` means *the request was served using the user's own upstream provider key (e.g. a real OpenAI/Anthropic key routed through OpenRouter), billed directly by that provider rather than OpenRouter credits*. This is **NOT** the same as VS Code Copilot's `isBYOK` (on `LanguageModelChatInformation`), which means *served with user-supplied credentials instead of the built-in Copilot service*. To avoid two different "BYOK" meanings in one codebase, the wire type must use a **distinct field name** — `usedByok` — with a doc comment stating it is OpenRouter's upstream-key BYOK, not VS Code's.
+
+## Dashboard — Option A (model collection)
+
+**Decision (2026-08-19):** research → [docs/openrouter-api-research.md](./docs/openrouter-api-research.md). OpenRouter is a **relay / model selector**, not a server — almost every valuable value is model-level (context, pricing, capabilities, benchmarks) or per-request (provider, cost, latency, tokens). The dashboard therefore renders OpenRouter as a **model collection**:
+
+- **OpenRouter server node = relay node** — account-level data only, from `GET /api/v1/key`:
+  - Credits remaining / used (month); free-tier vs paid (`is_free_tier`)
+  - (optional) today's activity from `GET /api/v1/activity`
+- **Per-model child nodes** — one per configured model, each showing model-level rows:
+  - Context window (already resolved)
+  - Full pricing: prompt / completion / `request` (fixed per-request cost) / cache-read, with `overrides` flagged
+  - Capabilities (tools, vision, structured outputs) from `supported_parameters`
+  - Description (tooltip), Design Arena rank (if present), expiration date
+- **Per-request** — captured from the stream's final `usage` chunk (no extra HTTP):
+  - Actual cost (`usage.cost`), tokens (incl. cached/reasoning), `usedByok` flag
+
+### Phases
+
+1. **Cost data plane** (the plan's acceptance criterion, zero extra HTTP, unblocks everything):
+   `WireUsage.cost`/`costDetails`/`usedByok` → capture in `consumeStream` → usage-store v2→v3 migration → Last Request + cost tracker prefer actual cost.
+2. **Model-collection dashboard restructure** (the core of Option A):
+   relay node (account health) + per-model detail nodes. Tree data model gains per-model nodes under a relay server (serverType-aware child strategy).
+3. **Authoritative cost ledger** (optional): `GET /api/v1/activity` → per-model daily cost/tokens.
+
+**Deferred:** generation endpoint / `X-Generation-Id` threading (richest but most plumbing) — follow-up "OpenRouter request diagnostics" feature.
+
+### Refactor consideration
+
+The current dashboard is server-centric (one engine per server, one metric set). OpenRouter breaks that: the engine polls `/v1/models` (the whole catalog, not "the server's models"), and context/cost/capabilities are per-model. The tree needs **per-model detail nodes under a relay server** — the natural extension of the "hide absent rows" cleanup, but it changes the tree data model (currently server → flat metric rows).
+
 ## Delivery
 
-Ship two reviewable changes:
+Remaining work, in plan order (dashboard cleanup — no degraded, backend-aware rows, per-model context, Deep-Dive vLLM-only — is already shipped in Unreleased):
 
-1. **Core OpenRouter support + cost data plane:** credential hygiene (redacted config log + webview projection), config/schema support, runtime limits, exact metadata, onboarding, chat/error fixtures, estimated rates, `WireUsage.cost` extension, LastRequest actual-cost capture, and the single usage-store migration (v2 → v3, additive). One migration, one delivery — cost is recorded from day one.
-2. **UI and documentation:** dashboard actual-cost display + per-backend classification, diagnostics, README/configuration/usage docs, and changelog.
+1. **Cost data plane (Phase 1 of Option A):** `WireUsage.cost`/`costDetails`/`usedByok` extension, capture in `consumeStream`, LastRequest actual-cost capture, and the single usage-store migration (v2 → v3, additive). One migration, one delivery — cost is recorded from day one.
+2. **Dashboard restructure (Phase 2 of Option A):** OpenRouter renders as a **model collection** — relay node with account health (`GET /api/v1/key`) + per-model detail nodes (full pricing, capabilities, description, benchmarks). Per-model rows in the tree.
+3. **Optional:** `GET /api/v1/activity` authoritative cost ledger for the cost tracker.
 
 Do not rename `VllmClient`, add a backend registry, or reorganize existing backends as part of this work. Those changes do not help the OpenRouter user path.
 

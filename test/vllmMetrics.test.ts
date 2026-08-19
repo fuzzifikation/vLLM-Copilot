@@ -10,6 +10,7 @@ import {
   fmtTokPerSec,
   shortUrl,
   getMetricsEngine,
+  ServerMetricsEngine,
   type ModelAccumulator,
   type RawMetricEntry,
   type ServerRawData,
@@ -447,6 +448,58 @@ describe('shortUrl', () => {
 describe('ServerMetricsEngine registry lifecycle', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('resolves the context window per-backend for non-vLLM servers', async () => {
+    // Non-vLLM backends don't report max_model_len on /v1/models. The engine must
+    // fall back to the per-backend resolver (e.g. OpenRouter's exact-model
+    // endpoint) so the dashboard shows the real window.
+    const urls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      urls.push(u);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+      }
+      if (u.includes('/v1/model/nvidia/nemotron-3.5-lightning')) {
+        return new Response(JSON.stringify({ data: { context_length: 1000000 } }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const url = 'http://or-test:8000';
+    const engine = getMetricsEngine(url, {}, 'openrouter', 'nvidia/nemotron-3.5-lightning:free');
+    const aggregated = await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
+      const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
+      setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
+    });
+
+    // Only /v1/models was probed (no vLLM-only endpoints), and the context
+    // window came from the per-backend resolver.
+    expect(aggregated?.online).toBe(true);
+    expect(aggregated?.maxModelLen).toBe(1000000);
+    expect(urls.some(u => u.endsWith('/v1/models'))).toBe(true);
+    expect(urls.some(u => u.endsWith('/metrics') || u.endsWith('/version') || u.endsWith('/load'))).toBe(false);
+  });
+
+  it('leaves the context window null when the per-backend resolver fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+      }
+      return new Response(null, { status: 404 }); // resolver endpoint missing
+    }));
+
+    const url = 'http://or-fail:8000';
+    const engine = getMetricsEngine(url, {}, 'openrouter', 'nvidia/nemotron-3.5-lightning:free');
+    const aggregated = await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
+      const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
+      setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
+    });
+
+    expect(aggregated?.online).toBe(true); // still reachable via /v1/models
+    expect(aggregated?.maxModelLen).toBeNull(); // context resolve failed → row hidden
   });
 
   it('releases the engine from the registry when the last subscriber unsubscribes', () => {

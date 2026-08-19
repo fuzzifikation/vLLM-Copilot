@@ -16,7 +16,7 @@ For anyone running AI models on a local or self-hosted server — vLLM first, wi
 
 - **Native Copilot integration**: your models show up in the Copilot model picker with chat, tools, vision, subagent capabilities and context-window stats, fully supported.
 - **Third-party backends**: llama.cpp, LM Studio, and Ollama are supported alongside vLLM, each with a per-model `serverType`. They cover the core features — chat, streaming, tools, personalities, per-server config, usage tracking — while vLLM keeps the full feature set (vLLM-specific request controls, per-request server metrics, auto-continue). The extension never invents metadata — every backend's context window is read from its own documented endpoint, and a model that can't honestly report one is not served. Add vLLM Server & Model and Server Settings auto-detect the backend for you.
-- **Live server dashboard**: at-a-glance metrics for every server right in the sidebar: queue status, KV-cache usage, TTFT, throughput, per-request token details, and a **cumulative token & cost tracker** (per model, Today / Overall, with optional per-1M cost rates). Non-vLLM servers are flagged as degraded (the vLLM-specific rows don't exist there), and throughput is still shown via client-side measurement (output tokens ÷ total time − time-to-first-token).
+- **Live server dashboard**: at-a-glance metrics for every server right in the sidebar: queue status, KV-cache usage, TTFT, throughput, per-request token details, and a **cumulative token & cost tracker** (per model, Today / Overall, with optional per-1M cost rates). Every backend is first-class — the dashboard probes only the endpoints each backend actually exposes, shows only the rows it reports, and resolves each model's context window per backend. Throughput for non-vLLM servers is shown via client-side measurement (output tokens ÷ total time − time-to-first-token).
 - **Personality presets**: strip Microsoft's 21KB of system-prompt boilerplate, or give a model a character. Per model, no JSON editing.
 - **Per-server control**: each server carries its own endpoint, auth, sampling, token budget.
 - **Fully configurable model-modes**: Copilot gives you thinking effort. This gives you full control with configurable request parameters, not only thinking, but *any* vLLM parameter. Fully supported in the sidebar-UI.
@@ -147,7 +147,7 @@ The `:free` suffix is a routing variant, not part of the model identity: it is s
 
 **Every backend gets:** native Copilot integration (chat, tools, vision, streaming), model modes, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue on empty responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
 
-**vLLM-only:** vLLM-specific request parameters (structured outputs, `chat_template_kwargs`, token budgets, …), per-request server metrics (TTFT/TPOT, KV cache, speculative decoding) — other backends show client-measured throughput instead, the full Dashboard/Deep-Dive row set (other backends are labeled `(degraded)`), and colon-truncation auto-continue.
+**vLLM-only:** vLLM-specific request parameters (structured outputs, `chat_template_kwargs`, token budgets, …), per-request server metrics (TTFT/TPOT, KV cache, speculative decoding), and the Deep-Dive webview. Other backends show client-measured throughput instead; the dashboard shows only the rows each backend actually reports (no dash placeholders) and resolves the model's context window per backend.
 
 The backend is auto-detected on Add Server and Server Settings; it can also be set explicitly per model via `serverType`.
 
@@ -225,10 +225,11 @@ Replacements are exact substring matches, applied sequentially to every system m
 
 ### Server Dashboard
 
-A native Tree View sidebar shows live metrics for each configured server. No webviews, no extra ports. vLLM servers show the full metric set; other backends are labeled `(degraded)` with the vLLM-only rows hidden, while throughput is measured client-side.
+A native Tree View sidebar shows live metrics for each configured server. No webviews, no extra ports. Every backend is first-class: the dashboard probes only what each backend exposes (vLLM gets the full endpoint set; others get `/v1/models` + a per-backend context resolve), shows only the rows the backend actually reports (no dash placeholders), and resolves each model's context window per backend. Throughput is measured client-side for non-vLLM servers.
 
 - **At-a-glance queue status:** Each server shows running and waiting request counts (or *idle*)
-- **Expandable metrics:** Model IDs, vLLM version, context window, KV cache usage & hit rate, TTFT, output & prefill speed (tok/s)
+- **Expandable metrics:** context window, vLLM version, KV cache usage & hit rate, TTFT, output & prefill speed (tok/s) — each shown only when the backend reports it
+- **Right-click:** Update Auth on any server; **vLLM Deep-Dive** on vLLM servers only
 - **MTP / speculative decoding:** Acceptance rate, draft depth, proposal count (when active)
 - **Last Request Details:** Per-server node showing the most recent request's token counts (input, output, cached, reasoning), timing metrics (TTFT, queue time, generation time), and throughput — updated **immediately** after every prompt, not on the poll interval. Requires vLLM `--enable-prompt-tokens-details` and `--enable-per-request-metrics` server flags for full detail. Displays hints when flags aren't set.
 - **Token Usage and Cost tracker:** Under each server, a **model-first** tree — one collapsible entry per model (labeled by `displayName`) carrying the price (`$11.51 today and $31.13 in 3.1 days`), expanding to **Today** and **Overall** token-only rows (`800k in · 200k cached · 500k out`); input is split so cache is never double-counted. Set per-model `cost` rates (per 1M tokens, USD / AI Credits / any currency) to see spend; costs round to 2 decimals. **Reset Usage** is a right-click action on the node. See [Configuration Reference → Token Usage & Cost](docs/configuration-reference.md#token-usage--cost) and [usage.md](docs/usage.md) for the design.
@@ -265,9 +266,9 @@ Access via **View → vLLM-Copilot → Server Settings** or the sidebar section 
 
 ### Server Deep-Dive
 
-A per-server details webview that opens in the editor area with live server statistics — the full vLLM set (including histogram breakdowns and the raw metric dump) for vLLM servers, or the available core metrics for other backends.
+A per-server details webview that opens in the editor area with live vLLM server statistics — the full set, including histogram breakdowns and the raw metric dump. **vLLM-only:** non-vLLM backends don't expose `/metrics`, so the Deep-Dive command is hidden on their server nodes.
 
-- **Open from the Dashboard**: right-click any server node → **vLLM Deep-Dive** (or click the server row in a future release)
+- **Open from the Dashboard**: right-click a **vLLM** server node → **vLLM Deep-Dive**
 - **Live polling**: refreshes at the same `vllm-copilot.dashboard.pollIntervalMs` interval as the sidebar
 - **Histograms with tooltips**: TTFT/TPOT/token-count distributions rendered as hoverable bars
 - **Full raw metric dump**: the same parser that feeds the dashboard sidebar, shown in full
@@ -330,7 +331,7 @@ a fresh start. Access via `Ctrl+Shift+P` → **Clean Copilot Sessions** (under U
 | **Set Model Personality** | Pick a model, pick a personality preset (or **Default** to clear), apply instantly |
 | **Configure Utility Model** | Switch utility model for MCP servers (`mainAgent` / `copilot` / `none`) |
 | **Update Auth** | Rotate API key or change auth headers for a server (right-click on server node) |
-| **vLLM Deep-Dive** | Open per-server webview with full metrics and histograms (right-click on server node) |
+| **vLLM Deep-Dive** | Open per-server webview with full metrics and histograms (right-click a **vLLM** server node) |
 | **Remove Model** | Remove a single configured model (button in Server Settings webview) |
 | **Remove Server** | Remove a configured server and all its models (command palette, with confirm) |
 | **Open Log File** | Open today's debug log |
