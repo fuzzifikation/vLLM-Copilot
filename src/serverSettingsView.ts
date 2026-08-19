@@ -173,6 +173,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
           this.outputChannel.appendLine(
             `[ERROR] Server Settings message "${msg.type}" failed: ${err instanceof Error ? err.message : String(err)}`
           );
+          this.outputChannel.show(true);
           vscode.window.showErrorMessage(
             `Server Settings: ${err instanceof Error ? err.message : String(err)}`
           );
@@ -238,8 +239,12 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
           const resp = await fetch(buildEndpoint(url, 'v1/models'), { headers, signal: AbortSignal.timeout(5000) });
           if (resp.ok) {
             entries = (await resp.json() as { data?: Array<{ id?: string; owned_by?: string; max_model_len?: number }> }).data ?? [];
+          } else {
+            this.outputChannel.appendLine(`[WARN] Server Settings: /v1/models probe returned HTTP ${resp.status} for ${url} — server-reported models hidden.`);
           }
-        } catch { /* non-critical: no /v1/models signal */ }
+        } catch (err) {
+          this.outputChannel.appendLine(`[WARN] Server Settings: /v1/models probe failed for ${url}: ${err instanceof Error ? err.message : String(err)}`);
+        }
         for (const m of entries) {
           if (m.id) serverModelIds.push(m.id);
         }
@@ -320,6 +325,10 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       try {
         replacementsFile = await ensureGlobalPersonality(this.context, msg.sourcePath);
       } catch (err) {
+        this.outputChannel.appendLine(
+          `[ERROR] Failed to apply personality: ${err instanceof Error ? err.message : String(err)}`
+        );
+        this.outputChannel.show(true);
         vscode.window.showErrorMessage(
           `Failed to apply personality: ${err instanceof Error ? err.message : String(err)}`
         );

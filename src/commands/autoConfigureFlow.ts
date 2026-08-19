@@ -19,6 +19,7 @@ export function registerAutoConfigureModelCommand(
     const config = vscode.workspace.getConfiguration('vllm-copilot');
     const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
     if (existing.length === 0) {
+      output.appendLine('[INFO] Auto-configure cancelled — no models configured.');
       vscode.window.showInformationMessage('No models configured. Use "Add vLLM Server & Model" first.');
       return;
     }
@@ -53,7 +54,10 @@ export function registerAutoConfigureModelCommand(
           output, context, vllmId, serverUrl, sibling?.requestHeaders,
           undefined, undefined, sibling?.serverType
         );
-        if (!discoveryResult) return;
+        if (!discoveryResult) {
+          output.appendLine(`[INFO] Auto-configure stopped for new model "${vllmId}" — discovery returned no result.`);
+          return;
+        }
 
         const newConfig: IdentifiedModelConfig = {
           ...discoveryResult.modelConfig,
@@ -87,22 +91,30 @@ export function registerAutoConfigureModelCommand(
       const selected = await vscode.window.showQuickPick(items, {
         placeHolder: 'Select a model to re-configure',
       });
-      if (!selected) return;
+      if (!selected) {
+        output.appendLine('[INFO] Auto-configure cancelled — no model selected.');
+        return;
+      }
 
       const idx = items.indexOf(selected);
       modelConfig = existing[idx];
-      if (!modelConfig) return;
+      if (!modelConfig) {
+        output.appendLine('[INFO] Auto-configure cancelled — selected model not found in config.');
+        return;
+      }
 
       vllmId = resolveVllmModelId(modelConfig) || '';
       if (!vllmId) {
-        vscode.window.showErrorMessage('Selected model has no identifiable vLLM model id.');
+        output.appendLine('[ERROR] Selected model has no identifiable vLLM model id.');
+        output.show(true);
         return;
       }
     }
 
     const serverUrl = modelConfig.serverUrl;
     if (!serverUrl) {
-      vscode.window.showErrorMessage(`Model "${vllmId}" has no serverUrl configured.`);
+      output.appendLine(`[ERROR] Model "${vllmId}" has no serverUrl configured.`);
+      output.show(true);
       return;
     }
 
@@ -113,7 +125,10 @@ export function registerAutoConfigureModelCommand(
       modelConfig, // preserve identity
       modelConfig.serverType // persist the model's own backend type
     );
-    if (!discoveryResult) return;
+    if (!discoveryResult) {
+      output.appendLine(`[INFO] Auto-configure stopped for "${vllmId}" — discovery returned no result.`);
+      return;
+    }
 
     // 3. Merge: discovery result is the base (full model-specific replace).
     //    Only infrastructure/personal fields survive from the user's old config.

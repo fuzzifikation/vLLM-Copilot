@@ -116,6 +116,9 @@ export async function confirmAndSaveAddedModel(
   } else if (action === 'Copy JSON') {
     await vscode.env.clipboard.writeText(JSON.stringify(finalConfig, null, 2));
     vscode.window.showInformationMessage('Model config copied to clipboard.');
+  } else {
+    output.appendLine('[INFO] Model add cancelled — confirm dismissed.');
+    output.show(true);
   }
   return false;
 }
@@ -182,36 +185,42 @@ export async function pickOpenRouterModel(output: vscode.OutputChannel, prefill?
     output.appendLine(`[WARN] OpenRouter catalog fetch failed, using free-text input: ${describeError(err)}`);
   }
 
-  // No catalog → a plain input box is all we can offer.
+  // No catalog → a plain input box, still pre-filled with the derived model ref
+  // (the pasted URL must work even when the catalog is unreachable).
   if (catalog.length === 0) {
     const typed = await vscode.window.showInputBox({
       title: 'Add OpenRouter Model',
       prompt: 'Enter a model id or model-page URL (e.g. nvidia/nemotron-3.5-lightning:free or https://openrouter.ai/nvidia/nemotron-3.5-lightning:free)',
       placeHolder: 'author/model[:variant]',
+      value: prefill ?? '',
       ignoreFocusOut: true,
-      validateInput: (v) => (!v.trim() ? 'Model reference is required' : undefined),
+      validateInput: (v) => {
+        if (!v.trim()) return 'Model reference is required';
+        const r = parseOpenRouterBranchInput(v);
+        return 'error' in r ? r.error : undefined;
+      },
     });
-    if (typed === undefined) return undefined; // cancelled
+    if (typed === undefined) {
+      output.appendLine('[INFO] Add OpenRouter model cancelled — no model reference entered.');
+      return undefined; // cancelled
+    }
     const parsed = parseOpenRouterBranchInput(typed);
     if ('error' in parsed) {
-      vscode.window.showErrorMessage(parsed.error);
+      output.appendLine(`[ERROR] Invalid OpenRouter model reference: ${parsed.error}`);
+      output.show(true);
+      vscode.window.showErrorMessage(`Invalid OpenRouter model reference: ${parsed.error}`);
       return undefined;
     }
     return parsed.requestedId;
   }
 
-  // Catalog present → filter-as-you-type over all ~415 models. A pasted
-  // model-page URL pre-fills the filter box (`qp.value`) so the user just hits
-  // Enter to confirm — the model is always PICKED from the catalog, never taken
-  // from the URL directly. `createQuickPick` (not `showQuickPick`) is required
-  // for the pre-fill: QuickPickOptions has no `value`.
-  const qp = vscode.window.createQuickPick<vscode.QuickPickItem>();
-  qp.title = 'Add OpenRouter Model';
-  qp.placeholder = 'Type a model name or id to filter (e.g. nemotron)';
-  qp.matchOnDescription = true;
-  qp.matchOnDetail = true;
-  qp.ignoreFocusOut = true;
-  qp.items = catalog.map((entry) => ({
+  // Catalog present → filter-as-you-type. A pasted model-page URL pre-fills and
+  // PRE-SELECTS the matching item so Enter confirms it directly — VS Code does
+  // NOT populate `selectedItems` from a programmatic `.value` (it fills
+  // `activeItems`), so relying on selectedItems alone silently cancelled the flow
+  // when the user pressed Enter on a prefill. The accept handler also falls back
+  // to the active item and to parsing the typed filter value.
+  const items: vscode.QuickPickItem[] = catalog.map((entry) => ({
     label: entry.id,
     description: entry.name ?? '',
     detail: [
@@ -219,18 +228,47 @@ export async function pickOpenRouterModel(output: vscode.OutputChannel, prefill?
       catalogPricing(entry),
     ].filter(Boolean).join(' · '),
   }));
-  if (prefill) qp.value = prefill;
+  const qp = vscode.window.createQuickPick<vscode.QuickPickItem>();
+  qp.title = 'Add OpenRouter Model';
+  qp.placeholder = 'Type a model name or id to filter (e.g. nemotron)';
+  qp.matchOnDescription = true;
+  qp.matchOnDetail = true;
+  qp.ignoreFocusOut = true;
+  qp.items = items;
+  if (prefill) {
+    qp.value = prefill;
+    const preSelected = items.find((i) => i.label === prefill);
+    if (preSelected) {
+      qp.activeItems = [preSelected];
+      qp.selectedItems = [preSelected];
+    }
+  }
   // A picked item's label is always a valid wire model id — no re-parsing.
   return await new Promise<string | undefined>((resolve) => {
-    qp.onDidAccept(() => {
-      const label = qp.selectedItems[0]?.label;
-      qp.dispose();
+    // CRITICAL: resolve BEFORE dispose. In real VS Code, disposing a QuickPick
+    // fires onDidHide synchronously. If we disposed first, onDidHide's
+    // resolve(undefined) would win over the accepted label — the flow would see
+    // "cancelled" the moment the user clicked a model. The settled guard makes
+    // whichever fires first the single outcome.
+    let settled = false;
+    const finish = (label: string | undefined): void => {
+      if (settled) return;
+      settled = true;
       resolve(label);
-    });
-    qp.onDidHide(() => {
       qp.dispose();
-      resolve(undefined);
+    };
+    qp.onDidAccept(() => {
+      const picked = qp.selectedItems[0] ?? qp.activeItems[0];
+      let label: string | undefined = picked?.label;
+      if (!label && qp.value.trim()) {
+        // Free-typed id or a prefill absent from the catalog — accept it if it
+        // parses (the exact-model metadata lookup validates it afterwards).
+        const parsed = parseOpenRouterBranchInput(qp.value);
+        label = 'error' in parsed ? undefined : parsed.requestedId;
+      }
+      finish(label);
     });
+    qp.onDidHide(() => finish(undefined));
     qp.show();
   });
 }
@@ -294,7 +332,11 @@ export async function runOpenRouterAddFlow(
     headersPrompt: '(optional) Additional request headers (e.g. HTTP-Referer for the OpenRouter dashboard). JSON format or "Name": "Value". Leave empty for none.',
     headersPlaceholder: '{"HTTP-Referer": "https://github.com"}',
   });
-  if (requestHeaders === undefined) return; // cancelled
+  if (requestHeaders === undefined) {
+    output.appendLine('[WARN] OpenRouter add cancelled — no API key entered.');
+    output.show(true);
+    return;
+  }
 
   // 2. Pick the model from the catalog. The URL input is a SERVER; if it was a
   //    full openrouter.ai model-page URL, extract the model and pre-fill the
@@ -303,7 +345,11 @@ export async function runOpenRouterAddFlow(
   const parsed = parseOpenRouterBranchInput(urlInput);
   const prefill = 'error' in parsed ? undefined : parsed.requestedId;
   const requestedId = await pickOpenRouterModel(output, prefill);
-  if (!requestedId) return; // cancelled
+  if (!requestedId) {
+    output.appendLine('[WARN] OpenRouter add cancelled — no model selected.');
+    output.show(true);
+    return;
+  }
   output.appendLine(`[INFO] OpenRouter model: ${requestedId}`);
 
   // 3. Resolve exact metadata (unauthenticated — the endpoint is public).
@@ -313,6 +359,7 @@ export async function runOpenRouterAddFlow(
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     output.appendLine(`[ERROR] OpenRouter metadata lookup failed: ${detail}`);
+    output.show(true);
     vscode.window.showErrorMessage(`OpenRouter model "${requestedId}" lookup failed: ${detail}`);
     return;
   }
@@ -341,7 +388,10 @@ export async function runOpenRouterAddFlow(
       const picked = await vscode.window.showQuickPick(items, {
         placeHolder: `Multiple configs share "${requestedId}" — choose which to replace`,
       });
-      if (!picked) return; // cancelled
+      if (!picked) {
+        output.appendLine('[INFO] OpenRouter add cancelled — duplicate disambiguation abandoned.');
+        return; // cancelled
+      }
       target = sameModelEntries.find((m) => resolveConfigId(m) === picked.description) ?? target;
     }
     const pick = await vscode.window.showInformationMessage(
@@ -356,7 +406,10 @@ export async function runOpenRouterAddFlow(
       await vscode.commands.executeCommand('vllm-copilot.updateServerAuth', apiBase, requestHeaders);
       return;
     }
-    if (pick !== 'Replace Config') return; // cancelled
+    if (pick !== 'Replace Config') {
+      output.appendLine('[INFO] OpenRouter add cancelled — no action chosen for existing config.');
+      return; // cancelled
+    }
     replaceExistingId = resolveConfigId(target);
   }
 
@@ -401,7 +454,10 @@ async function handleServerFailure(
   );
 
   // Discard or dismissed → stop
-  if (action === 'Discard' || action === undefined) return true;
+  if (action === 'Discard' || action === undefined) {
+    output.appendLine(`[INFO] Server ${serverUrl} not added — user discarded the failed connection.`);
+    return true;
+  }
 
   // Run Diagnostic — uses in-memory values, no settings write needed
   if (action === 'Run Diagnostic') {
@@ -422,7 +478,10 @@ async function handleServerFailure(
     ignoreFocusOut: true,
     validateInput: (v) => (v.trim() ? undefined : 'Model ID is required'),
   });
-  if (!modelId) return true; // cancelled → stop
+  if (!modelId) {
+    output.appendLine(`[INFO] Keep-Anyway cancelled for ${serverUrl} — no model id entered.`);
+    return true; // cancelled → stop
+  }
 
   const finalConfig: IdentifiedModelConfig = {
     id: buildModelId(serverUrl, modelId),
@@ -460,7 +519,10 @@ export function registerAddServerModelCommand(
       ignoreFocusOut: true,
       validateInput: (v) => (v.trim() ? undefined : 'Server URL is required'),
     });
-    if (!urlInput) return;
+    if (!urlInput) {
+      output.appendLine('[INFO] Add Server cancelled — no URL entered.');
+      return;
+    }
     const serverUrl = normalizeServerUrl(urlInput);
 
     const existingModels: ModelConfig[] = vscode.workspace.getConfiguration('vllm-copilot').get('models') || [];
@@ -495,7 +557,10 @@ export function registerAddServerModelCommand(
         // Delegate to update auth command
         return vscode.commands.executeCommand('vllm-copilot.updateServerAuth', serverUrl);
       }
-      if (pick !== 'Add Different Model') return; // cancelled
+      if (pick !== 'Add Different Model') {
+        output.appendLine(`[INFO] Add Server cancelled — server ${serverUrl} already configured.`);
+        return; // cancelled
+      }
     }
 
     // 2. API key + custom headers (optional). Cancellation aborts the flow.
@@ -507,7 +572,10 @@ export function registerAddServerModelCommand(
       headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty for none.',
       headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
     });
-    if (requestHeaders === undefined) return;
+    if (requestHeaders === undefined) {
+      output.appendLine('[INFO] Add Server cancelled — no API key/headers entered.');
+      return;
+    }
     const hasHeaders = Object.keys(requestHeaders).length > 0;
 
     // 4. Discover models on that server, using its headers
@@ -531,12 +599,16 @@ export function registerAddServerModelCommand(
     }
 
     if (models.length === 0) {
+      output.appendLine(`[WARN] No models found on ${serverUrl}.`);
       vscode.window.showInformationMessage(`No models found on ${serverUrl}.`);
       return;
     }
 
     const modelId = await pickModelFromServer(models, serverUrl, 'Add vLLM Server & Model (4/4)');
-    if (!modelId) return;
+    if (!modelId) {
+      output.appendLine(`[INFO] Add Server cancelled — no model selected on ${serverUrl}.`);
+      return;
+    }
 
     // Detect the backend type by probing its documented signatures. Add Server
     // ONLY — never at runtime (runtime uses the persisted serverType switch).
@@ -546,6 +618,7 @@ export function registerAddServerModelCommand(
       output.appendLine(`[INFO] Server type detected: ${detectedServerType}`);
     } catch (err) {
       output.appendLine(`[ERROR] Unsupported server: ${describeError(err)}`);
+      output.show(true);
       vscode.window.showErrorMessage(
         `Unsupported server at ${serverUrl}: ${describeError(err)}`
       );
@@ -577,7 +650,10 @@ export function registerAddServerModelCommand(
         const picked = await vscode.window.showQuickPick(items, {
           placeHolder: `Multiple configs share "${modelId}" — choose which to replace`,
         });
-        if (!picked) return; // cancelled
+        if (!picked) {
+          output.appendLine(`[INFO] Add Server cancelled — duplicate disambiguation abandoned.`);
+          return; // cancelled
+        }
         target = sameModelEntries.find(m => resolveConfigId(m) === picked.description) ?? target;
       }
       const pick = await vscode.window.showInformationMessage(
@@ -590,7 +666,10 @@ export function registerAddServerModelCommand(
         // Update auth for all models on this server (reuses updateServerAuth)
         return vscode.commands.executeCommand('vllm-copilot.updateServerAuth', serverUrl);
       }
-      if (pick !== 'Replace Config') return; // cancelled
+      if (pick !== 'Replace Config') {
+        output.appendLine(`[INFO] Add Server cancelled — no action chosen for existing config on ${serverUrl}.`);
+        return; // cancelled
+      }
       replaceExistingId = resolveConfigId(target);
     }
 
@@ -600,7 +679,10 @@ export function registerAddServerModelCommand(
       undefined,
       detectedServerType,
     );
-    if (!discoveryResult) return;
+    if (!discoveryResult) {
+      output.appendLine(`[INFO] Add Server stopped — auto-configure returned no result for "${modelId}".`);
+      return;
+    }
 
     // Attach the server + headers. `id` is composite ("<model> on <host>") so the
     // same model on two servers stays distinct; `vllmModelId` remains the raw wire identity.

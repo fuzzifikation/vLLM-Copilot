@@ -6,6 +6,7 @@ import {
   fetchOpenRouterModel,
   fetchOpenRouterAccount,
   resolveOpenRouterRuntimeLimits,
+  autoConfigureOpenRouterModel,
   PermanentContextError,
   OPENROUTER_API_BASE,
   type OpenRouterModelData,
@@ -406,6 +407,90 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
     );
     const limits = await resolveOpenRouterRuntimeLimits('openai/gpt-4');
     expect(limits).toEqual({ contextWindow: 8192, maxOutputTokens: 4096 });
+  });
+});
+
+// ── autoConfigureOpenRouterModel ──────────────────────────────────────────
+
+describe('autoConfigureOpenRouterModel', () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const jsonResponse = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+  it('builds config + summary from the reasoning object (grok-like mandatory ladder)', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      jsonResponse(200, {
+        data: {
+          id: 'x-ai/grok-4.6',
+          name: 'Grok 4.6',
+          context_length: 500000,
+          top_provider: { context_length: 500000, max_completion_tokens: null },
+          per_request_limits: null,
+          supported_parameters: ['tools', 'reasoning', 'reasoning_effort'],
+          architecture: { input_modalities: ['text'] },
+          reasoning: {
+            mandatory: true,
+            default_enabled: true,
+            supported_efforts: ['xhigh', 'high', 'medium', 'low'],
+            default_effort: 'high',
+          },
+          pricing: { prompt: '0.000003', completion: '0.000015' },
+        },
+      }),
+    );
+
+    const { modelConfig, summary } = await autoConfigureOpenRouterModel('x-ai/grok-4.6');
+
+    // Thinking modes from the effort ladder; mandatory reasoning → NO "No Think".
+    expect(modelConfig.modelModes).toEqual({
+      'Think (Xhigh)': { reasoning: { enabled: true, effort: 'xhigh' } },
+      'Think (High)': { reasoning: { enabled: true, effort: 'high' } },
+      'Think (Medium)': { reasoning: { enabled: true, effort: 'medium' } },
+      'Think (Low)': { reasoning: { enabled: true, effort: 'low' } },
+    });
+    expect(modelConfig.defaultMode).toBe('Think (High)');
+    expect(modelConfig.capabilities).toEqual({ toolCalling: true, imageInput: false });
+    // Authoritative ceiling (no API max_completion_tokens → clamps to context).
+    expect(modelConfig.maxOutputTokens).toBe(500000);
+    expect(modelConfig.cost).toEqual({ input: 3, output: 15, currency: 'USD' });
+    const text = summary.join('\n');
+    // Format via the same toLocaleString the code uses so the assertion is
+    // locale-independent (the thousands separator varies across runtimes).
+    expect(text).toContain(`Context window (OpenRouter): ${(500000).toLocaleString()} tokens`);
+    expect(text).toContain('Modes: Think (Xhigh), Think (High), Think (Medium), Think (Low)');
+    expect(text).toContain('Default mode: Think (High)');
+    // No HuggingFace attribution in the OpenRouter summary.
+    expect(text).not.toContain('HuggingFace');
+  });
+
+  it('passes per-model headers to the lookup and preserves variant chat ids', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      jsonResponse(200, {
+        data: {
+          id: 'meta-llama/llama-3.3-70b-instruct',
+          context_length: 131072,
+          top_provider: { context_length: 131072 },
+        },
+      }),
+    );
+    const headers = { Authorization: 'Bearer sk-test' };
+
+    const { modelConfig } = await autoConfigureOpenRouterModel('meta-llama/llama-3.3-70b-instruct:free', headers);
+
+    // Lookup uses the base slug; the chat id keeps the variant.
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `${OPENROUTER_API_BASE}/v1/model/meta-llama/llama-3.3-70b-instruct`,
+      expect.anything(),
+    );
+    expect(modelConfig.vllmModelId).toBe('meta-llama/llama-3.3-70b-instruct:free');
   });
 });
 

@@ -426,23 +426,71 @@ describe('formatError', () => {
     expect(formatError(new Error('fetch failed'))).toContain('Cannot connect');
   });
 
-  it('maps 401 to an auth-help message', () => {
-    expect(formatError(new Error('HTTP 401: Unauthorized'))).toContain('Authentication failed');
+  it('states the HTTP code and server status text for a 401', () => {
+    expect(formatError(new Error('HTTP 401: Unauthorized'))).toBe('Server error [401]. Unauthorized');
   });
 
-  it('maps 429 to a rate-limit message', () => {
-    expect(formatError(new Error('HTTP 429: Too Many Requests'))).toContain('Rate limited');
+  it('states the HTTP code and server status text for a 429', () => {
+    expect(formatError(new Error('HTTP 429: Too Many Requests'))).toBe('Server error [429]. Too Many Requests');
+  });
+
+  it('surfaces the server JSON error message for a 402 payment rejection', () => {
+    // The body contains "50000 tokens" — a naive substring classifier would read
+    // that as an HTTP 500. The status-marker match must not.
+    const err = new Error(
+      'HTTP 402: Payment Required — {"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 50000 tokens, but can only afford 6666. To increase, visit https://openrouter.ai/settings/credits"}}'
+    );
+    expect(formatError(err)).toBe(
+      'Server error [402]. This request requires more credits, or fewer max_tokens. You requested up to 50000 tokens, but can only afford 6666. To increase, visit https://openrouter.ai/settings/credits'
+    );
+  });
+
+  it('recovers the server message from a truncated JSON body', () => {
+    // fetchWithRetry caps the body embedded in the error; the tail may be cut
+    // mid-string. The tolerant extraction still surfaces the message.
+    const err = new Error(
+      'HTTP 402: Payment Required — {"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 50000 tok'
+    );
+    const out = formatError(err);
+    expect(out).toContain('Server error [402]');
+    expect(out).toContain('This request requires more credits');
+  });
+
+  it('states the code for a 5xx server error', () => {
+    expect(formatError(new Error('HTTP 503: Service Unavailable'))).toBe('Server error [503]. Service Unavailable');
+  });
+
+  it('states the 502 code + status text for a fetchWithRetry 5xx-exhausted error', () => {
+    // fetchWithRetry builds the full status line from response.status/statusText
+    // on the 5xx path (not a bare "HTTP <status> from server"), so the code AND
+    // the real status text surface in the user-facing message.
+    const err = new Error('Request failed after 2 attempts: HTTP 502: Bad Gateway — <html>502 Bad Gateway</html>');
+    expect(formatError(err)).toContain('[502]');
+    expect(formatError(err)).toContain('Bad Gateway');
+  });
+
+  it('states the code and status text for gateway timeouts', () => {
+    expect(formatError(new Error('HTTP 524: Gateway Timeout'))).toBe('Server error [524]. Gateway Timeout');
+    expect(formatError(new Error('HTTP 504: Gateway Timeout'))).toBe('Server error [504]. Gateway Timeout');
+  });
+
+  it('surfaces a mid-stream server error (no HTTP status) with backend-neutral wording', () => {
+    // Any backend can abort mid-stream (OpenRouter credits/moderation, vLLM OOM,
+    // etc.) — the fix must not be OpenRouter/402-specific, and must never say "vLLM".
+    const err = new Error('Server error (mid-stream): model is overloaded, please retry');
+    expect(formatError(err)).toBe('Server error (mid-stream). model is overloaded, please retry');
+    expect(formatError(err)).not.toContain('vLLM');
+  });
+
+  it('surfaces a mid-stream error nested in a cause chain', () => {
+    const inner = new Error('Server error (mid-stream): content flagged by moderation');
+    const outer = new Error('stream failed', { cause: inner });
+    expect(formatError(outer)).toBe('Server error (mid-stream). content flagged by moderation');
   });
 
   it('maps context length errors to a context-window message', () => {
     expect(formatError(new Error('Token exceeds max_model_len'))).toContain('Context window exceeded');
     expect(formatError(new Error('reached maximum context'))).toContain('Context window exceeded');
-  });
-
-  it('maps 524/504 Gateway Timeout to a reverse proxy timeout message', () => {
-    expect(formatError(new Error('HTTP 524: Gateway Timeout'))).toContain('Reverse proxy timeout');
-    expect(formatError(new Error('HTTP 504: Gateway Timeout'))).toContain('Reverse proxy timeout');
-    expect(formatError(new Error('Gateway Timeout'))).toContain('Reverse proxy timeout');
   });
 
   it('maps connection-reset errors to mention proxy timeout', () => {

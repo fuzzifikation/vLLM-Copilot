@@ -431,6 +431,7 @@ export class VllmClient {
       yield* readSseStream(response.body.getReader(), token, {
         inactivityMs,
         fileLogger: this.fileLogger,
+        output: this.output,
       });
     } catch (err) {
       // Log failed requests to the file logger so they're diagnosable
@@ -551,7 +552,10 @@ export class VllmClient {
         const message = typeof data.error === 'object' && data.error !== null
           ? data.error.message || JSON.stringify(data.error).slice(0, 500)
           : String(data.error);
-        throw new Error(`Server returned JSON error: ${message}`);
+        // Same marker as streamReader's mid-stream error — no HTTP status here
+        // either (200 with a JSON body instead of SSE), so formatError classifies
+        // it identically rather than falling through to a generic "Error: " wrap.
+        throw new Error(`Server error (mid-stream): ${message}`);
       }
       throw new Error(`Server returned unexpected JSON response (expected SSE stream)`);
     }

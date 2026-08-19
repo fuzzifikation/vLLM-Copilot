@@ -380,6 +380,58 @@ export function describeError(err: unknown): string {
 }
 
 /**
+ * Extract a server-reported HTTP status from a non-OK fetch-response error.
+ *
+ * `fetchWithRetry` throws `HTTP <code>: <statusText> — <body>` (the 5xx retry
+ * path builds a similar line). This parses the code and the server's own
+ * message: the OpenAI-compatible `error.message` from the JSON body when
+ * present, otherwise the HTTP status text.
+ *
+ * Matches only a real status marker (`HTTP \d{3}`), so a bare "50000" in the
+ * body can never be misread as an HTTP 500 (the old substring classifier did).
+ */
+function extractServerErrorInfo(text: string): { code: string; message?: string } | undefined {
+  const m = text.match(/HTTP\s+(\d{3})\b/);
+  if (!m) return undefined;
+  const code = m[1];
+
+  // Prefer the server's JSON error.message (OpenAI-compatible error envelope).
+  const jsonMessage = extractServerErrorMessage(text);
+  if (jsonMessage !== undefined) return { code, message: jsonMessage };
+
+  // Fall back to the HTTP status text ("Payment Required", "Unauthorized", …),
+  // trimmed at the body separator, any newline, or the 5xx-retry suffix.
+  const rest = text.slice(m.index! + m[0].length).replace(/^:\s*/, '');
+  const end = [rest.indexOf('—'), rest.indexOf('{'), rest.indexOf('\n')]
+    .filter(i => i >= 0)
+    .reduce((min, i) => Math.min(min, i), rest.length);
+  const statusText = rest.slice(0, end).trim().replace(/ from server$/, '');
+  return { code, message: statusText || undefined };
+}
+
+/**
+ * Extract the `message` from an OpenAI-compatible `{"error":{"message":"…"}}`
+ * body. Full JSON parse first (correct escaping); a tolerant regex recovers the
+ * message even when the body was truncated (fetchWithRetry caps the body length
+ * embedded in the error).
+ */
+function extractServerErrorMessage(text: string): string | undefined {
+  const brace = text.indexOf('{');
+  if (brace >= 0) {
+    try {
+      const parsed = JSON.parse(text.slice(brace)) as { error?: { message?: unknown } };
+      if (typeof parsed.error?.message === 'string' && parsed.error.message) {
+        return parsed.error.message;
+      }
+    } catch {
+      // Truncated or non-JSON — fall through to the tolerant regex.
+    }
+  }
+  const m = text.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)/);
+  return m && m[1] ? m[1] : undefined;
+}
+
+/**
  * Format an error for user-facing display. Maps common network/server failures
  * to actionable messages.
  * Handles both Error objects and plain string throws (fetch abort returns a string!).
@@ -404,41 +456,36 @@ export function formatError(err: unknown): string {
     if (classified !== cause) return classified;
   }
 
-  // Check combined message + full cause chain for network errors.
+  // Check combined message + full cause chain for transport failures.
   // Build a single string so deeply-nested errors (e.g. error.cause.cause.message = 'ECONNREFUSED')
   // are still matched.
   const combined = `${name} ${msg} ${allCauses.join(' ')}`;
+
+  // Server-reported HTTP rejection — the single, honest surface for any non-OK
+  // response (401/402/403/429/5xx/…): state the HTTP code and the server's own
+  // message (JSON `error.message`, else the status text). No per-status guessing —
+  // the server's real words beat a generic template, and matching the status
+  // marker (`HTTP \d{3}`) can't misread a "50000" in the body as an HTTP 500.
+  for (const text of [msg, ...allCauses]) {
+    const serverErr = extractServerErrorInfo(text);
+    if (serverErr) {
+      return `Server error [${serverErr.code}]${serverErr.message ? `. ${serverErr.message}` : '.'}`;
+    }
+  }
+
+  // Transport-level failures — the server never answered, so there is no HTTP
+  // status: connectivity, context limits, stream truncation, unexpected closes.
   if (combined.includes('ECONNREFUSED') || combined.includes('fetch failed') || combined.includes('ENOTFOUND')) {
-    return `Cannot connect to vLLM server. Make sure it's running and the URL is correct (${msg}).`;
-  }
-  if (combined.includes('401')) {
-    return `Authentication failed. Check your API key configuration (${msg}).`;
-  }
-  if (combined.includes('403')) {
-    return `Permission denied. Your API key is valid but lacks access to this model or endpoint. Check server permissions (${msg}).`;
-  }
-  if (combined.includes('400')) {
-    return `The request was rejected by the server. See Output for details (${msg}).`;
-  }
-  if (combined.includes('429')) {
-    return `Rate limited. The server is overloaded. Try again in a moment (${msg}).`;
+    return `Cannot connect to the server. Make sure it's running and the URL is correct (${msg}).`;
   }
   if (combined.includes('context length') || combined.includes('max_model_len') || combined.includes('maximum context')) {
-    return `Context window exceeded. The conversation is too long for the model. Please use /compact or start a new chat.`;
+    return `Context window exceeded. The conversation is too long for the model. Use /compact or start a new chat.`;
   }
   if (combined.includes('closed prematurely') || combined.includes('Premature close') || combined.includes('ERR_STREAM_PREMATURE_CLOSE')) {
     return `The connection was closed prematurely by the network or a reverse proxy. This happens when a proxy (Cloudflare, nginx, corporate gateway) drops the connection mid-stream, or when the network drops while the model is still generating. Try again — if it persists, check whether a proxy timeout is too short for this model's response time.`;
   }
   if (combined.includes('other side closed') || combined.includes('ECONNRESET') || combined.includes('socket hang up') || combined.includes('SocketError')) {
-    return `The server closed the connection unexpectedly. This can happen if the server is under heavy load or a reverse proxy (e.g. Cloudflare) timed out the idle connection. If you're behind Cloudflare, Gateway Timeout (524) fires after ~100s of no data. Wait a moment and try again.`;
-  }
-  if (combined.includes('524') || combined.includes('504') || combined.includes('Gateway Timeout')) {
-    return `Reverse proxy timeout: the connection was idle for too long and was terminated by the proxy/tunnel in front of the server. ` +
-      `Common codes: 524 (Cloudflare), 504 (nginx, HAProxy, ALB). This happens when a model takes longer than the proxy timeout (typically ~100s) to start responding. ` +
-      `Try a smaller prompt, a faster model, or reduce the conversation length.`;
-  }
-  if (combined.includes('500') || combined.includes('502') || combined.includes('503')) {
-    return `Server error. The vLLM server encountered a problem. Wait a moment and try again.`;
+    return `The server closed the connection unexpectedly. This can happen if the server is under heavy load or a reverse proxy (e.g. Cloudflare) timed out the idle connection.`;
   }
 
   // Try primary message
@@ -488,6 +535,15 @@ function _classifyMessage(msg: string): string {
   // Proxy authentication errors
   if (msg.includes('407') || msg.includes('Proxy Auth') || msg.includes('PROXY_AUTH_REQUIRED')) {
     return `Proxy authentication failed. Your corporate proxy requires authentication. Check VS Code's http.proxy setting and ensure proxy credentials are configured.`;
+  }
+  // Mid-stream server error (no HTTP status — the request already streamed a 200
+  // before the server aborted, e.g. a credit/moderation/overload rejection).
+  // Surface the server's own text the same way as the pre-stream Server error
+  // [code] path, for any backend, not just OpenRouter/402. Not anchored to the
+  // string start — cause-chain entries are formatted as "<Name> <message>".
+  const midStream = msg.match(/Server error \(mid-stream\): ([\s\S]*)$/);
+  if (midStream) {
+    return `Server error (mid-stream). ${midStream[1]}`;
   }
   return msg; // not matched
 }

@@ -80,7 +80,8 @@ export function registerSetModelPersonalityCommand(
       // needs both id and serverUrl) and would otherwise append a duplicate entry.
       const applicability = personalityApplicableTo(modelPick.model);
       if (!applicability.ok) {
-        vscode.window.showWarningMessage(applicability.reason);
+        outputChannel.appendLine(`[WARN] Personality not applicable: ${applicability.reason}`);
+        outputChannel.show(true);
         return;
       }
 
@@ -140,7 +141,7 @@ export function registerSetModelPersonalityCommand(
         // narrow `clear`/`sourcePath` for the code below — a missed preset
         // would fall through here, so the message stays honest about what it
         // means rather than blaming missing presets.
-        vscode.window.showWarningMessage('No personality action was selected.');
+        outputChannel.appendLine('[WARN] No personality action was selected.');
         return;
       }
 
@@ -164,6 +165,8 @@ export function registerSetModelPersonalityCommand(
           `[INFO] Personality presets: ${clear ? 'cleared' : `applied ${sourcePath}`} for ${modelPick.label}`
         );
       } catch (err) {
+        outputChannel.appendLine(`[ERROR] Failed to apply personality: ${describeError(err)}`);
+        outputChannel.show(true);
         vscode.window.showErrorMessage(`Failed to apply personality: ${describeError(err)}`);
         return;
       }

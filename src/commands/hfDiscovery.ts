@@ -3,6 +3,7 @@ import type { ModelConfig, ServerType } from '../config.js';
 import { buildEndpoint } from '../config.js';
 import { describeError } from '../messageConverter.js';
 import { resolveRuntimeLimits } from '../vllmClient.js';
+import { autoConfigureOpenRouterModel } from '../openRouter.js';
 import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig } from './presets.js';
 
 /**
@@ -325,6 +326,16 @@ export async function resolveModelConfigForAdd(
   baseConfig?: ModelConfig,
   serverType: ServerType = 'vllm',
 ): Promise<AutoConfigResult | null> {
+  // OpenRouter: exact-model metadata is the ONLY discovery source. HF chat-
+  // template sniffing cannot express its reasoning object or
+  // supported_parameters, and would append a misleading "detected from
+  // HuggingFace" summary. Route before the preset/HF machinery so OpenRouter
+  // never mixes in HuggingFace (the Add flow's dedicated branch and this shared
+  // resolver stay in sync).
+  if (serverType === 'openrouter') {
+    return autoConfigureOpenRouterModel(modelId, requestHeaders);
+  }
+
   const presets = await loadModelPresets(context.extensionUri);
   const preset = findPresetForModel(presets, modelId, serverRoot);
 
@@ -390,6 +401,8 @@ export async function resolveModelConfigForAddSafely(
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     output.appendLine(`[ERROR] Auto-configure failed for "${modelId}" on ${serverUrl}: ${detail}`);
+    output.show(true);
+    // Popup so the user KNOWS it failed; the output channel carries the full detail.
     vscode.window.showErrorMessage(`Auto-configure failed for "${modelId}": ${detail}`);
     return null;
   }

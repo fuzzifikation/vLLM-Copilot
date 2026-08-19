@@ -341,12 +341,15 @@ export class ServerMetricsEngine {
 
   /** Full set of configured wire model ids for this server (relay collection). */
   private modelIds: string[];
+  /** Whether the OpenRouter account probe last succeeded — for transition logging. */
+  private accountProbeSucceeded: boolean | undefined;
 
   constructor(
     private serverUrl: string,
     private requestHeaders: Record<string, string>,
     private serverType: ServerType = 'vllm',
     modelIds: string[] = [],
+    private output?: vscode.OutputChannel,
   ) {
     this.modelIds = [...modelIds];
   }
@@ -380,6 +383,11 @@ export class ServerMetricsEngine {
   /** Update the backend type in-place (called by getMetricsEngine on re-use). */
   setServerType(serverType: ServerType): void {
     this.serverType = serverType;
+  }
+
+  /** Attach/refresh the output channel (called by getMetricsEngine on re-use). */
+  setOutput(output?: vscode.OutputChannel): void {
+    this.output = output;
   }
 
   /**
@@ -483,13 +491,34 @@ export class ServerMetricsEngine {
       this._lastAggregated = aggregated;
       this._lastRaw = raw;
 
+      // Surface the OpenRouter account-probe failure in the output channel ONCE
+      // per state transition (ok→fail), not on every 15s poll — repeated identical
+      // warnings are noise, not clarity. Recovery (fail→ok) is logged as INFO.
+      // Gated on the server being ONLINE: an offline server already reports its
+      // own error and has no account data — blaming the account probe would be a
+      // false attribution. The first observation (undefined → ok/fail) is recorded
+      // silently — "recovered" on a fresh engine would be a false positive.
+      if (this.serverType === 'openrouter' && aggregated.online) {
+        const ok = aggregated.account !== undefined;
+        if (this.accountProbeSucceeded !== undefined && ok !== this.accountProbeSucceeded) {
+          if (ok) {
+            this.output?.appendLine(`[INFO] OpenRouter account probe recovered for ${this.serverUrl}.`);
+          } else {
+            this.output?.appendLine(`[WARN] OpenRouter account probe failed for ${this.serverUrl} — credits/limits hidden. Check the API key.`);
+          }
+        }
+        this.accountProbeSucceeded = ok;
+      }
+
       // Notify all subscribers
       for (const cb of this.callbacks) {
         try { cb(aggregated, raw); } catch { /* subscriber error — best-effort */ }
       }
     } catch (err) {
       // fetchAllEndpoints is error-proof via safeFetch, so this only fires on
-      // programming errors (OOM, JSON bomb, etc.). Log and schedule retry.
+      // programming errors (OOM, JSON bomb, etc.). Log to the output channel
+      // (user-visible) and schedule retry.
+      this.output?.appendLine(`[ERROR] Metrics engine tick failed for ${this.serverUrl}: ${err instanceof Error ? err.message : String(err)}`);
       console.error('[vllm-copilot] metrics engine tick failed:', err);
     } finally {
       // Always schedule next cycle — even on error we retry
@@ -538,6 +567,7 @@ export function getMetricsEngine(
   requestHeaders?: Record<string, string>,
   serverType: ServerType = 'vllm',
   modelIds?: string[],
+  output?: vscode.OutputChannel,
 ): ServerMetricsEngine {
   // Key engines by the canonical server URL (scheme added, trailing slash and
   // trailing /v1 stripped) so hand-edited variants of the same server — e.g.
@@ -548,7 +578,7 @@ export function getMetricsEngine(
   const key = normalizeServerUrl(serverUrl);
   let engine = engineRegistry.get(key);
   if (!engine) {
-    engine = new ServerMetricsEngine(key, requestHeaders ?? {}, serverType, modelIds);
+    engine = new ServerMetricsEngine(key, requestHeaders ?? {}, serverType, modelIds, output);
     engineRegistry.set(key, engine);
   } else {
     if (requestHeaders && Object.keys(requestHeaders).length > 0) {
@@ -559,6 +589,7 @@ export function getMetricsEngine(
     // non-vLLM server probes online via that backend's own endpoint, even if the
     // engine was first created before the type was known.
     engine.setServerType(serverType);
+    engine.setOutput(output);
   }
   // modelIds is the sole source of truth; `undefined` = caller doesn't manage
   // the set (leave as-is), an explicit [] = clear.

@@ -134,6 +134,26 @@ describe('confirmAndSaveAddedModel', () => {
     expect(replaceSpy).not.toHaveBeenCalled();
     expect(chatUpdate).not.toHaveBeenCalled();
   });
+
+  it('logs to the output channel when the confirm modal is dismissed instead of failing silently', async () => {
+    const warningSpy = vi.spyOn(vscode.window, 'showWarningMessage').mockResolvedValue(undefined);
+    infoSpy.mockResolvedValueOnce(undefined); // modal dismissed
+
+    const saved = await confirmAndSaveAddedModel(
+      finalConfig as any,
+      'model',
+      'http://host:8000',
+      'detail',
+      output,
+    );
+
+    expect(saved).toBe(false);
+    expect(replaceSpy).not.toHaveBeenCalled();
+    // No error popup — the outcome is logged to the output channel instead.
+    expect(warningSpy).not.toHaveBeenCalled();
+    expect(output.appendLine).toHaveBeenCalledWith(expect.stringContaining('[INFO] Model add cancelled'));
+    warningSpy.mockRestore();
+  });
 });
 
 describe('registerAddServerModelCommand', () => {

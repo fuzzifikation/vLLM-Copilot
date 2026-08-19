@@ -96,22 +96,27 @@ export async function promptForServerAuth(options: {
 
   // Custom headers (optional). Accepts JSON or forgiving shorthand.
   // Merged on top of the key-derived auth headers, so a custom header wins.
+  // Dismissing this optional box (Escape / focus loss) means "no headers" —
+  // it must NOT abort the whole Add flow. So unlike the key box, `ignoreFocusOut`
+  // is NOT set: clicking away here is an intentional "skip", and an empty result
+  // simply means no custom headers.
   const headersInput = await vscode.window.showInputBox({
     title: options.headersTitle,
     prompt: options.headersPrompt,
     placeHolder: options.headersPlaceholder,
-    ignoreFocusOut: true,
     validateInput: (v) => {
       const r = parseHeadersInput(v);
       return 'error' in r ? r.error : undefined;
     },
   });
-  if (headersInput === undefined) return undefined; // cancelled
+  // `undefined` (Escape/focus-out) and `''` (Enter on empty) both mean no headers.
+  if (headersInput === undefined) return { ...buildAuthHeaders(apiKey) };
   const parsedHeaders = parseHeadersInput(headersInput);
-  if ('error' in parsedHeaders) {
-    vscode.window.showErrorMessage(parsedHeaders.error);
-    return undefined;
-  }
+  // Unreachable in practice: the headers box's validateInput uses the same
+  // parseHeadersInput and blocks bad input from being submitted. Keep the guard
+  // (narrows the type) but never popup — no output channel exists here, so a
+  // silent return lets the caller surface the cancel.
+  if ('error' in parsedHeaders) return undefined;
 
   // Combine: API-key-derived auth first, then custom headers (custom wins).
   return { ...buildAuthHeaders(apiKey), ...parsedHeaders.headers };

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Server errors state the HTTP code and the server's real message** — e.g. `Server error [402]. This request requires more credits, or fewer max_tokens…` — instead of a generic "vLLM server problem" or raw JSON. No backend-specific wording, and the message is no longer cut off.
+
 ## v1.32.0 — OpenRouter backend & configurable first-response timeout
 
 ### Added

@@ -393,7 +393,7 @@ describe('checkResponseContentType', () => {
     });
     const result = await chatWithResponse(res);
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/Server returned JSON error.*context length exceeded/);
+    expect(result.error).toMatch(/Server error \(mid-stream\).*context length exceeded/);
   });
 
   it('throws generic message for JSON response without error key', async () => {

@@ -68,4 +68,20 @@ describe('fetchWithRetry abort handling', () => {
     expect(res.status).toBe(200);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
+
+  it('passes the FULL status line to onRetry and throws it after retries are exhausted', async () => {
+    // The 5xx retry path must carry status + statusText + body (from the real
+    // response), not a bare "HTTP <status> from server" — so a 502/503 surfaces
+    // its code AND message to the user.
+    const retryWarnings: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('upstream down', { status: 502, statusText: 'Bad Gateway' }))
+      .mockResolvedValueOnce(new Response('upstream down', { status: 502, statusText: 'Bad Gateway' }));
+
+    await expect(fetchWithRetry('http://test', {}, {}, (w) => retryWarnings.push(w)))
+      .rejects.toThrow('Request failed after 2 attempts: HTTP 502: Bad Gateway — upstream down');
+
+    expect(retryWarnings).toEqual(['HTTP 502: Bad Gateway — upstream down']);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
 });

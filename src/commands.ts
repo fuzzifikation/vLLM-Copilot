@@ -241,7 +241,10 @@ export function registerUpdateServerAuthCommand(
         headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty to clear.',
         headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
       });
-      if (combinedHeaders === undefined) return; // cancelled
+      if (combinedHeaders === undefined) {
+        outputChannel.appendLine(`[INFO] Update Auth cancelled for ${serverUrl} — no credentials entered.`);
+        return; // cancelled
+      }
       finalHeaders = Object.keys(combinedHeaders).length > 0 ? combinedHeaders : undefined;
     }
 
