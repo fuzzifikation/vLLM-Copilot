@@ -6,7 +6,7 @@
  * into structured StreamEvents, including incremental tool call accumulation.
  */
 
-import type { StreamEvent, FinalizedToolCall, WireChunk } from './types.js';
+import type { StreamEvent, FinalizedToolCall, WireChunk, WireUsage } from './types.js';
 
 export type PendingToolCall = { id: string; name: string; args: string };
 
@@ -48,7 +48,16 @@ export function processSSEChunk(
 
   const choice = parsed.choices?.[0];
 
-  if (parsed.usage) event.usage = parsed.usage;
+  if (parsed.usage) {
+    // OpenRouter sends the BYOK flag as `is_byok`; the wire type carries it as
+    // `usedByok` (distinct from VS Code's `isBYOK` — see types.ts). Remap so the
+    // rest of the pipeline reads one name. Non-OpenRouter chunks have no field,
+    // so this is a no-op for vLLM/local.
+    const rawUsage = parsed.usage as WireUsage & { is_byok?: boolean };
+    event.usage = rawUsage.is_byok !== undefined
+      ? { ...rawUsage, usedByok: rawUsage.is_byok }
+      : rawUsage;
+  }
   if (parsed.metrics) event.metrics = parsed.metrics;
 
   // Usage-only chunk (empty choices array) — final stats from vLLM

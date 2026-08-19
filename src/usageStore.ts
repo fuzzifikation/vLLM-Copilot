@@ -18,9 +18,13 @@
  * `reasoning` ⊆ `completion`. Components are summed independently; totals are
  * always Σprompt + Σcompletion — never `total + cached`.
  *
- * Cost is NEVER stored. It is derived at render time from each model's `cost`
- * config and the stored token counts (`computeCost`), so editing a rate
- * re-prices all history without any migration.
+ * Estimated cost is NEVER stored. It is derived at render time from each model's
+ * `cost` config and the stored token counts (`computeCost`), so editing a rate
+ * re-prices all history without any migration. ACTUAL reported cost (OpenRouter
+ * `usage.cost`) IS stored — it is server truth, not derivable from rates — in
+ * separate all-time/day planes (`allTimeCost`/`daysCost`). Actual and estimated
+ * cost are never summed: the dashboard prefers actual when a model has any,
+ * else falls back to the per-1M estimate.
  *
  * Auto-continue retries are counted per HTTP request: a continuation request
  * genuinely re-sends the context and generates new tokens, so each completion
@@ -51,6 +55,10 @@ export interface LastRequestData {
   createdCacheTokens?: number;
   /** Reasoning tokens, if applicable. */
   reasoningTokens?: number;
+  /** Actual reported cost in USD (OpenRouter `usage.cost`). Absent on vLLM/local. */
+  actualCost?: number;
+  /** OpenRouter: served with the user's own upstream key (`usage.is_byok`). */
+  usedByok?: boolean;
   /** Per-request timing (requires `--enable-per-request-metrics`). */
   metrics?: WireMetrics;
   /** Whether --enable-per-request-metrics is available (true if metrics were received). */
@@ -80,21 +88,34 @@ export interface UsageCounts {
 /** serverUrl → modelId → counts. */
 export type UsageServerMap = Record<string, Record<string, UsageCounts>>;
 
+/** serverUrl → modelId → accumulated actual cost (USD, from OpenRouter usage.cost). */
+export type UsageCostMap = Record<string, Record<string, number>>;
+
 /** Persisted shape under `globalState` (versioned for forward migration). */
 interface PersistedUsage {
-  version: 2;
+  version: 3;
   allTime: UsageServerMap;
   /** `YYYY-MM-DD` → server map. */
   days: Record<string, UsageServerMap>;
   /** First-recorded timestamp (epoch ms) per (serverUrl, modelId) — backs the
    *  "started X ago" label on a model's Overall row. */
   startedAt: Record<string, Record<string, number>>;
+  /** Actual reported cost (USD) per (serverUrl, modelId), all-time. */
+  allTimeCost: UsageCostMap;
+  /** `YYYY-MM-DD` → server → model → actual cost. */
+  daysCost: Record<string, UsageCostMap>;
 }
 
 /** Per-model cumulative counts for one server across all-time and today. */
 export interface ServerUsage {
   allTime: Record<string, UsageCounts>;
   today: Record<string, UsageCounts>;
+}
+
+/** Per-model actual reported cost (USD) for one server across all-time and today. */
+export interface ServerCost {
+  allTime: Record<string, number>;
+  today: Record<string, number>;
 }
 
 // ─── Cost rates ───────────────────────────────────────────────────────────
@@ -115,6 +136,8 @@ const lastRequest = new Map<string, LastRequestData>();
 let allTime: UsageServerMap = {};
 let days: Record<string, UsageServerMap> = {};
 let startedAt: Record<string, Record<string, number>> = {};
+let allTimeCost: UsageCostMap = {};
+let daysCost: Record<string, UsageCostMap> = {};
 let globalState: vscode.Memento | undefined;
 let writeQueue: Promise<void> = Promise.resolve();
 let logError: (msg: string) => void = () => {};
@@ -151,6 +174,12 @@ function accumulate(map: UsageServerMap, serverUrl: string, modelId: string, cou
   server[modelId] = addCounts(server[modelId] ?? emptyCounts(), counts);
 }
 
+/** Sum actual reported cost into a cost map (all-time or per-day plane). */
+function accumulateCost(map: UsageCostMap, serverUrl: string, modelId: string, cost: number): void {
+  const server = map[serverUrl] ?? (map[serverUrl] = {});
+  server[modelId] = (server[modelId] ?? 0) + cost;
+}
+
 /** Sum the counts across every model on a server. */
 export function sumCounts(map: Record<string, UsageCounts>): UsageCounts {
   let out = emptyCounts();
@@ -172,20 +201,25 @@ function load(): void {
   const raw = globalState?.get<unknown>(STORAGE_KEY);
   if (raw && typeof raw === 'object') {
     // Loose shape — the blob is an unknown external value, not a typed
-    // PersistedUsage. `version` is a plain number here so both v1 and v2 are
-    // comparable (PersistedUsage's literal `version: 2` would reject `=== 1`).
+    // PersistedUsage. `version` is a plain number here so v1/v2/v3 are all
+    // comparable (PersistedUsage's literal `version: 3` would reject `=== 2`).
     const p = raw as {
       version?: number;
       allTime?: UsageServerMap;
       days?: Record<string, UsageServerMap>;
       startedAt?: Record<string, Record<string, number>>;
+      allTimeCost?: UsageCostMap;
+      daysCost?: Record<string, UsageCostMap>;
     };
-    // version 1 is upgraded in place (startedAt defaults to {}); the counts
-    // are unchanged, so there is no data migration.
-    if ((p.version === 1 || p.version === 2) && p.allTime && p.days) {
+    // version 1 is upgraded in place (startedAt defaults to {}); v2 → v3 is
+    // additive — the cost planes default to {} so old token records migrate
+    // unchanged with no fabricated actual cost.
+    if ((p.version === 1 || p.version === 2 || p.version === 3) && p.allTime && p.days) {
       allTime = p.allTime;
       days = p.days;
       startedAt = p.startedAt ?? {};
+      allTimeCost = p.allTimeCost ?? {};
+      daysCost = p.daysCost ?? {};
     }
   }
   pruneDays();
@@ -200,7 +234,9 @@ function load(): void {
  */
 function schedulePersist(): void {
   if (!globalState) return;
-  const snapshot: PersistedUsage = JSON.parse(JSON.stringify({ version: 2, allTime, days, startedAt })) as PersistedUsage;
+  const snapshot: PersistedUsage = JSON.parse(JSON.stringify({
+    version: 3, allTime, days, startedAt, allTimeCost, daysCost,
+  })) as PersistedUsage;
   writeQueue = writeQueue
     .then(() => globalState!.update(STORAGE_KEY, snapshot))
     .catch(err => logError(`[usage] persist failed: ${err instanceof Error ? err.message : String(err)}`));
@@ -241,6 +277,15 @@ export function recordRequest(data: LastRequestData): void {
   if (!days[todayKey]) days[todayKey] = {};
   accumulate(days[todayKey], data.serverUrl, data.modelId, counts);
 
+  // Actual reported cost (OpenRouter usage.cost) accumulates separately from the
+  // derived estimates — never summed together. Only recorded when the server
+  // actually reports it; vLLM/local requests contribute nothing.
+  if (data.actualCost !== undefined && Number.isFinite(data.actualCost)) {
+    accumulateCost(allTimeCost, data.serverUrl, data.modelId, data.actualCost);
+    if (!daysCost[todayKey]) daysCost[todayKey] = {};
+    accumulateCost(daysCost[todayKey], data.serverUrl, data.modelId, data.actualCost);
+  }
+
   // Stamp the first-record timestamp for this (server, model) — backs the
   // "started X ago" label on the model's Overall row. Reset clears the entry,
   // so the next record re-stamps it (recording "restarted").
@@ -261,6 +306,14 @@ export function getServerUsage(serverUrl: string): ServerUsage {
   return {
     allTime: allTime[serverUrl] ?? {},
     today: days[dayKey()]?.[serverUrl] ?? {},
+  };
+}
+
+/** Cumulative actual reported cost (USD) per model for a server, all-time and today. */
+export function getServerCost(serverUrl: string): ServerCost {
+  return {
+    allTime: allTimeCost[serverUrl] ?? {},
+    today: daysCost[dayKey()]?.[serverUrl] ?? {},
   };
 }
 
@@ -289,11 +342,15 @@ export function resetUsage(scope: 'all' | { serverUrl: string }): void {
     allTime = {};
     days = {};
     startedAt = {};
+    allTimeCost = {};
+    daysCost = {};
   } else {
     const url = scope.serverUrl;
     delete allTime[url];
     for (const key of Object.keys(days)) delete days[key][url];
     delete startedAt[url];
+    delete allTimeCost[url];
+    for (const key of Object.keys(daysCost)) delete daysCost[key][url];
   }
   schedulePersist();
   emitter.fire();
@@ -428,6 +485,8 @@ export function resetUsageStoreForTests(): void {
   allTime = {};
   days = {};
   startedAt = {};
+  allTimeCost = {};
+  daysCost = {};
   globalState = undefined;
   writeQueue = Promise.resolve();
   logError = () => {};

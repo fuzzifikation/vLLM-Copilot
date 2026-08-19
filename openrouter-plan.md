@@ -1,6 +1,6 @@
 # OpenRouter First-Class Backend Plan
 
-**Status:** Onboarding + dashboard cleanup shipped (v1.32.0 + Unreleased). Dashboard data research done → [docs/openrouter-api-research.md](./docs/openrouter-api-research.md). **Dashboard approach decided: Option A — model collection** (see below). Next: Phase 1 cost data plane, then Phase 2 dashboard restructure.
+**Status:** Onboarding + dashboard cleanup shipped (v1.32.0 + Unreleased). Dashboard data research done → [docs/openrouter-api-research.md](./docs/openrouter-api-research.md). **Dashboard approach decided: Option A — model collection** (see below). **Phase 1 (cost data plane) LANDED in Unreleased.** Next: Phase 2 dashboard restructure, then Phase 3 cost ledger.
 **Date:** 2026-08-16
 
 ## Goal

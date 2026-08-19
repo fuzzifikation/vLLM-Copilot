@@ -139,6 +139,8 @@ export async function consumeStream(
       cachedTokens: pendingUsage.prompt_tokens_details?.cached_tokens,
       createdCacheTokens: pendingUsage.prompt_tokens_details?.created_cache_tokens,
       reasoningTokens: pendingUsage.completion_tokens_details?.reasoning_tokens,
+      actualCost: pendingUsage.cost ?? undefined,
+      usedByok: pendingUsage.usedByok === true ? true : undefined,
       metrics: pendingMetrics,
       hasMetrics,
       hasCacheDetails,

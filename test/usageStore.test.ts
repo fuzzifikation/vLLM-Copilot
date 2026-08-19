@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import {
-  initUsageStore, recordRequest, getLastRequest, getServerUsage, hasServerUsage,
+  initUsageStore, recordRequest, getLastRequest, getServerUsage, getServerCost, hasServerUsage,
   getServersWithUsage, resetUsage, computeCost, findModelCost, getModelStartedAt,
   formatCost, formatCostFine, formatCostSummary, fmtCount, sumCounts, dayKey, resetUsageStoreForTests, onUsageStoreDidChange,
   type LastRequestData,
@@ -107,6 +107,26 @@ describe('recordRequest — last request + accumulation', () => {
     expect(getModelStartedAt(url, 'm1')).toBe(t); // not re-stamped on later records
     expect(getModelStartedAt(url, 'm2')).toBeUndefined(); // per-model granularity
   });
+
+  it('accumulates actual reported cost separately from token counts', () => {
+    recordRequest(req({ promptTokens: 100, actualCost: 0.001 }));
+    recordRequest(req({ promptTokens: 50, actualCost: 0.0005 }));
+    recordRequest(req({ modelId: 'm2', promptTokens: 7, actualCost: 0.002 }));
+
+    const cost = getServerCost(url);
+    expect(cost.allTime['m1']).toBeCloseTo(0.0015, 10);
+    expect(cost.allTime['m2']).toBeCloseTo(0.002, 10);
+    // today mirrors allTime for the same day
+    expect(cost.today['m1']).toBeCloseTo(0.0015, 10);
+    // cost plane independent from counts
+    expect(getServerUsage(url).allTime['m1'].prompt).toBe(150);
+  });
+
+  it('ignores non-finite and absent actual cost (vLLM/local records nothing)', () => {
+    recordRequest(req({ actualCost: undefined }));
+    recordRequest(req({ actualCost: Number.NaN }));
+    expect(getServerCost(url).allTime).toEqual({});
+  });
 });
 
 describe('persistence (globalState)', () => {
@@ -119,7 +139,7 @@ describe('persistence (globalState)', () => {
     recordRequest(req({ promptTokens: 100, completionTokens: 50, cachedTokens: 10 }));
     await flushWrites(m, 1);
 
-    expect(m.stored.version).toBe(2);
+    expect(m.stored.version).toBe(3);
     expect(m.stored.allTime[url]['m1']).toEqual({ prompt: 100, completion: 50, cached: 10, reasoning: 5 });
     expect(m.stored.days[dayKey()][url]['m1'].prompt).toBe(100);
     expect(typeof m.stored.startedAt[url]['m1']).toBe('number'); // first-record stamp persisted
@@ -144,11 +164,34 @@ describe('persistence (globalState)', () => {
     expect(getServerUsage(url).allTime['m1'].prompt).toBe(100); // counts preserved
     expect(getModelStartedAt(url, 'm1')).toBeUndefined();       // no stamp for legacy data
 
-    // a new record persists as version 2 with a stamp
+    // a new record persists as version 3 with a stamp
     recordRequest(req({ promptTokens: 7 }));
     await flushWrites(m, 1);
-    expect(m.stored.version).toBe(2);
+    expect(m.stored.version).toBe(3);
     expect(m.stored.startedAt[url]['m1']).toBeTypeOf('number');
+  });
+
+  it('migrates version-2 data in place (cost planes default to {})', async () => {
+    const v2 = {
+      version: 2 as const,
+      allTime: { [url]: { m1: { prompt: 100, completion: 50, cached: 10, reasoning: 5 } } },
+      days: {},
+      startedAt: { [url]: { m1: 12345 } },
+    };
+    const m = makeMemento(v2);
+    initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
+
+    // counts + stamps preserved; no actual cost invented for legacy records
+    expect(getServerUsage(url).allTime['m1'].prompt).toBe(100);
+    expect(getModelStartedAt(url, 'm1')).toBe(12345);
+    expect(getServerCost(url).allTime).toEqual({});
+
+    // a new record with actual cost persists as version 3 alongside the legacy counts
+    recordRequest(req({ promptTokens: 7, actualCost: 0.0012 }));
+    await flushWrites(m, 1);
+    expect(m.stored.version).toBe(3);
+    expect(m.stored.allTime[url]['m1'].prompt).toBe(107); // legacy counts accumulated into
+    expect(m.stored.allTimeCost[url]['m1']).toBeCloseTo(0.0012, 10);
   });
 
   it('ignores corrupt/missing persisted data and starts fresh', () => {
@@ -180,23 +223,26 @@ describe('resetUsage', () => {
   afterEach(() => resetUsageStoreForTests());
 
   it("clears all usage but keeps the last request", () => {
-    recordRequest(req({ promptTokens: 100 }));
+    recordRequest(req({ promptTokens: 100, actualCost: 0.001 }));
     resetUsage('all');
 
     expect(hasServerUsage(url)).toBe(false);
     expect(getServerUsage(url).allTime).toEqual({});
+    expect(getServerCost(url).allTime).toEqual({});
     expect(getModelStartedAt(url, 'm1')).toBeUndefined(); // recording restarted
     // Last Request deliberately survives a reset
     expect(getLastRequest(url)).toBeDefined();
   });
 
   it('clears only the scoped server', () => {
-    recordRequest(req({ serverUrl: 'http://a:1', promptTokens: 5 }));
-    recordRequest(req({ serverUrl: 'http://b:2', promptTokens: 9 }));
+    recordRequest(req({ serverUrl: 'http://a:1', promptTokens: 5, actualCost: 0.001 }));
+    recordRequest(req({ serverUrl: 'http://b:2', promptTokens: 9, actualCost: 0.002 }));
     resetUsage({ serverUrl: 'http://a:1' });
 
     expect(hasServerUsage('http://a:1')).toBe(false);
     expect(getServerUsage('http://b:2').allTime['m1'].prompt).toBe(9);
+    expect(getServerCost('http://a:1').allTime).toEqual({});
+    expect(getServerCost('http://b:2').allTime['m1']).toBeCloseTo(0.002, 10);
     expect(getModelStartedAt('http://a:1', 'm1')).toBeUndefined();
     expect(getModelStartedAt('http://b:2', 'm1')).toBeTypeOf('number');
   });

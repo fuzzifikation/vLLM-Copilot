@@ -122,6 +122,39 @@ describe('consumeStream', () => {
     expect(last?.totalTimeMs).toBeTypeOf('number');
   });
 
+  it('captures OpenRouter actual cost and BYOK flag into the last request', async () => {
+    const { progress, output } = setup();
+    const outcome = createOutcome();
+    const usage = {
+      prompt_tokens: 10, completion_tokens: 5, total_tokens: 15,
+      cost: 0.0012, usedByok: true,
+    } as any;
+
+    await consumeStream(
+      streamOf([ev({ content: 'hi', usage })]),
+      model, progress, token, startTime, outcome, 'http://host', 'm', output,
+    );
+
+    const last = getLastRequest('http://host');
+    expect(last?.actualCost).toBe(0.0012);
+    expect(last?.usedByok).toBe(true);
+  });
+
+  it('does not invent actual cost when the server reports none', async () => {
+    const { progress, output } = setup();
+    const outcome = createOutcome();
+    const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } as any;
+
+    await consumeStream(
+      streamOf([ev({ content: 'hi', usage })]),
+      model, progress, token, startTime, outcome, 'http://host', 'm', output,
+    );
+
+    const last = getLastRequest('http://host');
+    expect(last?.actualCost).toBeUndefined();
+    expect(last?.usedByok).toBeUndefined();
+  });
+
   it('stops early when the token is cancelled before any part is reported', async () => {
     const { progress, output } = setup();
     const outcome = createOutcome();

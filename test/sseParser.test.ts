@@ -156,6 +156,25 @@ describe('processSSEChunk', () => {
     expect(event.usage?.prompt_tokens).toBe(20);
   });
 
+  it('maps OpenRouter is_byok to usedByok on the wire usage', () => {
+    const data = makeChunk({
+      choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 20, completion_tokens: 3, total_tokens: 23, cost: 0.0012, is_byok: true },
+    });
+    const event = processSSEChunk(data, pending)!;
+    expect(event.usage?.usedByok).toBe(true);
+    expect(event.usage?.cost).toBe(0.0012);
+  });
+
+  it('leaves usedByok undefined when the server reports no is_byok', () => {
+    const data = makeChunk({
+      choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 20, completion_tokens: 3, total_tokens: 23 },
+    });
+    const event = processSSEChunk(data, pending)!;
+    expect(event.usage?.usedByok).toBeUndefined();
+  });
+
   it('surfaces a server error chunk instead of dropping it', () => {
     const data = makeChunk({ error: { message: 'This model maximum context length is 4096 tokens' } });
     const event = processSSEChunk(data, pending)!;
