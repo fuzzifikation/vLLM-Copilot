@@ -129,6 +129,19 @@ Keep OpenRouter-specific parsing and normalization in one small module — **LAN
 - Do not add a catalog cache. `VllmClient` remains the sole configuration cache owner.
 - Exports: `parseOpenRouterModelRef`, `normalizeOpenRouterModel`, `fetchOpenRouterModel`, `resolveOpenRouterRuntimeLimits`. The last is the arm the shared `resolveRuntimeLimits` switch will call. Coverage: `test/openRouter.test.ts` (26 tests).
 
+### Reasoning Modes — LANDED (full OpenRouter `reasoning` object)
+
+The exact-model metadata's `reasoning` object is richer than a "supports reasoning" flag — it carries `supported_efforts` (the exact effort ladder), `default_effort`, `default_enabled`, `mandatory`, and `supports_max_tokens` (Anthropic-style budget via `max_tokens`). Instead of a hardcoded "Think (High) / No Think" pair, `normalizeOpenRouterModel` now builds real modes from it:
+
+- **Effort ladder:** one `Think (Effort)` mode per `supported_efforts` entry (skipping `none`), each `{ reasoning: { enabled: true, effort } }`. Falls back to `['high']` when the API omits the allowlist.
+- **`supports_max_tokens`:** no per-effort mapping exists, so a single `Think` mode `{ reasoning: { enabled: true } }` (OpenRouter applies a default budget) + `No Think` when disableable.
+- **`mandatory: true`:** no `No Think` mode at all.
+- **`defaultMode`:** from `default_effort` (mapped to its generated mode), else `No Think` when `default_enabled: false` / `default_effort: 'none'`, else the first (highest) mode.
+
+Modes serialize as raw params through `override.modelModes[selectedMode]` (see `requestBuilder.ts`) — `{ reasoning: { enabled, effort } }` and `{ reasoning: { enabled } }` both pass through unchanged. Effort values come straight from the API, so they're valid by construction.
+
+
+
 ### Onboarding
 
 Add an explicit OpenRouter branch to the existing Add flow:
@@ -186,6 +199,8 @@ Generic local-server detection remains unchanged. No OpenRouter presets or inter
 ### Refactor consideration
 
 The current dashboard is server-centric (one engine per server, one metric set). OpenRouter breaks that: the engine polls `/v1/models` (the whole catalog, not "the server's models"), and context/cost/capabilities are per-model. The tree needs **per-model detail nodes under a relay server** — the natural extension of the "hide absent rows" cleanup, but it changes the tree data model (currently server → flat metric rows).
+
+**Relay identity (2026-08-19):** credentials are per model, and multiple models at the fixed OpenRouter URL may use **different API keys**. The current engine registry (`vllmMetrics.ts`) keys by normalized URL only and the dashboard takes the *first* model's headers — so account-level data from `GET /api/v1/key` (credits, free-tier, activity) could be attributed to the wrong account when keys differ. Phase 2 must define relay identity as **normalized URL + credential fingerprint**, OR explicitly group account rows beneath separate connection/key nodes. The credential fingerprint is the existing `buildAuthHeaders`-derived header set (the connection identity the codebase already uses for same-URL key separation).
 
 ## Delivery
 

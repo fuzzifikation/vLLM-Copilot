@@ -29,6 +29,25 @@ The `data[]` entries (and the single-model lookup `data` object — **same schem
 | `expiration_date` | string \| null | Deprecation date — we show |
 | `benchmarks` | object \| undefined | **NEW — third-party benchmark rankings** (see §4) |
 
+### `reasoning` object — the thinking-toggle surface (now consumed)
+The model metadata carries a `reasoning` object that is **far richer** than a single
+"supports reasoning" boolean. It's the source of truth for the reasoning modes we
+generate (`Think (X)` / `No Think`):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `mandatory` | boolean \| undefined | Reasoning **cannot** be disabled (no "No Think" mode) |
+| `default_enabled` | boolean \| undefined | Reasoning on by default (drives `defaultMode`) |
+| `default_effort` | string \| null | Default effort level (`high`, `medium`, `low`, `minimal`, `xhigh`, `max`…) |
+| `supported_efforts` | string[] \| null | **Exact effort ladder** the model accepts — we build one `Think (X)` mode per level |
+| `supports_max_tokens` | boolean \| undefined | **Anthropic-style**: budget set via `reasoning.max_tokens`, not `effort`. No per-effort mapping → we emit a single `Think` mode |
+
+Consumption (`normalizeOpenRouterModel`):
+- `supported_efforts` (minus `none`) → one `Think (Effort)` mode each, with `{ reasoning: { enabled: true, effort } }`.
+- `supports_max_tokens` → single `Think` mode with `{ reasoning: { enabled: true } }` (OpenRouter applies a default budget).
+- `mandatory: true` → no `No Think` mode.
+- `default_effort` / `default_enabled: false` / `default_effort: 'none'` → `defaultMode`.
+
 ### Not yet consumed (candidates for the dashboard)
 - **`description`** — a human-readable paragraph per model. Ideal for the model tooltip / a "Model" detail row.
 - **`created`** — model age; could show "added YYYY-MM-DD".

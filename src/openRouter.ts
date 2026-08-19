@@ -65,6 +65,11 @@ function round6(n: number): number {
   return Math.round(n * 1e6) / 1e6;
 }
 
+/** Title-case a reasoning effort into a mode label, e.g. 'high' → 'Think (High)'. */
+function thinkModeLabel(effort: string): string {
+  return `Think (${effort[0].toUpperCase()}${effort.slice(1)})`;
+}
+
 /**
  * Parse a user-provided model reference into the pieces needed for the metadata
  * lookup, preserving the FULL requested id for chat.
@@ -190,7 +195,13 @@ export interface OpenRouterModelData {
   } | null;
   supported_parameters?: string[];
   default_parameters?: Record<string, unknown> | null;
-  reasoning?: { mandatory?: boolean } | null;
+  reasoning?: {
+    mandatory?: boolean;
+    default_enabled?: boolean;
+    default_effort?: string | null;
+    supported_efforts?: string[] | null;
+    supports_max_tokens?: boolean;
+  } | null;
 }
 
 /**
@@ -282,19 +293,54 @@ export function normalizeOpenRouterModel(
 
   // ── Reasoning modes ──
   // OpenRouter toggles reasoning via `reasoning: { enabled, effort }` (verified
-  // against docs + API). When reasoning is mandatory, a "No Think" mode is invalid.
-  const reasoningSupported = supports(data, 'reasoning') || supports(data, 'reasoning_effort');
-  const reasoningMandatory = data.reasoning?.mandatory === true;
+  // against docs + API). The model's `reasoning` object is richer than a single
+  // "supports reasoning" flag: it tells us the exact effort ladder
+  // (`supported_efforts`), whether reasoning is on by default, whether it's
+  // mandatory, and whether the model takes `max_tokens` instead of `effort`
+  // (Anthropic-style). Build real thinking modes from that instead of a
+  // hardcoded "Think (High) / No Think" pair.
+  const reasoningSupported =
+    data.reasoning != null ||
+    supports(data, 'reasoning') ||
+    supports(data, 'reasoning_effort');
+  const reasoningCfg = data.reasoning;
+  const reasoningMandatory = reasoningCfg?.mandatory === true;
+  const supportsMaxTokens = reasoningCfg?.supports_max_tokens === true;
   let modelModes: Record<string, Record<string, unknown>> | undefined;
   let defaultMode: string | undefined;
+
   if (reasoningSupported) {
-    modelModes = {
-      'Think (High)': { reasoning: { enabled: true, effort: 'high' } },
-    };
+    modelModes = {};
+
+    if (supportsMaxTokens) {
+      // Anthropic-style reasoning: the budget is set via `reasoning.max_tokens`,
+      // not an effort level, and there's no per-effort mapping. A single "Think"
+      // mode (reasoning on) + "No Think" (when disableable) is the honest shape.
+      modelModes['Think'] = { reasoning: { enabled: true } };
+    } else {
+      // Effort ladder from supported_efforts (descending, skipping 'none');
+      // fall back to a single 'high' when the API omits the allowlist.
+      const efforts = reasoningCfg?.supported_efforts?.filter((e) => e !== 'none') ?? ['high'];
+      for (const effort of efforts) {
+        const label = thinkModeLabel(effort);
+        modelModes[label] = { reasoning: { enabled: true, effort } };
+      }
+    }
+
     if (!reasoningMandatory) {
       modelModes['No Think'] = { reasoning: { enabled: false } };
     }
-    defaultMode = 'Think (High)';
+
+    // Default mode: the model's default effort when it maps to a generated mode;
+    // 'none'/disabled default → "No Think"; otherwise the first (highest) mode.
+    const defaultEffort = reasoningCfg?.default_effort;
+    if (defaultEffort && defaultEffort !== 'none' && modelModes[thinkModeLabel(defaultEffort)]) {
+      defaultMode = thinkModeLabel(defaultEffort);
+    } else if (defaultEffort === 'none' || reasoningCfg?.default_enabled === false) {
+      defaultMode = 'No Think';
+    } else {
+      defaultMode = Object.keys(modelModes)[0];
+    }
   }
 
   // ── Default params: only non-null values, only params the model supports ──
