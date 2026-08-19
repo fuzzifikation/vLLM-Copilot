@@ -98,20 +98,6 @@ class OpenRouterAccountTreeItem extends vscode.TreeItem {
   }
 }
 
-/** OpenRouter relay: collapsible "Model Collection" — one node per configured model. */
-class ModelCollectionTreeItem extends vscode.TreeItem {
-  constructor(
-    public readonly serverUrl: string,
-    public readonly modelIds: string[],
-  ) {
-    super('Model Collection', vscode.TreeItemCollapsibleState.Collapsed);
-    this.description = String(modelIds.length);
-    this.iconPath = new vscode.ThemeIcon('library');
-    this.id = `openRouterCollection:${serverUrl}`;
-    this.tooltip = new vscode.MarkdownString('Configured OpenRouter models. Each node shows that model\'s own context, capabilities, pricing, and usage — a relay has no single server context.');
-  }
-}
-
 /** OpenRouter relay: one configured model with its own model-level rows. */
 class OpenRouterModelTreeItem extends vscode.TreeItem {
   constructor(
@@ -449,10 +435,6 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       return this.getOpenRouterAccountChildren(element);
     }
 
-    if (element instanceof ModelCollectionTreeItem) {
-      return this.getModelCollectionChildren(element);
-    }
-
     if (element instanceof OpenRouterModelTreeItem) {
       return this.getOpenRouterModelChildren(element);
     }
@@ -488,19 +470,14 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     // the whole catalog (not "the server's models") and each configured model
     // has its own context window — so instead of the vLLM "Model IDs" node and
     // a single server Context Window row, show account health (from /api/v1/key)
-    // and one collapsible node per configured model with model-level rows.
+    // plus one collapsible node PER configured model (each with its own context
+    // in the description and model-level rows on expand).
     const isOpenRouterRelay = serverType === 'openrouter';
     if (isOpenRouterRelay) {
       if (m.account) {
         items.push(new OpenRouterAccountTreeItem(serverUrl ?? '', m.account));
       }
-      const wireIds = this.getRelayModels(serverUrl ?? '')
-        .map(model => model.vllmModelId ?? model.id)
-        .filter((id): id is string => !!id);
-      const uniqueIds = [...new Set(wireIds)];
-      if (uniqueIds.length > 0) {
-        items.push(new ModelCollectionTreeItem(serverUrl ?? '', uniqueIds));
-      }
+      items.push(...this.getRelayModelTreeItems(serverUrl ?? ''));
     } else {
       if (m.models.length > 0) {
         items.push(new ModelsTreeItem(m.models));
@@ -690,18 +667,22 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     return items;
   }
 
-  /** Children of the Model Collection node: one node per configured relay model. */
-  private getModelCollectionChildren(e: ModelCollectionTreeItem): OpenRouterModelTreeItem[] {
-    const models = this.getRelayModels(e.serverUrl);
-    return e.modelIds.map(modelId => {
-      const entry = models.find(m => (m.vllmModelId ?? m.id) === modelId);
-      const label = entry?.displayName || entry?.id || modelId;
-      // Context window rides in via the cached engine metrics — resolved per
-      // model, so each node shows ITS OWN window. The tree item captures it at
-      // build time; a resolved value arrives on the next engine tick.
-      const contextWindow = this.relayContextWindow(e.serverUrl, modelId);
-      return new OpenRouterModelTreeItem(e.serverUrl, modelId, label, contextWindow);
-    });
+  /** One collapsible node per configured relay model (direct children of the
+   *  OpenRouter server node). Each shows its own context window in the
+   *  description and model-level rows on expand. */
+  private getRelayModelTreeItems(serverUrl: string): OpenRouterModelTreeItem[] {
+    const models = this.getRelayModels(serverUrl);
+    const seen = new Set<string>();
+    const items: OpenRouterModelTreeItem[] = [];
+    for (const model of models) {
+      const modelId = model.vllmModelId ?? model.id;
+      if (!modelId || seen.has(modelId)) continue; // dedupe shared wire ids
+      seen.add(modelId);
+      const label = model.displayName || model.id || modelId;
+      const contextWindow = this.relayContextWindow(serverUrl, modelId);
+      items.push(new OpenRouterModelTreeItem(serverUrl, modelId, label, contextWindow));
+    }
+    return items;
   }
 
   /** Children of an OpenRouter model node: its own model-level rows. */

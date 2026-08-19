@@ -203,11 +203,11 @@ describe('DashboardTreeProvider', () => {
     });
   });
 
-  it('renders an OpenRouter relay as a model collection with account health', async () => {
+  it('renders an OpenRouter relay with per-model nodes + account health', async () => {
     // OpenRouter is a relay: /v1/models is the whole catalog and each configured
-    // model has its own context. Phase 2 renders the relay as a model collection
-    // — an Account node (from /api/v1/key) + one node per configured model with
-    // model-level rows — instead of the vLLM "Model IDs" list.
+    // model has its own context. The relay node shows an Account node (from
+    // /api/v1/key) plus ONE collapsible node PER configured model (direct
+    // children — no intermediate "collection" container).
     (vscode as any).workspace._mockConfig = {
       models: [
         {
@@ -235,9 +235,9 @@ describe('DashboardTreeProvider', () => {
       // No vLLM-style server rows (catalog is not "the server's models").
       expect(labels).not.toContain('Model IDs');
       expect(labels).not.toContain('Context Window');
-      // Account health + model collection rendered instead.
+      // Account health + one node per configured model, rendered directly.
       expect(labels).toContain('Account');
-      expect(labels).toContain('Model Collection');
+      expect(labels).not.toContain('Model Collection'); // container removed
       // The server is still online and usable.
       expect((serverNode as any).description).not.toContain('Offline');
 
@@ -247,16 +247,14 @@ describe('DashboardTreeProvider', () => {
       expect(accountRows.some(r => (r as any).label === 'Credits Remaining')).toBe(true);
       expect((accountRows.find(r => (r as any).label === 'Credits Remaining') as any).description).toBe('$3.50');
 
-      // Model Collection has one child per configured model, each labeled by displayName.
-      const collectionNode = metrics.find(m => (m as any).label === 'Model Collection');
-      const modelNodes = await provider.getChildren(collectionNode as any);
-      const modelLabels = modelNodes.map(m => (m as any).label as string);
+      // Each configured model is a direct child, labeled by displayName.
+      const modelLabels = labels.filter(l => l === 'Nemotron' || l === 'DeepSeek');
       expect(modelLabels).toEqual(['Nemotron', 'DeepSeek']);
+      const nemotron = metrics.find(m => (m as any).label === 'Nemotron');
+      const deepseek = metrics.find(m => (m as any).label === 'DeepSeek');
 
       // Each model node has its OWN context window from the per-model resolve.
-      const nemotron = modelNodes.find(m => (m as any).label === 'Nemotron');
       expect((nemotron as any).description).toBe('1M'); // fmtCount(1000000)
-      const deepseek = modelNodes.find(m => (m as any).label === 'DeepSeek');
       expect((deepseek as any).description).toBe('164k'); // fmtCount(163840)
 
       // Expand a model node — model-level rows (context, output, caps, modes).
@@ -267,7 +265,7 @@ describe('DashboardTreeProvider', () => {
     });
   });
 
-  it('hides Account + Model Collection when no OpenRouter models are configured on a server', async () => {
+  it('hides OpenRouter account + model nodes when no relay models are configured', async () => {
     // A non-OpenRouter server must not show relay nodes.
     (vscode as any).workspace._mockConfig = {
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
@@ -282,7 +280,7 @@ describe('DashboardTreeProvider', () => {
       const metrics = await provider.getChildren(serverNode as any);
       const labels = metrics.map(m => (m as any).label as string);
       expect(labels).not.toContain('Account');
-      expect(labels).not.toContain('Model Collection');
+      expect(labels).not.toContain('Nemotron'); // no relay model nodes
       expect(labels).toContain('Model IDs'); // vLLM path unchanged
     });
   });
@@ -312,9 +310,8 @@ describe('DashboardTreeProvider', () => {
       const children = await provider.getChildren();
       const serverNode = children.find(c => (c as any).label === 'openrouter.ai:');
       const metrics = await provider.getChildren(serverNode as any);
-      const collectionNode = metrics.find(m => (m as any).label === 'Model Collection');
-      const modelNodes = await provider.getChildren(collectionNode as any);
-      const nemotron = modelNodes.find(m => (m as any).label === 'Nemotron');
+      // The model node is a DIRECT child of the relay server (no container).
+      const nemotron = metrics.find(m => (m as any).label === 'Nemotron');
 
       const rows = await provider.getChildren(nemotron as any);
       const rowLabels = rows.map(r => (r as any).label as string);
