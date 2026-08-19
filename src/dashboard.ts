@@ -38,17 +38,18 @@ class ServerTreeItem extends vscode.TreeItem {
     super(displayName, vscode.TreeItemCollapsibleState.Collapsed);
     this.iconPath = statusIcon;
     this.id = `server:${serverUrl}`;
-    const degraded = serverType !== undefined && serverType !== 'vllm';
-    this.description = metrics.online
-      ? degraded
-        ? `${summaryLine(metrics)}  ·  ${serverType} (degraded)`
-        : summaryLine(metrics)
-      : 'Offline';
+    // No "degraded" label — every backend is a first-class dashboard citizen.
+    this.description = metrics.online ? summaryLine(metrics) : 'Offline';
     this.tooltip = new vscode.MarkdownString(
       `${serverUrl}\n*${metrics.models.join(', ') || 'no models'}*` +
-      (degraded ? `\n\n**${serverType} server — dashboard metrics are degraded.** Most metrics shown below (KV cache, throughput, TTFT, queue, speculative decoding) are vLLM-specific and unavailable for this backend. Token usage and cost are unaffected.` : '')
+      (metrics.maxModelLen != null ? `\n\n**Context window:** ${fmtCount(metrics.maxModelLen)}` : '') +
+      (serverType ? `\n**Backend:** ${serverType}` : '')
     );
-    this.contextValue = metrics.online ? 'serverOnline' : 'serverOffline';
+    // Context value encodes whether deep-dive applies: vLLM-only. Non-vLLM
+    // servers expose auth/remove but not the vLLM metrics deep-dive.
+    const isVllm = serverType === undefined || serverType === 'vllm';
+    const state = metrics.online ? 'serverOnline' : 'serverOffline';
+    this.contextValue = isVllm ? state : `${state}NoDive`;
   }
 }
 
@@ -233,8 +234,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
   /** Active engine subscriptions: serverUrl → { metrics, dispose } */
   private subscriptions: Array<{ serverUrl: string; metrics: ServerMetrics; dispose: () => void }> = [];
-  /** serverUrl → persisted serverType (first configured model wins). Used to flag
-   *  non-vLLM servers as degraded in the tree. */
+  /** serverUrl → persisted serverType (first configured model wins). Drives
+   *  the per-backend fetch set + context resolution in the metrics engine. */
   private serverTypes = new Map<string, ServerType>();
   private outputChannel: vscode.OutputChannel;
   /** Flag to coalesce multiple per-server updates into one tree re-render. */
@@ -309,8 +310,11 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       if (!this.visible || epoch !== this.refreshEpoch) {
         return;
       }
-      // Group models by server URL
+      // Group models by server URL. Track the first configured model's wire id
+      // per server — the metrics engine needs it to resolve the per-backend
+      // context window (non-vLLM only).
       const serverMap = new Map<string, Record<string, string>>();
+      const serverModelId = new Map<string, string>();
       this.serverTypes.clear();
       for (const model of config.models) {
         if (!model.serverUrl) continue;
@@ -318,13 +322,18 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
           const serverConfig = resolveServerConfig(model);
           serverMap.set(model.serverUrl, serverConfig.requestHeaders);
         }
+        const wireId = model.vllmModelId ?? model.id;
+        if (wireId && !serverModelId.has(model.serverUrl)) {
+          serverModelId.set(model.serverUrl, wireId);
+        }
         if (!this.serverTypes.has(model.serverUrl) && model.serverType) {
           this.serverTypes.set(model.serverUrl, model.serverType);
         }
       }
 
       for (const [url, headers] of serverMap) {
-        const engine = getMetricsEngine(url, headers, this.serverTypes.get(url));
+        const modelId = serverModelId.get(url);
+        const engine = getMetricsEngine(url, headers, this.serverTypes.get(url) ?? 'vllm', modelId);
         const sub = engine.subscribe((aggregated) => {
           // Update cached metrics and schedule a single re-render
           const entry = this.subscriptions.find(s => s.serverUrl === url);
@@ -397,18 +406,6 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       return [new MetricTreeItem('Error', m.error || 'Connection failed', 'error')];
     }
 
-    // Non-vLLM backend notice — the server is reachable and serving, but most
-    // of the rows below are vLLM-specific and will read "—". Say so up front
-    // instead of letting the user think the dashboard is broken.
-    if (serverType !== undefined && serverType !== 'vllm') {
-      items.push(new MetricTreeItem(
-        'Backend',
-        serverType,
-        'warning',
-        `This server runs ${serverType}, not vLLM. Dashboard metrics are severely degraded: KV cache, TTFT, throughput, queue, and speculative-decoding rows are vLLM-specific and unavailable here. Token usage and cost are tracked normally.`,
-      ));
-    }
-
     // Basic info
     if (m.version) {
       // vLLM's /version endpoint already returns the version with a leading
@@ -418,56 +415,74 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     if (m.models.length > 0) {
       items.push(new ModelsTreeItem(m.models));
     }
-    items.push(new MetricTreeItem(
-      'Context Window',
-      m.maxModelLen != null ? fmtCount(m.maxModelLen) : '—',
-      'layers',
-      'Maximum context length (input + output combined) for this model.',
-    ));
+    // Context window — only when resolved. vLLM from /v1/models max_model_len;
+    // non-vLLM from the per-backend resolver (LM Studio context_length, llama.cpp
+    // n_ctx, Ollama /api/ps, OpenRouter exact-model). No data → no row.
+    if (m.maxModelLen != null) {
+      items.push(new MetricTreeItem(
+        'Context Window',
+        fmtCount(m.maxModelLen),
+        'layers',
+        'Maximum context length (input + output combined) for this model.',
+      ));
+    }
 
-    // Server stats
-    items.push(new MetricTreeItem(
-      'KV Cache',
-      fmtPct(m.kvCacheUsagePercent),
-      'graph',
-      'Current KV cache utilization. High usage means less headroom for concurrent requests.',
-    ));
-    items.push(new MetricTreeItem(
-      'KV Cache Hit',
-      fmtPct(m.cacheHitRate),
-      'check-all',
-      'Percentage of input tokens served from cache (prefill skipped). Higher = faster prompts.',
-    ));
-    items.push(new MetricTreeItem(
-      'Avg TTFT',
-      fmtMs(m.avgTTFTMs),
-      'clock',
-      'Average time to first token across recent requests (queue + prompt processing).',
-    ));
-    const outSpeed = m.avgTputTokPerSec != null ? fmtTokPerSec(m.avgTputTokPerSec) : fmtThroughput(m.avgTPOTMs);
-    const prefillSpeed = m.avgPrefillTputTokPerSec != null ? fmtTokPerSec(m.avgPrefillTputTokPerSec) : null;
-    items.push(new MetricTreeItem(
-      'Speed',
-      prefillSpeed != null ? `Output ${outSpeed} · Prefill ${prefillSpeed}` : `Output ${outSpeed}`,
-      'rocket',
-      m.avgTputTokPerSec != null
-        ? 'Pooled throughput across requests. Output = Σ generation tokens ÷ Σ decode time (output-only; counts every emitted token, so MTP/spec-decode stays honest). Prefill = Σ prompt tokens ÷ Σ prefill time (includes cache-served tokens).'
-        : 'Average token generation throughput (inverse of time per output token).',
-    ));
+    // Server stats — each row only when the backend reports the value. vLLM-only
+    // metrics are simply absent for non-vLLM backends; no dash placeholders.
+    if (m.kvCacheUsagePercent != null) {
+      items.push(new MetricTreeItem(
+        'KV Cache',
+        fmtPct(m.kvCacheUsagePercent),
+        'graph',
+        'Current KV cache utilization. High usage means less headroom for concurrent requests.',
+      ));
+    }
+    if (m.cacheHitRate != null) {
+      items.push(new MetricTreeItem(
+        'KV Cache Hit',
+        fmtPct(m.cacheHitRate),
+        'check-all',
+        'Percentage of input tokens served from cache (prefill skipped). Higher = faster prompts.',
+      ));
+    }
+    if (m.avgTTFTMs != null) {
+      items.push(new MetricTreeItem(
+        'Avg TTFT',
+        fmtMs(m.avgTTFTMs),
+        'clock',
+        'Average time to first token across recent requests (queue + prompt processing).',
+      ));
+    }
+    if (m.avgTputTokPerSec != null || m.avgTPOTMs != null) {
+      const outSpeed = m.avgTputTokPerSec != null ? fmtTokPerSec(m.avgTputTokPerSec) : fmtThroughput(m.avgTPOTMs);
+      const prefillSpeed = m.avgPrefillTputTokPerSec != null ? fmtTokPerSec(m.avgPrefillTputTokPerSec) : null;
+      items.push(new MetricTreeItem(
+        'Speed',
+        prefillSpeed != null ? `Output ${outSpeed} · Prefill ${prefillSpeed}` : `Output ${outSpeed}`,
+        'rocket',
+        m.avgTputTokPerSec != null
+          ? 'Pooled throughput across requests. Output = Σ generation tokens ÷ Σ decode time (output-only; counts every emitted token, so MTP/spec-decode stays honest). Prefill = Σ prompt tokens ÷ Σ prefill time (includes cache-served tokens).'
+          : 'Average token generation throughput (inverse of time per output token).',
+      ));
+    }
 
     // Queue position
-    items.push(new MetricTreeItem(
-      'Running',
-      fmtN(m.runningRequests),
-      'play',
-      'Number of requests currently being processed by the GPU.',
-    ));
-    items.push(new MetricTreeItem(
-      'Waiting',
-      fmtN(m.waitingRequests),
-      'debug-pause',
-      'Number of requests queued, waiting for GPU resources.',
-    ));
+    if (m.runningRequests != null) {
+      items.push(new MetricTreeItem(
+        'Running',
+        fmtN(m.runningRequests),
+        'play',
+        'Number of requests currently being processed by the GPU.',
+      ));
+    }
+    if (m.waitingRequests != null) {
+      items.push(new MetricTreeItem(
+        'Waiting',
+        fmtN(m.waitingRequests),
+        'debug-pause',
+        'Number of requests queued, waiting for GPU resources.',
+      ));
+    }
 
     // Speculative decoding
     {

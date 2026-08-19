@@ -172,7 +172,7 @@
       "view/item/context": [
         {
           "command": "vllm-copilot.updateServerAuth",
-          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline)",
+          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive)",
           "group": "1_server@1"
         },
         {

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Dashboard treats every backend as first-class (no more "degraded")** — the `(degraded)` label and the "Backend" warning row are gone for all non-vLLM servers. The metrics engine now varies its probe set by backend: vLLM hits the full endpoint set (`/health`, `/v1/models`, `/version`, `/metrics`, `/load`); other backends probe only `/v1/models` plus a one-time per-backend context-window resolve (LM Studio `context_length`, llama.cpp `n_ctx`, Ollama `/api/ps`, OpenRouter exact-model) cached for the engine's lifetime. Metric rows render **only when the backend reports them** — no more dash (`—`) placeholders for absent vLLM-only data.
+- **Dashboard shows each model's context window, resolved per backend** — vLLM reads `max_model_len` from `/v1/models`; non-vLLM backends resolve it once from their own endpoint. The window rides in the server tooltip.
+- **Deep-Dive is vLLM-only** — the **vLLM Deep-Dive** right-click command is hidden on non-vLLM server nodes (and guarded in the command itself). Non-vLLM backends don't expose `/metrics`, so the panel would be all empty rows.
+
 ## v1.32.0 — OpenRouter backend & configurable initial-response timeout
 
 ### Added

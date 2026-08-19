@@ -191,8 +191,18 @@ export async function activate(context: vscode.ExtensionContext) {
         const config = vscode.workspace.getConfiguration('vllm-copilot');
         const models = config.get<any[]>('models') || [];
         const firstModel = models.find(m => m.serverUrl === serverUrl);
+        const serverType = resolveServerType(firstModel);
+        // Deep-Dive is a vLLM metrics view — non-vLLM backends don't expose
+        // /metrics, so the panel would be all empty rows. Guard even though the
+        // context menu already hides it for non-vLLM servers (defense in depth).
+        if (serverType !== 'vllm') {
+          vscode.window.showInformationMessage(
+            `Deep-Dive is a vLLM-only view. ${serverType} servers don't expose vLLM metrics (KV cache, throughput, TTFT).`
+          );
+          return;
+        }
         const headers = firstModel ? (resolveServerConfig(firstModel).requestHeaders ?? {}) : {};
-        openDeepDive(serverUrl, headers, resolveServerType(firstModel), context, outputChannel);
+        openDeepDive(serverUrl, headers, serverType, context, outputChannel);
       }),
     );
 
