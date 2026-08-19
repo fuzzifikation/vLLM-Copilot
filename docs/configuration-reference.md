@@ -28,7 +28,7 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 | `capabilities.toolCalling` | `true` | Model supports tool/function calling. |
 | `capabilities.imageInput` | `false` | Model supports vision/image input. |
 | `streamInactivityTimeout` | `0` (off) | SSE stream timeout in ms. `0` = wait indefinitely. |
-| `initialResponseTimeoutMs` | `180000` | Budget in ms for the server to send the **first response headers**. `0` = wait indefinitely. Raise it if the server is slow to start responding (model loading / queue backlog). |
+| `initialResponseTimeoutMs` | `600000` | Budget in ms for the server to send the **first response headers**. `0` = wait indefinitely. Raise it if the server is slow to start responding (model loading / queue backlog). |
 | `autoContinueRetries` | `1` | Retry attempts on empty/truncated responses (assistant prefill). `0` = off. |
 | `systemMessageReplacementsFile` | — | Path to a JSON file of `{ ruleName, find, replace }` pairs applied to every system message. See [System Message Replacements](#system-message-replacements) below. |
 | `cost` | — | Optional per-model cost rates for the dashboard **Token Usage** tracker (per 1,000,000 tokens). See [Token Usage & Cost](#token-usage--cost) below. |
@@ -233,7 +233,7 @@ A working chat model — minimum viable config. No modes, no custom params, just
 
     // ── Stream & retry ────────────────────────────────────
     "streamInactivityTimeout": 30000,                  // ms with no SSE data before abort; 0 = wait forever
-    "initialResponseTimeoutMs": 180000,                // ms for the server to send the first response headers; 0 = wait forever
+    "initialResponseTimeoutMs": 600000,                // ms for the server to send the first response headers; 0 = wait forever
     "autoContinueRetries": 1,                          // retries on empty response via assistant prefill; 0 = off
 
     // ── System message replacements (optional) ────────────

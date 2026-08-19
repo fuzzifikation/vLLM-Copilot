@@ -37,7 +37,7 @@ describe('buildRequest', () => {
     // Output budget re-asserted from the model's context-window-derived max.
     expect(result.mergedOptions.max_tokens).toBe(100);
     // Transport defaults apply when the override does not set them.
-    expect(result.serverConfig.initialResponseTimeoutMs).toBe(180000);
+    expect(result.serverConfig.initialResponseTimeoutMs).toBe(600000);
   });
 
   it('resolves vllmModelId, serverConfig and transport from the override', () => {

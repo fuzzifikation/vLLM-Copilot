@@ -8,13 +8,15 @@
 [![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot) [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
 
 **Run any vLLM model natively inside GitHub Copilot. No workarounds, no missing features.**
-llama.cpp, LM Studio, and Ollama are supported alongside vLLM with the core features — vLLM remains the primary target and gets the full feature set.
+**New: OpenRouter support as a first rate endpoint!**
+llama.cpp, LM Studio, Ollama, and **OpenRouter** are supported alongside vLLM with the core features — vLLM remains the primary target and gets the full feature set. Prefer a cloud model over running a server? **OpenRouter adds ~415 models with zero local infrastructure.**
 </div>
 
 
 For anyone running AI models on a local or self-hosted server — vLLM first, with llama.cpp, LM Studio, and Ollama supported alongside — this gets you:
 
 - **Native Copilot integration**: your models show up in the Copilot model picker with chat, tools, vision, subagent capabilities and context-window stats, fully supported.
+- **OpenRouter — the no-server backend**: add any of **~415 cloud models** in a few clicks. The endpoint is fixed, so you only pick the model; real context window, output ceiling, tool calling, pricing, and reasoning modes are resolved from OpenRouter's **public** API. The dashboard tracks your **actual spend** (`usage.cost`), not just per-1M estimates — see [Using OpenRouter](#using-openrouter).
 - **Third-party backends**: llama.cpp, LM Studio, and Ollama are supported alongside vLLM, each with a per-model `serverType`. They cover the core features — chat, streaming, tools, personalities, per-server config, usage tracking — while vLLM keeps the full feature set (vLLM-specific request controls, per-request server metrics, auto-continue). The extension never invents metadata — every backend's context window is read from its own documented endpoint, and a model that can't honestly report one is not served. Add vLLM Server & Model and Server Settings auto-detect the backend for you.
 - **Live server dashboard**: at-a-glance metrics for every server right in the sidebar: queue status, KV-cache usage, TTFT, throughput, per-request token details, and a **cumulative token & cost tracker** (per model, Today / Overall, with optional per-1M cost rates). Every backend is first-class — the dashboard probes only the endpoints each backend actually exposes, shows only the rows it reports, and resolves each model's context window per backend. Throughput for non-vLLM servers is shown via client-side measurement (output tokens ÷ total time − time-to-first-token).
 - **Personality presets**: strip Microsoft's 21KB of system-prompt boilerplate, or give a model a character. Per model, no JSON editing.
@@ -94,6 +96,8 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 
 **Prerequisites:** A running model server + GitHub Copilot. **vLLM** is the primary target and fully supported; **llama.cpp**, **LM Studio**, **Ollama**, and **OpenRouter** work as well (core features — see [Supported servers](#supported-servers)).
 
+> **🚀 No local server? Use OpenRouter.** Add an `openrouter.ai` URL, enter your key, and pick from ~415 cloud models — no GPU, no setup. The extension resolves each model's real context window, capabilities, and pricing, and the dashboard shows your **actual cost** per request. Full walkthrough: [Using OpenRouter](#using-openrouter).
+
 > **💡 Tip:** Enable `extensions.autoUpdate` in VS Code settings to get automatic updates. (Auto-updates are disabled by default for extensions using proposed APIs like `chatProvider`.)
 
 1. **Install** from the VS Code Marketplace
@@ -105,7 +109,7 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 
 > **Remote (SSH/WSL/Containers):** This extension runs on the remote host (`extensionKind: workspace`). Install it **while connected to the remote window** and VS Code places it on the remote extension host automatically. If you installed it locally first, the remote won't pick it up on its own — install it on the remote explicitly (Extensions view → *Install in SSH: … / WSL: … / Dev Container: …*).
 
-> **Multi-server, multi-model:** add any number of servers (vLLM, llama.cpp, LM Studio, Ollama) and use their models interchangeably on the fly — each server and model keeps its own endpoint, auth, and settings. Point multiple model entries at one server if it swaps models around; the extension doesn't care. Changes take effect immediately; no reload needed.
+> **Multi-server, multi-model:** add any number of servers (vLLM, llama.cpp, LM Studio, Ollama, OpenRouter) and use their models interchangeably on the fly — each server and model keeps its own endpoint, auth, and settings. Point multiple model entries at one server if it swaps models around; the extension doesn't care. Changes take effect immediately; no reload needed.
 
 ---
 

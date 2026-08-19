@@ -80,7 +80,7 @@ export interface ModelConfig {
   streamInactivityTimeout?: number;
   /**
    * Budget for the initial chat POST to receive response headers, in ms.
-   * 0 = disabled (wait indefinitely). Default 180000 (3 minutes).
+   * 0 = disabled (wait indefinitely). Default 600000 (10 minutes).
    */
   initialResponseTimeoutMs?: number;
   /**
@@ -148,7 +148,7 @@ export const DEFAULT_MODEL_SETTINGS = {
   /** Inactivity timeout for SSE stream in ms. 0 = disabled. */
   streamInactivityTimeout: 0,
   /** Budget for the initial chat POST to receive response headers, in ms. 0 = disabled. */
-  initialResponseTimeoutMs: 180000,
+  initialResponseTimeoutMs: 600000,
   autoContinueRetries: 1,
 } as const;
 
