@@ -339,15 +339,17 @@ export class ServerMetricsEngine {
   /** Array of callbacks so subscribers don't need to coordinate. */
   private callbacks: Array<(aggregated: ServerMetrics, raw: ServerRawData) => void> = [];
 
+  /** Full set of configured wire model ids for this server (relay collection). */
+  private modelIds: string[];
+
   constructor(
     private serverUrl: string,
     private requestHeaders: Record<string, string>,
     private serverType: ServerType = 'vllm',
-    private modelId?: string,
-  ) {}
-
-  /** Full set of configured wire model ids for this server (relay collection). */
-  private modelIds: string[] = [];
+    modelId?: string,
+  ) {
+    this.modelIds = modelId ? [modelId] : [];
+  }
 
   /** Latest aggregated metrics (synchronous, may be null before first poll). */
   getCachedAggregated(): ServerMetrics | null { return this._lastAggregated; }
@@ -380,15 +382,10 @@ export class ServerMetricsEngine {
     this.serverType = serverType;
   }
 
-  /** Update the wire model id used to resolve the per-backend context window. */
-  setModelId(modelId?: string): void {
-    this.modelId = modelId;
-  }
-
   /**
    * Update the full set of wire model ids for this server (relay model
    * collection). Each configured model's context window resolves independently
-   * (OpenRouter models can have different windows). Falls back to `modelId`.
+   * (OpenRouter models can have different windows).
    */
   setModelIds(modelIds: string[]): void {
     this.modelIds = [...modelIds];
@@ -438,40 +435,33 @@ export class ServerMetricsEngine {
       //     backoff so a one-off blip doesn't disable context for the session.
       // OpenRouter is a relay: every configured model resolves its own window
       // (a model collection can span models with different context lengths).
-      // `maxModelLen` stays the FIRST configured model's window — the server-level
-      // tooltip/row reads it; per-model windows ride in `contextByModel`.
+      // `maxModelLen` stays the first RESOLVED model's window — the server-level
+      // row/tooltip; per-model windows ride in `contextByModel`.
       if (this.serverType !== 'vllm') {
-        const modelIds = this.modelIds.length > 0 ? this.modelIds : (this.modelId ? [this.modelId] : []);
-        for (const modelId of modelIds) {
-          if (aggregated.maxModelLen === null && modelId === modelIds[0]) {
-            const cached = this.resolvedContextByModel.get(modelId);
-            if (cached !== undefined && cached !== null) {
-              aggregated.maxModelLen = cached;
-            }
-          }
+        const contextByModel: Record<string, number> = {};
+        for (const modelId of this.modelIds) {
           const cached = this.resolvedContextByModel.get(modelId);
-          if (cached !== undefined) {
-            if (cached !== null) {
-              aggregated.contextByModel = { ...aggregated.contextByModel, [modelId]: cached };
-              if (aggregated.maxModelLen === null) aggregated.maxModelLen = cached;
-            }
-            continue;
-          }
-          const retryAt = this.contextRetryAtByModel.get(modelId) ?? 0;
-          if (!aggregated.online || Date.now() < retryAt) continue;
-          try {
-            const resolved = (await resolveRuntimeLimits(this.serverType, this.serverUrl, this.requestHeaders, modelId)).contextWindow;
-            this.resolvedContextByModel.set(modelId, resolved);
-            aggregated.contextByModel = { ...aggregated.contextByModel, [modelId]: resolved };
-            if (aggregated.maxModelLen === null) aggregated.maxModelLen = resolved;
-          } catch (err) {
-            if (isPermanentContextError(err)) {
-              this.resolvedContextByModel.set(modelId, null); // unresolvable — stop retrying
-            } else {
-              this.contextRetryAtByModel.set(modelId, Date.now() + CONTEXT_RESOLVE_RETRY_MS); // transient — retry later
+          let resolved = cached;
+          if (cached === undefined) {
+            const retryAt = this.contextRetryAtByModel.get(modelId) ?? 0;
+            if (!aggregated.online || Date.now() < retryAt) continue;
+            try {
+              resolved = (await resolveRuntimeLimits(this.serverType, this.serverUrl, this.requestHeaders, modelId)).contextWindow;
+              this.resolvedContextByModel.set(modelId, resolved);
+            } catch (err) {
+              if (isPermanentContextError(err)) {
+                this.resolvedContextByModel.set(modelId, null); // unresolvable — stop retrying
+              } else {
+                this.contextRetryAtByModel.set(modelId, Date.now() + CONTEXT_RESOLVE_RETRY_MS); // transient — retry later
+              }
+              continue;
             }
           }
+          if (resolved == null) continue; // cached null (permanent) or unresolvable
+          contextByModel[modelId] = resolved;
+          if (aggregated.maxModelLen === null) aggregated.maxModelLen = resolved;
         }
+        if (Object.keys(contextByModel).length > 0) aggregated.contextByModel = contextByModel;
       }
 
       this._lastAggregated = aggregated;
@@ -541,6 +531,9 @@ export function getMetricsEngine(
   // vLLM process. The engine stores the canonical URL too, so endpoint fetch
   // and the registry removal in dispose() agree on identity.
   const key = normalizeServerUrl(serverUrl);
+  // One id list is the source of truth: the explicit set when given, else the
+  // single legacy modelId (back-compat with callers that only know one model).
+  const effective = modelIds && modelIds.length > 0 ? modelIds : (modelId ? [modelId] : []);
   let engine = engineRegistry.get(key);
   if (!engine) {
     engine = new ServerMetricsEngine(key, requestHeaders ?? {}, serverType, modelId);
@@ -554,10 +547,9 @@ export function getMetricsEngine(
     // non-vLLM server probes online via that backend's own endpoint, even if the
     // engine was first created before the type was known.
     engine.setServerType(serverType);
-    engine.setModelId(modelId);
   }
-  if (modelIds && modelIds.length > 0) {
-    engine.setModelIds(modelIds);
+  if (effective.length > 0) {
+    engine.setModelIds(effective);
   }
   return engine;
 }
@@ -584,6 +576,15 @@ async function fetchAllEndpoints(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   const headers = buildRequestHeaders(undefined, requestHeaders);
+
+  // OpenRouter relay: account/key health via `GET /api/v1/key`. Fired
+  // CONCURRENTLY with the endpoint fetches — it has its own timeout and must
+  // never stall the metrics cycle behind a slow /api/v1/key. Fails silently
+  // (bad/missing key, transient) → undefined → the dashboard hides the account
+  // rows rather than fabricating credits.
+  const accountPromise = serverType === 'openrouter'
+    ? fetchOpenRouterAccount(requestHeaders)
+    : Promise.resolve(undefined);
 
   // Vary the inquiry by backend. vLLM exposes the full set: /health, /v1/models,
   // /version, /metrics, /load. Non-vLLM backends (LM Studio, llama.cpp, Ollama,
@@ -663,15 +664,9 @@ async function fetchAllEndpoints(
   // ── Health body (for deep-dive) ──
   const healthBody = online && healthRes.ok ? await healthRes.text() : undefined;
 
-  // ── OpenRouter relay: account/key health ──
-  // `GET /api/v1/key` is authenticated and account-scoped. The relay is a model
-  // collection, so this rides the same fetch cycle — no separate poller. Fails
-  // silently (bad/missing key, transient) → `account` stays undefined and the
-  // dashboard hides the account rows rather than fabricating credits.
-  let account: OpenRouterAccount | undefined;
-  if (serverType === 'openrouter') {
-    account = await fetchOpenRouterAccount(requestHeaders);
-  }
+  // ── OpenRouter relay: account/key health (awaited here so the endpoint
+  // ── fetches above ran in parallel — never a serial stall).
+  const account = await accountPromise;
 
   // ── Build ServerMetrics (aggregated, for dashboard) ──
   const parser = new MetricsParser();
