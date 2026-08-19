@@ -51,6 +51,32 @@ export interface WireUsage {
   prompt_tokens_details?: Record<string, number>;
   /** vLLM details — may include `reasoning_tokens`, `decode_time` / `completion_time`, etc. */
   completion_tokens_details?: Record<string, number>;
+  /**
+   * OpenRouter: actual cost of the request in USD (OpenRouter credits), as
+   * reported by the server. Absent on vLLM/local backends. This is the
+   * authoritative spend — distinct from the token-derived estimates the
+   * dashboard computes from per-1M rates.
+   */
+  cost?: number | null;
+  /** OpenRouter: upstream cost breakdown (provider-side inference spend). */
+  cost_details?: WireCostDetails;
+  /**
+   * OpenRouter's `is_byok` (mapped here at the parser layer): the request was
+   * served using the user's OWN upstream provider key (e.g. a real
+   * OpenAI/Anthropic key routed through OpenRouter), billed directly by that
+   * provider rather than OpenRouter credits. Deliberately named `usedByok` —
+   * NOT VS Code's `isBYOK` (which means served with user-supplied credentials
+   * instead of the built-in Copilot service). Two different meanings in one
+   * codebase; distinct names.
+   */
+  usedByok?: boolean;
+}
+
+/** OpenRouter upstream cost breakdown (provider-side inference spend). */
+export interface WireCostDetails {
+  upstream_inference_prompt_cost?: number;
+  upstream_inference_completions_cost?: number;
+  upstream_inference_cost?: number | null;
 }
 
 /**

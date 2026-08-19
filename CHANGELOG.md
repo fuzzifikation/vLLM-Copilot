@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Actual OpenRouter cost is captured and tracked (Phase 1 cost data plane)** — OpenRouter's real spend (`usage.cost`, `usage.is_byok`) is now captured end-to-end. The wire type gained `cost`/`cost_details`/`usedByok` (mapped from the wire `is_byok` at the parser layer — distinct name so it can't be confused with VS Code's `isBYOK`), `consumeStream` records it on the Last Request, and the usage store gained a **v2→v3 additive migration** with separate all-time/day cost planes (`allTimeCost`/`daysCost`). The dashboard **prefers actual reported cost** when a model reports any (Last Request Cost row + per-model Today/Overall summary), falling back to the configured per-1M estimate otherwise — actual and estimated cost are **never summed**. `[TOKENS]` output-channel logs now include actual cost and a `(BYOK)` marker. Legacy v2 token records migrate unchanged with no fabricated cost.
+
 ### Changed
 
 - **OpenRouter reasoning modes built from the full `reasoning` object** — instead of a hardcoded "Think (High) / No Think" pair, `normalizeOpenRouterModel` now reads OpenRouter's rich `reasoning` metadata: `supported_efforts` yields one `Think (Effort)` mode per level (`high`, `medium`, `low`, `minimal`, …), `supports_max_tokens` (Anthropic-style budget) yields a single `Think` mode, `mandatory` suppresses `No Think`, and `default_effort`/`default_enabled` drive the default mode. Modes serialize as raw `reasoning` params unchanged.

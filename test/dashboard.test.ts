@@ -302,6 +302,34 @@ describe('DashboardTreeProvider', () => {
     });
   });
 
+  it('prefers actual reported cost in the per-model summary when the model reports it', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1', displayName: 'Friendly M1', cost: { input: 1, output: 2, cachedInput: 0.5 } }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+    // 1M prompt / 500k completion would derive $1.90 from rates — but the server
+    // reports actual cost, which must win.
+    recordRequest({
+      serverUrl: normalizeServerUrl('http://s:8000/v1'),
+      modelId: 'm1', timestamp: 1, promptTokens: 1_000_000, completionTokens: 500_000, totalTokens: 1_500_000,
+      cachedTokens: 200_000, hasMetrics: false, hasCacheDetails: true, maxModelLen: 1000, maxOutputTokens: 100,
+      firstTokenTimeMs: 10, totalTimeMs: 50, actualCost: 3.5,
+    });
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 's:8000');
+      const metrics = await provider.getChildren(serverNode as any);
+      const usageNode = metrics.find(m => (m as any).label === 'Token Usage and Cost');
+      const modelNodes = await provider.getChildren(usageNode as any);
+      const modelNode = modelNodes.find(m => (m as any).label === 'Friendly M1');
+      // Actual $3.50 beats the $1.90 estimate.
+      expect((modelNode as any).description).toBe('$3.50 today');
+    });
+  });
+
   it('shows a Cost row under Last Request when the model has cost rates', async () => {
     (vscode as any).workspace._mockConfig = {
       models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1', cost: { input: 1, output: 2, cachedInput: 0.5 } }],
@@ -326,6 +354,65 @@ describe('DashboardTreeProvider', () => {
       expect(costRow).toBeDefined();
       // fresh 5×$1 + output 7×$2 = $0.000005 + $0.000014 = $0.000019
       expect((costRow as any).description).toBe('$0.000019');
+    });
+  });
+
+  it('prefers actual reported cost over the estimate on the Last Request Cost row', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1', cost: { input: 1, output: 2, cachedInput: 0.5 } }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+    recordRequest({
+      serverUrl: normalizeServerUrl('http://s:8000/v1'),
+      modelId: 'm1', timestamp: 1, promptTokens: 5, completionTokens: 7, totalTokens: 12,
+      cachedTokens: 0, hasMetrics: false, hasCacheDetails: true, maxModelLen: 1000, maxOutputTokens: 100,
+      firstTokenTimeMs: 10, totalTimeMs: 50,
+      actualCost: 0.000019,
+    });
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 's:8000');
+      const metrics = await provider.getChildren(serverNode as any);
+      const last = metrics.find(m => (m as any).label === 'Last Request');
+      const rows = await provider.getChildren(last as any);
+      const costRow = rows.find(r => (r as any).label === 'Cost');
+      expect(costRow).toBeDefined();
+      // Actual cost wins over the derived estimate, formatted fine-precision USD.
+      expect((costRow as any).description).toBe('$0.000019');
+      // Same value as the estimate here, so prove it's the actual path via the BYOK row.
+      const byokRow = rows.find(r => (r as any).label === 'BYOK');
+      expect(byokRow).toBeUndefined(); // usedByok not set on this record
+    });
+  });
+
+  it('shows a BYOK row under Last Request when the backend served with an upstream key', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+    recordRequest({
+      serverUrl: normalizeServerUrl('http://s:8000/v1'),
+      modelId: 'm1', timestamp: 1, promptTokens: 5, completionTokens: 7, totalTokens: 12,
+      hasMetrics: false, hasCacheDetails: false, maxModelLen: 1000, maxOutputTokens: 100,
+      firstTokenTimeMs: 10, totalTimeMs: 50,
+      actualCost: 0.001, usedByok: true,
+    });
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 's:8000');
+      const metrics = await provider.getChildren(serverNode as any);
+      const last = metrics.find(m => (m as any).label === 'Last Request');
+      const rows = await provider.getChildren(last as any);
+      const costRow = rows.find(r => (r as any).label === 'Cost');
+      expect((costRow as any).description).toBe('$0.001');
+      const byokRow = rows.find(r => (r as any).label === 'BYOK');
+      expect(byokRow).toBeDefined();
     });
   });
 

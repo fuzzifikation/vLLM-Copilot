@@ -87,6 +87,12 @@ export function logTokenUsage(
   out.push(`  input: ${usage.prompt_tokens.toLocaleString()} (cached: ${cached.toLocaleString()}${cached > 0 && cacheHitPct ? ` = ${cacheHitPct}%` : ''}${inputTokPerSec ? `, ${inputTokPerSec} tok/s` : ''})`);
   out.push(`  output: ${usage.completion_tokens.toLocaleString()}${specAcceptPct ? ` (spec: ${accepted}/${specTotal} = ${specAcceptPct}%)` : ''}${outputTokPerSec ? `, ${outputTokPerSec} tok/s` : ''})`);
   out.push(`  total: ${usage.total_tokens.toLocaleString()}`);
+  if (usage.cost !== undefined && usage.cost !== null) {
+    const costStr = usage.cost < 0.01
+      ? `$${usage.cost.toFixed(6).replace(/\.?0+$/, '')}`
+      : `$${usage.cost.toFixed(4).replace(/\.?0+$/, '')}`;
+    out.push(`  cost: ${costStr}${usage.usedByok ? ' (BYOK)' : ''}`);
+  }
   if (totalElapsedMs !== undefined) {
     out.push(`  elapsed: ${(totalElapsedMs / 1000).toFixed(2)}s${firstTokenMs !== undefined ? ` (TTFT: ${(firstTokenMs / 1000).toFixed(2)}s)` : ''}`);
   }

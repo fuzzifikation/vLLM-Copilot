@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import { getConfig, resolveServerConfig, normalizeServerUrl, findModelConfig, type ModelConfig, type ServerType } from './config.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import {
-  getLastRequest, getServerUsage, hasServerUsage, onUsageStoreDidChange,
+  getLastRequest, getServerUsage, getServerCost, hasServerUsage, onUsageStoreDidChange,
   computeCost, findModelCost, formatCostFine, formatCostSummary, fmtCount, emptyCounts,
   getModelStartedAt,
   type UsageCounts,
@@ -145,6 +145,8 @@ class LastRequestTreeItem extends vscode.TreeItem {
     public readonly firstTokenTimeMs: number | null = null,
     public readonly totalTimeMs: number | null = null,
     public readonly serverType?: ServerType,
+    public readonly actualCost?: number,
+    public readonly usedByok?: boolean,
   ) {
     super('Last Request', vscode.TreeItemCollapsibleState.Collapsed);
     this.iconPath = new vscode.ThemeIcon('info');
@@ -566,6 +568,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
           lastRequest.firstTokenTimeMs,
           lastRequest.totalTimeMs,
           serverType,
+          lastRequest.actualCost,
+          lastRequest.usedByok,
         ));
       }
 
@@ -693,24 +697,42 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       ));
     }
 
-    // 7. Cost — derived from the model's per-1M cost config (never stored).
-    //    Only shown when the model has cost rates configured.
-    const models = this.readConfiguredModels();
-    const rates = findModelCost(models, e.serverUrl, e.modelId);
-    const requestCounts: UsageCounts = {
-      prompt: e.promptTokens,
-      completion: e.completionTokens,
-      cached: e.cachedTokens ?? 0,
-      reasoning: e.reasoningTokens ?? 0,
-    };
-    const cost = computeCost(requestCounts, rates);
-    if (cost !== undefined) {
+    // 7. Cost — actual reported cost (OpenRouter) when present, else derived
+    //    from the model's per-1M cost config. Never both: actual is server
+    //    truth, the estimate is a fallback for backends that don't report cost.
+    if (e.actualCost !== undefined) {
       items.push(new RequestMetricTreeItem(
         'Cost',
-        formatCostFine(cost, rates?.currency),
+        formatCostFine(e.actualCost, 'USD'),
         'credit-card',
-        'Estimated cost of this request from the model\'s configured per-1M cost rates. Shown per-prompt for money verification.',
+        'Actual cost reported by the backend (OpenRouter `usage.cost`, USD). Shown per-prompt for money verification.',
       ));
+      if (e.usedByok) {
+        items.push(new RequestMetricTreeItem(
+          'BYOK',
+          'upstream key',
+          'key',
+          'This request was served using your own upstream provider key (billed directly by that provider, not OpenRouter credits).',
+        ));
+      }
+    } else {
+      const models = this.readConfiguredModels();
+      const rates = findModelCost(models, e.serverUrl, e.modelId);
+      const requestCounts: UsageCounts = {
+        prompt: e.promptTokens,
+        completion: e.completionTokens,
+        cached: e.cachedTokens ?? 0,
+        reasoning: e.reasoningTokens ?? 0,
+      };
+      const cost = computeCost(requestCounts, rates);
+      if (cost !== undefined) {
+        items.push(new RequestMetricTreeItem(
+          'Cost',
+          formatCostFine(cost, rates?.currency),
+          'credit-card',
+          'Estimated cost of this request from the model\'s configured per-1M cost rates. Shown per-prompt for money verification.',
+        ));
+      }
     }
 
     // Hints for missing data — vLLM-only launch flags are meaningless for non-vLLM
@@ -734,18 +756,33 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   private getTokenUsageChildren(e: TokenUsageTreeItem): ModelUsageTreeItem[] {
     const models = this.readConfiguredModels();
     const usage = getServerUsage(e.serverUrl);
+    const cost = getServerCost(e.serverUrl);
     // Union of models with any today or all-time usage (a model used yesterday
     // still needs its Overall row visible).
     const modelIds = Array.from(new Set([...Object.keys(usage.today), ...Object.keys(usage.allTime)])).sort();
     return modelIds.map(modelId => {
       const entry = findModelConfig(models, e.serverUrl, modelId);
       const label = entry?.displayName || entry?.id || modelId;
+      // Cost per slot: actual reported cost (OpenRouter) when the model has any
+      // recorded, else the derived estimate from per-1M rates. Never mixed —
+      // a model that reports cost uses actual for both slots; one that doesn't
+      // uses the estimate. `??` here is per-slot fallback on absence, not a sum.
+      const actualToday = cost.today[modelId];
+      const actualOverall = cost.allTime[modelId];
+      const hasActual = actualToday !== undefined || actualOverall !== undefined;
+      const todayCost = hasActual
+        ? actualToday ?? computeCost(usage.today[modelId] ?? emptyCounts(), entry?.cost)
+        : computeCost(usage.today[modelId] ?? emptyCounts(), entry?.cost);
+      const overallCost = hasActual
+        ? actualOverall ?? computeCost(usage.allTime[modelId] ?? emptyCounts(), entry?.cost)
+        : computeCost(usage.allTime[modelId] ?? emptyCounts(), entry?.cost);
+      const currency = hasActual ? 'USD' : entry?.cost?.currency;
       // Collapsed description: "$11.51 today and $31.13 in 3.1 days" — today's
       // cost plus the all-time cost over the recording window (startedAt).
       const summary = formatCostSummary(
-        computeCost(usage.today[modelId] ?? emptyCounts(), entry?.cost),
-        computeCost(usage.allTime[modelId] ?? emptyCounts(), entry?.cost),
-        entry?.cost?.currency,
+        todayCost,
+        overallCost,
+        currency,
         getModelStartedAt(e.serverUrl, modelId),
       );
       return new ModelUsageTreeItem(e.serverUrl, modelId, label, summary);
