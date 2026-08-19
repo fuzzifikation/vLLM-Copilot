@@ -4,7 +4,9 @@ import {
   parseOpenRouterBranchInput,
   normalizeOpenRouterModel,
   fetchOpenRouterModel,
+  fetchOpenRouterAccount,
   resolveOpenRouterRuntimeLimits,
+  PermanentContextError,
   OPENROUTER_API_BASE,
   type OpenRouterModelData,
 } from '../src/openRouter.js';
@@ -277,6 +279,45 @@ describe('normalizeOpenRouterModel', () => {
     expect(info.defaultMode).toBe('Think (Low)');
   });
 
+  it('does not dangle a No Think default when reasoning is mandatory + default is none', () => {
+    // Contradictory-but-reachable metadata: reasoning is mandatory (no No Think
+    // mode) yet the default_effort is 'none'. defaultMode must not reference a
+    // mode that doesn't exist (regression: it used to point at 'No Think').
+    const info = normalizeOpenRouterModel(
+      {
+        ...base,
+        supported_parameters: ['reasoning_effort'],
+        reasoning: { mandatory: true, default_effort: 'none', default_enabled: true, supported_efforts: ['high'] },
+      },
+      'x',
+    );
+    expect(info.modelModes).toEqual({
+      'Think (High)': { reasoning: { enabled: true, effort: 'high' } },
+    });
+    expect('No Think' in (info.modelModes ?? {})).toBe(false);
+    // Falls back to the only real mode instead of the nonexistent No Think.
+    expect(info.defaultMode).toBe('Think (High)');
+  });
+
+  it('falls back to a single high effort when supported_efforts is empty or all-none', () => {
+    // An empty or all-'none' ladder is contradictory metadata — treat like missing.
+    for (const supported_efforts of [[], ['none']]) {
+      const info = normalizeOpenRouterModel(
+        {
+          ...base,
+          supported_parameters: ['reasoning_effort'],
+          reasoning: { mandatory: false, supported_efforts },
+        },
+        'x',
+      );
+      expect(info.modelModes).toEqual({
+        'Think (High)': { reasoning: { enabled: true, effort: 'high' } },
+        'No Think': { reasoning: { enabled: false } },
+      });
+      expect(info.defaultMode).toBe('Think (High)');
+    }
+  });
+
   it('filters default_parameters to non-null supported values', () => {
     const info = normalizeOpenRouterModel(
       {
@@ -339,6 +380,16 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
     await expect(fetchOpenRouterModel('deepseek/deepseek-chat')).rejects.toThrow(/no data payload/);
   });
 
+  it('classifies a 404 as a PermanentContextError (wrong slug — never retryable)', async () => {
+    fetchSpy.mockRejectedValue(new Error('HTTP 404: Not Found — {"error":{"message":"Model not found"}}'));
+    await expect(fetchOpenRouterModel('bad/not-a-real-model')).rejects.toBeInstanceOf(PermanentContextError);
+  });
+
+  it('classifies a missing data payload as a PermanentContextError', async () => {
+    fetchSpy.mockResolvedValueOnce(jsonResponse(200, { data: null }));
+    await expect(fetchOpenRouterModel('deepseek/deepseek-chat')).rejects.toBeInstanceOf(PermanentContextError);
+  });
+
   it('wraps a fetch/HTTP failure with model + lookup URL context', async () => {
     // fetchWithRetry retries once on a network error, so reject BOTH attempts.
     fetchSpy.mockRejectedValue(new Error('HTTP 404: Not Found — {"error":{"message":"Model not found"}}'));
@@ -355,5 +406,48 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
     );
     const limits = await resolveOpenRouterRuntimeLimits('openai/gpt-4');
     expect(limits).toEqual({ contextWindow: 8192, maxOutputTokens: 4096 });
+  });
+});
+
+// ── fetchOpenRouterAccount ────────────────────────────────────────────────
+
+describe('fetchOpenRouterAccount', () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  const keyHeaders = { Authorization: 'Bearer sk-test' };
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('sends the per-model auth header and returns the data object', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: { label: 'k', limit_remaining: 3.5, usage: 100, is_free_tier: false } }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const account = await fetchOpenRouterAccount(keyHeaders);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `${OPENROUTER_API_BASE}/v1/key`,
+      expect.objectContaining({ method: 'GET', headers: keyHeaders }),
+    );
+    expect(account).toEqual({ label: 'k', limit_remaining: 3.5, usage: 100, is_free_tier: false });
+  });
+
+  it('returns undefined on a non-OK response (bad key) — never fabricates', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(null, { status: 401 }));
+    expect(await fetchOpenRouterAccount(keyHeaders)).toBeUndefined();
+  });
+
+  it('returns undefined when the payload has no usable data object', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    expect(await fetchOpenRouterAccount(keyHeaders)).toBeUndefined();
+  });
+
+  it('returns undefined on a network failure (probe is best-effort)', async () => {
+    fetchSpy.mockRejectedValueOnce(new TypeError('fetch failed'));
+    expect(await fetchOpenRouterAccount(keyHeaders)).toBeUndefined();
   });
 });

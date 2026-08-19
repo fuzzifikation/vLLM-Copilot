@@ -27,6 +27,20 @@ import { buildEndpoint } from './config.js';
 import { buildRequestHeaders, fetchWithRetry } from './fetchRetry.js';
 import type { RuntimeModelLimits } from './types.js';
 
+/**
+ * A context-window resolve failure that retrying can never fix — the model
+ * doesn't exist (404), returns no usable metadata, or reports no context bound.
+ * The metrics engine classifies this as permanent (never re-probed) without
+ * string-matching error text. Thrown by the OpenRouter resolver arms only; the
+ * other backends still use plain Errors with marker strings.
+ */
+export class PermanentContextError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PermanentContextError';
+  }
+}
+
 /** OpenRouter's API base — composes with `buildEndpoint` like any other server. */
 export const OPENROUTER_API_BASE = 'https://openrouter.ai/api';
 
@@ -270,7 +284,7 @@ export function normalizeOpenRouterModel(
     data.top_provider?.context_length,
   ].filter(isPositive);
   if (contextCandidates.length === 0) {
-    throw new Error(
+    throw new PermanentContextError(
       `OpenRouter model "${requestedId}" reports no positive context bound ` +
       `(per_request_limits.context_tokens, context_length, top_provider.context_length all absent/invalid). ` +
       `The model may be retired or the slug may be wrong.`
@@ -319,8 +333,10 @@ export function normalizeOpenRouterModel(
       modelModes['Think'] = { reasoning: { enabled: true } };
     } else {
       // Effort ladder from supported_efforts (descending, skipping 'none');
-      // fall back to a single 'high' when the API omits the allowlist.
-      const efforts = reasoningCfg?.supported_efforts?.filter((e) => e !== 'none') ?? ['high'];
+      // fall back to a single 'high' when the API omits the allowlist OR the
+      // list is empty / only 'none' (contradictory metadata — treat like missing).
+      const ladder = (reasoningCfg?.supported_efforts ?? []).filter((e) => e !== 'none');
+      const efforts = ladder.length > 0 ? ladder : ['high'];
       for (const effort of efforts) {
         const label = thinkModeLabel(effort);
         modelModes[label] = { reasoning: { enabled: true, effort } };
@@ -332,11 +348,14 @@ export function normalizeOpenRouterModel(
     }
 
     // Default mode: the model's default effort when it maps to a generated mode;
-    // 'none'/disabled default → "No Think"; otherwise the first (highest) mode.
+    // 'none'/disabled default → "No Think" (only if it exists — a mandatory-
+    // reasoning model has no No Think mode, so fall through to the first mode);
+    // otherwise the first (highest) mode.
     const defaultEffort = reasoningCfg?.default_effort;
-    if (defaultEffort && defaultEffort !== 'none' && modelModes[thinkModeLabel(defaultEffort)]) {
-      defaultMode = thinkModeLabel(defaultEffort);
-    } else if (defaultEffort === 'none' || reasoningCfg?.default_enabled === false) {
+    const defaultLabel = defaultEffort && defaultEffort !== 'none' ? thinkModeLabel(defaultEffort) : undefined;
+    if (defaultLabel && modelModes[defaultLabel]) {
+      defaultMode = defaultLabel;
+    } else if ((defaultEffort === 'none' || reasoningCfg?.default_enabled === false) && modelModes['No Think']) {
       defaultMode = 'No Think';
     } else {
       defaultMode = Object.keys(modelModes)[0];
@@ -410,13 +429,19 @@ export async function fetchOpenRouterModel(
     );
   } catch (err) {
     // Wrap with model context so a failed lookup is actionable, matching the
-    // other backends' "model X has no window: GET <url>" convention.
+    // other backends' "model X has no window: GET <url>" convention. A 404 means
+    // the slug is wrong/retired — retrying can never fix it, so classify it
+    // permanent (the metrics engine must not re-probe it every poll).
     const detail = err instanceof Error ? err.message : String(err);
-    throw new Error(`OpenRouter model "${requestedId}" lookup failed: GET ${url} — ${detail}`);
+    const msg = `OpenRouter model "${requestedId}" lookup failed: GET ${url} — ${detail}`;
+    if (msg.includes('HTTP 404')) {
+      throw new PermanentContextError(msg);
+    }
+    throw new Error(msg);
   }
   const payload = await response.json() as { data?: OpenRouterModelData };
   if (!payload.data || typeof payload.data !== 'object') {
-    throw new Error(`OpenRouter exact-model lookup for "${requestedId}" returned no data payload.`);
+    throw new PermanentContextError(`OpenRouter exact-model lookup for "${requestedId}" returned no data payload.`);
   }
   return normalizeOpenRouterModel(payload.data, parsed.requestedId);
 }
@@ -443,8 +468,6 @@ export interface OpenRouterAccount {
   limit?: number | null;
   limit_remaining?: number | null;
   usage?: number;
-  usage_daily?: number;
-  usage_weekly?: number;
   usage_monthly?: number;
   byok_usage?: number;
   is_free_tier?: boolean;
@@ -477,7 +500,8 @@ export async function fetchOpenRouterAccount(
   if (!response.ok) return undefined;
   try {
     const payload = await response.json() as { data?: OpenRouterAccount };
-    if (!payload.data || typeof payload.data !== 'object') return undefined;
+    // `typeof [] === 'object'` — reject array-shaped data explicitly.
+    if (!payload.data || typeof payload.data !== 'object' || Array.isArray(payload.data)) return undefined;
     return payload.data;
   } catch {
     return undefined;

@@ -287,6 +287,50 @@ describe('DashboardTreeProvider', () => {
     });
   });
 
+  it('shows an OpenRouter model node Cost row preferring actual reported spend', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [
+        {
+          id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', serverType: 'openrouter', displayName: 'Nemotron',
+          capabilities: { toolCalling: true, imageInput: false }, maxOutputTokens: 4096,
+          modelModes: { 'Think (High)': { reasoning: { enabled: true, effort: 'high' } }, 'No Think': { reasoning: { enabled: false } } },
+          cost: { input: 1, output: 2 }, // would estimate, but actual must win
+        },
+      ],
+    };
+    vi.stubGlobal('fetch', openRouterFetch);
+    recordRequest({
+      serverUrl: normalizeServerUrl('https://openrouter.ai/api'),
+      modelId: 'nvidia/nemotron-3.5-lightning:free', timestamp: 1, promptTokens: 100, completionTokens: 50, totalTokens: 150,
+      hasMetrics: false, hasCacheDetails: false, maxModelLen: 1000000, maxOutputTokens: 4096,
+      firstTokenTimeMs: 10, totalTimeMs: 50, actualCost: 0.0012,
+    });
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 'openrouter.ai:');
+      const metrics = await provider.getChildren(serverNode as any);
+      const collectionNode = metrics.find(m => (m as any).label === 'Model Collection');
+      const modelNodes = await provider.getChildren(collectionNode as any);
+      const nemotron = modelNodes.find(m => (m as any).label === 'Nemotron');
+
+      const rows = await provider.getChildren(nemotron as any);
+      const rowLabels = rows.map(r => (r as any).label as string);
+      // Model-level rows from config metadata.
+      expect(rowLabels).toContain('Context Window');
+      expect(rowLabels).toContain('Max Output');
+      expect(rowLabels).toContain('Capabilities');
+      expect(rowLabels).toContain('Modes');
+      // Cost row: actual spend ($0.0012, fine precision) beats the per-1M estimate.
+      const costRow = rows.find(r => (r as any).label === 'Cost');
+      expect((costRow as any).description).toBe('$0.0012 today');
+      // Token rows for the recorded request.
+      expect(rowLabels).toContain('Tokens Today');
+    });
+  });
+
   it('shows Last Request for a server configured with a non-canonical URL (normalized lookup)', async () => {
     // consumeStream writes the store keyed by the NORMALIZED server URL; the
     // dashboard's node carries the raw `model.serverUrl`. A /v1 form must still

@@ -58,8 +58,6 @@ export interface WireUsage {
    * dashboard computes from per-1M rates.
    */
   cost?: number | null;
-  /** OpenRouter: upstream cost breakdown (provider-side inference spend). */
-  cost_details?: WireCostDetails;
   /**
    * OpenRouter's `is_byok` (mapped here at the parser layer): the request was
    * served using the user's OWN upstream provider key (e.g. a real
@@ -70,13 +68,6 @@ export interface WireUsage {
    * codebase; distinct names.
    */
   usedByok?: boolean;
-}
-
-/** OpenRouter upstream cost breakdown (provider-side inference spend). */
-export interface WireCostDetails {
-  upstream_inference_prompt_cost?: number;
-  upstream_inference_completions_cost?: number;
-  upstream_inference_cost?: number | null;
 }
 
 /**

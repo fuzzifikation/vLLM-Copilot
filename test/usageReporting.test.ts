@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { createUsageDataPart } from '../src/usageReporting.js';
+import { createUsageDataPart, logTokenUsage } from '../src/usageReporting.js';
 
 describe('createUsageDataPart', () => {
   it('produces a LanguageModelDataPart with MIME type "usage"', () => {
@@ -53,5 +53,41 @@ describe('createUsageDataPart', () => {
     expect(payload.prompt_tokens).toBe(0);
     expect(payload.completion_tokens).toBe(0);
     expect(payload.total_tokens).toBe(0);
+  });
+});
+
+describe('logTokenUsage', () => {
+  const output = () => ({ appendLine: vi.fn() });
+
+  it('logs token counts with fine-precision sub-cent cost and a (BYOK) marker', () => {
+    const out = output();
+    logTokenUsage(out as any, 'm1', {
+      prompt_tokens: 100, completion_tokens: 50, total_tokens: 150,
+      cost: 0.0007, usedByok: true,
+    });
+    const line = out.appendLine.mock.calls[0][0] as string;
+    expect(line).toContain('[TOKENS] m1');
+    expect(line).toContain('cost: $0.0007'); // sub-cent survives fine precision
+    expect(line).toContain('(BYOK)');
+  });
+
+  it('keeps 4-decimal precision for costs at/above a cent', () => {
+    const out = output();
+    logTokenUsage(out as any, 'm1', {
+      prompt_tokens: 100, completion_tokens: 50, total_tokens: 150,
+      cost: 0.0123,
+    });
+    const line = out.appendLine.mock.calls[0][0] as string;
+    expect(line).toContain('cost: $0.0123');
+    expect(line).not.toContain('(BYOK)'); // flag absent
+  });
+
+  it('omits the cost line when the server reports none', () => {
+    const out = output();
+    logTokenUsage(out as any, 'm1', {
+      prompt_tokens: 10, completion_tokens: 5, total_tokens: 15,
+    });
+    const line = out.appendLine.mock.calls[0][0] as string;
+    expect(line).not.toContain('cost:');
   });
 });

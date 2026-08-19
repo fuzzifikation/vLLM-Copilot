@@ -127,6 +127,14 @@ describe('recordRequest — last request + accumulation', () => {
     recordRequest(req({ actualCost: Number.NaN }));
     expect(getServerCost(url).allTime).toEqual({});
   });
+
+  it('records a zero actual cost as a real value (a free request is still actual)', () => {
+    // `cost === 0` from OpenRouter is a legitimate free-request spend and must
+    // count as "actual" (so the dashboard shows a real $0.00, not a suppressed
+    // estimate). Regression: `?? undefined` must not collapse 0 to absent.
+    recordRequest(req({ actualCost: 0 }));
+    expect(getServerCost(url).allTime['m1']).toBe(0);
+  });
 });
 
 describe('persistence (globalState)', () => {
@@ -194,6 +202,33 @@ describe('persistence (globalState)', () => {
     expect(m.stored.allTimeCost[url]['m1']).toBeCloseTo(0.0012, 10);
   });
 
+  it('round-trips version-3 data (cost planes reload intact)', async () => {
+    const v3 = {
+      version: 3 as const,
+      allTime: { [url]: { m1: { prompt: 100, completion: 50, cached: 10, reasoning: 5 } } },
+      days: { [dayKey()]: { [url]: { m1: { prompt: 100, completion: 50, cached: 10, reasoning: 5 } } } },
+      startedAt: { [url]: { m1: 12345 } },
+      allTimeCost: { [url]: { m1: 0.0037 } },
+      daysCost: { [dayKey()]: { [url]: { m1: 0.0037 } } },
+    };
+    const m = makeMemento(v3);
+    initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
+
+    expect(getServerUsage(url).allTime['m1'].prompt).toBe(100);
+    expect(getServerCost(url).allTime['m1']).toBeCloseTo(0.0037, 10);
+    expect(getServerCost(url).today['m1']).toBeCloseTo(0.0037, 10);
+    expect(getModelStartedAt(url, 'm1')).toBe(12345);
+  });
+
+  it('ignores a corrupt blob with a truthy primitive allTime (no crash on first record)', () => {
+    const m = makeMemento({ version: 3 as const, allTime: 5, days: {} });
+    initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
+    // Corruption detected at load — the store starts fresh instead of crashing
+    // on the first recordRequest with a strict-mode TypeError.
+    recordRequest(req({ promptTokens: 10 }));
+    expect(getServerUsage(url).allTime['m1'].prompt).toBe(10);
+  });
+
   it('ignores corrupt/missing persisted data and starts fresh', () => {
     const m = makeMemento({ version: 99, bogus: true });
     initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
@@ -215,6 +250,22 @@ describe('persistence (globalState)', () => {
     await flushWrites(m, 1);
     expect(m.stored.days).not.toHaveProperty(oldKey);
     expect(m.stored.days[dayKey()][url]['m1'].prompt).toBe(10);
+  });
+
+  it('prunes COST day buckets older than the retention window too', async () => {
+    // Regression: daysCost was never pruned, leaking one bucket per day forever.
+    const oldKey = dayKey(Date.now() - 120 * 24 * 60 * 60 * 1000);
+    const stale = {
+      version: 3 as const,
+      allTime: {}, days: {},
+      allTimeCost: {},
+      daysCost: { [oldKey]: { [url]: { m1: 0.001 } } },
+    };
+    const m = makeMemento(stale);
+    initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
+
+    expect(m.stored.daysCost).not.toHaveProperty(oldKey);
+    expect(getServerCost(url).allTime).toEqual({}); // pruned day contributes nothing
   });
 });
 
@@ -322,6 +373,15 @@ describe('cost derivation', () => {
     expect(formatCostSummary(11.51, 31.13, 'USD', now - 3.1 * 86_400_000)).toBe('$11.51 today and $31.13 in 3.1 days');
     // AI Credits keep the suffix wording (31.13 < 100 keeps 2 decimals)
     expect(formatCostSummary(12, 31.13, 'AI Credits', now - 3.1 * 86_400_000)).toBe('12.00 credits today and 31.13 credits in 3.1 days');
+  });
+
+  it('formatCostSummary keeps sub-cent precision for real currencies (no $0.00 collapse)', () => {
+    // Regression: actual OpenRouter costs are often $0.0007 — 2-decimal
+    // formatCost collapsed the summary to "$0.00 today". Fine precision must
+    // survive so the primary display shows the real spend.
+    const now = Date.now();
+    expect(formatCostSummary(0.0007, 0.0012, 'USD', now - 3.1 * 86_400_000)).toBe('$0.0007 today and $0.0012 in 3.1 days');
+    expect(formatCostSummary(0.0007, undefined, 'USD', undefined)).toBe('$0.0007 today');
   });
 
   it('fmtCount abbreviates with k/M, presentation only', () => {

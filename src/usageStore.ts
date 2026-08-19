@@ -194,6 +194,11 @@ function pruneDays(): void {
   for (const key of Object.keys(days)) {
     if (key < cutoff) delete days[key];
   }
+  // Cost day buckets must be pruned with the same window — otherwise the
+  // persisted blob grows one bucket per day indefinitely.
+  for (const key of Object.keys(daysCost)) {
+    if (key < cutoff) delete daysCost[key];
+  }
 }
 
 /** Load persisted usage from globalState (best-effort; corrupt/missing → fresh). */
@@ -213,8 +218,13 @@ function load(): void {
     };
     // version 1 is upgraded in place (startedAt defaults to {}); v2 → v3 is
     // additive — the cost planes default to {} so old token records migrate
-    // unchanged with no fabricated actual cost.
-    if ((p.version === 1 || p.version === 2 || p.version === 3) && p.allTime && p.days) {
+    // unchanged with no fabricated actual cost. The field guard checks SHAPE
+    // (not just presence): a corrupt blob with a truthy primitive allTime would
+    // otherwise crash the first recordRequest with a strict-mode TypeError.
+    const isPlainObj = (v: unknown): v is Record<string, unknown> =>
+      typeof v === 'object' && v !== null && !Array.isArray(v);
+    if ((p.version === 1 || p.version === 2 || p.version === 3)
+      && isPlainObj(p.allTime) && isPlainObj(p.days)) {
       allTime = p.allTime;
       days = p.days;
       startedAt = p.startedAt ?? {};
@@ -451,11 +461,17 @@ export function formatCostSummary(
   startedAt: number | undefined,
 ): string | undefined {
   if (todayCost === undefined) return undefined;
-  const today = `${formatCost(todayCost, currency)} today`;
+  // Per-request costs are often sub-cent ($0.0007); `formatCost`'s 2 decimals
+  // would collapse them to $0.00 — the exact number this summary exists to show.
+  // Credits keep 2 decimals (their display is pinned), real currencies use the
+  // adaptive fine formatter.
+  const isCredits = (currency ?? 'USD').toLowerCase() === 'ai credits';
+  const fmt = (v: number) => isCredits ? formatCost(v, currency) : formatCostFine(v, currency);
+  const today = `${fmt(todayCost)} today`;
   if (overallCost === undefined || startedAt === undefined) return today;
   const days = (Date.now() - startedAt) / 86_400_000;
   if (days < 0.1) return today;
-  return `${today} and ${formatCost(overallCost, currency)} in ${days.toFixed(1)} days`;
+  return `${today} and ${fmt(overallCost)} in ${days.toFixed(1)} days`;
 }
 
 /**
