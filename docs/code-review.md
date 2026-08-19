@@ -5,6 +5,42 @@ Do not bump version without asking.
 
 ---
 
+## Code Review 2026-08-19 — OpenRouter onboarding follow-up
+
+Deferred structural item from the OpenRouter onboarding review. The behavioral findings from that pass were fixed in the Unreleased CHANGELOG entries (host-only routing, required API key, timeout schema minimum).
+
+### Maintainability (deferred — pure move, no behavior change)
+
+- **`addServerFlow.ts` is ~250 lines heavier from OpenRouter onboarding** — `runOpenRouterAddFlow` (+ its catalog picker, summary builder, and the routing gate) lives alongside the generic server flow, and several block comments re-explain the "fixed managed remote / model-first" rationale at length. Candidate: extract to `src/commands/openRouterAddFlow.ts` and trim the comments. Deferred deliberately — moving 250 lines while behavioral fixes are landing is the highest-risk time; land it as a standalone no-op refactor with its own review.
+
+---
+
+## Code Review 2026-08-19 — over-clever audit
+
+Full sweep of the OpenRouter work + adjacent machinery against the design rule "we correct typos and wrong endpoints, never guess the category." The genuinely over-clever item is listed as a fix candidate; the borderline items are logged with a decision pending. The items marked keep were explicitly checked against the rule and are fine.
+
+### Over-engineering (fix candidate)
+
+- **Duplicate per-token→per-1M pricing formatters** — `catalogPricing` (`addServerFlow.ts`) and `perMillion`/`round6` (`openRouter.ts`) are the same conversion (per-token USD string → per-1M) with the same `Number('')`-is-0 guard and the same finite/negative check, in two files. Consolidate to one shared formatter. This is the clearest finding.
+
+### Borderline (decision pending)
+
+- **`~author/family-latest` alias support** in `parseOpenRouterModelRef` — spec'd in `openrouter-plan.md`, ~4 lines, but only reachable now via the free-text fallback box (the model is picked from the catalog). Keeping a parser for an input format the normal flow never reaches is "be generous with guesses" territory. Trim or keep as documented spec behavior — user decision.
+
+- **`RESERVED_PATHS` (11 hardcoded openrouter.ai paths)** — prevents pre-filling the picker when someone pastes a non-model page (`/models`, `/docs`). Correct behavior, but a stale-able list; more surface than strictly needed.
+
+- **Catalog-fail → free-text fallback box** — when the catalog fetch fails, `pickOpenRouterModel` degrades to a raw input box requiring an exact model id. The "we don't guess" rule could argue for showing an error and stopping instead of assuming the user knows a valid id. Leans "helpful" vs the rule's "stop."
+
+### By-design — explicitly checked against the rule (do not re-file)
+
+- **`normalizeServerUrl` scheme-guessing** (has-port → `http`, no-port → `https`) — this IS the "correct http/https per rules" behavior the user endorsed. Keep.
+- **`detectServerType` multi-probe** (FIRST-MATCH over 4 documented signatures, throws "Unsupported server" naming them all) — "try https://cow and if it fails, that's it"; Add-flow only, never runtime. Keep.
+- **`after (\d+)ms` regex in the timeout message** — honest reporting of the actual configured value, not cleverness. Keep.
+- **`createQuickPick` for the model picker prefill** — the only way to pre-fill `QuickPick.value` now that routing is host-only. Keep.
+- **`OUTPUT_TOKEN_FACTOR = 0.1`** in `hfDiscovery` — a labeled suggestion (user-editable), vLLM-path-only, pre-existing. Keep unless explicitly questioned.
+
+---
+
 ## Code Review 2026-08-10 — verified findings
 
 Full pass over every `src/` file, three parallel deep passes + independent verification of every finding by tracing the actual code. All items below are confirmed real and reachable.

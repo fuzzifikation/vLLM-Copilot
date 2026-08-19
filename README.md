@@ -92,7 +92,7 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 
 ## Quick Start
 
-**Prerequisites:** A running model server + GitHub Copilot. **vLLM** is the primary target and fully supported; **llama.cpp**, **LM Studio**, and **Ollama** work as well (core features — see [Supported servers](#supported-servers)).
+**Prerequisites:** A running model server + GitHub Copilot. **vLLM** is the primary target and fully supported; **llama.cpp**, **LM Studio**, **Ollama**, and **OpenRouter** work as well (core features — see [Supported servers](#supported-servers)).
 
 > **💡 Tip:** Enable `extensions.autoUpdate` in VS Code settings to get automatic updates. (Auto-updates are disabled by default for extensions using proposed APIs like `chatProvider`.)
 
@@ -111,7 +111,7 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 
 ## Supported servers
 
-**vLLM is the primary target and gets the full feature set.** llama.cpp, LM Studio, and Ollama are supported alongside it with the core features.
+**vLLM is the primary target and gets the full feature set.** llama.cpp, LM Studio, Ollama, and OpenRouter are supported alongside it with the core features.
 
 | Backend | Status | Notes |
 |---------|--------|-------|
@@ -119,6 +119,31 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 | **llama.cpp** | ✅ Core | OpenAI-compatible `/v1/chat/completions`; context window from `/v1/models` |
 | **LM Studio** | ✅ Core | Same as llama.cpp |
 | **Ollama** | ✅ Core | Same as llama.cpp; `tool_choice` values are dropped (the parameter isn't supported by Ollama's API), tool calling itself works |
+| **OpenRouter** | ✅ Managed remote | Fixed endpoint `https://openrouter.ai/api`; host-only detection; model picked from the ~415-model catalog |
+
+### Using OpenRouter
+
+OpenRouter is different from the other backends: the **server is fixed** (`https://openrouter.ai/api`) and the only thing you choose is the **model**. The Add flow detects an `openrouter.ai` server URL and follows the same ordering as every backend — server → key → model pick:
+
+1. Enter the OpenRouter server URL — `https://openrouter.ai` (or the API base `https://openrouter.ai/api`). Pasting a full model-page URL (`https://openrouter.ai/nvidia/nemotron-3.5-lightning:free`) pre-fills the model picker.
+2. Enter your OpenRouter API key (from [openrouter.ai/keys](https://openrouter.ai/keys)); it is stored in the model's `requestHeaders` as `Authorization: Bearer <key>` and never leaves trusted extension code.
+3. Pick the model from the ~415-model catalog (filter-as-you-type). The extension resolves its metadata from OpenRouter's **public** exact-model API — real context window, output ceiling, tool calling, pricing, and reasoning modes.
+
+Manual config works the same way — each entry is self-contained:
+
+```json
+{
+  "serverType": "openrouter",
+  "serverUrl": "https://openrouter.ai/api",
+  "vllmModelId": "nvidia/nemotron-3.5-lightning:free",
+  "displayName": "Nemotron 3.5 Lightning (free)",
+  "requestHeaders": {
+    "Authorization": "Bearer sk-or-v1-YOUR_KEY"
+  }
+}
+```
+
+The `:free` suffix is a routing variant, not part of the model identity: it is stripped for the metadata lookup (variants 404 on the exact-model endpoint) but preserved for chat. Free routes are rate-limited — if a request feels dead, it's the free tier, not the extension.
 
 **Every backend gets:** native Copilot integration (chat, tools, vision, streaming), model modes, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue on empty responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
 
@@ -300,7 +325,7 @@ a fresh start. Access via `Ctrl+Shift+P` → **Clean Copilot Sessions** (under U
 
 | Command | What it does |
 |---------|--------------|
-| **Add vLLM Server & Model** | Guided flow: enter server URL → discover models → auto-configure → save |
+| **Add vLLM Server & Model** | Guided flow: enter server URL → discover models → auto-configure → save. An `openrouter.ai` server URL routes into the OpenRouter flow (server → key → model pick) |
 | **Test & Refresh Models** | Verify servers, list models, correct ID mismatches, check network settings |
 | **Set Model Personality** | Pick a model, pick a personality preset (or **Default** to clear), apply instantly |
 | **Configure Utility Model** | Switch utility model for MCP servers (`mainAgent` / `copilot` / `none`) |

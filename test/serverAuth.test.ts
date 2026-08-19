@@ -78,4 +78,26 @@ describe('promptForServerAuth', () => {
     expect(errorSpy).toHaveBeenCalledTimes(1);
     expect(errorSpy.mock.calls[0][0]).toContain('Headers');
   });
+
+  it('requires a non-empty key when requireApiKey is set', async () => {
+    const callOpts = { ...opts, requireApiKey: true };
+    inputBoxSpy.mockResolvedValueOnce('sk-ok').mockResolvedValueOnce('');
+
+    await promptForServerAuth(callOpts);
+
+    const keyCall = inputBoxSpy.mock.calls[0][0] as any;
+    expect(keyCall.validateInput).toBeDefined();
+    expect(keyCall.validateInput('')).toBe('An API key is required.');
+    expect(keyCall.validateInput('   ')).toBe('An API key is required.');
+    expect(keyCall.validateInput('sk-or-v1-abc')).toBeUndefined();
+  });
+
+  it('leaves the key optional when requireApiKey is omitted', async () => {
+    inputBoxSpy.mockResolvedValueOnce('   ').mockResolvedValueOnce('');
+
+    await promptForServerAuth(opts);
+
+    const keyCall = inputBoxSpy.mock.calls[0][0] as any;
+    expect(keyCall.validateInput).toBeUndefined();
+  });
 });

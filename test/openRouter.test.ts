@@ -1,12 +1,50 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   parseOpenRouterModelRef,
+  parseOpenRouterBranchInput,
   normalizeOpenRouterModel,
   fetchOpenRouterModel,
   resolveOpenRouterRuntimeLimits,
   OPENROUTER_API_BASE,
   type OpenRouterModelData,
 } from '../src/openRouter.js';
+
+// ── parseOpenRouterBranchInput ─────────────────────────────────────────────
+
+describe('parseOpenRouterBranchInput', () => {
+  it('passes a fully-qualified model-page URL straight through', () => {
+    const r = parseOpenRouterBranchInput('https://openrouter.ai/nvidia/nemotron-3.5-lightning:free');
+    expect(r).toEqual({
+      requestedId: 'nvidia/nemotron-3.5-lightning:free',
+      author: 'nvidia',
+      slug: 'nemotron-3.5-lightning',
+    });
+  });
+
+  it('treats a scheme-less openrouter.ai base as a base reference (error → catalog picker)', () => {
+    // "openrouter.ai/api" must NOT parse as a bare slug (author "openrouter.ai").
+    const r = parseOpenRouterBranchInput('openrouter.ai/api');
+    expect('error' in r).toBe(true);
+  });
+
+  it('resolves a scheme-less openrouter.ai model-page URL as a URL, not a bare slug', () => {
+    const r = parseOpenRouterBranchInput('openrouter.ai/nvidia/nemotron-3.5-lightning:free');
+    expect(r).toEqual({
+      requestedId: 'nvidia/nemotron-3.5-lightning:free',
+      author: 'nvidia',
+      slug: 'nemotron-3.5-lightning',
+    });
+  });
+
+  it('leaves a bare author/slug on a non-openrouter host on the slug path', () => {
+    const r = parseOpenRouterBranchInput('nvidia/nemotron-3.5-lightning:free');
+    expect(r).toEqual({
+      requestedId: 'nvidia/nemotron-3.5-lightning:free',
+      author: 'nvidia',
+      slug: 'nemotron-3.5-lightning',
+    });
+  });
+});
 
 // ── parseOpenRouterModelRef ────────────────────────────────────────────────
 

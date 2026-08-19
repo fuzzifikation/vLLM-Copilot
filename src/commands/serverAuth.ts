@@ -76,14 +76,20 @@ export async function promptForServerAuth(options: {
   headersTitle: string;
   headersPrompt: string;
   headersPlaceholder: string;
+  /** Require a non-empty API key (e.g. OpenRouter — chat is billed per account). */
+  requireApiKey?: boolean;
 }): Promise<Record<string, string> | undefined> {
-  // API key (optional). Folded into headers as Authorization: Bearer.
+  // API key. Optional for the generic server flows; required when the caller
+  // needs credentials (OpenRouter). Folded into headers as Authorization: Bearer.
   const apiKeyInput = await vscode.window.showInputBox({
     title: options.apiKeyTitle,
     prompt: options.apiKeyPrompt,
     placeHolder: options.apiKeyPlaceholder,
     ignoreFocusOut: true,
     password: true,
+    validateInput: options.requireApiKey
+      ? (v) => (!v.trim() ? 'An API key is required.' : undefined)
+      : undefined,
   });
   if (apiKeyInput === undefined) return undefined; // cancelled
   const apiKey = apiKeyInput.trim();

@@ -4,7 +4,7 @@ import { fetchWithRetry } from './fetchRetry.js';
 import { readSseStream } from './streamReader.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
-import { resolveOpenRouterRuntimeLimits } from './openRouter.js';
+import { isOpenRouterUrl, resolveOpenRouterRuntimeLimits } from './openRouter.js';
 import type { ServerConfig } from './provider/requestBuilder.js';
 import type { StreamEvent, VllmChatOptions, OpenAIChatMessage, VllmModel, LmStudioModel, RuntimeModelLimits } from './types.js';
 export type { StreamEvent, VllmChatOptions, OpenAIChatMessage, VllmModel } from './types.js';
@@ -21,8 +21,9 @@ const METADATA_TIMEOUT_MS = 10000;
  * Overall budget for the initial chat POST to receive response headers.
  * fetch and fetchWithRetry have no deadline of their own, so without this a server
  * that accepts the connection but never answers would hang the request forever.
+ * Default is 180000ms, overridable per model via `initialResponseTimeoutMs`
+ * (0 = disabled). Resolved at request time in {@link chatCompletionStream}.
  */
-const INITIAL_RESPONSE_TIMEOUT_MS = 60000;
 
 /**
  * True when `err` is an HTTP 404 (probe "endpoint not served here" signal).
@@ -139,6 +140,12 @@ export async function detectServerType(
   requestHeaders: Record<string, string> = {},
   modelId: string,
 ): Promise<ServerType> {
+  // 0. OpenRouter is a fixed managed remote, identified by HOST before any probe.
+  //    Its `/v1/models` catalog and metadata endpoints are public, but the
+  //    local-signature probes below (`/api/v1/models`, `/api/ps`) 404 on it —
+  //    without this arm the Add flow would throw "Unsupported server".
+  if (isOpenRouterUrl(serverUrl)) return 'openrouter';
+
   // 1+2. OpenAI /v1/models (vLLM, llama.cpp, LM Studio all serve it).
   let v1: { data?: VllmModel[] };
   try {
@@ -180,7 +187,7 @@ export async function detectServerType(
   throw new Error(
     `Unsupported server at ${serverUrl}: expected vLLM (/v1/models with max_model_len), ` +
     `llama.cpp (owned_by "llamacpp"), LM Studio (/api/v1/models with models[].key), or ` +
-    `Ollama (/api/ps with models[]). No documented signature matched model "${modelId}".`
+    `Ollama (/api/ps with models[]), or OpenRouter (openrouter.ai host). No documented signature matched model "${modelId}".`
   );
 }
 
@@ -344,6 +351,8 @@ export class VllmClient {
     // 0 = disabled (wait indefinitely). Measured via read() timing, not wall-clock,
     // so it is not affected by generator pauses during tool execution.
     const inactivityMs = serverConfig?.streamInactivityTimeout ?? DEFAULT_MODEL_SETTINGS.streamInactivityTimeout;
+    // Budget for the initial POST to receive response headers. 0 = disabled.
+    const initialResponseMs = serverConfig?.initialResponseTimeoutMs ?? DEFAULT_MODEL_SETTINGS.initialResponseTimeoutMs;
     // For the initial fetch (pre-stream), we still need a timer because there is
     // no read() call yet. Once streaming starts, readSseStream takes over.
     let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
@@ -381,9 +390,11 @@ export class VllmClient {
     this.fileLogger?.logRequest('POST', url, allHeaders, body);
 
     try {
-      initialResponseTimer = setTimeout(() => {
-        controller.abort(`Initial request timed out after ${INITIAL_RESPONSE_TIMEOUT_MS}ms without a response`);
-      }, INITIAL_RESPONSE_TIMEOUT_MS);
+      if (initialResponseMs > 0) {
+        initialResponseTimer = setTimeout(() => {
+          controller.abort(`Initial request timed out after ${initialResponseMs}ms without a response`);
+        }, initialResponseMs);
+      }
 
       const response = await fetchWithRetry(
         url,

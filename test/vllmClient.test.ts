@@ -317,6 +317,26 @@ describe('detectServerType', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1); // first signature hit — no further probes
   });
 
+  it('classifies OpenRouter by host (API base) without probing local signatures', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ data: [] }));
+    expect(await detectServerType('https://openrouter.ai/api', {}, 'nvidia/nemotron-3.5-lightning:free')).toBe('openrouter');
+    expect(fetchSpy).not.toHaveBeenCalled(); // host arm short-circuits — no probes
+  });
+
+  it('classifies OpenRouter by host (model-page URL) without probing', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ data: [] }));
+    expect(await detectServerType('https://openrouter.ai/nvidia/nemotron-3.5-lightning:free', {}, 'nvidia/nemotron-3.5-lightning:free')).toBe('openrouter');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a non-openrouter host as OpenRouter', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () => Promise.resolve(jsonResponse({ data: [{ id: 'm', object: 'model', owned_by: 'mystery' }] }))
+    );
+    await expect(detectServerType('https://openrouter.example.com', {}, 'm')).rejects.toThrow(/Unsupported server/);
+    expect(fetchSpy).toHaveBeenCalled(); // fell through to the probe path
+  });
+
   it('classifies llama.cpp from owned_by "llamacpp"', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
       () => Promise.resolve(jsonResponse({ data: [{ id: 'm', object: 'model', owned_by: 'llamacpp' }] }))
@@ -453,7 +473,7 @@ describe('chatCompletionStream backend adaptation (via buildChatBody)', () => {
     );
     const client = new VllmClient(makeContext(), makeOutput());
     const options = { continue_final_message: true, add_generation_prompt: false, tool_choice: 'auto' as const, temperature: 0.7 };
-    await client.chatCompletionStream('m', [], options as any, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any, { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, serverType: 'vllm' }).next();
+    await client.chatCompletionStream('m', [], options as any, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any, { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'vllm' }).next();
     const body = streamResult(fetchSpy);
     expect(body.continue_final_message).toBe(true);
     expect(body.add_generation_prompt).toBe(false);
@@ -468,7 +488,7 @@ describe('chatCompletionStream backend adaptation (via buildChatBody)', () => {
     const client = new VllmClient(makeContext(), makeOutput());
     const options = { continue_final_message: true, add_generation_prompt: false };
     const messages = [{ role: 'user' as const, content: 'hi' }, { role: 'assistant' as const, content: 'prefill' }];
-    await client.chatCompletionStream('m', messages as any, options as any, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any, { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, serverType: 'llamacpp' }).next();
+    await client.chatCompletionStream('m', messages as any, options as any, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any, { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'llamacpp' }).next();
     const body = streamResult(fetchSpy);
     expect(body.continue_final_message).toBeUndefined();
     expect(body.add_generation_prompt).toBeUndefined();
@@ -483,7 +503,7 @@ describe('chatCompletionStream backend adaptation (via buildChatBody)', () => {
     );
     const client = new VllmClient(makeContext(), output as any);
     const options = { tool_choice: 'required' as const, tools: [{ type: 'function' as const, function: { name: 'f' } }] };
-    const serverConfig = { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, serverType: 'ollama' } as const;
+    const serverConfig = { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'ollama' } as const;
     const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any;
     // Two requests with tool_choice — the WARN fires exactly ONCE (per session),
     // not per request. The misleading "ONE [WARN]" comment once described a
@@ -522,7 +542,7 @@ describe('chatCompletionStream initial request timeout', () => {
     const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) };
     const gen = client.chatCompletionStream(
       'm', [], {} as any, token as any,
-      { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, serverType: 'vllm' },
+      { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'vllm' },
     );
     const nextPromise = gen.next();
     // Attach the rejection handler BEFORE firing the timer — the generator rejects
@@ -536,5 +556,69 @@ describe('chatCompletionStream initial request timeout', () => {
     await assertion;
     // AbortError is not retried — a single attempt, then the hang is broken.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('honors a per-model initialResponseTimeoutMs (aborts at the configured time, message carries it)', async () => {
+    vi.useFakeTimers();
+    let abortReason: unknown;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      (_url: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal as AbortSignal;
+          const onAbort = () => {
+            abortReason = signal.reason;
+            reject(Object.assign(new Error(String(signal.reason)), { name: 'AbortError' }));
+          };
+          if (signal.aborted) onAbort();
+          else signal.addEventListener('abort', onAbort, { once: true });
+        })
+    );
+    const client = new VllmClient(makeContext(), makeOutput());
+    const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) };
+    const gen = client.chatCompletionStream(
+      'm', [], {} as any, token as any,
+      { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 3000, serverType: 'vllm' },
+    );
+    const nextPromise = gen.next();
+    const assertion = expect(nextPromise).rejects.toThrow(/3000ms/);
+
+    // The configured 3s budget (NOT the 60s default) aborts the request, and the
+    // abort reason carries the configured value so the user message is accurate.
+    await vi.advanceTimersByTimeAsync(3001);
+    await assertion;
+    expect(abortReason).toContain('3000ms');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not arm an initial-response timer when initialResponseTimeoutMs is 0 (disabled)', async () => {
+    vi.useFakeTimers();
+    let abortReason: unknown;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      (_url: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal as AbortSignal;
+          const onAbort = () => {
+            abortReason = signal.reason;
+            reject(Object.assign(new Error(String(signal.reason)), { name: 'AbortError' }));
+          };
+          if (signal.aborted) onAbort();
+          else signal.addEventListener('abort', onAbort, { once: true });
+        })
+    );
+    const client = new VllmClient(makeContext(), makeOutput());
+    const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) };
+    const gen = client.chatCompletionStream(
+      'm', [], {} as any, token as any,
+      { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 0, serverType: 'vllm' },
+    );
+    const nextPromise = gen.next(); // start the generator (fetch is invoked, request stays pending)
+    // Wait well past the default 60s — with 0 the timer is never armed, so no abort.
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(abortReason).toBeUndefined();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // Nothing aborts the pending request — the generator's return promise would
+    // also never settle (the underlying fetch never resolves), so do not await it.
+    gen.return(undefined);
+    void nextPromise.catch(() => {});
   });
 });

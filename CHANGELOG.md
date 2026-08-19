@@ -1,16 +1,32 @@
 # Changelog
 
-## Unreleased
+## v1.32.0 — OpenRouter backend & configurable initial-response timeout
 
 ### Added
 
-- **OpenRouter as a first-class backend (prep wiring)** — `'openrouter'` is now a valid `serverType` (`vllm` | `lmstudio` | `llamacpp` | `ollama` | `openrouter`), accepted by validation, the Server Settings webview dropdown, and the configuration schema. The shared `resolveRuntimeLimits` switch gained an `openrouter` arm that resolves runtime limits from OpenRouter's exact-model endpoint (via the new `src/openRouter.ts` control plane; variant/alias suffixes are stripped for the metadata lookup but preserved for chat). No user-facing onboarding yet — a model can only be configured by hand-editing `serverType`.
+- **OpenRouter as a first-class backend (prep wiring)** — `'openrouter'` is now a valid `serverType` (`vllm` | `lmstudio` | `llamacpp` | `ollama` | `openrouter`), accepted by validation, the Server Settings webview dropdown, and the configuration schema. The shared `resolveRuntimeLimits` switch gained an `openrouter` arm that resolves runtime limits from OpenRouter's exact-model endpoint (via the new `src/openRouter.ts` control plane; variant/alias suffixes are stripped for the metadata lookup but preserved for chat).
 
 - **OpenRouter control-plane module (prep, no behavior change)** — new `src/openRouter.ts` with `parseOpenRouterModelRef`, `normalizeOpenRouterModel`, `fetchOpenRouterModel`, and `resolveOpenRouterRuntimeLimits`. Parses slugs/variants/`~`-aliases/verified model-page URLs; fetches the exact-model endpoint with the base slug; normalizes runtime limits, capabilities, reasoning modes, defaults, and estimated per-million USD rates. Live-verified against the OpenRouter API: `per_request_limits` is null in practice (fallback chain `context_length` → `top_provider.context_length`), and variant suffixes (`:free` etc.) 404 on the metadata endpoint, so the lookup strips the suffix while chat keeps the full requested id.
+
+- **OpenRouter onboarding in Add Server** — the guided flow detects an `openrouter.ai` server URL and runs onboarding with the same ordering as every other backend: **server URL → API key → model pick**. The model is picked from the ~415-model public catalog (filter-as-you-type); pasting a full model-page URL only *pre-fills* the picker. Then an unauthenticated exact-model metadata resolve (real context window, output ceiling, capabilities, pricing, reasoning modes) and save with the fixed URL (`https://openrouter.ai/api`). `detectServerType` now classifies the `openrouter.ai` host, so re-add / Test & Refresh work too. Previously OpenRouter could only be configured by hand-editing `serverType`.
+
+- **Per-model `initialResponseTimeoutMs`** — the hardcoded 60-second budget for the server to send the first response headers is now a per-model setting (default `180000` = 3 minutes; `0` = wait indefinitely). If the server accepts the connection but never responds — model loading, queue backlog — the request aborts with an actionable message instead of hanging.
 
 ### Fixed
 
 - **Credential hygiene (OpenRouter prep, no behavior change)** — request header *values* no longer leave trusted extension code: the Add Server output-channel log now shows headers as `[REDACTED]` (key names kept), and the Server Settings webview receives a public model projection with the `requestHeaders` field stripped entirely. The webview never reads headers, and the patch-save path preserves stored headers on save, so no behavior change.
+
+- **Honest initial-response timeout message** — the user-facing error for the first-response-header timeout previously dumped the raw abort string. It now explains that the server did not respond in time (model loading / server busy), names the per-model `initialResponseTimeoutMs` setting to raise (milliseconds, `0` = wait indefinitely), and points to the Output channel for details.
+
+- **OpenRouter routing is host-only** — the Add-flow branch now routes to OpenRouter **only** when the server URL's host is `openrouter.ai`. The server field is a server; the model is always picked from the catalog (a pasted model-page URL just pre-fills the picker). A bare model id or any other host falls through to the normal server flow — never hijacked into an OpenRouter model lookup.
+
+- **OpenRouter onboarding requires an API key** — the prompt previously said "Chat requires it" but let you proceed with an empty key, saving a keyless config. The key box now validates non-empty (OpenRouter bills per account, even free routes).
+
+- **`initialResponseTimeoutMs` schema rejects negatives** — the settings schema now enforces `minimum: 0`. A negative already behaved like `0` (disabled) at runtime and `validateConfig` warns on it; the schema closes the door at the settings UI.
+
+- **Duplicate "Update Auth" prompt removed on OpenRouter re-add** — the Add flow already collects the key + headers, so choosing "Update Auth" on an existing model previously fired a SECOND, generic vLLM-flavored wizard and discarded the just-entered key (which could even clear the required OpenRouter key). `updateServerAuth` now accepts the already-collected headers and reuses them; when invoked standalone it is provider-aware (required, OpenRouter-flavored key prompt for an `openrouter.ai` server).
+
+- **README + source comments corrected to the current OpenRouter flow** — stale text describing bare-`author/slug` routing, metadata-before-key ordering, and "the user's input is a MODEL" were replaced with the actual behavior: host-only routing (`openrouter.ai`), server → key & headers → model pick, and the pasted model-page URL merely pre-filling the picker.
 
 ## v1.31.0 — Pooled output/prefill speed & hardened metrics parsing
 

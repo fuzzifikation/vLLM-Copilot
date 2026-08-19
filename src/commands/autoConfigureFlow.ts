@@ -127,6 +127,7 @@ export function registerAutoConfigureModelCommand(
       systemMessageReplacementsFile: modelConfig.systemMessageReplacementsFile,
       autoContinueRetries: modelConfig.autoContinueRetries,
       streamInactivityTimeout: modelConfig.streamInactivityTimeout,
+      initialResponseTimeoutMs: modelConfig.initialResponseTimeoutMs,
       // Token-budget overrides are user-configured (webview "reserve headroom" /
       // chars-per-token fields) and must survive re-configure like the other
       // transport settings. replaceModelConfig strips undefined, so unset values

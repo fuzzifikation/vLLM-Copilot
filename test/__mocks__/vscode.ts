@@ -123,6 +123,25 @@ export interface QuickPickItem {
   picked?: boolean;
   alwaysShow?: boolean;
 }
+export interface QuickPick<T extends QuickPickItem = QuickPickItem> {
+  value: string;
+  placeholder: string | undefined;
+  title: string | undefined;
+  prompt: string | undefined;
+  items: readonly T[];
+  selectedItems: readonly T[];
+  activeItems: readonly T[];
+  canSelectMany: boolean;
+  matchOnDescription: boolean;
+  matchOnDetail: boolean;
+  ignoreFocusOut: boolean;
+  show(): void;
+  hide(): void;
+  dispose(): void;
+  onDidAccept(listener: () => unknown): Disposable;
+  onDidHide(listener: () => unknown): Disposable;
+  onDidChangeValue(listener: (value: string) => unknown): Disposable;
+}
 export interface QuickPickOptions {
   canPickMany?: boolean;
   placeHolder?: string;
@@ -353,6 +372,7 @@ export const window: {
     options?: QuickPickOptions,
     token?: CancellationToken
   ): Promise<T | undefined>;
+  createQuickPick<T extends QuickPickItem>(): QuickPick<T>;
   withProgress<R>(options: unknown, task: (progress: Progress<unknown>) => Thenable<R>): Promise<R>;
   createOutputChannel(name: string): OutputChannel;
   showTextDocument(document: unknown, ..._rest: unknown[]): Promise<unknown>;
@@ -362,6 +382,35 @@ export const window: {
   showErrorMessage: () => Promise.resolve(undefined),
   showInputBox: () => Promise.resolve(undefined),
   showQuickPick: ((..._args: unknown[]) => Promise.resolve(undefined)) as any,
+  createQuickPick: <T extends QuickPickItem>() => {
+    // Minimal QuickPick stub. `show()` resolves as cancelled (fires hide) so a
+    // test that forgets to drive the picker still completes instead of hanging.
+    // Tests that need selection spy on this and override show/onDidAccept.
+    let accept: (() => void) | undefined;
+    let hide: (() => void) | undefined;
+    const qp = {
+      value: '',
+      placeholder: undefined,
+      title: undefined,
+      prompt: undefined,
+      items: [] as readonly T[],
+      selectedItems: [] as readonly T[],
+      activeItems: [] as readonly T[],
+      canSelectMany: false,
+      matchOnDescription: false,
+      matchOnDetail: false,
+      ignoreFocusOut: false,
+      show: () => { queueMicrotask(() => hide?.()); },
+      hide: () => {},
+      dispose: () => {},
+      onDidAccept: (fn: () => void) => { accept = fn; return { dispose: () => {} }; },
+      onDidHide: (fn: () => void) => { hide = fn; return { dispose: () => {} }; },
+      onDidChangeValue: () => ({ dispose: () => {} }),
+      _fireAccept: () => accept?.(),
+      _fireHide: () => hide?.(),
+    } as QuickPick<T> & { _fireAccept: () => void; _fireHide: () => void };
+    return qp;
+  },
   withProgress: <R,>(_options: unknown, task: (progress: Progress<unknown>) => Thenable<R>) =>
     Promise.resolve(task({ report: () => {} })),
   createOutputChannel: (name: string): OutputChannel => ({

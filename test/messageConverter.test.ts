@@ -477,6 +477,9 @@ describe('formatError', () => {
   it('handles plain string throws (Node.js fetch abort returns string)', () => {
     expect(formatError('Stream inactivity timeout (30000ms without data)')).toContain('inactivity');
     expect(formatError('User cancelled')).toContain('cancelled');
+    // The initial-response timeout message is honest: names the configured value and the setting.
+    expect(formatError('Initial request timed out after 30000ms without a response')).toContain('30000ms');
+    expect(formatError('Initial request timed out after 30000ms without a response')).toContain('initialResponseTimeoutMs');
   });
 
   it('serializes plain string throws', () => {

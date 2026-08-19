@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "You use vLLM and want its AI models in Copilot? This is what you need. The full Copilot integration for vLLM models — *all* features supported. Optimized for robust hosting of local AI with fully configurable model modes, supporting every vLLM parameter with full UI configuration. Supports multiple servers and models, each with its own auth, parameters, and modes. Auto-detects vLLM server models and their capabilities. Includes a dashboard for server metrics and model status.",
-  "version": "1.31.0",
+  "version": "1.32.0",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -287,6 +287,12 @@
                   "type": "number",
                   "default": 0,
                   "markdownDescription": "Inactivity timeout in ms for this model's SSE stream. If the server sends no tokens for this duration, the stream is considered stalled and the request ends. **Default: 0** (disabled — wait indefinitely)."
+                },
+                "initialResponseTimeoutMs": {
+                  "type": "number",
+                  "default": 180000,
+                  "minimum": 0,
+                  "markdownDescription": "Budget in ms for this model's server to send the **first response headers**. If the server accepts the connection but never responds (e.g. the model is still loading, or the queue is backed up), the request is aborted. **Default: 180000 (3 minutes).** Set to 0 to wait indefinitely."
                 },
                 "autoContinueRetries": {
                   "type": "number",
