@@ -40,9 +40,17 @@ class ServerTreeItem extends vscode.TreeItem {
     this.id = `server:${serverUrl}`;
     // No "degraded" label — every backend is a first-class dashboard citizen.
     this.description = metrics.online ? summaryLine(metrics) : 'Offline';
+    // OpenRouter is a relay, not a server: /v1/models is the whole catalog (not
+    // "the server's models") and any context window here is one arbitrary
+    // configured model's — wrong scope to present as server-wide. Suppress both
+    // until the model-collection restructure (Phase 2) lands.
+    const isOpenRouterRelay = serverType === 'openrouter';
+    const modelsLine = isOpenRouterRelay ? '' : `\n*${metrics.models.join(', ') || 'no models'}*`;
+    const contextLine = isOpenRouterRelay || metrics.maxModelLen == null
+      ? ''
+      : `\n\n**Context window:** ${fmtCount(metrics.maxModelLen)}`;
     this.tooltip = new vscode.MarkdownString(
-      `${serverUrl}\n*${metrics.models.join(', ') || 'no models'}*` +
-      (metrics.maxModelLen != null ? `\n\n**Context window:** ${fmtCount(metrics.maxModelLen)}` : '') +
+      `${serverUrl}${modelsLine}${contextLine}` +
       (serverType ? `\n**Backend:** ${serverType}` : '')
     );
     // Context value encodes whether deep-dive applies: vLLM-only. Non-vLLM
@@ -412,13 +420,18 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       // "v" (e.g. "v0.6.0"), so prepending another "v" would render "vv0.6.0".
       items.push(new MetricTreeItem('vLLM Version', m.version, 'server'));
     }
-    if (m.models.length > 0) {
+    // OpenRouter relay: /v1/models is the full catalog (hundreds of unconfigured
+    // models), not "the server's models" — and the resolved context window is
+    // one arbitrary configured model's, not the server's. Both are wrong scope,
+    // so suppress them until the model-collection restructure (Phase 2) lands.
+    const isOpenRouterRelay = serverType === 'openrouter';
+    if (!isOpenRouterRelay && m.models.length > 0) {
       items.push(new ModelsTreeItem(m.models));
     }
     // Context window — only when resolved. vLLM from /v1/models max_model_len;
     // non-vLLM from the per-backend resolver (LM Studio context_length, llama.cpp
     // n_ctx, Ollama /api/ps, OpenRouter exact-model). No data → no row.
-    if (m.maxModelLen != null) {
+    if (!isOpenRouterRelay && m.maxModelLen != null) {
       items.push(new MetricTreeItem(
         'Context Window',
         fmtCount(m.maxModelLen),
