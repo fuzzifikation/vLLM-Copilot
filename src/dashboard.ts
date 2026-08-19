@@ -11,7 +11,7 @@ import {
   getLastRequest, getServerUsage, getServerCost, hasServerUsage, onUsageStoreDidChange,
   computeCost, findModelCost, formatCost, formatCostFine, formatCostSummary, fmtCount, emptyCounts,
   getModelStartedAt,
-  type UsageCounts,
+  type UsageCounts, type CostRates,
 } from './usageStore.js';
 
 // ─── Tree Items ──────────────────────────────────────────────────────
@@ -368,13 +368,10 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       if (!this.visible || epoch !== this.refreshEpoch) {
         return;
       }
-      // Group models by server URL. Track the first configured model's wire id
-      // per server — the metrics engine needs it to resolve the per-backend
-      // context window (non-vLLM only). Also collect ALL wire ids so OpenRouter
-      // relay servers can resolve a per-model context collection (models at a
-      // relay can have different context lengths).
+      // Group models by server URL. Collect ALL wire ids per server — the
+      // metrics engine needs them to resolve the per-backend context window
+      // (non-vLLM only; OpenRouter relay models can have different windows).
       const serverMap = new Map<string, Record<string, string>>();
-      const serverModelId = new Map<string, string>();
       const serverModelIds = new Map<string, string[]>();
       this.serverTypes.clear();
       for (const model of config.models) {
@@ -385,9 +382,6 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
         }
         const wireId = model.vllmModelId ?? model.id;
         if (wireId) {
-          if (!serverModelId.has(model.serverUrl)) {
-            serverModelId.set(model.serverUrl, wireId);
-          }
           const ids = serverModelIds.get(model.serverUrl) ?? [];
           ids.push(wireId);
           serverModelIds.set(model.serverUrl, ids);
@@ -398,9 +392,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       }
 
       for (const [url, headers] of serverMap) {
-        const modelId = serverModelId.get(url);
         const modelIds = serverModelIds.get(url);
-        const engine = getMetricsEngine(url, headers, this.serverTypes.get(url) ?? 'vllm', modelId, modelIds);
+        const engine = getMetricsEngine(url, headers, this.serverTypes.get(url) ?? 'vllm', undefined, modelIds);
         const sub = engine.subscribe((aggregated) => {
           // Update cached metrics and schedule a single re-render
           const entry = this.subscriptions.find(s => s.serverUrl === url);
@@ -501,12 +494,12 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       if (m.account) {
         items.push(new OpenRouterAccountTreeItem(serverUrl ?? '', m.account));
       }
-      const configuredModels = this.readConfiguredModels()
-        .filter(model => normalizeServerUrl(model.serverUrl ?? '') === normalizeServerUrl(serverUrl ?? ''))
-        .filter(model => (model.serverType ?? 'vllm') === 'openrouter');
-      const wireIds = [...new Set(configuredModels.map(model => model.vllmModelId ?? model.id).filter((id): id is string => !!id))];
-      if (wireIds.length > 0) {
-        items.push(new ModelCollectionTreeItem(serverUrl ?? '', wireIds));
+      const wireIds = this.getRelayModels(serverUrl ?? '')
+        .map(model => model.vllmModelId ?? model.id)
+        .filter((id): id is string => !!id);
+      const uniqueIds = [...new Set(wireIds)];
+      if (uniqueIds.length > 0) {
+        items.push(new ModelCollectionTreeItem(serverUrl ?? '', uniqueIds));
       }
     } else {
       if (m.models.length > 0) {
@@ -699,20 +692,14 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
   /** Children of the Model Collection node: one node per configured relay model. */
   private getModelCollectionChildren(e: ModelCollectionTreeItem): OpenRouterModelTreeItem[] {
-    const models = this.readConfiguredModels();
+    const models = this.getRelayModels(e.serverUrl);
     return e.modelIds.map(modelId => {
-      const entry = models.find(m =>
-        normalizeServerUrl(m.serverUrl ?? '') === normalizeServerUrl(e.serverUrl) &&
-        (m.vllmModelId ?? m.id) === modelId &&
-        (m.serverType ?? 'vllm') === 'openrouter',
-      );
+      const entry = models.find(m => (m.vllmModelId ?? m.id) === modelId);
       const label = entry?.displayName || entry?.id || modelId;
       // Context window rides in via the cached engine metrics — resolved per
       // model, so each node shows ITS OWN window. The tree item captures it at
       // build time; a resolved value arrives on the next engine tick.
-      const contextWindow = this.subscriptions
-        .find(s => normalizeServerUrl(s.serverUrl) === normalizeServerUrl(e.serverUrl))
-        ?.metrics.contextByModel?.[modelId];
+      const contextWindow = this.relayContextWindow(e.serverUrl, modelId);
       return new OpenRouterModelTreeItem(e.serverUrl, modelId, label, contextWindow);
     });
   }
@@ -720,19 +707,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   /** Children of an OpenRouter model node: its own model-level rows. */
   private getOpenRouterModelChildren(e: OpenRouterModelTreeItem): MetricTreeItem[] {
     const items: MetricTreeItem[] = [];
-    const models = this.readConfiguredModels();
-    const entry = models.find(m =>
-      normalizeServerUrl(m.serverUrl ?? '') === normalizeServerUrl(e.serverUrl) &&
-      (m.vllmModelId ?? m.id) === e.modelId &&
-      (m.serverType ?? 'vllm') === 'openrouter',
-    );
+    const entry = this.getRelayModels(e.serverUrl)
+      .find(m => (m.vllmModelId ?? m.id) === e.modelId);
 
     // Context window — from the per-model engine resolve (cached for the engine
     // lifetime). Show the row only when resolved; a transient failure hides it
     // and a later poll retries (see vllmMetrics contextByModel).
-    const contextWindow = this.subscriptions
-      .find(s => normalizeServerUrl(s.serverUrl) === normalizeServerUrl(e.serverUrl))
-      ?.metrics.contextByModel?.[e.modelId];
+    const contextWindow = this.relayContextWindow(e.serverUrl, e.modelId);
     if (contextWindow !== undefined) {
       items.push(new MetricTreeItem('Context Window', fmtCount(contextWindow), 'layers', 'Maximum context length (input + output) this model reports.'));
     }
@@ -761,24 +742,23 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
     // Cost — estimated per-1M rates from config (fallback) OR actual reported
     // cost when present. Never both.
-    const usage = getServerUsage(normalizeServerUrl(e.serverUrl));
-    const cost = getServerCost(normalizeServerUrl(e.serverUrl));
-    const todayCounts = usage.today[e.modelId] ?? emptyCounts();
-    const overallCounts = usage.allTime[e.modelId] ?? emptyCounts();
-    const actualToday = cost.today[e.modelId];
-    const actualOverall = cost.allTime[e.modelId];
-    const hasActual = actualToday !== undefined || actualOverall !== undefined;
-    const todayCost = hasActual
-      ? actualToday ?? computeCost(todayCounts, entry?.cost)
-      : computeCost(todayCounts, entry?.cost);
-    const overallCost = hasActual
-      ? actualOverall ?? computeCost(overallCounts, entry?.cost)
-      : computeCost(overallCounts, entry?.cost);
+    const { today: todayCost, overall: overallCost, currency, hasActual } =
+      this.modelCostFor(e.serverUrl, e.modelId, entry?.cost);
     if (todayCost !== undefined || overallCost !== undefined) {
-      const currency = hasActual ? 'USD' : entry?.cost?.currency;
+      const summary = formatCostSummary(
+        todayCost,
+        overallCost,
+        currency,
+        getModelStartedAt(normalizeServerUrl(e.serverUrl), e.modelId),
+      );
+      // Honest fallback: show whichever slot has a value, never a fabricated $0.
+      const value = summary
+        ?? (todayCost !== undefined ? formatCostFine(todayCost, currency)
+          : overallCost !== undefined ? formatCostFine(overallCost, currency)
+          : '');
       items.push(new MetricTreeItem(
         'Cost',
-        formatCostSummary(todayCost, overallCost, currency, getModelStartedAt(normalizeServerUrl(e.serverUrl), e.modelId)) ?? formatCostFine(todayCost ?? 0, currency),
+        value,
         'credit-card',
         hasActual
           ? 'Actual cost reported by OpenRouter (usage.cost). The authoritative spend — not the per-1M estimate.'
@@ -787,6 +767,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     }
 
     // Token usage — today + overall (same split as the Token Usage node).
+    const usage = getServerUsage(normalizeServerUrl(e.serverUrl));
+    const todayCounts = usage.today[e.modelId] ?? emptyCounts();
+    const overallCounts = usage.allTime[e.modelId] ?? emptyCounts();
     const since = getModelStartedAt(normalizeServerUrl(e.serverUrl), e.modelId);
     if (todayCounts.prompt > 0 || todayCounts.completion > 0) {
       items.push(new MetricTreeItem('Tokens Today', usageLine(todayCounts), 'calendar', 'Token usage for this model today.'));
@@ -968,35 +951,17 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   private getTokenUsageChildren(e: TokenUsageTreeItem): ModelUsageTreeItem[] {
     const models = this.readConfiguredModels();
     const usage = getServerUsage(e.serverUrl);
-    const cost = getServerCost(e.serverUrl);
     // Union of models with any today or all-time usage (a model used yesterday
     // still needs its Overall row visible).
     const modelIds = Array.from(new Set([...Object.keys(usage.today), ...Object.keys(usage.allTime)])).sort();
     return modelIds.map(modelId => {
       const entry = findModelConfig(models, e.serverUrl, modelId);
       const label = entry?.displayName || entry?.id || modelId;
-      // Cost per slot: actual reported cost (OpenRouter) when the model has any
-      // recorded, else the derived estimate from per-1M rates. Never mixed —
-      // a model that reports cost uses actual for both slots; one that doesn't
-      // uses the estimate. `??` here is per-slot fallback on absence, not a sum.
-      const actualToday = cost.today[modelId];
-      const actualOverall = cost.allTime[modelId];
-      const hasActual = actualToday !== undefined || actualOverall !== undefined;
-      const todayCost = hasActual
-        ? actualToday ?? computeCost(usage.today[modelId] ?? emptyCounts(), entry?.cost)
-        : computeCost(usage.today[modelId] ?? emptyCounts(), entry?.cost);
-      const overallCost = hasActual
-        ? actualOverall ?? computeCost(usage.allTime[modelId] ?? emptyCounts(), entry?.cost)
-        : computeCost(usage.allTime[modelId] ?? emptyCounts(), entry?.cost);
-      const currency = hasActual ? 'USD' : entry?.cost?.currency;
+      // Cost: actual reported (OpenRouter) when present, else the per-1M estimate.
+      const { today, overall, currency } = this.modelCostFor(e.serverUrl, modelId, entry?.cost);
       // Collapsed description: "$11.51 today and $31.13 in 3.1 days" — today's
       // cost plus the all-time cost over the recording window (startedAt).
-      const summary = formatCostSummary(
-        todayCost,
-        overallCost,
-        currency,
-        getModelStartedAt(e.serverUrl, modelId),
-      );
+      const summary = formatCostSummary(today, overall, currency, getModelStartedAt(e.serverUrl, modelId));
       return new ModelUsageTreeItem(e.serverUrl, modelId, label, summary);
     });
   }
@@ -1026,6 +991,49 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
   /** Read the configured model entries (sync settings read) for cost lookups. */
   private readConfiguredModels(): ModelConfig[] {
     return vscode.workspace.getConfiguration('vllm-copilot').get<ModelConfig[]>('models') || [];
+  }
+
+  /** Configured OpenRouter models for a relay server (normalized URL match). */
+  private getRelayModels(serverUrl: string): ModelConfig[] {
+    const key = normalizeServerUrl(serverUrl);
+    return this.readConfiguredModels()
+      .filter(m => (m.serverType ?? 'vllm') === 'openrouter')
+      .filter(m => normalizeServerUrl(m.serverUrl ?? '') === key);
+  }
+
+  /** The cached per-model context window for a relay model, if resolved. */
+  private relayContextWindow(serverUrl: string, modelId: string): number | undefined {
+    const key = normalizeServerUrl(serverUrl);
+    return this.subscriptions
+      .find(s => normalizeServerUrl(s.serverUrl) === key)
+      ?.metrics.contextByModel?.[modelId];
+  }
+
+  /**
+   * Cost per model, preferring actual reported cost (OpenRouter usage.cost)
+   * when the model has any, else the per-1M estimate. Per-slot fallback on
+   * absence — never a sum of actual + estimate. `hasActual` tells callers which
+   * path produced the numbers (for honest labeling).
+   */
+  private modelCostFor(
+    serverUrl: string,
+    modelId: string,
+    rates: CostRates | undefined,
+  ): { today: number | undefined; overall: number | undefined; currency: string | undefined; hasActual: boolean } {
+    const key = normalizeServerUrl(serverUrl);
+    const usage = getServerUsage(key);
+    const cost = getServerCost(key);
+    const actualToday = cost.today[modelId];
+    const actualOverall = cost.allTime[modelId];
+    const hasActual = actualToday !== undefined || actualOverall !== undefined;
+    const estToday = computeCost(usage.today[modelId] ?? emptyCounts(), rates);
+    const estOverall = computeCost(usage.allTime[modelId] ?? emptyCounts(), rates);
+    return {
+      today: hasActual ? actualToday ?? estToday : estToday,
+      overall: hasActual ? actualOverall ?? estOverall : estOverall,
+      currency: hasActual ? 'USD' : rates?.currency,
+      hasActual,
+    };
   }
 
   async refresh(): Promise<void> {

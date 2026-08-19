@@ -24,7 +24,7 @@
  */
 
 import { buildEndpoint } from './config.js';
-import { fetchWithRetry } from './fetchRetry.js';
+import { buildRequestHeaders, fetchWithRetry } from './fetchRetry.js';
 import type { RuntimeModelLimits } from './types.js';
 
 /** OpenRouter's API base — composes with `buildEndpoint` like any other server. */
@@ -457,18 +457,20 @@ const ACCOUNT_TIMEOUT_MS = 10_000;
  * Fetch the account/key health for the relay. Returns `undefined` when the
  * request fails or returns no usable `data` (bad/missing key, transient error)
  * — the dashboard degrades by hiding the account rows, never fabricating.
+ *
+ * Best-effort probe: plain fetch + timeout, NO retry. It runs on every metrics
+ * poll (~15s), and `fetchWithRetry`'s 1.5s network-error backoff would add that
+ * latency to EVERY tick while /api/v1/key is unreachable — for a value that's
+ * optional anyway. Failure → undefined, always.
  */
 export async function fetchOpenRouterAccount(
   requestHeaders: Record<string, string> = {},
 ): Promise<OpenRouterAccount | undefined> {
   const url = buildEndpoint(OPENROUTER_API_BASE, 'v1/key');
+  const headers = buildRequestHeaders(undefined, requestHeaders);
   let response: Response;
   try {
-    response = await fetchWithRetry(
-      url,
-      { method: 'GET', signal: AbortSignal.timeout(ACCOUNT_TIMEOUT_MS) },
-      requestHeaders,
-    );
+    response = await fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(ACCOUNT_TIMEOUT_MS) });
   } catch {
     return undefined;
   }
