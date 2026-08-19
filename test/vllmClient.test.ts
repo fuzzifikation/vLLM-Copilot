@@ -516,6 +516,23 @@ describe('chatCompletionStream backend adaptation (via buildChatBody)', () => {
     const warns = calls.filter((s) => s.includes('[WARN]') && s.includes('tool_choice'));
     expect(warns).toHaveLength(1);
   });
+
+  it('throws the backend-neutral mid-stream marker when the server returns a 200 JSON error body', async () => {
+    // A 200 response with a JSON error object instead of an SSE stream — no HTTP
+    // status to classify on, so formatError relies on this exact marker.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () => Promise.resolve(new Response(JSON.stringify({ error: { message: 'model is overloaded' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }))
+    );
+    const client = new VllmClient(makeContext(), makeOutput());
+    const gen = client.chatCompletionStream('m', [] as any, {} as any,
+      { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any,
+      { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'vllm' });
+    await expect(gen.next()).rejects.toThrow('Server error (mid-stream): model is overloaded');
+    expect(fetchSpy).toHaveBeenCalled();
+  });
 });
 
 describe('chatCompletionStream initial request timeout', () => {

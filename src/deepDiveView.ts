@@ -71,7 +71,7 @@ export function openDeepDive(
       // `engineSubscription === undefined` — subscribing now would create a
       // metrics poller that is never disposed (leaks for the session).
       if (disposed) return;
-      const engine = getMetricsEngine(serverUrl, requestHeaders, serverType);
+      const engine = getMetricsEngine(serverUrl, requestHeaders, serverType, undefined, outputChannel);
 
       // Subscribe only on the FIRST ready. A second `ready` (webview recycle /
       // manual reload) must not orphan the first subscription: it is still live

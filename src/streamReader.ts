@@ -18,6 +18,8 @@ export interface StreamReaderOptions {
   inactivityMs: number;
   /** File logger for stream chunk logging. Optional. */
   fileLogger?: FileLogger;
+  /** Output channel for user-visible SSE parse warnings. Optional. */
+  output?: vscode.OutputChannel;
 }
 
 /**
@@ -48,7 +50,7 @@ export async function* readSseStream(
   token: vscode.CancellationToken,
   options: StreamReaderOptions
 ): AsyncGenerator<StreamEvent> {
-  const { inactivityMs, fileLogger } = options;
+  const { inactivityMs, fileLogger, output } = options;
   const pendingToolCalls = new Map<number, { id: string; name: string; args: string }>();
   let contentChunks = 0;
 
@@ -93,7 +95,8 @@ export async function* readSseStream(
 
       // Server error mid-stream — surface immediately
       if (event.error) {
-        streamError = new Error(`vLLM server error: ${event.error}`);
+        // No backend-specific wording (formatError classifies this marker for ANY backend).
+        streamError = new Error(`Server error (mid-stream): ${event.error}`);
         streamDone = true;
         return;
       }
@@ -106,8 +109,12 @@ export async function* readSseStream(
       }
     },
     onError: (err) => {
-      // Parse errors from eventsource-parser (malformed SSE). Log but continue.
-      console.warn(`SSE parse error: ${err.message}`);
+      // Parse errors from eventsource-parser (malformed SSE). Log to the output
+      // channel (user-visible) and continue — never hide them in the extension
+      // host console only.
+      const msg = `SSE parse error: ${err instanceof Error ? err.message : String(err)}`;
+      output?.appendLine(`[WARN] ${msg}`);
+      console.warn(msg);
     },
   });
 

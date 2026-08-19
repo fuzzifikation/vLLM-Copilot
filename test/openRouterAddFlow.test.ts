@@ -79,6 +79,10 @@ function mockSaveSurfaces(chatUpdate = vi.fn().mockResolvedValue(undefined)) {
 
 /** Build a controllable createQuickPick stub. Drive it with _fireAccept/_fireHide. */
 function makeQuickPickStub(): any {
+  // `dispose()` fires `onDidHide` — real VS Code does this. A picker handler
+  // that disposes BEFORE resolving would let onDidHide's resolve(undefined)
+  // clobber the accepted label (the "clicked a model → cancelled" bug). The
+  // stub must model this so the dispose→hide race is caught in tests.
   const qp: any = {
     value: '',
     placeholder: undefined,
@@ -93,14 +97,14 @@ function makeQuickPickStub(): any {
     ignoreFocusOut: false,
     show: vi.fn(),
     hide: vi.fn(),
-    dispose: vi.fn(),
+    dispose: vi.fn(() => { if (qp._hide) { const cb = qp._hide; qp._hide = undefined; cb(); } }),
     onDidAccept: vi.fn((cb: () => unknown) => { qp._accept = cb; return { dispose: () => {} }; }),
     onDidHide: vi.fn((cb: () => unknown) => { qp._hide = cb; return { dispose: () => {} }; }),
     onDidChangeValue: vi.fn(() => ({ dispose: () => {} })),
     _accept: undefined,
     _hide: undefined,
     _fireAccept: () => qp._accept?.(),
-    _fireHide: () => qp._hide?.(),
+    _fireHide: () => { if (qp._hide) { const cb = qp._hide; qp._hide = undefined; cb(); } },
   };
   return qp;
 }
@@ -337,6 +341,42 @@ describe('runOpenRouterAddFlow', () => {
     // Update Auth does not save a new config.
     expect(resolveSpy).not.toHaveBeenCalled();
   });
+
+  it('logs (does not pop up) when the API-key step is cancelled', async () => {
+    const out = freshOutput();
+    stubOpenRouterFetch();
+    const errorSpy = vi.spyOn(vscode.window, 'showErrorMessage').mockResolvedValue(undefined);
+    inputBoxSpy.mockResolvedValueOnce(undefined); // key box cancelled
+
+    await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/api', []);
+
+    // Error details go to the OUTPUT CHANNEL, never a popup.
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(out.appendLine).toHaveBeenCalledWith(expect.stringContaining('[WARN] OpenRouter add cancelled — no API key entered.'));
+    expect(out.show).toHaveBeenCalledWith(true); // output channel revealed
+    // Nothing saved, no picker shown.
+    expect(resolveSpy).not.toHaveBeenCalled();
+    expect(createQuickPickSpy).not.toHaveBeenCalled();
+  });
+
+  it('logs (does not pop up) when the model picker is dismissed without a selection', async () => {
+    const out = freshOutput();
+    stubOpenRouterFetch();
+    const errorSpy = vi.spyOn(vscode.window, 'showErrorMessage').mockResolvedValue(undefined);
+    inputBoxSpy
+      .mockResolvedValueOnce('sk-or-v1-test') // API key
+      .mockResolvedValueOnce('');             // headers
+
+    const flow = runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/api', []);
+    await vi.waitFor(() => expect(qpStub._hide).toBeDefined());
+    qpStub._fireHide(); // picker dismissed
+    await flow;
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(out.appendLine).toHaveBeenCalledWith(expect.stringContaining('[WARN] OpenRouter add cancelled — no model selected.'));
+    expect(out.show).toHaveBeenCalledWith(true);
+    expect(resolveSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe('pickOpenRouterModel', () => {
@@ -394,6 +434,21 @@ describe('pickOpenRouterModel', () => {
     await vi.waitFor(() => expect(qpStub._hide).toBeDefined());
     qpStub._fireHide();
     await expect(p).resolves.toBeUndefined();
+  });
+
+  it('accepting a model wins over the dispose→hide race (no false cancel)', async () => {
+    // Regression for the real-VS-Code bug: onDidAccept disposes the picker,
+    // which fires onDidHide. If the handler resolved AFTER dispose, onDidHide's
+    // resolve(undefined) would clobber the accepted label — clicking a model
+    // would read as "cancelled". The stub's dispose fires onDidHide like VS Code.
+    const out = freshOutput();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(CATALOG));
+    const p = pickOpenRouterModel(out);
+    await vi.waitFor(() => expect(qpStub._accept).toBeDefined());
+    const nemotron = qpStub.items.find((i: any) => i.label === 'nvidia/nemotron-3.5-lightning:free');
+    qpStub.selectedItems = [nemotron];
+    qpStub._fireAccept(); // accept handler disposes → fires onDidHide internally
+    await expect(p).resolves.toBe('nvidia/nemotron-3.5-lightning:free');
   });
 
   it('falls back to a plain input box when the catalog is empty', async () => {
@@ -522,5 +577,69 @@ describe('registerAddServerModelCommand — OpenRouter routing', () => {
     expect(createQuickPickSpy).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalledWith(expect.stringContaining('openrouter.ai/api/v1/model'), expect.anything());
     expect(resolveSpy).not.toHaveBeenCalledWith(expect.objectContaining({ serverType: 'openrouter' }));
+  });
+
+  it('pre-selects a model pasted as a URL so Enter confirms it without manual selection', async () => {
+    // Regression test for the silent "no model selected" failure: real VS Code does
+    // NOT populate QuickPick.selectedItems from a programmatic .value (it fills
+    // activeItems), so a pasted model-page URL previously cancelled the flow when
+    // the user pressed Enter. The flow must pre-select the matching item itself.
+    const out = freshOutput();
+    stubOpenRouterFetch();
+    inputBoxSpy
+      .mockResolvedValueOnce('https://openrouter.ai/nvidia/nemotron-3.5-lightning:free') // server URL
+      .mockResolvedValueOnce('sk-or-v1-test')                                            // API key
+      .mockResolvedValueOnce('');                                                        // headers
+    infoSpy.mockResolvedValue('Save to Settings' as any);
+
+    registerAddServerModelCommand({} as any, provider, out);
+    const cmd = (vscode as any).commands._run('vllm-copilot.addServerModel');
+    await vi.waitFor(() => expect(qpStub._accept).toBeDefined());
+    // The pasted URL pre-filled AND pre-selected the model.
+    expect(qpStub.value).toBe('nvidia/nemotron-3.5-lightning:free');
+    expect(qpStub.selectedItems[0]?.label).toBe('nvidia/nemotron-3.5-lightning:free');
+    expect(qpStub.activeItems[0]?.label).toBe('nvidia/nemotron-3.5-lightning:free');
+    // NO manual selectedItems assignment — this is what the regression caught.
+    qpStub._fireAccept();
+    await cmd;
+
+    expect(resolveSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverType: 'openrouter',
+        serverUrl: 'https://openrouter.ai/api',
+        vllmModelId: 'nvidia/nemotron-3.5-lightning:free',
+      }),
+    );
+    expect(provider.clearCache).toHaveBeenCalled();
+  });
+
+  it('pre-fills the free-text input with the pasted model when the catalog is unreachable', async () => {
+    // A catalog failure must NOT strand the pasted URL: the free-text fallback
+    // still receives the derived model ref so the flow completes.
+    const out = freshOutput();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: any) => {
+      const u = String(url);
+      if (u.includes('/v1/models')) throw new TypeError('fetch failed'); // catalog unreachable
+      if (u.includes('/v1/model/nvidia/nemotron-3.5-lightning')) return jsonResponse({ data: NEMOTRON_METADATA });
+      return jsonResponse({}, 404);
+    });
+    inputBoxSpy
+      .mockResolvedValueOnce('https://openrouter.ai/nvidia/nemotron-3.5-lightning:free') // server URL
+      .mockResolvedValueOnce('sk-or-v1-test')                                            // API key
+      .mockResolvedValueOnce('')                                                        // headers
+      .mockResolvedValueOnce('nvidia/nemotron-3.5-lightning:free');                     // free-text model input (pre-filled)
+    infoSpy.mockResolvedValue('Save to Settings' as any);
+
+    registerAddServerModelCommand({} as any, provider, out);
+    await (vscode as any).commands._run('vllm-copilot.addServerModel');
+
+    // The free-text input box was pre-filled with the derived model ref.
+    // Match the EXACT title — the API-key/headers boxes are "… — API Key" etc.
+    const freeTextCall = inputBoxSpy.mock.calls.find((c: any) => c[0]?.title === 'Add OpenRouter Model');
+    expect(freeTextCall).toBeDefined();
+    expect(freeTextCall[0].value).toBe('nvidia/nemotron-3.5-lightning:free');
+    expect(resolveSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ serverType: 'openrouter', vllmModelId: 'nvidia/nemotron-3.5-lightning:free' }),
+    );
   });
 });

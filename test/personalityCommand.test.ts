@@ -60,7 +60,7 @@ describe('registerSetModelPersonalityCommand', () => {
   beforeEach(() => {
     (vscode as any).commands._registrations = [];
     provider = { clearCache: vi.fn() };
-    output = { appendLine: vi.fn() };
+    output = { appendLine: vi.fn(), show: vi.fn() };
     quickPickSpy = vi.spyOn(vscode.window, 'showQuickPick').mockResolvedValue(undefined);
     infoSpy = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(undefined);
     warningSpy = vi.spyOn(vscode.window, 'showWarningMessage').mockResolvedValue(undefined);
@@ -95,12 +95,13 @@ describe('registerSetModelPersonalityCommand', () => {
     expect(provider.clearCache).not.toHaveBeenCalled();
   });
 
-  it('warns and skips a server-less model instead of appending a duplicate', async () => {
+  it('logs and skips a server-less model instead of appending a duplicate', async () => {
     quickPickSpy.mockResolvedValueOnce({ label: 'm2', model: { id: 'm2' } } as any);
 
     await run();
 
-    expect(warningSpy).toHaveBeenCalledWith(expect.stringContaining('no serverUrl configured'));
+    expect(warningSpy).not.toHaveBeenCalled();
+    expect(output.appendLine).toHaveBeenCalledWith(expect.stringContaining('[WARN] Personality not applicable'));
     expect(replaceSpy).not.toHaveBeenCalled();
   });
 
@@ -152,14 +153,17 @@ describe('registerSetModelPersonalityCommand', () => {
     expect(infoSpy).toHaveBeenCalledWith('Applied "Spartan" personality to "m1".');
   });
 
-  it('surfaces a persistence failure and does not clear the cache', async () => {
+  it('surfaces a persistence failure via popup + output channel and does not clear the cache', async () => {
     quickPickSpy.mockResolvedValueOnce({ label: 'm1', model: MODEL } as any);
     quickPickSpy.mockResolvedValueOnce({ label: 'Spartan', sourcePath: '/p/spartan.json' } as any);
     replaceSpy.mockRejectedValueOnce(new Error('write failed'));
 
     await run();
 
+    // Popup so the user KNOWS; the output channel carries the full detail.
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to apply personality'));
+    expect(output.appendLine).toHaveBeenCalledWith(expect.stringContaining('[ERROR] Failed to apply personality'));
+    expect(output.show).toHaveBeenCalledWith(true);
     expect(provider.clearCache).not.toHaveBeenCalled();
   });
 

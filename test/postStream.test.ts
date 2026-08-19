@@ -197,4 +197,28 @@ describe('handleResponseError', () => {
     expect(progress.reports).toHaveLength(1);
     expect(String((progress.reports[0] as any).value)).toContain('⚠️');
   });
+
+  it('surfaces a server JSON error to the chat with the code and message (no stack)', () => {
+    const output = makeOutput();
+    const progress = makeProgress();
+    const err = new Error(
+      'HTTP 402: Payment Required — {"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 50000 tokens, but can only afford 6666."}}'
+    );
+    handleResponseError(
+      err,
+      makeModel('x-ai/grok-4.6 on openrouter.ai'),
+      outcome(),
+      makeToken(false),
+      progress,
+      output,
+    );
+    expect(lines(output)).toContain('[ERROR] Chat response failed for x-ai/grok-4.6 on openrouter.ai');
+    expect(progress.reports).toHaveLength(1);
+    const text = String((progress.reports[0] as any).value);
+    expect(text).toContain('Server error [402]');
+    expect(text).toContain('This request requires more credits');
+    // The chat part must never carry the stack trace or backend-specific wording.
+    expect(text).not.toContain('at fetchWithRetry');
+    expect(text).not.toContain('vLLM');
+  });
 });

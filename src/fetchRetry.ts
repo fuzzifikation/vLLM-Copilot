@@ -119,16 +119,24 @@ export async function fetchWithRetry(
 
     // Handle non-OK responses
     if (!response.ok) {
+      // Read the body ONCE and reuse it for BOTH the retry-warning text and the
+      // final thrown error. The 5xx path previously cancelled the body and threw
+      // only "HTTP <status> from server" — losing statusText and any error
+      // message, so a 502 surfaced as a bare code with no explanation while a
+      // 530 (non-5xx path) showed "Bad Gateway"-style text. Both must carry the
+      // server's real status line.
+      const text = await response.text().catch(() => '');
+      const isRetry = attempt > 0;
+      const statusLine = `HTTP ${response.status}: ${response.statusText}${text ? ' — ' + text.substring(0, 2000) : ''}`;
       if (response.status >= 500 && response.status < 600) {
-        // Retry once on 5xx transient server errors. Drain the failed body first
-        // so the underlying socket can be reused (keep-alive) instead of leaking.
-        await response.body?.cancel().catch(() => {});
-        lastError = `HTTP ${response.status} from server`;
+        // Retry once on 5xx transient server errors.
+        lastError = statusLine;
         continue;
       } else {
-        const text = await response.text().catch(() => '');
-        const isRetry = attempt > 0;
-        throw new Error(`HTTP ${response.status}: ${response.statusText}${text ? ' — ' + text.substring(0, 200) : ''}${isRetry ? ' (after retry)' : ''}`);
+        // Cap the body so a pathological server response can't balloon the error
+        // string, but keep enough to carry a real error.message — OpenRouter's
+        // credit / max_tokens notices run ~200 chars and were being cut off.
+        throw new Error(`${statusLine}${isRetry ? ' (after retry)' : ''}`);
       }
     }
 

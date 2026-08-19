@@ -38,13 +38,17 @@ describe('promptForServerAuth', () => {
     expect(inputBoxSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('returns undefined when the user cancels at the headers step', async () => {
+  it('returns key-derived auth when the optional headers box is dismissed (no flow abort)', async () => {
+    // The headers box is optional — dismissing it (Escape/focus loss) must mean
+    // "no custom headers", NOT "cancel the whole Add flow". A silent abort here
+    // was what made "picked a model" look like nothing happened.
     inputBoxSpy.mockResolvedValueOnce('abc123').mockResolvedValueOnce(undefined);
 
     const result = await promptForServerAuth(opts);
 
-    expect(result).toBeUndefined();
+    expect(result).toEqual({ Authorization: 'Bearer abc123' });
     expect(inputBoxSpy).toHaveBeenCalledTimes(2);
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it('combines the API key into Bearer auth and merges custom headers on top', async () => {
@@ -69,14 +73,15 @@ describe('promptForServerAuth', () => {
     expect(result).toEqual({});
   });
 
-  it('shows an error and returns undefined for invalid headers input', async () => {
+  it('returns undefined without a popup for invalid headers input (unreachable via UI)', async () => {
     inputBoxSpy.mockResolvedValueOnce('abc').mockResolvedValueOnce('not json @@@');
 
     const result = await promptForServerAuth(opts);
 
+    // The headers box's validateInput blocks invalid input from being submitted,
+    // so this guard is defense-in-depth only — it must not popup.
     expect(result).toBeUndefined();
-    expect(errorSpy).toHaveBeenCalledTimes(1);
-    expect(errorSpy.mock.calls[0][0]).toContain('Headers');
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it('requires a non-empty key when requireApiKey is set', async () => {

@@ -379,7 +379,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
 
       for (const [url, headers] of serverMap) {
         const modelIds = serverModelIds.get(url);
-        const engine = getMetricsEngine(url, headers, this.serverTypes.get(url) ?? 'vllm', modelIds);
+        const engine = getMetricsEngine(url, headers, this.serverTypes.get(url) ?? 'vllm', modelIds, this.outputChannel);
         const sub = engine.subscribe((aggregated) => {
           // Update cached metrics and schedule a single re-render
           const entry = this.subscriptions.find(s => s.serverUrl === url);

@@ -385,9 +385,13 @@ export const window: {
   createQuickPick: <T extends QuickPickItem>() => {
     // Minimal QuickPick stub. `show()` resolves as cancelled (fires hide) so a
     // test that forgets to drive the picker still completes instead of hanging.
+    // CRITICAL: `dispose()` fires `onDidHide` — real VS Code does this, and a
+    // handler that disposes before resolving would let onDidHide's resolve
+    // clobber the accept. Tests must model this so the dispose→hide race is caught.
     // Tests that need selection spy on this and override show/onDidAccept.
     let accept: (() => void) | undefined;
     let hide: (() => void) | undefined;
+    const fireHide = () => { if (hide) { const h = hide; hide = undefined; h(); } };
     const qp = {
       value: '',
       placeholder: undefined,
@@ -400,14 +404,14 @@ export const window: {
       matchOnDescription: false,
       matchOnDetail: false,
       ignoreFocusOut: false,
-      show: () => { queueMicrotask(() => hide?.()); },
+      show: () => { queueMicrotask(() => fireHide()); },
       hide: () => {},
-      dispose: () => {},
+      dispose: () => { fireHide(); },
       onDidAccept: (fn: () => void) => { accept = fn; return { dispose: () => {} }; },
       onDidHide: (fn: () => void) => { hide = fn; return { dispose: () => {} }; },
       onDidChangeValue: () => ({ dispose: () => {} }),
       _fireAccept: () => accept?.(),
-      _fireHide: () => hide?.(),
+      _fireHide: () => fireHide(),
     } as QuickPick<T> & { _fireAccept: () => void; _fireHide: () => void };
     return qp;
   },

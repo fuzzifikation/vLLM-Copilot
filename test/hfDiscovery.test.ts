@@ -246,11 +246,55 @@ describe('resolveModelConfigForAdd', () => {
     expect(result!.modelConfig.family).toBe('qwen');
     expect(fetchFn).toHaveBeenCalled();
   });
+
+  it('routes OpenRouter models to exact-model discovery — no HF, no presets, no fabricated cap', async () => {
+    seedNoPresets();
+    const fetchFn = vi.fn(async (url: string) => {
+      if (String(url).includes('/v1/model/x-ai/grok-4.6')) {
+        return jsonResponse({
+          data: {
+            id: 'x-ai/grok-4.6',
+            name: 'Grok 4.6',
+            context_length: 500000,
+            top_provider: { context_length: 500000 },
+            supported_parameters: ['tools', 'reasoning', 'reasoning_effort'],
+            reasoning: {
+              mandatory: true,
+              supported_efforts: ['xhigh', 'high', 'medium', 'low'],
+              default_effort: 'high',
+            },
+          },
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal('fetch', fetchFn);
+    const infoSpy = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(undefined as any);
+
+    const result = await resolveModelConfigForAdd(
+      extContext, 'x-ai/grok-4.6', 'https://openrouter.ai/api', undefined,
+      undefined, undefined, 'openrouter',
+    );
+
+    expect(result).not.toBeNull();
+    // The exact-model endpoint is the ONLY call — HF and the local-server
+    // /v1/models catalog are never touched, and no preset dialog is shown.
+    expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/v1/model/x-ai/grok-4.6'))).toBe(true);
+    expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/api/models/'))).toBe(false);
+    expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/v1/models'))).toBe(false);
+    expect(infoSpy).not.toHaveBeenCalled();
+    // Thinking modes came from the reasoning object, not fabricated.
+    expect(result!.modelConfig.modelModes?.['Think (High)']).toEqual({ reasoning: { enabled: true, effort: 'high' } });
+    // Authoritative ceiling, not the ctx × 0.1 factor guess.
+    expect(result!.suggestedMaxOutputTokens).toBeUndefined();
+    expect(result!.modelConfig.maxOutputTokens).toBe(500000);
+    expect(result!.summary.join('\n')).not.toContain('HuggingFace');
+  });
 });
 
 describe('resolveModelConfigForAddSafely', () => {
   const extContext = { extensionUri: vscode.Uri.file('/ext') } as any;
-  const output = { appendLine: vi.fn() } as any;
+  const output = { appendLine: vi.fn(), show: vi.fn() } as any;
 
   const jsonResponse = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -276,14 +320,14 @@ describe('resolveModelConfigForAddSafely', () => {
     );
 
     // The strict policy refuses to serve — the wrapper converts the throw into a
-    // logged, user-facing error and returns null (nothing saved).
+    // logged, user-facing error AND a popup (so the user knows it failed), with
+    // the full detail in the output channel. Returns null (nothing saved).
     expect(result).toBeNull();
     expect(output.appendLine).toHaveBeenCalledWith(
       expect.stringContaining('[ERROR] Auto-configure failed for "unknown-model"'),
     );
-    // The actionable detail (names serverType as the fix) reaches the user.
-    expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining('serverType'),
-    );
+    // Popup so the user KNOWS; the output channel carries the full detail.
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('serverType'));
+    expect(output.show).toHaveBeenCalledWith(true);
   });
 });

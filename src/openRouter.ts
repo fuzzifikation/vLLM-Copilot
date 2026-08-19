@@ -24,6 +24,7 @@
  */
 
 import { buildEndpoint } from './config.js';
+import type { ModelConfig } from './config.js';
 import { buildRequestHeaders, fetchWithRetry } from './fetchRetry.js';
 import type { RuntimeModelLimits } from './types.js';
 
@@ -456,6 +457,59 @@ export async function resolveOpenRouterRuntimeLimits(
 ): Promise<RuntimeModelLimits> {
   const info = await fetchOpenRouterModel(requestedId, requestHeaders);
   return info.runtimeLimits;
+}
+
+/**
+ * Auto-configure an OpenRouter model from its exact-model metadata — the ONLY
+ * discovery source for this backend. HF chat-template sniffing cannot express
+ * OpenRouter's `reasoning` object (effort ladder, mandatory, default_enabled)
+ * or `supported_parameters`, so routing OpenRouter through the HuggingFace
+ * discovery would fabricate a "detected from HuggingFace" summary and never set
+ * thinking modes. Presets are keyed to HF repos and skipped here by design
+ * (matches the plan's "no OpenRouter presets" decision).
+ *
+ * Mirrors `runOpenRouterAddFlow`'s config assembly so Add and Auto-Configure
+ * cannot drift: same field mapping, same authoritative `maxOutputTokens`.
+ *
+ * @throws when the exact-model lookup fails (network/404) or the model reports
+ *   no positive context bound — the strict no-context-no-model policy.
+ */
+export async function autoConfigureOpenRouterModel(
+  modelId: string,
+  requestHeaders: Record<string, string> = {},
+): Promise<{ modelConfig: ModelConfig; summary: string[] }> {
+  const info = await fetchOpenRouterModel(modelId, requestHeaders);
+  const modelConfig: ModelConfig = {
+    id: modelId,
+    vllmModelId: info.wireModelId,
+    displayName: info.displayName ?? info.wireModelId,
+    capabilities: info.capabilities,
+    ...(info.modelModes ? { modelModes: info.modelModes } : {}),
+    ...(info.defaultMode ? { defaultMode: info.defaultMode } : {}),
+    ...(info.defaultParams ? { defaultParams: info.defaultParams } : {}),
+    ...(info.cost ? { cost: info.cost } : {}),
+    ...(info.runtimeLimits.maxOutputTokens !== undefined ? { maxOutputTokens: info.runtimeLimits.maxOutputTokens } : {}),
+  };
+
+  const summary: string[] = [];
+  summary.push(`Context window (OpenRouter): ${info.runtimeLimits.contextWindow.toLocaleString()} tokens`);
+  if (info.runtimeLimits.maxOutputTokens !== undefined) {
+    summary.push(`Max output: ${info.runtimeLimits.maxOutputTokens.toLocaleString()} tokens`);
+  }
+  summary.push(`Tool calling: ${info.capabilities.toolCalling ? 'yes' : 'no'}`);
+  summary.push(`Image input: ${info.capabilities.imageInput ? 'yes' : 'no'}`);
+  if (info.modelModes && Object.keys(info.modelModes).length > 0) {
+    summary.push(`Modes: ${Object.keys(info.modelModes).join(', ')}`);
+    if (info.defaultMode) summary.push(`Default mode: ${info.defaultMode}`);
+  }
+  if (info.cost) {
+    const fmt = (v?: number) => (v === undefined ? '—' : `$${v.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
+    summary.push(`Estimated rates: in ${fmt(info.cost.input)} · out ${fmt(info.cost.output)} per 1M tokens`);
+  }
+  if (info.expirationDate) summary.push(`Expires: ${info.expirationDate}`);
+  summary.push('');
+  summary.push('Note: Configured from OpenRouter exact-model metadata (authoritative for this backend).');
+  return { modelConfig, summary };
 }
 
 /**
