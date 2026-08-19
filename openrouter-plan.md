@@ -1,6 +1,6 @@
 # OpenRouter First-Class Backend Plan
 
-**Status:** Onboarding + dashboard cleanup shipped (v1.32.0 + Unreleased). Dashboard data research done → [docs/openrouter-api-research.md](./docs/openrouter-api-research.md). **Dashboard approach decided: Option A — model collection** (see below). **Phase 1 (cost data plane) LANDED in Unreleased.** Next: Phase 2 dashboard restructure, then Phase 3 cost ledger.
+**Status:** Onboarding + dashboard cleanup shipped (v1.32.0 + Unreleased). Dashboard data research done → [docs/openrouter-api-research.md](./docs/openrouter-api-research.md). **Dashboard approach decided: Option A — model collection** (see below). **Phase 1 (cost data plane) and Phase 2 (model-collection dashboard) LANDED in Unreleased.** Next: Phase 3 cost ledger (optional).
 **Date:** 2026-08-16
 
 ## Goal
@@ -188,10 +188,8 @@ Generic local-server detection remains unchanged. No OpenRouter presets or inter
 
 ### Phases
 
-1. **Cost data plane** (the plan's acceptance criterion, zero extra HTTP, unblocks everything):
-   `WireUsage.cost`/`costDetails`/`usedByok` → capture in `consumeStream` → usage-store v2→v3 migration → Last Request + cost tracker prefer actual cost.
-2. **Model-collection dashboard restructure** (the core of Option A):
-   relay node (account health) + per-model detail nodes. Tree data model gains per-model nodes under a relay server (serverType-aware child strategy).
+1. **Cost data plane** — ✔ **LANDED (Unreleased).** `WireUsage.cost`/`costDetails`/`usedByok` → capture in `consumeStream` → usage-store v2→v3 migration → Last Request + cost tracker prefer actual cost.
+2. **Model-collection dashboard restructure** — ✔ **LANDED (Unreleased).** OpenRouter relay renders as a model collection: **Account** node (credits/limits/free-tier from `GET /api/v1/key`) + **Model Collection** node with one child per configured model (per-model context window, output ceiling, capabilities, reasoning modes, estimated/actual cost, today/overall tokens). The engine now resolves **per-model** context windows (relay models differ) and caches them; the old single-window resolve became a per-model map. **Known limitation:** account health reflects the server's credential (first configured model's headers) — per plan's "OR group account rows beneath separate connection/key nodes", multi-key grouping is a documented follow-up if a user actually runs mixed keys on one relay.
 3. **Authoritative cost ledger** (optional): `GET /api/v1/activity` → per-model daily cost/tokens.
 
 **Deferred:** generation endpoint / `X-Generation-Id` threading (richest but most plumbing) — follow-up "OpenRouter request diagnostics" feature.

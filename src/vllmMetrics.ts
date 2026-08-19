@@ -18,6 +18,7 @@ import * as vscode from 'vscode';
 import { buildEndpoint, normalizeServerUrl, type ServerType } from './config.js';
 import { buildRequestHeaders } from './fetchRetry.js';
 import { resolveRuntimeLimits } from './vllmClient.js';
+import { fetchOpenRouterAccount, type OpenRouterAccount } from './openRouter.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -63,6 +64,10 @@ export interface ServerMetrics {
   preemptions: number | null;
   evictions: number | null;
   error?: string;
+  /** Per-model context window (non-vLLM only, resolved lazily + cached). modelId → window. */
+  contextByModel?: Record<string, number>;
+  /** OpenRouter account/key health from `GET /api/v1/key` (relay node). */
+  account?: OpenRouterAccount;
 }
 
 // Raw parsed data from /metrics — richer than ServerMetrics
@@ -322,13 +327,15 @@ export class ServerMetricsEngine {
   private _lastRaw: ServerRawData | null = null;
   private _disposed = false;
   /**
-   * Cached per-backend context window (non-vLLM only). `undefined` = not yet
-   * attempted (or a transient failure awaiting retry); `null` = permanently
-   * unresolvable (validation failure — never retry); number = resolved value.
+   * Cached per-backend context window, per model (non-vLLM only).
+   * modelId → `undefined` = not yet attempted (or transient failure awaiting
+   * retry); `null` = permanently unresolvable (validation failure — never
+   * retry); number = resolved value. OpenRouter is a relay: each configured
+   * model has its OWN context window, so this is a map, not a scalar.
    */
-  private resolvedContextWindow: number | null | undefined;
-  /** Earliest ms timestamp at which a transient context-resolve failure may retry. */
-  private contextRetryAt = 0;
+  private resolvedContextByModel = new Map<string, number | null | undefined>();
+  /** Earliest ms timestamp at which a transient context-resolve failure may retry, per model. */
+  private contextRetryAtByModel = new Map<string, number>();
   /** Array of callbacks so subscribers don't need to coordinate. */
   private callbacks: Array<(aggregated: ServerMetrics, raw: ServerRawData) => void> = [];
 
@@ -338,6 +345,9 @@ export class ServerMetricsEngine {
     private serverType: ServerType = 'vllm',
     private modelId?: string,
   ) {}
+
+  /** Full set of configured wire model ids for this server (relay collection). */
+  private modelIds: string[] = [];
 
   /** Latest aggregated metrics (synchronous, may be null before first poll). */
   getCachedAggregated(): ServerMetrics | null { return this._lastAggregated; }
@@ -375,6 +385,15 @@ export class ServerMetricsEngine {
     this.modelId = modelId;
   }
 
+  /**
+   * Update the full set of wire model ids for this server (relay model
+   * collection). Each configured model's context window resolves independently
+   * (OpenRouter models can have different windows). Falls back to `modelId`.
+   */
+  setModelIds(modelIds: string[]): void {
+    this.modelIds = [...modelIds];
+  }
+
   dispose(): void {
     this._disposed = true;
     this.subscriberCount = 0;
@@ -409,31 +428,50 @@ export class ServerMetricsEngine {
 
       if (this._disposed) return;
 
-      // Resolve the per-backend context window, only for non-vLLM backends and
-      // only while the server is online. A loaded model's context window is
+      // Resolve the per-backend context window(s), only for non-vLLM backends
+      // and only while the server is online. A loaded model's context window is
       // static, so a SUCCESSFUL resolve is cached for the engine's lifetime —
       // never re-resolve it every poll (that would hammer OpenRouter's exact-model
       // API or llama.cpp /props / Ollama /api/ps forever). Failures are classified:
       //   - validation failure (model reports no window) → permanent, never retry;
       //   - transient failure (network, 429/5xx, timeout) → retry after a bounded
       //     backoff so a one-off blip doesn't disable context for the session.
-      if (this.serverType !== 'vllm' && aggregated.maxModelLen === null && this.resolvedContextWindow === undefined) {
-        if (aggregated.online && this.modelId && Date.now() >= this.contextRetryAt) {
+      // OpenRouter is a relay: every configured model resolves its own window
+      // (a model collection can span models with different context lengths).
+      // `maxModelLen` stays the FIRST configured model's window — the server-level
+      // tooltip/row reads it; per-model windows ride in `contextByModel`.
+      if (this.serverType !== 'vllm') {
+        const modelIds = this.modelIds.length > 0 ? this.modelIds : (this.modelId ? [this.modelId] : []);
+        for (const modelId of modelIds) {
+          if (aggregated.maxModelLen === null && modelId === modelIds[0]) {
+            const cached = this.resolvedContextByModel.get(modelId);
+            if (cached !== undefined && cached !== null) {
+              aggregated.maxModelLen = cached;
+            }
+          }
+          const cached = this.resolvedContextByModel.get(modelId);
+          if (cached !== undefined) {
+            if (cached !== null) {
+              aggregated.contextByModel = { ...aggregated.contextByModel, [modelId]: cached };
+              if (aggregated.maxModelLen === null) aggregated.maxModelLen = cached;
+            }
+            continue;
+          }
+          const retryAt = this.contextRetryAtByModel.get(modelId) ?? 0;
+          if (!aggregated.online || Date.now() < retryAt) continue;
           try {
-            this.resolvedContextWindow = (await resolveRuntimeLimits(this.serverType, this.serverUrl, this.requestHeaders, this.modelId)).contextWindow;
-            aggregated.maxModelLen = this.resolvedContextWindow;
+            const resolved = (await resolveRuntimeLimits(this.serverType, this.serverUrl, this.requestHeaders, modelId)).contextWindow;
+            this.resolvedContextByModel.set(modelId, resolved);
+            aggregated.contextByModel = { ...aggregated.contextByModel, [modelId]: resolved };
+            if (aggregated.maxModelLen === null) aggregated.maxModelLen = resolved;
           } catch (err) {
             if (isPermanentContextError(err)) {
-              this.resolvedContextWindow = null; // unresolvable — stop retrying
+              this.resolvedContextByModel.set(modelId, null); // unresolvable — stop retrying
             } else {
-              this.contextRetryAt = Date.now() + CONTEXT_RESOLVE_RETRY_MS; // transient — retry later
+              this.contextRetryAtByModel.set(modelId, Date.now() + CONTEXT_RESOLVE_RETRY_MS); // transient — retry later
             }
           }
         }
-        // Offline, no modelId, or inside the transient retry backoff → leave
-        // undefined; a later poll retries when the backoff elapses.
-      } else if (this.resolvedContextWindow !== undefined && this.resolvedContextWindow !== null) {
-        aggregated.maxModelLen = this.resolvedContextWindow;
       }
 
       this._lastAggregated = aggregated;
@@ -494,6 +532,7 @@ export function getMetricsEngine(
   requestHeaders?: Record<string, string>,
   serverType: ServerType = 'vllm',
   modelId?: string,
+  modelIds?: string[],
 ): ServerMetricsEngine {
   // Key engines by the canonical server URL (scheme added, trailing slash and
   // trailing /v1 stripped) so hand-edited variants of the same server — e.g.
@@ -516,6 +555,9 @@ export function getMetricsEngine(
     // engine was first created before the type was known.
     engine.setServerType(serverType);
     engine.setModelId(modelId);
+  }
+  if (modelIds && modelIds.length > 0) {
+    engine.setModelIds(modelIds);
   }
   return engine;
 }
@@ -621,6 +663,16 @@ async function fetchAllEndpoints(
   // ── Health body (for deep-dive) ──
   const healthBody = online && healthRes.ok ? await healthRes.text() : undefined;
 
+  // ── OpenRouter relay: account/key health ──
+  // `GET /api/v1/key` is authenticated and account-scoped. The relay is a model
+  // collection, so this rides the same fetch cycle — no separate poller. Fails
+  // silently (bad/missing key, transient) → `account` stays undefined and the
+  // dashboard hides the account rows rather than fabricating credits.
+  let account: OpenRouterAccount | undefined;
+  if (serverType === 'openrouter') {
+    account = await fetchOpenRouterAccount(requestHeaders);
+  }
+
   // ── Build ServerMetrics (aggregated, for dashboard) ──
   const parser = new MetricsParser();
   parser.parse(metricsText);
@@ -628,7 +680,7 @@ async function fetchAllEndpoints(
   const allModels = [...new Set([...modelNames, ...aggregated.models])];
 
   const serverMetrics: ServerMetrics = online
-    ? { online: true, version, ...aggregated, models: allModels, maxModelLen }
+    ? { online: true, version, ...aggregated, models: allModels, maxModelLen, account }
     : emptyMetrics(errorStr ?? 'Unknown error');
 
   // ── Build ServerRawData (raw, for deep-dive) ──

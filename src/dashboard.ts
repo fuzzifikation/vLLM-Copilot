@@ -6,9 +6,10 @@
 import * as vscode from 'vscode';
 import { getConfig, resolveServerConfig, normalizeServerUrl, findModelConfig, type ModelConfig, type ServerType } from './config.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
+import type { OpenRouterAccount } from './openRouter.js';
 import {
   getLastRequest, getServerUsage, getServerCost, hasServerUsage, onUsageStoreDidChange,
-  computeCost, findModelCost, formatCostFine, formatCostSummary, fmtCount, emptyCounts,
+  computeCost, findModelCost, formatCost, formatCostFine, formatCostSummary, fmtCount, emptyCounts,
   getModelStartedAt,
   type UsageCounts,
 } from './usageStore.js';
@@ -77,6 +78,53 @@ class ModelTreeItem extends vscode.TreeItem {
     super(modelName, vscode.TreeItemCollapsibleState.None);
     this.iconPath = new vscode.ThemeIcon('symbol-class');
     this.tooltip = modelName;
+  }
+}
+
+/** OpenRouter relay: collapsible "Account" node — credits/limits from /api/v1/key. */
+class OpenRouterAccountTreeItem extends vscode.TreeItem {
+  constructor(
+    public readonly serverUrl: string,
+    public readonly account: OpenRouterAccount,
+  ) {
+    super('Account', vscode.TreeItemCollapsibleState.Collapsed);
+    this.iconPath = new vscode.ThemeIcon('account');
+    this.id = `openRouterAccount:${serverUrl}`;
+    const remaining = account.limit_remaining;
+    this.description = remaining != null
+      ? `${formatCost(remaining, 'USD')} remaining`
+      : (account.is_free_tier ? 'free tier' : undefined);
+    this.tooltip = new vscode.MarkdownString('OpenRouter account/key health. Reflects the credential this server was configured with.');
+  }
+}
+
+/** OpenRouter relay: collapsible "Model Collection" — one node per configured model. */
+class ModelCollectionTreeItem extends vscode.TreeItem {
+  constructor(
+    public readonly serverUrl: string,
+    public readonly modelIds: string[],
+  ) {
+    super('Model Collection', vscode.TreeItemCollapsibleState.Collapsed);
+    this.description = String(modelIds.length);
+    this.iconPath = new vscode.ThemeIcon('library');
+    this.id = `openRouterCollection:${serverUrl}`;
+    this.tooltip = new vscode.MarkdownString('Configured OpenRouter models. Each node shows that model\'s own context, capabilities, pricing, and usage — a relay has no single server context.');
+  }
+}
+
+/** OpenRouter relay: one configured model with its own model-level rows. */
+class OpenRouterModelTreeItem extends vscode.TreeItem {
+  constructor(
+    public readonly serverUrl: string,
+    public readonly modelId: string,
+    modelLabel: string,
+    contextWindow?: number,
+  ) {
+    super(modelLabel, vscode.TreeItemCollapsibleState.Collapsed);
+    if (contextWindow !== undefined) this.description = fmtCount(contextWindow);
+    this.iconPath = new vscode.ThemeIcon('symbol-class');
+    this.id = `openRouterModel:${serverUrl}:${modelId}`;
+    this.tooltip = new vscode.MarkdownString(`${modelLabel} — click for model-level detail (context, capabilities, pricing, usage).`);
   }
 }
 
@@ -238,8 +286,8 @@ function usageLine(counts: UsageCounts, since?: number): string {
 
 // ─── Tree Data Provider ──────────────────────────────────────────────
 
-export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem> {
-  private _onDidChangeTreeData = new vscode.EventEmitter<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem | undefined | void>();
+export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem | OpenRouterAccountTreeItem | ModelCollectionTreeItem | OpenRouterModelTreeItem> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem | OpenRouterAccountTreeItem | ModelCollectionTreeItem | OpenRouterModelTreeItem | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   /** Active engine subscriptions: serverUrl → { metrics, dispose } */
@@ -322,9 +370,12 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       }
       // Group models by server URL. Track the first configured model's wire id
       // per server — the metrics engine needs it to resolve the per-backend
-      // context window (non-vLLM only).
+      // context window (non-vLLM only). Also collect ALL wire ids so OpenRouter
+      // relay servers can resolve a per-model context collection (models at a
+      // relay can have different context lengths).
       const serverMap = new Map<string, Record<string, string>>();
       const serverModelId = new Map<string, string>();
+      const serverModelIds = new Map<string, string[]>();
       this.serverTypes.clear();
       for (const model of config.models) {
         if (!model.serverUrl) continue;
@@ -333,8 +384,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
           serverMap.set(model.serverUrl, serverConfig.requestHeaders);
         }
         const wireId = model.vllmModelId ?? model.id;
-        if (wireId && !serverModelId.has(model.serverUrl)) {
-          serverModelId.set(model.serverUrl, wireId);
+        if (wireId) {
+          if (!serverModelId.has(model.serverUrl)) {
+            serverModelId.set(model.serverUrl, wireId);
+          }
+          const ids = serverModelIds.get(model.serverUrl) ?? [];
+          ids.push(wireId);
+          serverModelIds.set(model.serverUrl, ids);
         }
         if (!this.serverTypes.has(model.serverUrl) && model.serverType) {
           this.serverTypes.set(model.serverUrl, model.serverType);
@@ -343,7 +399,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
       for (const [url, headers] of serverMap) {
         const modelId = serverModelId.get(url);
-        const engine = getMetricsEngine(url, headers, this.serverTypes.get(url) ?? 'vllm', modelId);
+        const modelIds = serverModelIds.get(url);
+        const engine = getMetricsEngine(url, headers, this.serverTypes.get(url) ?? 'vllm', modelId, modelIds);
         const sub = engine.subscribe((aggregated) => {
           // Update cached metrics and schedule a single re-render
           const entry = this.subscriptions.find(s => s.serverUrl === url);
@@ -374,11 +431,11 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
     return new PollIntervalTreeItem(label);
   }
 
-  getTreeItem(element: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem): vscode.TreeItem {
+  getTreeItem(element: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem | OpenRouterAccountTreeItem | ModelCollectionTreeItem | OpenRouterModelTreeItem): vscode.TreeItem {
     return element;
   }
 
-  async getChildren(element?: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem): Promise<(ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem)[]> {
+  async getChildren(element?: ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem | OpenRouterAccountTreeItem | ModelCollectionTreeItem | OpenRouterModelTreeItem): Promise<(ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem | LastRequestTreeItem | RequestMetricTreeItem | FlagHintTreeItem | TokenUsageTreeItem | ModelUsageTreeItem | OpenRouterAccountTreeItem | ModelCollectionTreeItem | OpenRouterModelTreeItem)[]> {
     if (!element) {
       const items: (ServerTreeItem | ModelsTreeItem | ModelTreeItem | MetricTreeItem | PollIntervalTreeItem | AddServerTreeItem | TestRefreshTreeItem)[] = [this.getPollIntervalTreeItem()];
       const servers = this.subscriptions.map(sub =>
@@ -393,6 +450,18 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
 
     if (element instanceof ModelsTreeItem) {
       return element.modelNames.map(name => new ModelTreeItem(name));
+    }
+
+    if (element instanceof OpenRouterAccountTreeItem) {
+      return this.getOpenRouterAccountChildren(element);
+    }
+
+    if (element instanceof ModelCollectionTreeItem) {
+      return this.getModelCollectionChildren(element);
+    }
+
+    if (element instanceof OpenRouterModelTreeItem) {
+      return this.getOpenRouterModelChildren(element);
     }
 
     if (element instanceof LastRequestTreeItem) {
@@ -422,24 +491,38 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       // "v" (e.g. "v0.6.0"), so prepending another "v" would render "vv0.6.0".
       items.push(new MetricTreeItem('vLLM Version', m.version, 'server'));
     }
-    // OpenRouter relay: /v1/models is the full catalog (hundreds of unconfigured
-    // models), not "the server's models" — and the resolved context window is
-    // one arbitrary configured model's, not the server's. Both are wrong scope,
-    // so suppress them until the model-collection restructure (Phase 2) lands.
+    // OpenRouter relay: render as a MODEL COLLECTION (Option A). /v1/models is
+    // the whole catalog (not "the server's models") and each configured model
+    // has its own context window — so instead of the vLLM "Model IDs" node and
+    // a single server Context Window row, show account health (from /api/v1/key)
+    // and one collapsible node per configured model with model-level rows.
     const isOpenRouterRelay = serverType === 'openrouter';
-    if (!isOpenRouterRelay && m.models.length > 0) {
-      items.push(new ModelsTreeItem(m.models));
-    }
-    // Context window — only when resolved. vLLM from /v1/models max_model_len;
-    // non-vLLM from the per-backend resolver (LM Studio context_length, llama.cpp
-    // n_ctx, Ollama /api/ps, OpenRouter exact-model). No data → no row.
-    if (!isOpenRouterRelay && m.maxModelLen != null) {
-      items.push(new MetricTreeItem(
-        'Context Window',
-        fmtCount(m.maxModelLen),
-        'layers',
-        'Maximum context length (input + output combined) for this model.',
-      ));
+    if (isOpenRouterRelay) {
+      if (m.account) {
+        items.push(new OpenRouterAccountTreeItem(serverUrl ?? '', m.account));
+      }
+      const configuredModels = this.readConfiguredModels()
+        .filter(model => normalizeServerUrl(model.serverUrl ?? '') === normalizeServerUrl(serverUrl ?? ''))
+        .filter(model => (model.serverType ?? 'vllm') === 'openrouter');
+      const wireIds = [...new Set(configuredModels.map(model => model.vllmModelId ?? model.id).filter((id): id is string => !!id))];
+      if (wireIds.length > 0) {
+        items.push(new ModelCollectionTreeItem(serverUrl ?? '', wireIds));
+      }
+    } else {
+      if (m.models.length > 0) {
+        items.push(new ModelsTreeItem(m.models));
+      }
+      // Context window — only when resolved. vLLM from /v1/models max_model_len;
+      // non-vLLM from the per-backend resolver (LM Studio context_length, llama.cpp
+      // n_ctx, Ollama /api/ps, OpenRouter exact-model). No data → no row.
+      if (m.maxModelLen != null) {
+        items.push(new MetricTreeItem(
+          'Context Window',
+          fmtCount(m.maxModelLen),
+          'layers',
+          'Maximum context length (input + output combined) for this model.',
+        ));
+      }
     }
 
     // Server stats — each row only when the backend reports the value. vLLM-only
@@ -581,6 +664,135 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<ServerTree
       if (hasServerUsage(normalizedUrl)) {
         items.push(new TokenUsageTreeItem(normalizedUrl));
       }
+    }
+
+    return items;
+  }
+
+  /** Children of the OpenRouter Account node: credit/limit/free-tier rows. */
+  private getOpenRouterAccountChildren(e: OpenRouterAccountTreeItem): MetricTreeItem[] {
+    const items: MetricTreeItem[] = [];
+    const a = e.account;
+    if (a.limit_remaining != null) {
+      items.push(new MetricTreeItem('Credits Remaining', formatCost(a.limit_remaining, 'USD'), 'credit-card', 'OpenRouter credits available on this key.'));
+    }
+    if (a.limit != null) {
+      items.push(new MetricTreeItem('Credit Limit', formatCost(a.limit, 'USD'), 'pulse', 'Credit limit on this key (null = unlimited).'));
+    }
+    if (a.usage != null) {
+      items.push(new MetricTreeItem('Usage (all-time)', formatCost(a.usage, 'USD'), 'history', 'Total OpenRouter credits used on this key.'));
+    }
+    if (a.usage_monthly != null) {
+      items.push(new MetricTreeItem('Usage (monthly)', formatCost(a.usage_monthly, 'USD'), 'calendar', 'Credits used this UTC month.'));
+    }
+    if (a.byok_usage != null) {
+      items.push(new MetricTreeItem('BYOK Usage', formatCost(a.byok_usage, 'USD'), 'key', 'Usage billed directly to your upstream provider (BYOK), not OpenRouter credits.'));
+    }
+    if (a.is_free_tier) {
+      items.push(new MetricTreeItem('Free Tier', 'yes', 'star', 'This account has never paid — subject to free-tier rate limits.'));
+    }
+    if (a.label) {
+      items.push(new MetricTreeItem('Key Label', a.label, 'tag', 'The label OpenRouter stores for this API key.'));
+    }
+    return items;
+  }
+
+  /** Children of the Model Collection node: one node per configured relay model. */
+  private getModelCollectionChildren(e: ModelCollectionTreeItem): OpenRouterModelTreeItem[] {
+    const models = this.readConfiguredModels();
+    return e.modelIds.map(modelId => {
+      const entry = models.find(m =>
+        normalizeServerUrl(m.serverUrl ?? '') === normalizeServerUrl(e.serverUrl) &&
+        (m.vllmModelId ?? m.id) === modelId &&
+        (m.serverType ?? 'vllm') === 'openrouter',
+      );
+      const label = entry?.displayName || entry?.id || modelId;
+      // Context window rides in via the cached engine metrics — resolved per
+      // model, so each node shows ITS OWN window. The tree item captures it at
+      // build time; a resolved value arrives on the next engine tick.
+      const contextWindow = this.subscriptions
+        .find(s => normalizeServerUrl(s.serverUrl) === normalizeServerUrl(e.serverUrl))
+        ?.metrics.contextByModel?.[modelId];
+      return new OpenRouterModelTreeItem(e.serverUrl, modelId, label, contextWindow);
+    });
+  }
+
+  /** Children of an OpenRouter model node: its own model-level rows. */
+  private getOpenRouterModelChildren(e: OpenRouterModelTreeItem): MetricTreeItem[] {
+    const items: MetricTreeItem[] = [];
+    const models = this.readConfiguredModels();
+    const entry = models.find(m =>
+      normalizeServerUrl(m.serverUrl ?? '') === normalizeServerUrl(e.serverUrl) &&
+      (m.vllmModelId ?? m.id) === e.modelId &&
+      (m.serverType ?? 'vllm') === 'openrouter',
+    );
+
+    // Context window — from the per-model engine resolve (cached for the engine
+    // lifetime). Show the row only when resolved; a transient failure hides it
+    // and a later poll retries (see vllmMetrics contextByModel).
+    const contextWindow = this.subscriptions
+      .find(s => normalizeServerUrl(s.serverUrl) === normalizeServerUrl(e.serverUrl))
+      ?.metrics.contextByModel?.[e.modelId];
+    if (contextWindow !== undefined) {
+      items.push(new MetricTreeItem('Context Window', fmtCount(contextWindow), 'layers', 'Maximum context length (input + output) this model reports.'));
+    }
+
+    // Output budget — from the model config (saved at onboarding from top_provider).
+    if (entry?.maxOutputTokens != null) {
+      items.push(new MetricTreeItem('Max Output', fmtCount(entry.maxOutputTokens), 'symbol-parameter', 'Model\'s reported output ceiling.'));
+    }
+
+    // Capabilities — from the model config (saved at onboarding).
+    if (entry?.capabilities) {
+      const caps = entry.capabilities;
+      if (caps.toolCalling != null || caps.imageInput != null) {
+        const parts: string[] = [];
+        if (caps.toolCalling != null) parts.push(`tools: ${caps.toolCalling ? 'yes' : 'no'}`);
+        if (caps.imageInput != null) parts.push(`image: ${caps.imageInput ? 'yes' : 'no'}`);
+        items.push(new MetricTreeItem('Capabilities', parts.join('  ·  '), 'wrench', 'Model capabilities reported by OpenRouter.'));
+      }
+    }
+
+    // Reasoning modes — from the model config (modelModes built from reasoning metadata).
+    const modeKeys = Object.keys(entry?.modelModes ?? {});
+    if (modeKeys.length > 0) {
+      items.push(new MetricTreeItem('Modes', modeKeys.join('  ·  '), 'lightbulb', 'Reasoning modes this model supports (from its `reasoning` metadata).'));
+    }
+
+    // Cost — estimated per-1M rates from config (fallback) OR actual reported
+    // cost when present. Never both.
+    const usage = getServerUsage(normalizeServerUrl(e.serverUrl));
+    const cost = getServerCost(normalizeServerUrl(e.serverUrl));
+    const todayCounts = usage.today[e.modelId] ?? emptyCounts();
+    const overallCounts = usage.allTime[e.modelId] ?? emptyCounts();
+    const actualToday = cost.today[e.modelId];
+    const actualOverall = cost.allTime[e.modelId];
+    const hasActual = actualToday !== undefined || actualOverall !== undefined;
+    const todayCost = hasActual
+      ? actualToday ?? computeCost(todayCounts, entry?.cost)
+      : computeCost(todayCounts, entry?.cost);
+    const overallCost = hasActual
+      ? actualOverall ?? computeCost(overallCounts, entry?.cost)
+      : computeCost(overallCounts, entry?.cost);
+    if (todayCost !== undefined || overallCost !== undefined) {
+      const currency = hasActual ? 'USD' : entry?.cost?.currency;
+      items.push(new MetricTreeItem(
+        'Cost',
+        formatCostSummary(todayCost, overallCost, currency, getModelStartedAt(normalizeServerUrl(e.serverUrl), e.modelId)) ?? formatCostFine(todayCost ?? 0, currency),
+        'credit-card',
+        hasActual
+          ? 'Actual cost reported by OpenRouter (usage.cost). The authoritative spend — not the per-1M estimate.'
+          : 'Estimated cost from the model\'s configured per-1M rates.',
+      ));
+    }
+
+    // Token usage — today + overall (same split as the Token Usage node).
+    const since = getModelStartedAt(normalizeServerUrl(e.serverUrl), e.modelId);
+    if (todayCounts.prompt > 0 || todayCounts.completion > 0) {
+      items.push(new MetricTreeItem('Tokens Today', usageLine(todayCounts), 'calendar', 'Token usage for this model today.'));
+    }
+    if (overallCounts.prompt > 0 || overallCounts.completion > 0) {
+      items.push(new MetricTreeItem('Tokens Overall', usageLine(overallCounts, since), 'history', 'All-time token usage for this model.'));
     }
 
     return items;

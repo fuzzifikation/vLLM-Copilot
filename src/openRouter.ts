@@ -432,3 +432,52 @@ export async function resolveOpenRouterRuntimeLimits(
   const info = await fetchOpenRouterModel(requestedId, requestHeaders);
   return info.runtimeLimits;
 }
+
+/**
+ * OpenRouter account/key health from `GET /api/v1/key` — credits, limits,
+ * free-tier status. Used by the dashboard's relay node (Option A account rows).
+ * Requires a valid `Authorization` header (same per-model key we already store).
+ */
+export interface OpenRouterAccount {
+  label?: string;
+  limit?: number | null;
+  limit_remaining?: number | null;
+  usage?: number;
+  usage_daily?: number;
+  usage_weekly?: number;
+  usage_monthly?: number;
+  byok_usage?: number;
+  is_free_tier?: boolean;
+}
+
+/** Timeout for the authenticated account-health probe. */
+const ACCOUNT_TIMEOUT_MS = 10_000;
+
+/**
+ * Fetch the account/key health for the relay. Returns `undefined` when the
+ * request fails or returns no usable `data` (bad/missing key, transient error)
+ * — the dashboard degrades by hiding the account rows, never fabricating.
+ */
+export async function fetchOpenRouterAccount(
+  requestHeaders: Record<string, string> = {},
+): Promise<OpenRouterAccount | undefined> {
+  const url = buildEndpoint(OPENROUTER_API_BASE, 'v1/key');
+  let response: Response;
+  try {
+    response = await fetchWithRetry(
+      url,
+      { method: 'GET', signal: AbortSignal.timeout(ACCOUNT_TIMEOUT_MS) },
+      requestHeaders,
+    );
+  } catch {
+    return undefined;
+  }
+  if (!response.ok) return undefined;
+  try {
+    const payload = await response.json() as { data?: OpenRouterAccount };
+    if (!payload.data || typeof payload.data !== 'object') return undefined;
+    return payload.data;
+  } catch {
+    return undefined;
+  }
+}
