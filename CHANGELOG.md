@@ -12,13 +12,7 @@
 
 ### Fixed
 
-- **OpenRouter API keys** are never shown in logs or the Settings view.
-- **First-response timeout error is actionable** — explains the server didn't respond in time and points to the per-model timeout setting.
-- **OpenRouter is host-only** — a pasted model URL just pre-fills the picker; nothing else routes into the OpenRouter lookup.
-- **OpenRouter onboarding requires an API key** — no more keyless saves.
-- **Negative timeout values** are rejected in the settings UI.
-- **No duplicate auth prompt** when re-adding an OpenRouter model.
-- **README** corrected to the real OpenRouter flow.
+- **First-response timeout error is actionable** — explains the server didn't respond in time and points to the per-model timeout setting, instead of a raw technical error.
 
 ## v1.31.0 — Pooled output/prefill speed & hardened metrics parsing
 
