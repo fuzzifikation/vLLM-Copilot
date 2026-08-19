@@ -126,7 +126,7 @@ The `usage` object (present in the final stream chunk) carries the **actual** co
 }
 ```
 
-**This is the single most valuable dashboard addition for OpenRouter:** after every request we already stream the final usage chunk. We can capture `cost` (real spend), `is_byok`, cached tokens, reasoning tokens, and server-tool usage — without any extra API call. This is the planned `WireUsage.cost` extension.
+**This is the single most valuable dashboard addition for OpenRouter:** after every request we already stream the final usage chunk. We can capture `cost` (real spend), `is_byok`, cached tokens, reasoning tokens, and server-tool usage — without any extra API call. This is the shipped `WireUsage.cost` extension (LANDED, Phase 1): `cost`/`usedByok` are captured, stored, and preferred over the per-1M estimate in the dashboard. (`cost_details` was proposed but removed as dead wire surface — the upstream breakdown is a documented follow-up.)
 
 ---
 

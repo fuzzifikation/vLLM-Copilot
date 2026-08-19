@@ -8,9 +8,9 @@
 
 ## What it is
 
-A client-side tracker that shows **cumulative** token consumption and estimated cost for every configured vLLM server, live in the dashboard. It captures each completed prompt exactly once and surfaces it in two places:
+A client-side tracker that shows **cumulative** token consumption and cost for every configured server, live in the dashboard. It captures each completed prompt exactly once and surfaces it in two places:
 
-- **Last Request** — the most recent prompt per server (per-prompt tokens, timing, and estimated cost).
+- **Last Request** — the most recent prompt per server (per-prompt tokens, timing, and cost).
 - **Token Usage and Cost** — **model-first**: one collapsible node per model whose collapsed line carries the price (`$11.51 today and $31.13 in 3.1 days`), expanding to **Today / Overall** token-only rows (persisted across reloads).
 
 ## What it is NOT
@@ -59,13 +59,13 @@ Additionally, `startedAt[serverUrl][modelId]` records the epoch ms of each model
 
 ## Persistence
 
-- Single `globalState` key `vllm-copilot.usage.v1`, versioned for forward migration (currently **v2**: adds `startedAt`; v1 data loads in place, counts unchanged).
+- Single `globalState` key `vllm-copilot.usage.v1`, versioned for forward migration (currently **v3**: adds the actual-cost planes `allTimeCost`/`daysCost`; v1/v2 data loads in place, counts unchanged, cost planes default to `{}` with no fabricated cost).
 - **Writes are serialized** through a chained promise. `globalState.update` is async, so two rapid completions could otherwise interleave read-modify-write and lose an update; chaining guarantees writes land in order. The snapshot is deep-copied at schedule time so later mutations cannot bleed into an in-flight write.
 - Loaded once in `activate()` (`initUsageStore`), before any request can complete. Corrupt/missing data degrades to a fresh store.
 
-## Cost: per-model only, derived never stored
+## Cost: estimates derived, actual spend stored
 
-Cost is **never persisted**. It is derived at render time from each model's `cost` config and the stored token counts:
+**Estimated cost is never persisted.** It is derived at render time from each model's `cost` config and the stored token counts:
 
 ```
 cost = (prompt − cached) / 1M × input
@@ -73,10 +73,11 @@ cost = (prompt − cached) / 1M × input
      + completion / 1M × output
 ```
 
+**Actual reported cost (OpenRouter `usage.cost`) IS stored** — it is server truth, not derivable from rates — in separate all-time/day planes (`allTimeCost`/`daysCost`, v3), also per `(server, model)`. The dashboard **prefers actual cost when a model has any**, falling back to the per-1M estimate per slot otherwise. Actual and estimated cost are **never summed**. Editing a rate re-prices the estimate history without any migration; recorded actual spend is unchanged.
+
 - **Rates are per 1,000,000 tokens**, entered in the model's `currency` unit (default `USD`; `"AI Credits"` renders a credits label — 1 credit = $0.01 — values are entered directly, no conversion applied).
-- **Currency decoration uses a small static map, not an i18n library** — `$` (USD), `€` (EUR), `£` (GBP), `¥` (JPY/CNY), `credits` (AI Credits); any other currency falls back to its raw code (`EUR 12.35`). This also means a non-USD currency never renders as a wrong `$`.
+- **Currency decoration uses a small static map, not an i18n library** — `$` (USD), `€` (EUR), `£` (GBP), `¥` (JPY/CNY), `credits` (AI Credits); any other currency falls back to its raw code (`EUR 12.35`). This also means a non-USD currency never renders as a wrong `$`. Actual OpenRouter cost is always USD.
 - Fresh input is priced at `input`; cache-read input at `cachedInput`. No cache-write surcharge — self-hosted vLLM never bills for it.
-- Because cost is derived, **editing a rate re-prices all history** — no migration.
 - **Cost is per MODEL only; there is no server-level cost sum.** Models on one server may legitimately use different currencies (USD vs AI Credits), so summing them into a server aggregate would produce a wrong money number. Each model's price sits on its collapsed line (labeled with its currency); the **Today / Overall** rows are token-only. The per-request **Cost** row under Last Request shows the single-request cost with fine precision. The user sums costs across models manually. This was a deliberate decision after `aggregateCost` was removed — do not re-introduce a server cost aggregate.
 - **Entry point:** right-click the Token Usage and Cost node → **Set Cost…** (`vllm-copilot.configureCost`) guides through model → rates → currency and writes the `cost` block via the config store. Hidden from the command palette because it requires a server-context argument.
 
@@ -93,7 +94,7 @@ This fixed a **pre-existing bug**: the Last Request node was previously written 
 ## Design decisions & gotchas
 
 - **Auto-continue retries count as separate requests.** The retry loop calls `consumeStream` once per attempt, and each completion that carries a usage payload is recorded — a continuation request genuinely re-sends the context and generates new tokens, so per-HTTP-request accounting is the honest number.
-- **`formatCost` precision adapts** so a per-request cost of `$0.000019` never collapses to `$0.0000`: ≥$100 → 0 decimals, ≥$1 → 2, ≥$0.01 → up to 4 with trailing-zero stripping, else up to 6.
+- **`formatCost` precision adapts** so a per-request cost of `$0.000019` never collapses to `$0.0000`: ≥$100 → 0 decimals, ≥$1 → 2, ≥$0.01 → up to 4 with trailing-zero stripping, else up to 6. The collapsed cost summary uses the same fine precision for real currencies (AI Credits keep 2 decimals), so sub-cent actual spend never renders as `$0.00`.
 - **Server URLs are normalized before any store read/write** — the two existing normalization bugs (scheme-less, `/v1` forms) are the reason the store keys on the normalized form.
 
 ## Where the code lives
