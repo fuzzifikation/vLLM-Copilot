@@ -79,6 +79,11 @@ export interface ModelConfig {
   /** Inactivity timeout for the SSE stream in ms. 0 = disabled (wait indefinitely). */
   streamInactivityTimeout?: number;
   /**
+   * Budget for the initial chat POST to receive response headers, in ms.
+   * 0 = disabled (wait indefinitely). Default 180000 (3 minutes).
+   */
+  initialResponseTimeoutMs?: number;
+  /**
    * How many times to auto-retry when the model returns an empty response.
    * Uses assistant prefill. 0 = disabled.
    */
@@ -142,6 +147,8 @@ export const DEFAULT_MODEL_SETTINGS = {
   estimateCharsPerToken: 3.5,
   /** Inactivity timeout for SSE stream in ms. 0 = disabled. */
   streamInactivityTimeout: 0,
+  /** Budget for the initial chat POST to receive response headers, in ms. 0 = disabled. */
+  initialResponseTimeoutMs: 180000,
   autoContinueRetries: 1,
 } as const;
 
@@ -150,6 +157,7 @@ export interface ResolvedModelSettings {
   maxOutputTokens: number;
   estimateCharsPerToken: number;
   streamInactivityTimeout: number;
+  initialResponseTimeoutMs: number;
   autoContinueRetries: number;
 }
 
@@ -184,6 +192,7 @@ export function resolveModelSettings(override: ModelConfig | undefined): Resolve
     maxOutputTokens: override?.maxOutputTokens ?? DEFAULT_MODEL_SETTINGS.maxOutputTokens,
     estimateCharsPerToken: override?.estimateCharsPerToken ?? DEFAULT_MODEL_SETTINGS.estimateCharsPerToken,
     streamInactivityTimeout: override?.streamInactivityTimeout ?? DEFAULT_MODEL_SETTINGS.streamInactivityTimeout,
+    initialResponseTimeoutMs: override?.initialResponseTimeoutMs ?? DEFAULT_MODEL_SETTINGS.initialResponseTimeoutMs,
     autoContinueRetries: override?.autoContinueRetries ?? DEFAULT_MODEL_SETTINGS.autoContinueRetries,
   };
 }
@@ -517,6 +526,9 @@ export function validateConfig(config: VllmConfig): string[] {
     if (settings.streamInactivityTimeout < 0) {
       warnings.push(`Model "${display}": streamInactivityTimeout is ${settings.streamInactivityTimeout}ms; should be >= 0 (0 = disabled).`);
     }
+    if (settings.initialResponseTimeoutMs < 0) {
+      warnings.push(`Model "${display}": initialResponseTimeoutMs is ${settings.initialResponseTimeoutMs}ms; should be >= 0 (0 = disabled).`);
+    }
     if (settings.autoContinueRetries < 0) {
       warnings.push(`Model "${display}": autoContinueRetries is ${settings.autoContinueRetries}; should be >= 0.`);
     }
@@ -631,6 +643,7 @@ const CLEARABLE_ON_EMPTY: readonly (keyof ModelConfig)[] = [
   'maxInputTokens',
   'estimateCharsPerToken',
   'streamInactivityTimeout',
+  'initialResponseTimeoutMs',
   'autoContinueRetries',
   'defaultMode',
   'defaultParams',

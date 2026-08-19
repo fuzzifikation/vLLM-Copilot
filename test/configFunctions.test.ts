@@ -183,6 +183,16 @@ describe('validateConfig', () => {
     expect(warnings.some(w => w.includes('streamInactivityTimeout'))).toBe(false);
   });
 
+  it('warns on negative initialResponseTimeoutMs', () => {
+    const warnings = validateConfig(withModel({ initialResponseTimeoutMs: -100 }));
+    expect(warnings.some(w => w.includes('initialResponseTimeoutMs'))).toBe(true);
+  });
+
+  it('does not warn when initialResponseTimeoutMs is 0 (disabled)', () => {
+    const warnings = validateConfig(withModel({ initialResponseTimeoutMs: 0 }));
+    expect(warnings.some(w => w.includes('initialResponseTimeoutMs'))).toBe(false);
+  });
+
   it('warns on negative autoContinueRetries', () => {
     const warnings = validateConfig(withModel({ autoContinueRetries: -1 }));
     expect(warnings.some(w => w.includes('autoContinueRetries'))).toBe(true);

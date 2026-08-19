@@ -24,6 +24,7 @@ import {
 } from './sessionManager.js';
 import { getMetricsEngine } from './vllmMetrics.js';
 import { resetUsage, getServersWithUsage } from './usageStore.js';
+import { isOpenRouterUrl } from './openRouter.js';
 
 // Re-export the extracted workflows so extension.ts and tests keep a single
 // stable import surface (matches the autoConfig.ts facade pattern).
@@ -213,7 +214,7 @@ export function registerUpdateServerAuthCommand(
   _provider: VllmChatModelProvider,
   outputChannel: vscode.OutputChannel,
 ): vscode.Disposable {
-  return vscode.commands.registerCommand('vllm-copilot.updateServerAuth', async (arg?: any) => {
+  return vscode.commands.registerCommand('vllm-copilot.updateServerAuth', async (arg?: any, initialHeaders?: Record<string, string>) => {
     // VS Code passes the tree item for context menus; extract serverUrl.
     const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
     if (!serverUrl) {
@@ -221,17 +222,28 @@ export function registerUpdateServerAuthCommand(
       return;
     }
 
-    // Step 1+2: API key + custom headers
-    const combinedHeaders = await promptForServerAuth({
-      apiKeyTitle: `Update Auth for ${serverUrl} (1/2)`,
-      apiKeyPrompt: '(optional) vLLM API key. Sent as "Authorization: Bearer <key>". Leave empty to clear.',
-      apiKeyPlaceholder: 'abc123... or leave empty to clear',
-      headersTitle: `Update Auth for ${serverUrl} (2/2)`,
-      headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty to clear.',
-      headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
-    });
-    if (combinedHeaders === undefined) return; // cancelled
-    const finalHeaders = Object.keys(combinedHeaders).length > 0 ? combinedHeaders : undefined;
+    // Step 1+2: API key + custom headers. If the caller (e.g. the OpenRouter Add
+    // flow) already collected credentials, REUSE them — never re-prompt and
+    // discard the first key. Otherwise prompt, provider-aware: OpenRouter
+    // requires the key (chat bills per account), generic servers keep it optional.
+    let finalHeaders: Record<string, string> | undefined;
+    if (initialHeaders && Object.keys(initialHeaders).length > 0) {
+      finalHeaders = initialHeaders;
+    } else {
+      const combinedHeaders = await promptForServerAuth({
+        apiKeyTitle: `Update Auth for ${serverUrl} (1/2)`,
+        apiKeyPrompt: isOpenRouterUrl(serverUrl)
+          ? 'OpenRouter API key. Sent as "Authorization: Bearer <key>". Get one at https://openrouter.ai/keys. Required.'
+          : '(optional) vLLM API key. Sent as "Authorization: Bearer <key>". Leave empty to clear.',
+        apiKeyPlaceholder: isOpenRouterUrl(serverUrl) ? 'sk-or-v1-...' : 'abc123... or leave empty to clear',
+        requireApiKey: isOpenRouterUrl(serverUrl),
+        headersTitle: `Update Auth for ${serverUrl} (2/2)`,
+        headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty to clear.',
+        headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
+      });
+      if (combinedHeaders === undefined) return; // cancelled
+      finalHeaders = Object.keys(combinedHeaders).length > 0 ? combinedHeaders : undefined;
+    }
 
     // Update all models pointing to this server
     const config = vscode.workspace.getConfiguration('vllm-copilot');

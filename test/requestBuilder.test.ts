@@ -36,6 +36,8 @@ describe('buildRequest', () => {
     expect(result.serverConfig.serverUrl).toBe('');
     // Output budget re-asserted from the model's context-window-derived max.
     expect(result.mergedOptions.max_tokens).toBe(100);
+    // Transport defaults apply when the override does not set them.
+    expect(result.serverConfig.initialResponseTimeoutMs).toBe(180000);
   });
 
   it('resolves vllmModelId, serverConfig and transport from the override', () => {
@@ -46,7 +48,7 @@ describe('buildRequest', () => {
       {
         models: [{
           id: 'm', vllmModelId: 'wire-model', serverUrl: 'http://host:8000',
-          maxOutputTokens: 50, streamInactivityTimeout: 99,
+          maxOutputTokens: 50, streamInactivityTimeout: 99, initialResponseTimeoutMs: 42,
         }],
         enableFileLogging: false,
       },
@@ -56,6 +58,7 @@ describe('buildRequest', () => {
     expect(result.vllmModelId).toBe('wire-model');
     expect(result.serverConfig.serverUrl).toBe('http://host:8000');
     expect(result.serverConfig.streamInactivityTimeout).toBe(99);
+    expect(result.serverConfig.initialResponseTimeoutMs).toBe(42);
     // max_tokens always wins over a stray value in the override.
     expect(result.mergedOptions.max_tokens).toBe(100);
   });

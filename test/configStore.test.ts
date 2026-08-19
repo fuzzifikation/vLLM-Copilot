@@ -526,13 +526,13 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
     // (absent keys are otherwise preserved by the shallow merge).
     await patchModelConfig(identity(), {
       displayName: '', maxOutputTokens: '', maxInputTokens: '', estimateCharsPerToken: '',
-      streamInactivityTimeout: '', autoContinueRetries: '', defaultMode: '', defaultParams: '',
+      streamInactivityTimeout: '', initialResponseTimeoutMs: '', autoContinueRetries: '', defaultMode: '', defaultParams: '',
     } as any);
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
     for (const k of ['displayName', 'maxOutputTokens', 'maxInputTokens', 'estimateCharsPerToken',
-      'streamInactivityTimeout', 'autoContinueRetries', 'defaultMode', 'defaultParams']) {
+      'streamInactivityTimeout', 'initialResponseTimeoutMs', 'autoContinueRetries', 'defaultMode', 'defaultParams']) {
       expect(k in stored[0]).toBe(false);
     }
   });

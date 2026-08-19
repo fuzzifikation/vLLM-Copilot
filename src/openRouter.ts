@@ -30,6 +30,22 @@ import type { RuntimeModelLimits } from './types.js';
 /** OpenRouter's API base — composes with `buildEndpoint` like any other server. */
 export const OPENROUTER_API_BASE = 'https://openrouter.ai/api';
 
+/**
+ * True when a server URL points at OpenRouter's fixed managed remote. Used to
+ * route the Add flow into the OpenRouter branch — the "server" is fixed, so the
+ * user's URL input is really a *model* reference — and to classify the backend
+ * during detection. Host-only: the API base (`openrouter.ai/api`), model-page
+ * URLs, and any future openrouter.ai host all match. Scheme-less input returns
+ * false (the Add flow normalizes before calling this).
+ */
+export function isOpenRouterUrl(serverUrl: string): boolean {
+  try {
+    return new URL(serverUrl).hostname.replace(/^www\./, '').toLowerCase() === 'openrouter.ai';
+  } catch {
+    return false;
+  }
+}
+
 /** Timeout for the exact-model metadata GET (same budget as other metadata probes). */
 const METADATA_TIMEOUT_MS = 10000;
 
@@ -119,6 +135,29 @@ export function parseOpenRouterModelRef(
   const baseSlug = slug.split(':')[0];
 
   return { requestedId, author, slug: baseSlug };
+}
+
+/**
+ * Extract the model reference from an OpenRouter Add-flow URL input. The model
+ * is always PICKED from the catalog; this only produces the picker's prefill
+ * (and validates the free-text fallback box). A scheme-less OpenRouter base or
+ * model-page URL (`openrouter.ai/api`, `openrouter.ai/author/slug`) would
+ * mis-parse as a bare slug — detect the `openrouter.ai` host and parse it as a
+ * URL instead. Routing is host-only (`isOpenRouterUrl`); this never routes.
+ */
+export function parseOpenRouterBranchInput(
+  input: string,
+): { requestedId: string; author: string; slug: string } | { error: string } {
+  const trimmed = input.trim();
+  if (/^https?:\/\//i.test(trimmed)) return parseOpenRouterModelRef(trimmed);
+  let host: string | null = null;
+  try {
+    host = new URL(`https://${trimmed}`).hostname.replace(/^www\./, '').toLowerCase();
+  } catch {
+    host = null;
+  }
+  if (host === 'openrouter.ai') return parseOpenRouterModelRef(`https://${trimmed}`);
+  return parseOpenRouterModelRef(trimmed);
 }
 
 /**

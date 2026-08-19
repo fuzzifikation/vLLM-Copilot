@@ -21,6 +21,8 @@ export interface ServerConfig {
   serverUrl: string;
   requestHeaders: Record<string, string>;
   streamInactivityTimeout: number;
+  /** Budget for the initial chat POST to receive response headers, in ms. 0 = disabled. */
+  initialResponseTimeoutMs: number;
   /** Which backend's protocol to speak. Missing → 'vllm'. */
   serverType: ServerType;
 }
@@ -133,9 +135,11 @@ export function buildRequest(
   // + backend type). Missing serverType resolves to 'vllm' — zero behavior change
   // for existing configs, while secondary backends get protocol-aware adaptation.
   const resolved = resolveServerConfig(override);
+  const settings = resolveModelSettings(override);
   const serverConfig: ServerConfig = {
     ...resolved,
-    streamInactivityTimeout: resolveModelSettings(override).streamInactivityTimeout,
+    streamInactivityTimeout: settings.streamInactivityTimeout,
+    initialResponseTimeoutMs: settings.initialResponseTimeoutMs,
     serverType: resolveServerType(override),
   };
 

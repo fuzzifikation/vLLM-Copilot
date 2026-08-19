@@ -27,6 +27,7 @@ const SERVER_CONFIG = {
   serverUrl: SERVER_URL,
   requestHeaders: REQUEST_HEADERS,
   streamInactivityTimeout: 60000,
+  initialResponseTimeoutMs: 60000,
   serverType: 'vllm' as const,
 };
 
