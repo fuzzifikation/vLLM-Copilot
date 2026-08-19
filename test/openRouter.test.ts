@@ -206,6 +206,77 @@ describe('normalizeOpenRouterModel', () => {
     expect('No Think' in (mandatory.modelModes ?? {})).toBe(false);
   });
 
+  it('builds the full effort ladder from supported_efforts (no hardcoded pair)', () => {
+    const info = normalizeOpenRouterModel(
+      {
+        ...base,
+        supported_parameters: ['reasoning_effort'],
+        reasoning: {
+          mandatory: false,
+          default_effort: 'medium',
+          default_enabled: true,
+          supported_efforts: ['high', 'medium', 'low', 'minimal'],
+        },
+      },
+      'x',
+    );
+    expect(info.modelModes).toEqual({
+      'Think (High)': { reasoning: { enabled: true, effort: 'high' } },
+      'Think (Medium)': { reasoning: { enabled: true, effort: 'medium' } },
+      'Think (Low)': { reasoning: { enabled: true, effort: 'low' } },
+      'Think (Minimal)': { reasoning: { enabled: true, effort: 'minimal' } },
+      'No Think': { reasoning: { enabled: false } },
+    });
+    // Default mode honors the model's default_effort.
+    expect(info.defaultMode).toBe('Think (Medium)');
+  });
+
+  it('defaults to No Think when reasoning is disabled by default', () => {
+    const info = normalizeOpenRouterModel(
+      {
+        ...base,
+        supported_parameters: ['reasoning_effort'],
+        reasoning: { mandatory: false, default_enabled: false, supported_efforts: ['high'] },
+      },
+      'x',
+    );
+    expect(info.defaultMode).toBe('No Think');
+  });
+
+  it('uses a single Think mode for Anthropic-style max_tokens reasoning (no effort ladder)', () => {
+    const info = normalizeOpenRouterModel(
+      {
+        ...base,
+        supported_parameters: ['reasoning'],
+        reasoning: { mandatory: false, supports_max_tokens: true, supported_efforts: ['high'] },
+      },
+      'x',
+    );
+    expect(info.modelModes).toEqual({
+      'Think': { reasoning: { enabled: true } },
+      'No Think': { reasoning: { enabled: false } },
+    });
+    expect(info.defaultMode).toBe('Think');
+  });
+
+  it('detects reasoning from the reasoning object even when the param is not listed', () => {
+    // The reasoning object is authoritative evidence of support; don't require it
+    // to be echoed in supported_parameters (API variance).
+    const info = normalizeOpenRouterModel(
+      {
+        ...base,
+        supported_parameters: ['tools'],
+        reasoning: { mandatory: false, default_effort: 'low', supported_efforts: ['low'] },
+      },
+      'x',
+    );
+    expect(info.modelModes).toEqual({
+      'Think (Low)': { reasoning: { enabled: true, effort: 'low' } },
+      'No Think': { reasoning: { enabled: false } },
+    });
+    expect(info.defaultMode).toBe('Think (Low)');
+  });
+
   it('filters default_parameters to non-null supported values', () => {
     const info = normalizeOpenRouterModel(
       {
