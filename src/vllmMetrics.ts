@@ -323,9 +323,12 @@ export class ServerMetricsEngine {
   private _disposed = false;
   /**
    * Cached per-backend context window (non-vLLM only). `undefined` = not yet
-   * attempted; `null` = resolve failed (don't retry); number = resolved value.
+   * attempted (or a transient failure awaiting retry); `null` = permanently
+   * unresolvable (validation failure — never retry); number = resolved value.
    */
   private resolvedContextWindow: number | null | undefined;
+  /** Earliest ms timestamp at which a transient context-resolve failure may retry. */
+  private contextRetryAt = 0;
   /** Array of callbacks so subscribers don't need to coordinate. */
   private callbacks: Array<(aggregated: ServerMetrics, raw: ServerRawData) => void> = [];
 
@@ -406,24 +409,29 @@ export class ServerMetricsEngine {
 
       if (this._disposed) return;
 
-      // Resolve the per-backend context window ONCE per engine lifetime, only
-      // for non-vLLM backends and only while the server is online. A loaded
-      // model's context window is static — re-resolving it on every poll would
-      // hammer OpenRouter's exact-model API (or llama.cpp /props, Ollama /api/ps)
-      // every interval forever for a value that never changes. Semantics:
-      //   undefined → not attempted yet (retry once the server is online);
-      //   null → attempted and failed (unresolvable — stop hammering it);
-      //   number → resolved (re-applied to each poll's aggregated metrics).
+      // Resolve the per-backend context window, only for non-vLLM backends and
+      // only while the server is online. A loaded model's context window is
+      // static, so a SUCCESSFUL resolve is cached for the engine's lifetime —
+      // never re-resolve it every poll (that would hammer OpenRouter's exact-model
+      // API or llama.cpp /props / Ollama /api/ps forever). Failures are classified:
+      //   - validation failure (model reports no window) → permanent, never retry;
+      //   - transient failure (network, 429/5xx, timeout) → retry after a bounded
+      //     backoff so a one-off blip doesn't disable context for the session.
       if (this.serverType !== 'vllm' && aggregated.maxModelLen === null && this.resolvedContextWindow === undefined) {
-        if (aggregated.online && this.modelId) {
+        if (aggregated.online && this.modelId && Date.now() >= this.contextRetryAt) {
           try {
             this.resolvedContextWindow = (await resolveRuntimeLimits(this.serverType, this.serverUrl, this.requestHeaders, this.modelId)).contextWindow;
             aggregated.maxModelLen = this.resolvedContextWindow;
-          } catch {
-            this.resolvedContextWindow = null;
+          } catch (err) {
+            if (isPermanentContextError(err)) {
+              this.resolvedContextWindow = null; // unresolvable — stop retrying
+            } else {
+              this.contextRetryAt = Date.now() + CONTEXT_RESOLVE_RETRY_MS; // transient — retry later
+            }
           }
         }
-        // Offline or no modelId → leave undefined; a later poll retries when online.
+        // Offline, no modelId, or inside the transient retry backoff → leave
+        // undefined; a later poll retries when the backoff elapses.
       } else if (this.resolvedContextWindow !== undefined && this.resolvedContextWindow !== null) {
         aggregated.maxModelLen = this.resolvedContextWindow;
       }
@@ -662,6 +670,26 @@ function emptyMetrics(error: string): ServerMetrics {
     cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
     avgTTFTMs: null, avgTPOTMs: null, avgTputTokPerSec: null, avgPrefillTputTokPerSec: null, preemptions: null, evictions: null,
   };
+}
+
+/** Bounded backoff before retrying a TRANSIENT context-resolve failure. */
+const CONTEXT_RESOLVE_RETRY_MS = 60_000;
+
+/**
+ * True when a context-resolve error is a PERMANENT validation failure — the
+ * backend reported a response but the model genuinely has no usable context
+ * bound (retrying can never change that). Everything else (network errors,
+ * HTTP 429/5xx, timeouts) is transient and retryable. The permanent markers are
+ * the backend-specific actionable messages thrown by `resolveRuntimeLimits`.
+ */
+function isPermanentContextError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes('has no runtime context window') ||
+    msg.includes('has no context window') ||
+    msg.includes('is not loaded (or reports no context_length)') ||
+    msg.includes('reports no positive context bound')
+  );
 }
 
 /**

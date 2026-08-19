@@ -190,6 +190,30 @@ describe('DashboardTreeProvider', () => {
     });
   });
 
+  it('suppresses Models + Context Window for an OpenRouter relay (wrong scope, interim)', async () => {
+    // OpenRouter is a relay: /v1/models is the whole catalog and a single
+    // configured model's context isn't "the server's". Until the model-collection
+    // restructure (Phase 2), both are hidden on the relay node.
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', serverType: 'openrouter' }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 'openrouter.ai:'); // shortUrl → "host:port" (empty port)
+      expect(serverNode).toBeDefined();
+      const metrics = await provider.getChildren(serverNode as any);
+      const labels = metrics.map(m => (m as any).label as string);
+      expect(labels).not.toContain('Model IDs');
+      expect(labels).not.toContain('Context Window');
+      // The server is still online and usable.
+      expect((serverNode as any).description).not.toContain('Offline');
+    });
+  });
+
   it('shows Last Request for a server configured with a non-canonical URL (normalized lookup)', async () => {
     // consumeStream writes the store keyed by the NORMALIZED server URL; the
     // dashboard's node carries the raw `model.serverUrl`. A /v1 form must still

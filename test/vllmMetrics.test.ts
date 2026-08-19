@@ -447,6 +447,7 @@ describe('shortUrl', () => {
 
 describe('ServerMetricsEngine registry lifecycle', () => {
   afterEach(() => {
+    vi.useRealTimers(); // undo any fake timers from the retry tests (fail-safe)
     vi.unstubAllGlobals();
   });
 
@@ -500,6 +501,80 @@ describe('ServerMetricsEngine registry lifecycle', () => {
 
     expect(aggregated?.online).toBe(true); // still reachable via /v1/models
     expect(aggregated?.maxModelLen).toBeNull(); // context resolve failed → row hidden
+  });
+
+  it('retries a TRANSIENT context-resolve failure after the backoff and recovers', async () => {
+    // A 404 on the resolver endpoint is transient (the model may be temporarily
+    // unavailable). The engine must retry after the bounded backoff and recover
+    // once the endpoint works again — a one-off blip must not disable context
+    // for the session.
+    vi.useFakeTimers();
+    let resolverHits = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+      }
+      if (u.includes('/v1/model/')) {
+        resolverHits++;
+        // First attempt fails transiently (429 — not retried by fetchWithRetry,
+        // so it surfaces immediately), later attempts succeed.
+        return resolverHits === 1
+          ? new Response(null, { status: 429 })
+          : new Response(JSON.stringify({ data: { context_length: 1000000 } }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const url = 'http://or-transient:8000';
+    const engine = getMetricsEngine(url, {}, 'openrouter', 'nvidia/nemotron-3.5-lightning:free');
+    // One subscription stays alive across both polls so the engine isn't
+    // disposed between them.
+    const polls: Array<ReturnType<ServerMetricsEngine['getCachedAggregated']>> = [];
+    const sub = engine.subscribe((agg) => { polls.push(agg); });
+
+    // First poll: transient failure → no window yet.
+    await vi.advanceTimersByTimeAsync(0); // flush the initial tick's async fetch
+    expect(polls[0]?.maxModelLen).toBeNull();
+
+    // Advance past the 60s retry backoff + a poll interval so the next poll
+    // re-attempts the resolve and succeeds.
+    await vi.advanceTimersByTimeAsync(60_000 + 16_000);
+    expect(polls.some(p => p?.maxModelLen === 1000000)).toBe(true);
+    sub.dispose();
+    vi.useRealTimers();
+  });
+
+  it('does NOT retry a PERMANENT context-resolve failure', async () => {
+    // A model that reports no context bound is permanently unresolvable —
+    // retrying forever would hammer the API for a value that can never appear.
+    vi.useFakeTimers();
+    let resolverHits = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+      }
+      if (u.includes('/v1/model/')) {
+        resolverHits++;
+        // Model exists but reports NO context bound → permanent validation error.
+        return new Response(JSON.stringify({ data: { id: 'm1' } }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const url = 'http://or-permanent:8000';
+    const engine = getMetricsEngine(url, {}, 'openrouter', 'nvidia/nemotron-3.5-lightning:free');
+    await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
+      const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
+      setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
+    });
+
+    // Advance well past the backoff + several poll intervals — the resolver
+    // must NOT be hit again (permanent failures are never retried).
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(resolverHits).toBe(1);
+    vi.useRealTimers();
   });
 
   it('releases the engine from the registry when the last subscriber unsubscribes', () => {
