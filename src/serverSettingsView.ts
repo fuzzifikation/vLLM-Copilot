@@ -1,5 +1,5 @@
 /**
- * Server Settings Webview View.
+ * Model Settings Webview View.
  * Per-model settings editor in the vLLM sidebar.
  */
 
@@ -173,11 +173,11 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
           // Error boundary — a failing handler must never become an unhandled
           // rejection (VS Code would only log it invisibly).
           this.outputChannel.appendLine(
-            `[ERROR] Server Settings message "${msg.type}" failed: ${err instanceof Error ? err.message : String(err)}`
+            `[ERROR] Model Settings message "${msg.type}" failed: ${err instanceof Error ? err.message : String(err)}`
           );
           this.outputChannel.show(true);
           vscode.window.showErrorMessage(
-            `Server Settings: ${err instanceof Error ? err.message : String(err)}`
+            `Model Settings: ${err instanceof Error ? err.message : String(err)}`
           );
         }
       },
@@ -262,10 +262,10 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
           if (resp.ok) {
             entries = (await resp.json() as { data?: Array<{ id?: string; owned_by?: string; max_model_len?: number }> }).data ?? [];
           } else {
-            this.outputChannel.appendLine(`[WARN] Server Settings: /v1/models probe returned HTTP ${resp.status} for ${url} — server-reported models hidden.`);
+            this.outputChannel.appendLine(`[WARN] Model Settings: /v1/models probe returned HTTP ${resp.status} for ${url} — server-reported models hidden.`);
           }
         } catch (err) {
-          this.outputChannel.appendLine(`[WARN] Server Settings: /v1/models probe failed for ${url}: ${err instanceof Error ? err.message : String(err)}`);
+          this.outputChannel.appendLine(`[WARN] Model Settings: /v1/models probe failed for ${url}: ${err instanceof Error ? err.message : String(err)}`);
         }
         for (const m of entries) {
           if (m.id) serverModelIds.push(m.id);

@@ -1,4 +1,4 @@
-// Server Settings Webview - runs inside webview iframe
+// Model Settings Webview - runs inside webview iframe
 // Receives data via postMessage from extension
 
 (function() {
@@ -174,11 +174,19 @@
     // the label is disambiguated with the composite id.
     const wireCounts = {};
     sv.models.forEach(m => { const w = m.vllmModelId || m.id || ''; wireCounts[w] = (wireCounts[w] || 0) + 1; });
+    // Only when the server probe succeeded do we know what's actually running.
+    // A configured model whose wire id is NOT reported by the server is stale —
+    // mark it so the user can see it won't serve requests. Empty probe result
+    // (unreachable / non-`/v1/models` backend) means "unknown", not "inactive".
+    const knowsRunning = !!sv.serverModelIds && sv.serverModelIds.length > 0;
     allOptions.forEach(opt => {
       let label;
       if (opt.configured) {
         const wire = opt.mc.vllmModelId || opt.mc.id;
         label = wireCounts[wire] > 1 ? wire + ' (' + opt.value + ')' : wire;
+        if (knowsRunning && !sv.serverModelIds.includes(wire)) {
+          label += ' (inactive)';
+        }
       } else {
         label = opt.value + ' (not configured)';
       }
@@ -197,7 +205,7 @@
     // auto-detected via /v1/models (max_model_len → vllm, owned_by "llamacpp" → llamacpp).
     h += '<div class="field"><label>serverType</label>' +
       '<select data-f="serverType">' +
-      ['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter'].map(t =>
+      ['vllm', 'openrouter', 'llamacpp', 'lmstudio', 'ollama'].map(t =>
         '<option value="' + t + '"' + (mc.serverType === t ? ' selected' : '') + '>' + t + '</option>').join('') +
       '</select>' +
       '<div class="field-hint">Backend serving this model. Auto-detected from /v1/models for unconfigured models; default vllm.</div></div>';
