@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **OpenRouter models with no reported output cap no longer break every request** — the output ceiling now falls back to 10% of the context window (hard-capped at 81920) instead of the full window, which made output + input exceed the context limit (OpenRouter 400 "…1048575 in the output") and return nothing. Mirrors the HF auto-configure factor.
+
+### Changed
+
+- **OpenRouter Add flow asks only for the API key** — the custom-headers prompt is gone (expert headers are set via the model config in settings).
+- **Pasting a full OpenRouter model-page URL skips the catalog picker** — the model resolves straight to the confirm/save dialog instead of pre-selecting and auto-accepting on Enter. A bare `/api` base or slug still shows the typeahead.
+- **Model Settings shows `serverType` next to the server** — ordered general → specific (Server Type → Server → Model), instead of buried below the model's fields.
+
 ## v1.32.2 — Per-model identity & actionable server errors
 
 ### Fixed

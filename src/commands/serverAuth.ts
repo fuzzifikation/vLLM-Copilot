@@ -64,10 +64,14 @@ function tryRepair(text: string): string | undefined {
 }
 
 /**
- * Prompt user for server auth credentials (API key + custom headers) via two
+ * Prompt user for server auth credentials (API key + optional custom headers) via
  * sequential input boxes. Handles cancellation, validation, and combines both
  * into a single headers object. Returns `undefined` if the user cancelled at
  * either step.
+ *
+ * `promptForHeaders: false` (OpenRouter) asks ONLY for the API key and returns
+ * just the Bearer auth — custom headers are an expert concern left to
+ * settings editing, so no headers box is shown.
  */
 export async function promptForServerAuth(options: {
   apiKeyTitle: string;
@@ -78,6 +82,8 @@ export async function promptForServerAuth(options: {
   headersPlaceholder: string;
   /** Require a non-empty API key (e.g. OpenRouter — chat is billed per account). */
   requireApiKey?: boolean;
+  /** Skip the custom-headers input box entirely (OpenRouter). Default true. */
+  promptForHeaders?: boolean;
 }): Promise<Record<string, string> | undefined> {
   // API key. Optional for the generic server flows; required when the caller
   // needs credentials (OpenRouter). Folded into headers as Authorization: Bearer.
@@ -93,6 +99,11 @@ export async function promptForServerAuth(options: {
   });
   if (apiKeyInput === undefined) return undefined; // cancelled
   const apiKey = apiKeyInput.trim();
+
+  // OpenRouter: custom headers are not prompted — experts add them via settings.
+  if (options.promptForHeaders === false) {
+    return { ...buildAuthHeaders(apiKey) };
+  }
 
   // Custom headers (optional). Accepts JSON or forgiving shorthand.
   // Merged on top of the key-derived auth headers, so a custom header wins.

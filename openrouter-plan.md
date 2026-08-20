@@ -63,7 +63,7 @@ The catalog response is normalized as follows:
 - Each catalog entry is keyed by its exact `id`; match the requested id **verbatim** — no slug derivation, no fallback. A `:free` pick always resolves to the free entry, never the paid model.
 - Keep the requested slug as the wire ID, including aliases and variants (`:free`, dated `canonical_slug`).
 - Resolve the runtime context from `per_request_limits.context_tokens` first — it is the API's enforceable per-request bound, not an invented budget — falling back to `context_length`, then `top_provider.context_length`. Reject only when **no** positive bound is reported. **Live verification (2026-08-17): `per_request_limits` is `null` for every sampled catalog model including the auto router — the field is a defensive nicety, the real chain is `context_length` → `top_provider.context_length`.**
-- Compute the output ceiling from the smallest positive value among `top_provider.max_completion_tokens`, `per_request_limits.completion_tokens`, and the context-window safety bound.
+- Compute the output ceiling from the smallest positive value among `top_provider.max_completion_tokens`, `per_request_limits.completion_tokens`. When **no** cap is reported (null for essentially every model), fall back to **10% of the context window, hard-capped at 81920** (mirrors the HF auto-configure factor) — never the full window, which guarantees output+input exceeds the context on the first real request (OpenRouter 400: "...1048575 in the output").
 - Derive tools, image input, reasoning modes, defaults, and estimated per-million USD rates from the returned model fields. Ignore unknown fields and invalid optional numbers. **Live: `pricing.prompt`/`completion` are per-token USD strings; `-1` means unknown (dynamic routers) and must not become a rate.**
 - Treat `usage.cost` as the authoritative request charge; catalog pricing is only an estimate.
 - A **malformed `200` catalog** (missing `data` array / invalid payload) is a transient protocol failure and THROWS — it is never treated as an empty authoritative catalog. Entries without a string `id` are dropped.
@@ -155,7 +155,7 @@ Modes serialize as raw params through `override.modelModes[selectedMode]` (see `
 Add an explicit OpenRouter branch to the existing Add flow:
 
 1. Open `https://openrouter.ai/models` or continue directly.
-2. Paste a slug or model-page URL; clipboard reading happens only after an explicit button press.
+2. Paste a slug or model-page URL; clipboard reading happens only after an explicit button press. A **pasted model-page URL bypasses the catalog typeahead** (it's an explicit model reference) and resolves directly to the confirmation dialog, so the user actively confirms the model instead of it flashing and auto-accepting. A bare `/api` base or bare `author/slug` still shows the typeahead for an explicit pick.
 3. **Resolve metadata first — the exact-model GET is unauthenticated (verified live), so no key is needed yet.** Show a compact confirmation: requested/canonical ID, limits, capabilities, reasoning modes, rates, and expiration when present.
 4. Then prompt for an API key or reuse an existing OpenRouter connection (distinguished by URL + header fingerprint).
 5. Save `serverType: 'openrouter'`, `serverUrl: 'https://openrouter.ai/api'`, the requested wire ID, headers, and normalized config fields.

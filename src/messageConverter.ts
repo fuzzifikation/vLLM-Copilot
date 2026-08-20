@@ -410,25 +410,70 @@ function extractServerErrorInfo(text: string): { code: string; message?: string 
 }
 
 /**
- * Extract the `message` from an OpenAI-compatible `{"error":{"message":"…"}}`
- * body. Full JSON parse first (correct escaping); a tolerant regex recovers the
- * message even when the body was truncated (fetchWithRetry caps the body length
- * embedded in the error).
+ * Extract the human-readable message(s) from an OpenAI-compatible
+ * `{"error":{"message":"…"}}` body. OpenRouter buries the real provider reason
+ * under `error.metadata.raw` while `error.message` is a terse stub ("Provider
+ * returned error") — so every message-like field is gathered and joined, instead
+ * of dead-ending on the stub. Full JSON parse first (correct escaping); a
+ * tolerant regex recovers `message` + `raw` even when the body was truncated
+ * (fetchWithRetry caps the body length embedded in the error).
  */
 function extractServerErrorMessage(text: string): string | undefined {
   const brace = text.indexOf('{');
   if (brace >= 0) {
     try {
-      const parsed = JSON.parse(text.slice(brace)) as { error?: { message?: unknown } };
-      if (typeof parsed.error?.message === 'string' && parsed.error.message) {
-        return parsed.error.message;
-      }
+      const parsed = JSON.parse(text.slice(brace)) as { error?: unknown };
+      const messages = collectErrorMessages(parsed.error);
+      if (messages.length > 0) return messages.join(' — ');
     } catch {
       // Truncated or non-JSON — fall through to the tolerant regex.
     }
   }
-  const m = text.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)/);
-  return m && m[1] ? m[1] : undefined;
+  const parts: string[] = [];
+  const msgMatch = text.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)/);
+  if (msgMatch && msgMatch[1] && msgMatch[1].trim()) parts.push(msgMatch[1]);
+  const rawMatch = text.match(/"raw"\s*:\s*"((?:[^"\\]|\\.)*)/);
+  if (rawMatch && rawMatch[1] && rawMatch[1].trim()) parts.push(rawMatch[1]);
+  return parts.length > 0 ? [...new Set(parts)].join(' — ') : undefined;
+}
+
+/**
+ * Gather every plausible human-readable message from an OpenAI-compatible error
+ * envelope. The top-level `error.message` is canonical and kept first;
+ * OpenRouter nests the real provider reason under `error.metadata.raw`, and
+ * other backends bury detail in `message`/`detail`/`reason` fields arbitrarily
+ * deep. String-form envelopes (`{"error":"…"}`) are handled too. Result is
+ * deduped with order preserved.
+ */
+function collectErrorMessages(error: unknown): string[] {
+  const out: string[] = [];
+  if (typeof error === 'string') {
+    if (error.trim()) out.push(error.trim());
+    return out;
+  }
+  if (error === null || typeof error !== 'object') return out;
+
+  const obj = error as Record<string, unknown>;
+  if (typeof obj.message === 'string' && obj.message.trim()) {
+    out.push(obj.message.trim());
+  }
+
+  const walk = (value: unknown): void => {
+    if (value === null || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+      return;
+    }
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof child === 'string' && /^(message|raw|detail|reason|error|description|code_reason)$/i.test(key)) {
+        if (child.trim()) out.push(child.trim());
+      } else if (child !== null && typeof child === 'object') {
+        walk(child);
+      }
+    }
+  };
+  walk(obj);
+  return [...new Set(out)];
 }
 
 /**

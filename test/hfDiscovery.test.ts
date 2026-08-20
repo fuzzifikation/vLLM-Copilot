@@ -286,9 +286,10 @@ describe('resolveModelConfigForAdd', () => {
     expect(infoSpy).not.toHaveBeenCalled();
     // Thinking modes came from the reasoning object, not fabricated.
     expect(result!.modelConfig.modelModes?.['Think (High)']).toEqual({ reasoning: { enabled: true, effort: 'high' } });
-    // Authoritative ceiling, not the ctx × 0.1 factor guess.
+    // No API completion cap → 10% of the context window, hard-capped at 81920.
+    // floor(500000 × 0.1) = 50000 < 81920 → 50000.
     expect(result!.suggestedMaxOutputTokens).toBeUndefined();
-    expect(result!.modelConfig.maxOutputTokens).toBe(500000);
+    expect(result!.modelConfig.maxOutputTokens).toBe(50000);
     expect(result!.summary.join('\n')).not.toContain('HuggingFace');
   });
 });

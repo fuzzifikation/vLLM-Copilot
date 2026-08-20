@@ -11,7 +11,7 @@ import * as configStore from '../src/configStore.js';
 
 /**
  * Tests for the OpenRouter onboarding branch of the Add-server flow: host-only
- * routing (openrouter.ai), server → key & headers → model-pick ordering, catalog
+ * routing (openrouter.ai), server → key → model ordering, catalog
  * typeahead with prefill from a pasted model-page URL, one catalog snapshot
  * (no free-text fallback / no double download), duplicate handling, and the
  * save shape (serverType/URL/headers/limits).
@@ -151,31 +151,28 @@ describe('runOpenRouterAddFlow', () => {
     vscode.workspace._mockConfig = {};
   });
 
-  it('onboards from a model-page URL: key → picker (pre-filled) → metadata → fixed-URL config', async () => {
+  it('onboards from a model-page URL: key → direct metadata (no picker) → confirm dialog → fixed-URL config', async () => {
     const out = freshOutput();
     const fetchSpy = stubOpenRouterFetch();
-    // Order per the rule: server → key & headers → model pick.
-    inputBoxSpy
-      .mockResolvedValueOnce('sk-or-v1-test') // API key
-      .mockResolvedValueOnce('');             // custom headers
+    // Order per the rule: server → key → model. Custom headers are NOT prompted
+    // for OpenRouter (expert concern — edited in settings).
+    inputBoxSpy.mockResolvedValueOnce('sk-or-v1-test'); // API key only
     infoSpy.mockResolvedValue('Save to Settings' as any);
 
-    const flow = runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/nvidia/nemotron-3.5-lightning:free', []);
-    // Wait for the flow to reach the picker, then confirm the selection.
-    await vi.waitFor(() => expect(qpStub._accept).toBeDefined());
-    // The pasted model-page URL pre-filled the picker filter box.
-    expect(qpStub.value).toBe('nvidia/nemotron-3.5-lightning:free');
-    qpStub.selectedItems = [{ label: 'nvidia/nemotron-3.5-lightning:free' } as any];
-    qpStub._fireAccept();
-    await flow;
+    // A full model-page URL names the model EXPLICITLY — the picker is SKIPPED
+    // and the flow resolves the exact catalog entry directly, so the user
+    // actively confirms the model in the confirm/save dialog (no pre-select
+    // flash + auto-accept on Enter).
+    await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/nvidia/nemotron-3.5-lightning:free', []);
+    expect(createQuickPickSpy).not.toHaveBeenCalled();
 
     // Key box ran FIRST, as a required password box.
     expect(inputBoxSpy).toHaveBeenCalledWith(expect.objectContaining({ password: true, title: 'Add OpenRouter Model — API Key' }));
     const keyCall = inputBoxSpy.mock.calls[0][0] as any;
     expect(keyCall.validateInput).toBeDefined();
     expect(keyCall.validateInput('')).toBe('An API key is required.');
-    // Model was PICKED (not taken from the URL) — metadata resolved from the
-    // catalog by EXACT id match (the :free entry, never the paid base model).
+    // Model resolved from the catalog by EXACT id match (the :free entry, never
+    // the paid base model).
     expect(fetchSpy).toHaveBeenCalledWith(
       'https://openrouter.ai/api/v1/models',
       expect.objectContaining({ method: 'GET' }),
@@ -198,9 +195,7 @@ describe('runOpenRouterAddFlow', () => {
   it('onboards from the bare /api base via catalog typeahead', async () => {
     const out = freshOutput();
     stubOpenRouterFetch();
-    inputBoxSpy
-      .mockResolvedValueOnce('sk-or-v1-test')
-      .mockResolvedValueOnce('');
+    inputBoxSpy.mockResolvedValueOnce('sk-or-v1-test'); // API key only
     infoSpy.mockResolvedValue('Save to Settings' as any);
 
     const flow = runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/api', []);
@@ -224,6 +219,29 @@ describe('runOpenRouterAddFlow', () => {
     );
   });
 
+  it('a bare model slug still requires an explicit pick from the catalog typeahead', async () => {
+    const out = freshOutput();
+    stubOpenRouterFetch();
+    inputBoxSpy.mockResolvedValueOnce('sk-or-v1-test'); // API key only
+    infoSpy.mockResolvedValue('Save to Settings' as any);
+
+    // A slug without a URL is NOT an explicit model reference — the picker must
+    // show so the user actively selects the model (no bypass, no auto-accept).
+    const flow = runOpenRouterAddFlow(out, provider, 'nvidia/nemotron-3.5-lightning:free', []);
+    await vi.waitFor(() => expect(qpStub._accept).toBeDefined());
+    // The slug pre-fills the filter box for typeahead...
+    expect(qpStub.value).toBe('nvidia/nemotron-3.5-lightning:free');
+    // ...but the picker was shown (NOT skipped) and the user must confirm.
+    expect(createQuickPickSpy).toHaveBeenCalled();
+    qpStub.selectedItems = [{ label: 'nvidia/nemotron-3.5-lightning:free' } as any];
+    qpStub._fireAccept();
+    await flow;
+
+    expect(resolveSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ vllmModelId: 'nvidia/nemotron-3.5-lightning:free' }),
+    );
+  });
+
   it('fails clearly (no guessing) when the catalog cannot be loaded — no picker, nothing saved', async () => {
     // The catalog is the authoritative metadata source. If it can't be loaded,
     // the flow fails up front rather than collecting an id it cannot size/save.
@@ -232,16 +250,14 @@ describe('runOpenRouterAddFlow', () => {
     const fetchSpy = stubOpenRouterFetch();
     const errorSpy = vi.spyOn(vscode.window, 'showErrorMessage').mockResolvedValue(undefined);
     fetchSpy.mockRejectedValue(new Error('ECONNREFUSED'));
-    inputBoxSpy
-      .mockResolvedValueOnce('sk-or-v1-test') // API key
-      .mockResolvedValueOnce('');             // headers
+    inputBoxSpy.mockResolvedValueOnce('sk-or-v1-test'); // API key only
     infoSpy.mockResolvedValue('Save to Settings' as any);
 
     await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/api', []);
 
     // No model picker (and no free-text input box) — the flow stops at the catalog.
     expect(createQuickPickSpy).not.toHaveBeenCalled();
-    expect(inputBoxSpy).toHaveBeenCalledTimes(2); // key + headers only
+    expect(inputBoxSpy).toHaveBeenCalledTimes(1); // API key only — no headers prompt
     expect(resolveSpy).not.toHaveBeenCalled();
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Couldn't load the OpenRouter model catalog"));
     expect(out.appendLine).toHaveBeenCalledWith(expect.stringContaining('[ERROR] OpenRouter model catalog unavailable'));
@@ -263,9 +279,7 @@ describe('runOpenRouterAddFlow', () => {
   it('treats a scheme-less openrouter.ai base as a base reference (no prefill → catalog picker)', async () => {
     const out = freshOutput();
     stubOpenRouterFetch();
-    inputBoxSpy
-      .mockResolvedValueOnce('sk-or-v1-test')
-      .mockResolvedValueOnce('');
+    inputBoxSpy.mockResolvedValueOnce('sk-or-v1-test'); // API key only
     infoSpy.mockResolvedValue('Save to Settings' as any);
 
     const flow = runOpenRouterAddFlow(out, provider, 'openrouter.ai/api', []);
@@ -281,20 +295,16 @@ describe('runOpenRouterAddFlow', () => {
     );
   });
 
-  it('pre-fills the picker from a scheme-less openrouter.ai model-page URL', async () => {
+  it('resolves a scheme-less openrouter.ai model-page URL directly (picker skipped)', async () => {
     const out = freshOutput();
     const fetchSpy = stubOpenRouterFetch();
-    inputBoxSpy
-      .mockResolvedValueOnce('sk-or-v1-test')
-      .mockResolvedValueOnce('');
+    inputBoxSpy.mockResolvedValueOnce('sk-or-v1-test'); // API key only
     infoSpy.mockResolvedValue('Save to Settings' as any);
 
-    const flow = runOpenRouterAddFlow(out, provider, 'openrouter.ai/nvidia/nemotron-3.5-lightning:free', []);
-    await vi.waitFor(() => expect(qpStub._accept).toBeDefined());
-    expect(qpStub.value).toBe('nvidia/nemotron-3.5-lightning:free'); // pre-filled, still picked
-    qpStub.selectedItems = [{ label: 'nvidia/nemotron-3.5-lightning:free' } as any];
-    qpStub._fireAccept();
-    await flow;
+    // A scheme-less openrouter.ai model-page URL is still an EXPLICIT model
+    // reference → the picker is skipped and the model resolves directly.
+    await runOpenRouterAddFlow(out, provider, 'openrouter.ai/nvidia/nemotron-3.5-lightning:free', []);
+    expect(createQuickPickSpy).not.toHaveBeenCalled();
 
     // Metadata resolved from the catalog by exact id (parsed as a URL, not a bare slug).
     expect(fetchSpy).toHaveBeenCalledWith(
@@ -309,20 +319,16 @@ describe('runOpenRouterAddFlow', () => {
   it('Replace Config retains the existing entry id (duplicate on the fixed API base)', async () => {
     const out = freshOutput();
     stubOpenRouterFetch();
-    inputBoxSpy
-      .mockResolvedValueOnce('sk-or-v1-test')
-      .mockResolvedValueOnce('');
+    inputBoxSpy.mockResolvedValueOnce('sk-or-v1-test'); // API key only
     infoSpy
       .mockResolvedValueOnce('Replace Config' as any)   // duplicate dialog
       .mockResolvedValueOnce('Save to Settings' as any); // final confirm
 
-    const flow = runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/nvidia/nemotron-3.5-lightning:free', [
+    // Full model-page URL → picker skipped, straight to the duplicate dialog.
+    await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/nvidia/nemotron-3.5-lightning:free', [
       { id: 'custom-openrouter-id', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', serverUrl: 'https://openrouter.ai/api', displayName: 'OldName' },
     ]);
-    await vi.waitFor(() => expect(qpStub._accept).toBeDefined());
-    qpStub.selectedItems = [{ label: 'nvidia/nemotron-3.5-lightning:free' } as any];
-    qpStub._fireAccept();
-    await flow;
+    expect(createQuickPickSpy).not.toHaveBeenCalled();
 
     expect(infoSpy).toHaveBeenCalledWith(
       expect.stringContaining('is already configured'),
@@ -339,29 +345,25 @@ describe('runOpenRouterAddFlow', () => {
   it('Update Auth reuses the already-collected headers (no second prompt, no discarded key)', async () => {
     const out = freshOutput();
     stubOpenRouterFetch();
-    inputBoxSpy
-      .mockResolvedValueOnce('sk-or-v1-test') // API key
-      .mockResolvedValueOnce('');             // headers
+    inputBoxSpy.mockResolvedValueOnce('sk-or-v1-test'); // API key only
     const execSpy = vi.spyOn(vscode.commands, 'executeCommand');
     infoSpy.mockResolvedValueOnce('Update Auth' as any); // duplicate dialog
 
-    const flow = runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/nvidia/nemotron-3.5-lightning:free', [
+    // Full model-page URL → picker skipped, straight to the duplicate dialog.
+    await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/nvidia/nemotron-3.5-lightning:free', [
       { id: 'custom-openrouter-id', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', serverUrl: 'https://openrouter.ai/api', displayName: 'OldName' },
     ]);
-    await vi.waitFor(() => expect(qpStub._accept).toBeDefined());
-    qpStub.selectedItems = [{ label: 'nvidia/nemotron-3.5-lightning:free' } as any];
-    qpStub._fireAccept();
-    await flow;
+    expect(createQuickPickSpy).not.toHaveBeenCalled();
 
-    // The key+headers collected at step 1 are passed straight to updateServerAuth —
+    // The key collected at step 1 is passed straight to updateServerAuth —
     // it must NOT re-prompt (which would discard this key and open a second wizard).
     expect(execSpy).toHaveBeenCalledWith(
       'vllm-copilot.updateServerAuth',
       'https://openrouter.ai/api',
       { Authorization: 'Bearer sk-or-v1-test' },
     );
-    // Only the two step-1 prompts ran (key + headers) — no second auth wizard.
-    expect(inputBoxSpy).toHaveBeenCalledTimes(2);
+    // Only the step-1 key prompt ran (no headers box, no second auth wizard).
+    expect(inputBoxSpy).toHaveBeenCalledTimes(1);
     // Update Auth does not save a new config.
     expect(resolveSpy).not.toHaveBeenCalled();
   });
@@ -387,9 +389,7 @@ describe('runOpenRouterAddFlow', () => {
     const out = freshOutput();
     stubOpenRouterFetch();
     const errorSpy = vi.spyOn(vscode.window, 'showErrorMessage').mockResolvedValue(undefined);
-    inputBoxSpy
-      .mockResolvedValueOnce('sk-or-v1-test') // API key
-      .mockResolvedValueOnce('');             // headers
+    inputBoxSpy.mockResolvedValueOnce('sk-or-v1-test'); // API key only
 
     const flow = runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/api', []);
     await vi.waitFor(() => expect(qpStub._hide).toBeDefined());
@@ -560,19 +560,15 @@ describe('registerAddServerModelCommand — OpenRouter routing', () => {
     stubOpenRouterFetch();
     inputBoxSpy
       .mockResolvedValueOnce('https://openrouter.ai/nvidia/nemotron-3.5-lightning:free') // server URL
-      .mockResolvedValueOnce('sk-or-v1-test')                                            // API key
-      .mockResolvedValueOnce('');                                                        // headers
+      .mockResolvedValueOnce('sk-or-v1-test')                                            // API key (no headers prompt)
     infoSpy.mockResolvedValue('Save to Settings' as any);
 
     registerAddServerModelCommand({} as any, provider, out);
-    const cmd = (vscode as any).commands._run('vllm-copilot.addServerModel');
-    await vi.waitFor(() => expect(qpStub._accept).toBeDefined());
-    // Model-page URL pre-filled the picker; user confirms the pick.
-    expect(qpStub.value).toBe('nvidia/nemotron-3.5-lightning:free');
-    qpStub.selectedItems = [{ label: 'nvidia/nemotron-3.5-lightning:free' } as any];
-    qpStub._fireAccept();
-    await cmd;
+    await (vscode as any).commands._run('vllm-copilot.addServerModel');
 
+    // A model-page URL names the model explicitly → the picker is SKIPPED and
+    // the model resolves directly to the confirm/save dialog.
+    expect(createQuickPickSpy).not.toHaveBeenCalled();
     expect(resolveSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         serverType: 'openrouter',
@@ -602,30 +598,24 @@ describe('registerAddServerModelCommand — OpenRouter routing', () => {
     expect(resolveSpy).not.toHaveBeenCalledWith(expect.objectContaining({ serverType: 'openrouter' }));
   });
 
-  it('pre-selects a model pasted as a URL so Enter confirms it without manual selection', async () => {
-    // Regression test for the silent "no model selected" failure: real VS Code does
-    // NOT populate QuickPick.selectedItems from a programmatic .value (it fills
-    // activeItems), so a pasted model-page URL previously cancelled the flow when
-    // the user pressed Enter. The flow must pre-select the matching item itself.
+  it('skips the picker for a pasted model-page URL — no pre-select, goes straight to confirm', async () => {
+    // A pasted full model-page URL is an EXPLICIT model reference. It must NOT
+    // pre-select a model in the typeahead (which flashed and auto-accepted on
+    // Enter) — instead the picker is skipped entirely and the model resolves
+    // directly to the confirm/save dialog, where the user actively confirms.
     const out = freshOutput();
     stubOpenRouterFetch();
     inputBoxSpy
       .mockResolvedValueOnce('https://openrouter.ai/nvidia/nemotron-3.5-lightning:free') // server URL
-      .mockResolvedValueOnce('sk-or-v1-test')                                            // API key
-      .mockResolvedValueOnce('');                                                        // headers
+      .mockResolvedValueOnce('sk-or-v1-test')                                            // API key (no headers prompt)
     infoSpy.mockResolvedValue('Save to Settings' as any);
 
     registerAddServerModelCommand({} as any, provider, out);
-    const cmd = (vscode as any).commands._run('vllm-copilot.addServerModel');
-    await vi.waitFor(() => expect(qpStub._accept).toBeDefined());
-    // The pasted URL pre-filled AND pre-selected the model.
-    expect(qpStub.value).toBe('nvidia/nemotron-3.5-lightning:free');
-    expect(qpStub.selectedItems[0]?.label).toBe('nvidia/nemotron-3.5-lightning:free');
-    expect(qpStub.activeItems[0]?.label).toBe('nvidia/nemotron-3.5-lightning:free');
-    // NO manual selectedItems assignment — this is what the regression caught.
-    qpStub._fireAccept();
-    await cmd;
+    await (vscode as any).commands._run('vllm-copilot.addServerModel');
 
+    // The picker never appears (no flash, no auto-accept).
+    expect(createQuickPickSpy).not.toHaveBeenCalled();
+    // The explicit URL resolved the exact catalog entry directly.
     expect(resolveSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         serverType: 'openrouter',
@@ -649,8 +639,7 @@ describe('registerAddServerModelCommand — OpenRouter routing', () => {
     });
     inputBoxSpy
       .mockResolvedValueOnce('https://openrouter.ai/nvidia/nemotron-3.5-lightning:free') // server URL
-      .mockResolvedValueOnce('sk-or-v1-test')                                            // API key
-      .mockResolvedValueOnce('');                                                        // headers
+      .mockResolvedValueOnce('sk-or-v1-test')                                            // API key (no headers prompt)
     infoSpy.mockResolvedValue('Save to Settings' as any);
 
     registerAddServerModelCommand({} as any, provider, out);
@@ -658,7 +647,7 @@ describe('registerAddServerModelCommand — OpenRouter routing', () => {
 
     // No picker, no free-text input box, no save — the flow stops at the catalog.
     expect(createQuickPickSpy).not.toHaveBeenCalled();
-    expect(inputBoxSpy).toHaveBeenCalledTimes(3); // server URL + key + headers
+    expect(inputBoxSpy).toHaveBeenCalledTimes(2); // server URL + API key (no headers)
     expect(resolveSpy).not.toHaveBeenCalledWith(expect.objectContaining({ serverType: 'openrouter' }));
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Couldn't load the OpenRouter model catalog"));
   });
