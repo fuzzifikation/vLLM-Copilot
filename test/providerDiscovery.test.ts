@@ -129,4 +129,39 @@ describe('clearCache (invalidation + change event)', () => {
     expect(silent).toHaveLength(1);
     expect(client.getConfigCached).toHaveBeenCalledTimes(2); // re-read after invalidation
   });
+
+  it('does not return or cache a discovery result invalidated while in flight', async () => {
+    let resolveOldContext!: (value: { contextWindow: number }) => void;
+    const oldContext = new Promise<{ contextWindow: number }>(resolve => {
+      resolveOldContext = resolve;
+    });
+    const oldConfig = {
+      models: [{ id: 'old', serverUrl: server, family: 'old-family' }],
+      enableFileLogging: false,
+    } as VllmConfig;
+    const newConfig = {
+      models: [{ id: 'new', serverUrl: server, family: 'new-family' }],
+      enableFileLogging: false,
+    } as VllmConfig;
+    const client = fakeClient({
+      getConfigCached: vi.fn()
+        .mockResolvedValueOnce(oldConfig)
+        .mockResolvedValue(newConfig),
+      getModelContextWindow: vi.fn()
+        .mockImplementationOnce(() => oldContext)
+        .mockResolvedValue({ contextWindow: 8192 }),
+    });
+    const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+
+    const pending = provider.provideLanguageModelChatInformation({ silent: false }, makeToken());
+    await vi.waitFor(() => expect(client.getModelContextWindow).toHaveBeenCalledTimes(1));
+    provider.clearCache();
+    resolveOldContext({ contextWindow: 8192 });
+
+    const models = await pending;
+    expect(models.map(model => model.id)).toEqual(['new']);
+    const silent = await provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+    expect(silent.map(model => model.id)).toEqual(['new']);
+    expect(client.getConfigCached).toHaveBeenCalledTimes(2);
+  });
 });

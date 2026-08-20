@@ -23,6 +23,17 @@ describe('deriveTokenBudget', () => {
     );
   });
 
+  it('ignores non-finite input and output overrides', () => {
+    expect(deriveTokenBudget(8192, 1024, {
+      maxOutputTokens: Number.NaN,
+      maxInputTokens: Number.NaN,
+    })).toEqual({
+      maxModelLen: 8192,
+      maxOutputTokens: 1024,
+      maxInputTokens: 7168,
+    });
+  });
+
   it('per-model override beats global config', () => {
     const b = deriveTokenBudget(10000, 4096, { maxOutputTokens: 3000 });
     expect(b.maxOutputTokens).toBe(3000);

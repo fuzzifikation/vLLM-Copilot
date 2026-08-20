@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fetchWithRetry } from '../src/fetchRetry.js';
+import { fetchWithRetry, parseRetryAfterMs } from '../src/fetchRetry.js';
 
 /**
  * fetchWithRetry retry classification. Regression tests for the real Node/undici
@@ -15,6 +15,7 @@ const okResponse = () => new Response('ok', { status: 200 });
 
 describe('fetchWithRetry abort handling', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -79,9 +80,74 @@ describe('fetchWithRetry abort handling', () => {
       .mockResolvedValueOnce(new Response('upstream down', { status: 502, statusText: 'Bad Gateway' }));
 
     await expect(fetchWithRetry('http://test', {}, {}, (w) => retryWarnings.push(w)))
-      .rejects.toThrow('Request failed after 2 attempts: HTTP 502: Bad Gateway — upstream down');
+      .rejects.toThrow('HTTP 502: Bad Gateway — upstream down (after retry)');
 
     expect(retryWarnings).toEqual(['HTTP 502: Bad Gateway — upstream down']);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries 429 once after the server Retry-After delay', async () => {
+    vi.useFakeTimers();
+    const delays: number[] = [];
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('slow down', {
+        status: 429,
+        headers: { 'Retry-After': '2' },
+      }))
+      .mockResolvedValueOnce(okResponse());
+
+    const pending = fetchWithRetry('http://test', {}, {}, (_error, delay) => delays.push(delay));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(pending).resolves.toMatchObject({ status: 200 });
+    expect(delays).toEqual([2000]);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails immediately when Retry-After exceeds the interactive 10s limit', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('wait', { status: 503, headers: { 'Retry-After': '11' } }),
+    );
+
+    await expect(fetchWithRetry('http://test', {}, {})).rejects.toThrow('HTTP 503');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts immediately while waiting to retry', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let retryStarted!: () => void;
+    const started = new Promise<void>(resolve => { retryStarted = resolve; });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('busy', { status: 503 }))
+      .mockResolvedValueOnce(okResponse());
+
+    const pending = fetchWithRetry(
+      'http://test',
+      { signal: controller.signal },
+      {},
+      () => retryStarted(),
+    );
+    await started;
+    controller.abort('User cancelled');
+
+    await expect(pending).rejects.toBe('User cancelled');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('parseRetryAfterMs', () => {
+  it('parses seconds and HTTP dates', () => {
+    expect(parseRetryAfterMs('1.5', 0)).toBe(1500);
+    expect(parseRetryAfterMs('Thu, 01 Jan 1970 00:00:05 GMT', 1000)).toBe(4000);
+  });
+
+  it('rejects invalid values and clamps past dates to zero', () => {
+    expect(parseRetryAfterMs('later')).toBeUndefined();
+    expect(parseRetryAfterMs('Thu, 01 Jan 1970 00:00:00 GMT', 1000)).toBe(0);
   });
 });

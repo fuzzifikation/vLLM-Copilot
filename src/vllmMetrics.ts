@@ -599,6 +599,23 @@ export function getMetricsEngine(
   return engine;
 }
 
+/**
+ * Update request headers on an existing metrics engine, if one is already
+ * registered for this server. Unlike {@link getMetricsEngine}, this never
+ * creates an engine — it exists so header-only updates (e.g. Update Auth)
+ * don't leak a zero-subscriber registry entry. No-op when no engine exists.
+ *
+ * @param serverUrl - The vLLM server URL (canonicalized internally)
+ * @param requestHeaders - New auth/routing headers
+ */
+export function updateMetricsEngineHeaders(serverUrl: string, requestHeaders: Record<string, string>): void {
+  const key = normalizeServerUrl(serverUrl);
+  const engine = engineRegistry.get(key);
+  if (engine) {
+    engine.setHeaders(requestHeaders);
+  }
+}
+
 // ─── Unified Fetch ──────────────────────────────────────────────────
 
 /**

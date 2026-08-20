@@ -17,7 +17,7 @@ This is a focused fifth-backend integration, not a transport rewrite.
 - Do **not** extract a backend registry now. The current switches are small and already express real differences. Revisit only when another backend adds repeated behavior that cannot stay in those existing boundaries.
 - Keep the runtime request body unchanged unless a contract test proves a difference. Current OpenRouter Chat supports `max_tokens`; the existing non-vLLM path already removes vLLM-only continuation flags.
 - Use OpenRouter's website for catalog browsing and its public exact-model API for validation. Do not recreate the catalog UI or copy catalog data into presets.
-- Keep credentials in per-model `requestHeaders`. They remain plaintext user settings and must never reach logs or webview state.
+- Keep credentials in per-model `requestHeaders`. They remain plaintext user settings. Opt-in raw file logging and connection diagnostics may include them on the user's own machine by design; this is not treated as automatic exfiltration. Credentials must still stay out of webview state.
 - Reuse the current fetch/retry, `eventsource-parser`, SSE parser, malformed-JSON recovery, and message converter. Do not add `@openrouter/sdk` for one metadata GET.
 - Defer Responses and the Agent SDK. Copilot owns the agent loop; Responses is a separate item/event protocol and should be added only for a concrete user-facing capability.
 
@@ -67,7 +67,7 @@ The exact-model response is normalized as follows:
 
 **Variants 404 on the exact-model endpoint — lookup uses the base slug, chat keeps the full id.** Despite the OpenAPI claiming variant support (`gpt-4:free`), the live endpoint 404s every variant/alias suffix tested (`:free` on llama-3.3 and solar-pro-3, `~latest`, `~author/...` prefix, and even some dated `canonical_slug`s) while the base slug always resolves. `:free` ids ARE valid chat ids (free-router responses echo `model: "...:free"`), so: strip the suffix for the metadata lookup (`/api/v1/model/{author}/{slug}` with the base slug) and preserve the full requested id for chat. This is implemented in `src/openRouter.ts` (`parseOpenRouterModelRef`).
 
-Streaming already matches the shared parser: keep-alive comments, `[DONE]`, reasoning/content/tool deltas, an empty-choice final usage chunk, and top-level mid-stream errors. Preserve `error.metadata.error_type`, honor bounded `Retry-After` on pre-stream 429/503 responses, never retry after partial output, and retain `X-Generation-Id` for redacted diagnostics.
+Streaming matches the shared parser: keep-alive comments, `[DONE]`, reasoning/content/tool deltas, an empty-choice final usage chunk, and top-level mid-stream errors. Bounded pre-stream `Retry-After` handling for 429/503 is landed: one retry, at most 10 seconds, cancellation-aware, and never after partial output. Preserve `error.metadata.error_type`; `X-Generation-Id` remains deferred below.
 
 ## Reuse Decision
 
@@ -93,12 +93,16 @@ OpenRouter is now just a 5th arm of an already-widened contract: its control-pla
 
 ### Credential Hygiene (LANDED — done before this delivery, no behavior change)
 
-Credentials stay in per-model `requestHeaders` — plaintext user settings, and never in logs or webview state by construction. Two low-severity hygiene fixes landed as a quick chore ahead of onboarding:
+Credentials stay in per-model `requestHeaders` as plaintext user settings. Raw local request/response logging and connection diagnostics are an intentional expert-mode behavior: the user explicitly enables or invokes them, the data remains on the user's machine, and the extension does not upload it. The webview remains a separate trust boundary and does not receive header values. Two low-severity hygiene fixes landed as a quick chore ahead of onboarding:
 
 - `addServerFlow.ts` logs the complete config — including `requestHeaders` — to the output channel. That channel is the user's own machine, so this is not a vulnerability; but the extension tells users to copy the channel and share it when reporting issues, so a key can end up in a shared paste. Log a redacted projection (headers as `[REDACTED]`) so the "key never leaves trusted extension code" claim made during onboarding is actually true.
 - `serverSettingsView.ts` posts full `ModelConfig[]` objects (including `requestHeaders`) to the webview. Same low severity — same-machine DOM — but defense-in-depth: send a public model projection to the webview.
 
 Shared helper: `toPublicModelConfig` (`src/config.ts`) — `[REDACTED]`-values mode for the output channel, `{ strip: true }` for the webview. Covered in `test/configFunctions.test.ts`.
+
+### Backlog
+
+- **Optional sanitized diagnostics export/warning** — revisit whether to offer a redacted log export or a warning before sharing raw local diagnostics. This is a usability and sharing-safety improvement, not a correctness/security blocker under the current product decision. Do not change the existing expert-mode raw logging behavior without explicit product direction.
 
 Connection identity reuses the existing normalized-URL + backend + deterministic header fingerprint. Do not add multi-key isolation logic for OpenRouter — one key per user is the norm, and the existing fingerprint already keeps distinct keys separate at the same URL.
 
@@ -158,7 +162,7 @@ Generic local-server detection remains unchanged. No OpenRouter presets or inter
 
 - Use the existing request body and non-vLLM continuation behavior unchanged.
 - Preserve canonical `error.metadata.error_type` for pre-stream and mid-stream errors; unknown future values remain displayable.
-- Extend the shared pre-stream retry — `fetchWithRetry` today does one 1.5s retry on 5xx and none on 429 — to honor a bounded `Retry-After` on pre-stream 429/503 responses. Never retry 401, 402, invalid 4xx responses, cancellation, or a stream after partial output.
+- ✔ **LANDED:** the shared pre-stream transport retries 429/503 once, honors valid `Retry-After` values up to 10 seconds, falls back to 1.5 seconds when absent/invalid, and fails immediately for longer requested waits. Cancellation interrupts backoff; 401, 402, permanent 4xx responses, and streams after partial output are never retried.
 - Do **not** retain `X-Generation-Id`. The stream path never reads response headers, so it would thread a header-read through four layers for a diagnostic nicety; router metadata is out for the same reason (cache hits omit it). No new stream plumbing.
 - OpenRouter is **not** "degraded". Replace the dashboard's blanket `serverType !== 'vllm'` → degraded flag with per-backend classification: OpenRouter renders as a managed remote backend — suppress the vLLM-only metric rows as today, but label it accurately and surface token usage + actual cost. The actual-cost display becomes the headline, not a "degraded" footnote.
 

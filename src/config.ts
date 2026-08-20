@@ -188,12 +188,21 @@ export function resolveRequestParams(
 
 /** Resolve typed per-model token/transport settings against the built-in defaults. */
 export function resolveModelSettings(override: ModelConfig | undefined): ResolvedModelSettings {
+  const finiteOr = (value: number | undefined, fallback: number): number =>
+    typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  const maxOutputTokens = finiteOr(override?.maxOutputTokens, DEFAULT_MODEL_SETTINGS.maxOutputTokens);
+  const estimateCharsPerToken = finiteOr(override?.estimateCharsPerToken, DEFAULT_MODEL_SETTINGS.estimateCharsPerToken);
+  const streamInactivityTimeout = finiteOr(override?.streamInactivityTimeout, DEFAULT_MODEL_SETTINGS.streamInactivityTimeout);
+  const initialResponseTimeoutMs = finiteOr(override?.initialResponseTimeoutMs, DEFAULT_MODEL_SETTINGS.initialResponseTimeoutMs);
+  const autoContinueRetries = finiteOr(override?.autoContinueRetries, DEFAULT_MODEL_SETTINGS.autoContinueRetries);
   return {
-    maxOutputTokens: override?.maxOutputTokens ?? DEFAULT_MODEL_SETTINGS.maxOutputTokens,
-    estimateCharsPerToken: override?.estimateCharsPerToken ?? DEFAULT_MODEL_SETTINGS.estimateCharsPerToken,
-    streamInactivityTimeout: override?.streamInactivityTimeout ?? DEFAULT_MODEL_SETTINGS.streamInactivityTimeout,
-    initialResponseTimeoutMs: override?.initialResponseTimeoutMs ?? DEFAULT_MODEL_SETTINGS.initialResponseTimeoutMs,
-    autoContinueRetries: override?.autoContinueRetries ?? DEFAULT_MODEL_SETTINGS.autoContinueRetries,
+    maxOutputTokens: Math.max(1, Math.floor(maxOutputTokens)),
+    estimateCharsPerToken: estimateCharsPerToken > 0
+      ? estimateCharsPerToken
+      : DEFAULT_MODEL_SETTINGS.estimateCharsPerToken,
+    streamInactivityTimeout: Math.max(0, Math.floor(streamInactivityTimeout)),
+    initialResponseTimeoutMs: Math.max(0, Math.floor(initialResponseTimeoutMs)),
+    autoContinueRetries: Math.max(0, Math.floor(autoContinueRetries)),
   };
 }
 
@@ -363,13 +372,16 @@ export function normalizeServerUrl(url: string): string {
   let normalized = url.trim();
   if (!normalized) return 'http://localhost:8000';
 
-  // Already has a scheme
-  if (!(normalized.startsWith('http://') || normalized.startsWith('https://'))) {
+  // Already has a scheme (URI schemes are case-insensitive). Canonicalize it
+  // so all downstream string operations and map keys see one spelling.
+  if (!/^https?:\/\//i.test(normalized)) {
     // Missing scheme — detect scheme by whether the host has an explicit port.
     // Has port (e.g. host:8000) → http:// (raw vLLM). No port → https:// (reverse proxy).
     const hostPart = normalized.split(/[\/?]/)[0];
     const scheme = /\:\d+$/.test(hostPart) ? 'http' : 'https';
     normalized = `${scheme}://${normalized}`;
+  } else {
+    normalized = normalized.replace(/^https?:\/\//i, match => match.toLowerCase());
   }
 
   // Validate that a host is present (http:// and https:// have no host)
@@ -501,8 +513,8 @@ export function validateConfig(config: VllmConfig): string[] {
     } else {
       // Warn if normalizeServerUrl silently fell back to localhost (empty host after scheme).
       const trimmed = model.serverUrl.trim();
-      const afterScheme = trimmed.replace(/^https?:\/\//, '');
-      if ((trimmed.startsWith('http://') || trimmed.startsWith('https://')) &&
+      const afterScheme = trimmed.replace(/^https?:\/\//i, '');
+      if (/^https?:\/\//i.test(trimmed) &&
           (!afterScheme || afterScheme.startsWith('/') || afterScheme.startsWith('?'))) {
         warnings.push(`Model "${display}": serverUrl "${model.serverUrl}" is invalid (no host) — falling back to http://localhost:8000.`);
       }
@@ -516,21 +528,21 @@ export function validateConfig(config: VllmConfig): string[] {
       );
     }
 
-    const settings = resolveModelSettings(model);
-    if (settings.maxOutputTokens <= 0) {
-      warnings.push(`Model "${display}": maxOutputTokens is ${settings.maxOutputTokens}; should be > 0.`);
+    if (model.maxOutputTokens !== undefined && (!Number.isFinite(model.maxOutputTokens) || model.maxOutputTokens <= 0)) {
+      warnings.push(`Model "${display}": maxOutputTokens is ${model.maxOutputTokens}; should be finite and > 0.`);
     }
-    if (settings.estimateCharsPerToken <= 0) {
-      warnings.push(`Model "${display}": estimateCharsPerToken is ${settings.estimateCharsPerToken}; should be > 0.`);
+    if (model.estimateCharsPerToken !== undefined && (!Number.isFinite(model.estimateCharsPerToken) || model.estimateCharsPerToken <= 0)) {
+      warnings.push(`Model "${display}": estimateCharsPerToken is ${model.estimateCharsPerToken}; should be finite and > 0.`);
     }
-    if (settings.streamInactivityTimeout < 0) {
-      warnings.push(`Model "${display}": streamInactivityTimeout is ${settings.streamInactivityTimeout}ms; should be >= 0 (0 = disabled).`);
+    if (model.streamInactivityTimeout !== undefined && (!Number.isFinite(model.streamInactivityTimeout) || model.streamInactivityTimeout < 0)) {
+      warnings.push(`Model "${display}": streamInactivityTimeout is ${model.streamInactivityTimeout}ms; should be finite and >= 0 (0 = disabled).`);
     }
-    if (settings.initialResponseTimeoutMs < 0) {
-      warnings.push(`Model "${display}": initialResponseTimeoutMs is ${settings.initialResponseTimeoutMs}ms; should be >= 0 (0 = disabled).`);
+    if (model.initialResponseTimeoutMs !== undefined && (!Number.isFinite(model.initialResponseTimeoutMs) || model.initialResponseTimeoutMs < 0)) {
+      warnings.push(`Model "${display}": initialResponseTimeoutMs is ${model.initialResponseTimeoutMs}ms; should be finite and >= 0 (0 = disabled).`);
     }
-    if (settings.autoContinueRetries < 0) {
-      warnings.push(`Model "${display}": autoContinueRetries is ${settings.autoContinueRetries}; should be >= 0.`);
+    if (model.autoContinueRetries !== undefined &&
+        (!Number.isFinite(model.autoContinueRetries) || model.autoContinueRetries < 0 || !Number.isInteger(model.autoContinueRetries))) {
+      warnings.push(`Model "${display}": autoContinueRetries is ${model.autoContinueRetries}; should be a finite integer >= 0.`);
     }
 
     // Validate request params at model scope and each mode scope.

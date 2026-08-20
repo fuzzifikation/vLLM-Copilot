@@ -92,7 +92,8 @@
     if (input) setTimeout(() => input.focus(), 50);
     return new Promise(resolve => {
       body.querySelector('#modalOk').onclick = () => { resolve(onOk ? onOk() : null); overlay.classList.remove('show'); };
-      body.querySelector('#modalCancel').onclick = () => { resolve(null); overlay.classList.remove('show'); };
+      const cancel = body.querySelector('#modalCancel');
+      if (cancel) cancel.onclick = () => { resolve(null); overlay.classList.remove('show'); };
     });
   }
 
@@ -107,6 +108,13 @@
   function webviewConfirm(msg) {
     return showModal(
       '<p>' + E(msg) + '</p><div class="modal-actions"><button id="modalCancel">Cancel</button><button id="modalOk">Confirm</button></div>',
+      () => true
+    );
+  }
+
+  function webviewAlert(msg) {
+    return showModal(
+      '<p>' + E(msg) + '</p><div class="modal-actions"><button id="modalOk">OK</button></div>',
       () => true
     );
   }
@@ -413,6 +421,16 @@
   function save() {
     const mc = S.mc;
     if (!mc) return;
+    const modeCards = [...document.querySelectorAll('.mode-card')];
+    const seenModeNames = new Set();
+    for (const card of modeCards) {
+      const name = card.dataset.mn;
+      if (seenModeNames.has(name)) {
+        void webviewAlert('A mode named "' + name + '" already exists. Mode names must be unique.');
+        return;
+      }
+      seenModeNames.add(name);
+    }
     const u = { ...mc };
     document.querySelectorAll('[data-f]').forEach(el => {
       const k = el.dataset.f;
@@ -428,14 +446,14 @@
     });
     u.capabilities = { toolCalling: true, ...caps };
     const modes = {};
-    document.querySelectorAll('.mode-card').forEach(card => {
+    modeCards.forEach(card => {
       const pn = card.dataset.mn;
       const ps = {};
       card.querySelectorAll('[data-mk]').forEach(inp => {
         const k = inp.dataset.mk;
         let v;
-        if (inp.tagName === 'TEXTAREA') v = tryJSON(inp.value) || inp.value;
-        else if (inp.tagName === 'SELECT') v = inp.value === '' ? undefined : tryJSON(inp.value) || inp.value;
+        if (inp.tagName === 'TEXTAREA') v = jsonValueOrString(inp.value);
+        else if (inp.tagName === 'SELECT') v = inp.value === '' ? undefined : jsonValueOrString(inp.value);
         else if (inp.type === 'text') v = inp.value || undefined;
         else v = inp.value === '' ? undefined : Number(inp.value);
         if (v !== undefined) ps[k] = v;
@@ -447,8 +465,8 @@
     document.querySelectorAll('[data-dk]').forEach(inp => {
       const k = inp.dataset.dk;
       let v;
-      if (inp.tagName === 'TEXTAREA') v = tryJSON(inp.value) || inp.value;
-      else if (inp.tagName === 'SELECT') v = inp.value === '' ? undefined : tryJSON(inp.value) || inp.value;
+      if (inp.tagName === 'TEXTAREA') v = jsonValueOrString(inp.value);
+      else if (inp.tagName === 'SELECT') v = inp.value === '' ? undefined : jsonValueOrString(inp.value);
       else if (inp.type === 'text') v = inp.value || undefined;
       else v = inp.value === '' ? undefined : Number(inp.value);
       if (v !== undefined) dp[k] = v;
@@ -461,7 +479,14 @@
     vscode.postMessage({ type: 'save', config: u });
   }
 
-  function tryJSON(s) { try { return JSON.parse(s); } catch { return null; } }
+  function jsonValueOrString(s) {
+    try { return JSON.parse(s); } catch { return s; }
+  }
+
+  function modeNameExists(name, excludedCard) {
+    return [...document.querySelectorAll('.mode-card')]
+      .some(card => card !== excludedCard && card.dataset.mn === name);
+  }
 
   // Event delegation for dynamically created buttons
   document.addEventListener('click', e => {
@@ -476,16 +501,27 @@
   });
 
   async function addMode() {
-    const name = await webviewPrompt('Mode name (e.g. "Think", "Coding"):');
+    const name = (await webviewPrompt('Mode name (e.g. "Think", "Coding"):') || '').trim();
     if (!name) return;
+    if (modeNameExists(name)) {
+      await webviewAlert('A mode named "' + name + '" already exists.');
+      return;
+    }
     document.getElementById('modesList').insertAdjacentHTML('beforeend', modeCard(name, {}));
     markDirty();
   }
   async function renameMode(btn) {
     const card = btn.closest('.mode-card');
     const old = card.dataset.mn;
-    const nw = await webviewPrompt('New mode name:', old);
-    if (nw && nw !== old) { card.dataset.mn = nw; card.querySelector('.mode-title').textContent = nw; markDirty(); }
+    const nw = (await webviewPrompt('New mode name:', old) || '').trim();
+    if (!nw || nw === old) return;
+    if (modeNameExists(nw, card)) {
+      await webviewAlert('A mode named "' + nw + '" already exists.');
+      return;
+    }
+    card.dataset.mn = nw;
+    card.querySelector('.mode-title').textContent = nw;
+    markDirty();
   }
   async function removeMode(btn) {
     const card = btn.closest('.mode-card');
@@ -495,7 +531,17 @@
     const card = btn.closest('.mode-card');
     const used = [...card.querySelectorAll('[data-mk]')].map(el => el.dataset.mk);
     const avail = Object.entries(S.knownParams).filter(([k]) => !used.includes(k));
-    if (!avail.length) { const k = await webviewPrompt('Parameter name:'); if (k) { insertMP(card, k, 'number'); markDirty(); } return; }
+    if (!avail.length) {
+      const k = (await webviewPrompt('Parameter name:') || '').trim();
+      if (!k) return;
+      if (used.includes(k)) {
+        await webviewAlert('Parameter "' + k + '" already exists in this mode.');
+        return;
+      }
+      insertMP(card, k, 'number');
+      markDirty();
+      return;
+    }
     const pick = await webviewParamPick(avail);
     if (!pick) return;
     if (pick.info.options) {

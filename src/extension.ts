@@ -73,7 +73,7 @@ export async function activate(context: vscode.ExtensionContext) {
     setExtensionVersion(context.extension.packageJSON.version);
 
     // Wire output channel to sessionManager for logging
-    setSessionManagerOutput(outputChannel);
+    setSessionManagerOutput(outputChannel, context.globalStorageUri.fsPath);
 
     // Initialize usage store (last request + cumulative token/cost tracking).
     // Must run before any request can complete so the persisted counters load

@@ -34,6 +34,7 @@ export async function consumeStream(
   vllmModelId: string,
   output: vscode.OutputChannel,
   fileLogger?: FileLogger,
+  contextWindow?: number,
 ): Promise<void> {
   // Track reported tool calls to avoid duplicates
   const reportedToolCallIds = new Set<string>();
@@ -144,7 +145,7 @@ export async function consumeStream(
       metrics: pendingMetrics,
       hasMetrics,
       hasCacheDetails,
-      maxModelLen: (model.maxInputTokens || 0) + (model.maxOutputTokens || 0),
+      maxModelLen: contextWindow ?? ((model.maxInputTokens || 0) + (model.maxOutputTokens || 0)),
       maxOutputTokens: model.maxOutputTokens || 0,
       firstTokenTimeMs: outcome.firstTokenTime ?? null,
       totalTimeMs: totalElapsedMs,

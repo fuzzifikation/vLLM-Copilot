@@ -10,6 +10,7 @@ import {
   fmtTokPerSec,
   shortUrl,
   getMetricsEngine,
+  updateMetricsEngineHeaders,
   ServerMetricsEngine,
   type ModelAccumulator,
   type RawMetricEntry,
@@ -597,9 +598,10 @@ describe('ServerMetricsEngine registry lifecycle', () => {
       }
       if (u.includes('/v1/model/')) {
         resolverHits++;
-        // First attempt fails transiently (429 — not retried by fetchWithRetry,
-        // so it surfaces immediately), later attempts succeed.
-        return resolverHits === 1
+        // Exhaust fetchWithRetry's initial attempt + one pre-stream retry so
+        // the first metrics tick still observes a transient failure. A later
+        // engine poll succeeds after the context backoff.
+        return resolverHits <= 2
           ? new Response(null, { status: 429 })
           : new Response(JSON.stringify({ data: { context_length: 1000000 } }), { status: 200 });
       }
@@ -614,7 +616,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     const sub = engine.subscribe((agg) => { polls.push(agg); });
 
     // First poll: transient failure → no window yet.
-    await vi.advanceTimersByTimeAsync(0); // flush the initial tick's async fetch
+    await vi.advanceTimersByTimeAsync(1500); // initial attempt + 429 retry
     expect(polls[0]?.maxModelLen).toBeNull();
 
     // Advance past the 60s retry backoff + a poll interval so the next poll
@@ -784,5 +786,41 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     expect(after).not.toBe(first);
     expect(after.getCachedRaw()).toBeNull();
     expect(after.getCachedAggregated()).toBeNull();
+  });
+
+  it('updateMetricsEngineHeaders updates an existing engine but never creates one', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (url: unknown, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const url = 'http://header-update:8000';
+    // No engine exists yet — update-if-present is a strict no-op.
+    updateMetricsEngineHeaders(url, { Authorization: 'Bearer new' });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Create an engine, subscribe (starts polling), then update headers.
+    const engine = getMetricsEngine(url, { Authorization: 'Bearer old' });
+    const sub = engine.subscribe(() => {});
+    await vi.advanceTimersByTimeAsync(16_000);
+
+    updateMetricsEngineHeaders(url, { Authorization: 'Bearer new' });
+    // The registry still holds the SAME engine (not a fresh one)…
+    expect(getMetricsEngine(url)).toBe(engine);
+    // …and the next poll uses the updated header.
+    fetchMock.mockClear();
+    await vi.advanceTimersByTimeAsync(16_000);
+    const authHeaders = fetchMock.mock.calls.map(([, init]) =>
+      (init?.headers as Record<string, string> | undefined)?.Authorization
+    );
+    expect(authHeaders).toContain('Bearer new');
+
+    sub.dispose();
+    vi.useRealTimers();
   });
 });

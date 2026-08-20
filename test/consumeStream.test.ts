@@ -107,7 +107,7 @@ describe('consumeStream', () => {
 
     await consumeStream(
       streamOf([ev({ content: 'hi', usage, metrics: { generation_time_ms: 12 } })]),
-      model, progress, token, startTime, outcome, 'http://host', 'm', output,
+      model, progress, token, startTime, outcome, 'http://host', 'm', output, undefined, 32768,
     );
 
     expect(progress.report).toHaveBeenCalledWith(expect.objectContaining({ mimeType: 'usage' }));
@@ -116,7 +116,7 @@ describe('consumeStream', () => {
     expect(last?.modelId).toBe('m');
     expect(last?.promptTokens).toBe(10);
     expect(last?.totalTokens).toBe(15);
-    expect(last?.maxModelLen).toBe(1100);
+    expect(last?.maxModelLen).toBe(32768);
     // Client-measured total time is always recorded, so the dashboard can compute
     // throughput even when the server reports no per-request metrics.
     expect(last?.totalTimeMs).toBeTypeOf('number');

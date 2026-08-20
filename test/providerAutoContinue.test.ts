@@ -188,6 +188,19 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  it('still performs the initial request when autoContinueRetries is negative', async () => {
+    const { provider, spy } = setupProvider(
+      [[ev({ content: 'Answer', finishReason: 'stop' })]],
+      -1,
+    );
+    const progress = { report: vi.fn() };
+
+    await run(provider, progress);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(reportedText(progress)).toBe('Answer');
+  });
+
   it('does not retry a colon-terminated reply that stopped on length, not stop', async () => {
     // Ends with a colon (would trigger continuation) BUT finish_reason is 'length',
     // so the stop-only gate must suppress the retry. This isolates the finish_reason check.

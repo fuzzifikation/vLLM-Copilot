@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getConfig, buildEndpoint, findModelConfigIndex, toPublicModelConfig, type ModelConfig, type ServerType } from './config.js';
+import { getConfig, buildEndpoint, findModelConfigIndex, resolveServerConfig, toPublicModelConfig, type ModelConfig, type ServerType } from './config.js';
 import { patchModelConfig, type ModelIdentity } from './configStore.js';
 import { detectServerTypeFromV1Models } from './vllmClient.js';
 import {
@@ -116,6 +116,7 @@ type FromWebviewMessage = ReadyMessage | SaveMessage | ApplyPersonalityMessage |
 export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private isWebviewReady = false;
+  private refreshGeneration = 0;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -124,6 +125,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   ) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
+    this.refreshGeneration++;
     this.view = webviewView;
     this.isWebviewReady = false;
     this.outputChannel.appendLine('[SETTINGS] resolveWebviewView called');
@@ -193,8 +195,11 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       // Drop the stale view reference so an in-flight refreshWebview (which
       // passed the entry guard before awaiting getConfig) can't postMessage to
       // a dead webview. resolveWebviewView re-creates both on re-show.
-      this.view = undefined;
-      this.isWebviewReady = false;
+      if (this.view === webviewView) {
+        this.refreshGeneration++;
+        this.view = undefined;
+        this.isWebviewReady = false;
+      }
     });
 
     // Set HTML synchronously - references external files
@@ -217,26 +222,43 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async refreshWebview(): Promise<void> {
-    if (!this.view || !this.isWebviewReady) return;
+    const view = this.view;
+    if (!view || !this.isWebviewReady) return;
+    const generation = ++this.refreshGeneration;
     const config = await getConfig(this.context);
-    const serverMap = new Map<string, ModelConfig[]>();
+    const serverMap = new Map<string, {
+      models: ModelConfig[];
+      publicModels: ModelConfig[];
+      requestHeaders: Record<string, string>;
+    }>();
     for (const model of config.models) {
       if (!model.serverUrl) continue;
-      let existing = serverMap.get(model.serverUrl);
-      if (!existing) { existing = []; serverMap.set(model.serverUrl, existing); }
+      const resolved = resolveServerConfig(model);
+      if (!resolved.serverUrl) continue;
+      let existing = serverMap.get(resolved.serverUrl);
+      if (!existing) {
+        existing = { models: [], publicModels: [], requestHeaders: resolved.requestHeaders };
+        serverMap.set(resolved.serverUrl, existing);
+      }
+      existing.models.push(model);
       // Public projection: header values never reach the webview DOM.
-      existing.push(toPublicModelConfig(model, { strip: true }));
+      existing.publicModels.push({
+        ...toPublicModelConfig(model, { strip: true }),
+        serverUrl: resolved.serverUrl,
+      });
     }
     const servers: ServerGroup[] = await Promise.all(
-      Array.from(serverMap.entries()).map(async ([url, models]) => {
+      Array.from(serverMap.entries()).map(async ([url, group]) => {
         // Fetch server model IDs from /v1/models (same endpoint Add Server probes).
         // Also detect the backend from the response so unconfigured models can be
         // added with the correct serverType instead of silently defaulting to vllm.
         const serverModelIds: string[] = [];
         let entries: Array<{ id?: string; owned_by?: string; max_model_len?: number }> = [];
         try {
-          const headers = models[0]?.requestHeaders ?? {};
-          const resp = await fetch(buildEndpoint(url, 'v1/models'), { headers, signal: AbortSignal.timeout(5000) });
+          const resp = await fetch(buildEndpoint(url, 'v1/models'), {
+            headers: group.requestHeaders,
+            signal: AbortSignal.timeout(5000),
+          });
           if (resp.ok) {
             entries = (await resp.json() as { data?: Array<{ id?: string; owned_by?: string; max_model_len?: number }> }).data ?? [];
           } else {
@@ -251,8 +273,8 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
         // /v1/models can only identify vLLM and llama.cpp. LM Studio / Ollama have no
         // /v1/models signature — when the endpoint signal is inconclusive (or unreachable),
         // adopt the persisted serverType of a configured sibling on the same server.
-        const detectedServerType = resolveDetectedServerType(entries, models);
-        return { url, models, serverModelIds, detectedServerType };
+        const detectedServerType = resolveDetectedServerType(entries, group.models);
+        return { url, models: group.publicModels, serverModelIds, detectedServerType };
       }),
     );
     const firstServer = servers[0];
@@ -292,8 +314,8 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     // The view may have been disposed during the awaits above (entry guard
     // passed, then the config/server/personality fetches ran). Posting to a
     // dead webview throws, so re-check before the single postMessage.
-    if (!this.view || !this.isWebviewReady) return;
-    this.view.webview.postMessage({
+    if (this.view !== view || !this.isWebviewReady || generation !== this.refreshGeneration) return;
+    view.webview.postMessage({
       type: 'data',
       servers,
       selectedServerUrl: firstServer?.url || '',

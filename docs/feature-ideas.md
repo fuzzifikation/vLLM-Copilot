@@ -127,17 +127,7 @@ Since the model list is small (typically < 20 entries) and the server is local/c
 ## 🛡️ Centralized Engine Header Update Path
 
 **Category:** Painkiller (correctness)
-**Status:** Not implemented
-
-**What:** When `registerUpdateServerAuthCommand` changes auth headers, it updates settings and calls `provider.clearCache()` but does NOT propagate the new headers to `ServerMetricsEngine` instances. The dashboard's `refreshSubscriptions()` does this on re-subscribe (via `getMetricsEngine` which calls `setHeaders`), but only when the dashboard is visible.
-
-If only the deep-dive is open (dashboard hidden) when auth is updated, the engine's subscription continues using old headers until the dashboard is shown and re-subscribes.
-
-**Suggestion:** Either:
-1. Have `updateServerAuthCommand` call `updateEngineHeaders()` to push new headers to any existing engine, or
-2. Have the `onDidChangeConfiguration` handler in the dashboard also update engine headers even when not visible
-
-The fix is small (< 10 lines) and eliminates a correctness gap.
+**Status:** Implemented — `registerUpdateServerAuthCommand` now calls `updateMetricsEngineHeaders()` (update-if-present) to push new headers to any existing engine. See CHANGELOG v1.32.1.
 
 ---
 

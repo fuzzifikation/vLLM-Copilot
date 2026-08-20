@@ -47,7 +47,11 @@ export function deriveTokenBudget(
   // straight through as `max_tokens: 0`, which vLLM rejects. A deliberate
   // misconfiguration degrades to a minimal (1-token) output instead of a
   // broken request.
-  let maxOutputTokens = Math.max(1, override?.maxOutputTokens ?? configMaxOutputTokens);
+  const configuredOutput = override?.maxOutputTokens;
+  const requestedOutput = typeof configuredOutput === 'number' && Number.isFinite(configuredOutput)
+    ? configuredOutput
+    : configMaxOutputTokens;
+  let maxOutputTokens = Math.max(1, Math.floor(requestedOutput));
   // Always reserve at least 1 token for input. Without this, a model whose
   // window is at or below the configured output budget (e.g. a 2k window vs the
   // default 4096) would have its output clamped to the full window and end up
@@ -71,6 +75,10 @@ export function deriveTokenBudget(
   // negative override is likewise clamped to at least 1 (subject to remaining
   // input room) so the picker never advertises a model with no input capacity.
   const remainingForInput = maxModelLen - maxOutputTokens;
-  const maxInputTokens = Math.max(1, (override?.maxInputTokens ?? remainingForInput));
+  const configuredInput = override?.maxInputTokens;
+  const requestedInput = typeof configuredInput === 'number' && Number.isFinite(configuredInput)
+    ? configuredInput
+    : remainingForInput;
+  const maxInputTokens = Math.max(1, Math.floor(requestedInput));
   return { maxModelLen, maxOutputTokens, maxInputTokens: Math.min(maxInputTokens, remainingForInput) };
 }

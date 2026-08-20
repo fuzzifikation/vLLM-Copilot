@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { buildAuthHeaders, validateConfig, resolveServerType, buildModelId, resolveWorkspaceRelativePath, toPublicModelConfig, type VllmConfig } from '../src/config.js';
+import { buildAuthHeaders, validateConfig, resolveServerType, resolveModelSettings, buildModelId, resolveWorkspaceRelativePath, toPublicModelConfig, type VllmConfig } from '../src/config.js';
 
 // ── resolveServerType ───────────────────────────────────────────────────
 
@@ -17,6 +17,28 @@ describe('resolveServerType', () => {
     expect(resolveServerType({ serverType: 'llamacpp' } as any)).toBe('llamacpp');
     expect(resolveServerType({ serverType: 'ollama' } as any)).toBe('ollama');
     expect(resolveServerType({ serverType: 'vllm' } as any)).toBe('vllm');
+  });
+});
+
+describe('resolveModelSettings', () => {
+  it('normalizes invalid transport and retry values before runtime control flow', () => {
+    expect(resolveModelSettings({
+      maxOutputTokens: Number.NaN,
+      estimateCharsPerToken: Number.NaN,
+      streamInactivityTimeout: -10,
+      initialResponseTimeoutMs: Number.POSITIVE_INFINITY,
+      autoContinueRetries: -1,
+    })).toEqual({
+      maxOutputTokens: 4096,
+      estimateCharsPerToken: 3.5,
+      streamInactivityTimeout: 0,
+      initialResponseTimeoutMs: 600000,
+      autoContinueRetries: 0,
+    });
+  });
+
+  it('floors retry counts to a non-negative integer', () => {
+    expect(resolveModelSettings({ autoContinueRetries: 2.9 }).autoContinueRetries).toBe(2);
   });
 });
 

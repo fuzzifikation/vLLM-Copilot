@@ -11,6 +11,8 @@ import { messageToText } from './messageConverter.js';
 export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, vscode.Disposable {
   private client: ProviderClient;
   private cachedModels: vscode.LanguageModelChatInformation[] | null = null;
+  private modelCacheGeneration = 0;
+  private modelContextWindows = new Map<string, number>();
 
   /** Instance-owned system-message pipeline (replacements + capture). */
   private readonly systemMessages: SystemMessagePipeline;
@@ -40,7 +42,9 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
    * immediately rather than after extension restart.
    */
   clearCache(): void {
+    this.modelCacheGeneration++;
     this.cachedModels = null;
+    this.modelContextWindows.clear();
     this.client.invalidateConfigCache();
     this._onDidChangeLanguageModelChatInformation.fire();
   }
@@ -50,7 +54,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
    */
   async provideLanguageModelChatInformation(
     options: { silent: boolean },
-    _token: vscode.CancellationToken
+    token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelChatInformation[]> {
     // If extension is not installed on the remote, don't show ghost models that can't work.
     if (vscode.env.remoteName && this.context.extension.extensionKind === vscode.ExtensionKind.UI) {
@@ -62,19 +66,39 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       return this.cachedModels;
     }
 
-    const config = await this.client.getConfigCached();
-    const modelOverrides = config.models || [];
+    while (!token.isCancellationRequested) {
+      const generation = this.modelCacheGeneration;
+      const config = await this.client.getConfigCached();
+      const modelOverrides = config.models || [];
 
-    if (modelOverrides.length === 0) {
-      return [];
+      if (modelOverrides.length === 0) {
+        if (generation === this.modelCacheGeneration) {
+          this.cachedModels = [];
+          this.modelContextWindows.clear();
+        }
+        return [];
+      }
+
+      // The remote guard + cache stay here (lifecycle/cache owner); the per-model
+      // discovery core (context-window fetch, model info, warnings) is a pure
+      // function taking explicit collaborators.
+      const contextWindows = new Map<string, number>();
+      const models = await discoverModels(
+        modelOverrides,
+        this.client,
+        this.output,
+        (modelId, contextWindow) => contextWindows.set(modelId, contextWindow),
+      );
+      if (generation === this.modelCacheGeneration) {
+        this.cachedModels = models;
+        this.modelContextWindows = contextWindows;
+        return models;
+      }
+      // Config changed while discovery was in flight. The client's cache was
+      // invalidated by clearCache(); retry so this call cannot return or cache
+      // the obsolete model list after the change event.
     }
-
-    // The remote guard + cache stay here (lifecycle/cache owner); the per-model
-    // discovery core (context-window fetch, model info, warnings) is a pure
-    // function taking explicit collaborators.
-    const models = await discoverModels(modelOverrides, this.client, this.output);
-    this.cachedModels = models;
-    return models;
+    return [];
   }
 
   /**
@@ -120,6 +144,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         output: this.output,
         fileLogger: this.fileLogger,
         systemMessages: this.systemMessages,
+        contextWindow: this.modelContextWindows.get(model.id),
       },
       model,
       messages,

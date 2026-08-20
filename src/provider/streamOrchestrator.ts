@@ -19,6 +19,8 @@ export interface ChatDeps {
   output: vscode.OutputChannel;
   fileLogger?: FileLogger;
   systemMessages: SystemMessagePipeline;
+  /** Authoritative server-reported context window captured during discovery. */
+  contextWindow?: number;
 }
 
 /**
@@ -47,7 +49,7 @@ export async function runChatResponse(
   progress: vscode.Progress<vscode.LanguageModelResponsePart>,
   token: vscode.CancellationToken
 ): Promise<void> {
-  const { client, output, fileLogger, systemMessages } = deps;
+  const { client, output, fileLogger, systemMessages, contextWindow } = deps;
   const startTime = Date.now();
   const outcome = createOutcome();
 
@@ -110,7 +112,19 @@ export async function runChatResponse(
         token,
         serverConfig
       );
-      await consumeStream(stream, model, progress, token, attemptStartTime, outcome, serverConfig.serverUrl, vllmModelId, output, fileLogger);
+      await consumeStream(
+        stream,
+        model,
+        progress,
+        token,
+        attemptStartTime,
+        outcome,
+        serverConfig.serverUrl,
+        vllmModelId,
+        output,
+        fileLogger,
+        contextWindow,
+      );
 
       // Retry when the model stopped (finish_reason: stop) either with no content at all,
       // or mid-sentence on a trailing colon. Use the full buffer (not the last chunk) so a

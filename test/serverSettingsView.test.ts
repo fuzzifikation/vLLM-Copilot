@@ -524,6 +524,75 @@ describe('ServerSettingsViewProvider', () => {
       );
     });
   });
+
+  describe('refreshWebview', () => {
+    it('uses trusted headers with a canonical URL but strips them from webview state', async () => {
+      const postMessage = vi.fn().mockResolvedValue(true);
+      (provider as any).view = { webview: { postMessage } };
+      (provider as any).isWebviewReady = true;
+      mockContext.extensionUri = { fsPath: 'extension' };
+      mockContext.globalStorageUri = { fsPath: 'global-storage' };
+      vscode.workspace._mockConfig = {
+        get: (key: string) => key === 'models'
+          ? [{
+              id: 'configured',
+              vllmModelId: 'configured',
+              serverUrl: 'http://secure:8000/v1',
+              requestHeaders: { Authorization: 'Bearer secret' },
+            }]
+          : undefined,
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({
+          data: [
+            { id: 'configured', max_model_len: 8192 },
+            { id: 'unconfigured', max_model_len: 8192 },
+          ],
+        }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      );
+
+      await (provider as any).refreshWebview();
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://secure:8000/v1/models',
+        expect.objectContaining({ headers: { Authorization: 'Bearer secret' } }),
+      );
+      const payload = postMessage.mock.calls[0][0];
+      expect(payload.servers[0].url).toBe('http://secure:8000');
+      expect(payload.servers[0].serverModelIds).toEqual(['configured', 'unconfigured']);
+      expect(payload.servers[0].models[0]).not.toHaveProperty('requestHeaders');
+      expect(payload.servers[0].models[0].serverUrl).toBe('http://secure:8000');
+    });
+
+    it('discards an older refresh that finishes after a newer one', async () => {
+      const postMessage = vi.fn().mockResolvedValue(true);
+      (provider as any).view = { webview: { postMessage } };
+      (provider as any).isWebviewReady = true;
+      mockContext.extensionUri = { fsPath: 'extension' };
+      mockContext.globalStorageUri = { fsPath: 'global-storage' };
+      let models: ModelConfig[] = [{ id: 'old', serverUrl: 'http://old:8000' }];
+      vscode.workspace._mockConfig = {
+        get: (key: string) => key === 'models' ? models : undefined,
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+      let resolveOld!: (response: Response) => void;
+      const oldResponse = new Promise<Response>(resolve => { resolveOld = resolve; });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockImplementationOnce(() => oldResponse)
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'new' }] }), { status: 200 }));
+
+      const oldRefresh = (provider as any).refreshWebview();
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+      models = [{ id: 'new', serverUrl: 'http://new:8000' }];
+      await (provider as any).refreshWebview();
+      resolveOld(new Response(JSON.stringify({ data: [{ id: 'old' }] }), { status: 200 }));
+      await oldRefresh;
+
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      expect(postMessage.mock.calls[0][0].servers[0].url).toBe('http://new:8000');
+    });
+  });
 });
 
 describe('resolveDetectedServerType', () => {
