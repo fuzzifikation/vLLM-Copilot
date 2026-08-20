@@ -339,19 +339,35 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     // the webview can render a provider dropdown for the selected model. The
     // tags come VERBATIM from the API — never derived. A failed fetch yields no
     // entry (dropdown falls back to "Auto" only), never a fabricated list.
-    const providersByModel: Record<string, OpenRouterModelEndpoint[]> = {};
+    // The fetches run in PARALLEL and race a 2s bound (same discipline as the
+    // dashboard's account probe and the 5s /v1/models probe): provider lists are
+    // display-only, and a hung /endpoints must never stall Model Settings from
+    // opening behind its 10s timeout.
+    const openRouterWireIds: string[] = [];
     for (const sv of servers) {
       for (const m of sv.models) {
         if (m.serverType !== 'openrouter') continue;
         const wireId = m.vllmModelId || m.id || '';
-        if (!wireId || providersByModel[wireId]) continue;
-        try {
-          providersByModel[wireId] = await fetchOpenRouterModelEndpoints(wireId);
-        } catch (err) {
+        if (wireId && !openRouterWireIds.includes(wireId)) openRouterWireIds.push(wireId);
+      }
+    }
+    const providersByModel: Record<string, OpenRouterModelEndpoint[]> = {};
+    if (openRouterWireIds.length > 0) {
+      const settled = await Promise.race([
+        Promise.allSettled(openRouterWireIds.map((wireId) => fetchOpenRouterModelEndpoints(wireId))),
+        new Promise<PromiseSettledResult<OpenRouterModelEndpoint[]>[]>(
+          (resolve) => setTimeout(() => resolve(openRouterWireIds.map(() => ({ status: 'rejected' as const, reason: new Error('timed out') }))), 2000),
+        ),
+      ]);
+      for (let i = 0; i < openRouterWireIds.length; i++) {
+        const s = settled[i];
+        if (s.status !== 'fulfilled') {
           this.outputChannel.appendLine(
-            `[WARN] Model Settings: OpenRouter provider list for "${wireId}" unavailable: ${err instanceof Error ? err.message : String(err)}`
+            `[WARN] Model Settings: OpenRouter provider list for "${openRouterWireIds[i]}" unavailable: ${s.reason instanceof Error ? s.reason.message : String(s.reason)}`
           );
+          continue;
         }
+        if (s.value.length > 0) providersByModel[openRouterWireIds[i]] = s.value;
       }
     }
 

@@ -9,6 +9,8 @@
 
 ### Fixed
 
+- **OpenRouter models that report a completion cap at/near the context window no longer break every request** — ~12% of the catalog (e.g. `dots-studio/dots-3-note-preview:free`) reports `max_completion_tokens` equal to or near the full window. Trusting that cap set the output budget to the whole window, which 400s on the first real request (prompt + output > context). A reported cap is now trusted only when it leaves real input headroom (≥10% of the window); degenerate caps fall back to the 10% safe budget. Genuine caps (e.g. 384k on a 1M window) are preserved.
+- **Provider pricing lookup no longer stalls the Dashboard or Model Settings** — the `/endpoints` fetches (10s timeout) ran unbound inside the metrics tick and sequentially in Model Settings, so a hung request could freeze the dashboard refresh or settings-open for up to 10s per model. Both now run in parallel and race a 2s bound (same discipline as the account probe) — pricing is display-only, never worth stalling the UI.
 - **OpenRouter provider list loads in Model Settings** — the `/api/v1/models/{id}/endpoints` lookup kept the model id's `/` as an encoded `%2F`, which OpenRouter's gateway rejects with 404, so the Provider dropdown fell back to "only Auto". The id is now split on `/` and each segment encoded, keeping the route structure intact (variants like `:free` still pass through).
 - **OpenRouter models with no reported output cap no longer break every request** — the output ceiling now falls back to 10% of the context window (hard-capped at 81920) instead of the full window, which made output + input exceed the context limit (OpenRouter 400 "…1048575 in the output") and return nothing. Mirrors the HF auto-configure factor.
 

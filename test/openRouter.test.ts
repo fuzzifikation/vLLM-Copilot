@@ -154,6 +154,37 @@ describe('normalizeOpenRouterModel', () => {
     expect(huge.runtimeLimits).toEqual({ contextWindow: 2000000, maxOutputTokens: 81920 });
   });
 
+  it('does NOT trust a completion cap at/near the window — falls back to the safe budget (regression: full-window output budget)', () => {
+    // Live catalog: ~12% of models report max_completion_tokens >= the window
+    // (e.g. dots-studio/dots-3-note-preview:free, z-ai/glm-5.2:free). Trusting
+    // that cap set the output budget to the FULL window, which 400s on the first
+    // real request (prompt + output > context) — the exact failure the 10%
+    // fallback exists to prevent, resurrected through the reported-cap path.
+    const atWindow = normalizeOpenRouterModel(
+      { id: 'risky/at-window', context_length: 512000, top_provider: { context_length: 512000, max_completion_tokens: 512000 } },
+      'x',
+    );
+    // floor(512000 × 0.1) = 51200 (below the 81920 cap) — never 512000.
+    expect(atWindow.runtimeLimits).toEqual({ contextWindow: 512000, maxOutputTokens: 51200 });
+
+    // Near-window cap (95%) is equally degenerate — no input headroom.
+    const nearWindow = normalizeOpenRouterModel(
+      { id: 'risky/near-window', context_length: 512000, top_provider: { context_length: 512000, max_completion_tokens: 486400 } },
+      'x',
+    );
+    expect(nearWindow.runtimeLimits).toEqual({ contextWindow: 512000, maxOutputTokens: 51200 });
+  });
+
+  it('preserves a reported cap that leaves real input headroom (never over-restricted)', () => {
+    // A cap well below the window (e.g. 384k on a 1M window — deepseek-v4-pro)
+    // leaves genuine room for the prompt and is a real model capability: keep it.
+    const headroom = normalizeOpenRouterModel(
+      { id: 'deepseek/deepseek-v4-pro-0813', context_length: 1048576, top_provider: { context_length: 1048576, max_completion_tokens: 384000 } },
+      'x',
+    );
+    expect(headroom.runtimeLimits).toEqual({ contextWindow: 1048576, maxOutputTokens: 384000 });
+  });
+
   it('derives estimated per-1M USD rates from per-token pricing strings', () => {
     const info = normalizeOpenRouterModel(base, 'x');
     expect(info.cost).toEqual({

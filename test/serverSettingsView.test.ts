@@ -643,6 +643,56 @@ describe('ServerSettingsViewProvider', () => {
       expect(postMessage).toHaveBeenCalledTimes(1);
       expect(postMessage.mock.calls[0][0].servers[0].url).toBe('http://new:8000');
     });
+
+    it('fetches OpenRouter provider lists keyed by wire id, in parallel, with failures dropped', async () => {
+      const postMessage = vi.fn().mockResolvedValue(true);
+      (provider as any).view = { webview: { postMessage } };
+      (provider as any).isWebviewReady = true;
+      mockContext.extensionUri = { fsPath: 'extension' };
+      mockContext.globalStorageUri = { fsPath: 'global-storage' };
+      vscode.workspace._mockConfig = {
+        get: (key: string) => key === 'models'
+          ? [
+              { id: 'cfg-a', vllmModelId: 'author/a', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter', requestHeaders: { Authorization: 'Bearer secret' } },
+              { id: 'cfg-b', vllmModelId: 'author/b', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter', requestHeaders: { Authorization: 'Bearer secret' } },
+            ]
+          : undefined,
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+      // The /v1/models probe is called once per identity; the /endpoints fetches
+      // run for both wire ids. One endpoint resolves, one 404s (dropped → no entry).
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockImplementation(async (url: unknown) => {
+          const u = String(url);
+          if (u.endsWith('/v1/models')) {
+            return new Response(JSON.stringify({ data: [{ id: 'author/a' }, { id: 'author/b' }] }), { status: 200 });
+          }
+          if (u.endsWith('/author/a/endpoints')) {
+            return new Response(JSON.stringify({ data: { id: 'author/a', endpoints: [{ tag: 'together', provider_name: 'Together', quantization: 'unknown', pricing: { prompt: '0.0000005', completion: '0.0000015' } }] } }), { status: 200 });
+          }
+          return new Response(null, { status: 404 });
+        });
+
+      await (provider as any).refreshWebview();
+
+      // The /endpoints URL keeps the model id's literal path separator.
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://openrouter.ai/api/v1/models/author/a/endpoints',
+        expect.anything(),
+      );
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://openrouter.ai/api/v1/models/author/b/endpoints',
+        expect.anything(),
+      );
+      const payload = postMessage.mock.calls[0][0];
+      // Only the resolved provider list reaches the webview — keyed by the wire id.
+      expect(payload.providersByModel).toEqual({
+        'author/a': [expect.objectContaining({ tag: 'together', providerName: 'Together' })],
+      });
+      expect(payload.providersByModel['author/b']).toBeUndefined();
+      // Header values never leak into the payload.
+      expect(JSON.stringify(payload)).not.toContain('secret');
+    });
   });
 });
 

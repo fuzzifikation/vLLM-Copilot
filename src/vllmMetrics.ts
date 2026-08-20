@@ -551,13 +551,22 @@ export class ServerMetricsEngine {
       // retries after the same bounded backoff as context resolution; a missing
       // or empty list yields no row — the dashboard hides pricing rather than
       // fabricating it. Only models with cached lists are exposed, matched by id.
+      // The fetches race a 2s bound (same discipline as the account probe) so a
+      // hung /endpoints can NEVER stall the metrics cycle behind its 10s timeout —
+      // pricing is display-only; a late/slow result is not worth blocking the
+      // dashboard, which otherwise refreshes on every poll.
       if (this.serverType === 'openrouter' && aggregated.online && this.modelIds.length > 0) {
         const pending = this.modelIds.filter((id) => {
           if (this.providersByModelCache.has(id)) return false;
           return (this.providersRetryAtByModel.get(id) ?? 0) <= Date.now();
         });
         if (pending.length > 0) {
-          const settled = await Promise.allSettled(pending.map((id) => fetchOpenRouterModelEndpoints(id)));
+          const settled = await Promise.race([
+            Promise.allSettled(pending.map((id) => fetchOpenRouterModelEndpoints(id))),
+            new Promise<PromiseSettledResult<OpenRouterModelEndpoint[]>[]>(
+              (resolve) => setTimeout(() => resolve(pending.map(() => ({ status: 'rejected' as const, reason: new Error('timed out') }))), 2000),
+            ),
+          ]);
           for (let i = 0; i < pending.length; i++) {
             const id = pending[i];
             const s = settled[i];
