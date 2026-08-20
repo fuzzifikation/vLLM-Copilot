@@ -271,6 +271,30 @@ describe('Model Settings webview', () => {
     expect(routing.disabled).toBe(true);
   });
 
+  it('syncs the routing dropdown LIVE to the provider selection — no save-and-re-render needed', () => {
+    const { dom } = loadWebview({}, ['wire-model'], [], { 'wire-model': [{ tag: 'gmicloud/fp8', providerName: 'GMICloud' }] }, 'openrouter');
+    const document = dom.window.document;
+    const provider = document.querySelector<HTMLSelectElement>('select[data-f="provider"]')!;
+    const routing = document.querySelector<HTMLSelectElement>('select[data-f="routingMode"]')!;
+    const hint = document.getElementById('routingHint')!;
+    // Starts Auto → routing selectable, hint hidden.
+    expect(provider.value).toBe('');
+    expect(routing.disabled).toBe(false);
+    expect(hint.hidden).toBe(true);
+
+    // Pin a provider in the dropdown — routing greys out immediately, hint shows.
+    provider.value = 'gmicloud/fp8';
+    provider.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    expect(routing.disabled).toBe(true);
+    expect(hint.hidden).toBe(false);
+
+    // Flip back to Auto — routing is selectable again, hint hides.
+    provider.value = '';
+    provider.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    expect(routing.disabled).toBe(false);
+    expect(hint.hidden).toBe(true);
+  });
+
   it('persists the routing mode on save', () => {
     const { dom, posted } = loadWebview({}, ['wire-model'], [], {}, 'openrouter');
     const document = dom.window.document;
