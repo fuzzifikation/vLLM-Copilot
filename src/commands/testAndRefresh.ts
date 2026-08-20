@@ -15,7 +15,7 @@ import type { VllmModel } from '../types.js';
 // single stable import surface for the server-identity helper.
 export { serverFingerprint } from '../config.js';
 import { describeError } from '../messageConverter.js';
-import { resolveRuntimeLimits } from '../vllmClient.js';
+import { resolveRuntimeLimits } from '../runtimeLimits.js';
 import { runDiagnostics, formatReport } from '../diagnostics.js';
 
 /**

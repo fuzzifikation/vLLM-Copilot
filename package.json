@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "Professional GitHub Copilot integration for self-hosted vLLM inference servers — built for teams running local AI for many users. Connect multiple vLLM servers and models, each with its own auth, parameters, and modes; full vLLM request control via UI. Live observability: queue status, KV-cache, TTFT, throughput, and per-model cost tracking. OpenRouter (400+ cloud models), llama.cpp, LM Studio, and Ollama supported. Self-hosted — prompts stay on your network.",
-  "version": "1.32.1",
+  "version": "1.32.2",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",

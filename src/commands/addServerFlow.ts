@@ -4,7 +4,7 @@ import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl,
 import { replaceModelConfig, type IdentifiedModelConfig } from '../configStore.js';
 import type { VllmModel } from '../types.js';
 import { describeError } from '../messageConverter.js';
-import { detectServerType } from '../vllmClient.js';
+import { detectServerType } from '../runtimeLimits.js';
 import { ensureByokUtilityDefault } from './byok.js';
 import { promptForServerAuth } from './serverAuth.js';
 import { fetchWithTimeout, resolveModelConfigForAddSafely } from './hfDiscovery.js';
@@ -13,6 +13,7 @@ import {
   parseOpenRouterBranchInput,
   normalizeOpenRouterFromCatalog,
   fetchOpenRouterCatalog as fetchOpenRouterCatalogFull,
+  perMillion,
   isOpenRouterUrl,
   type OpenRouterModelData,
   type OpenRouterModelInfo,
@@ -157,14 +158,13 @@ export function projectCatalog(full: OpenRouterModelData[]): OpenRouterCatalogEn
   }));
 }
 
-/** Render a catalog entry's per-token pricing as compact per-1M "in · out", or ''. */
+/** Render a catalog entry's pricing as compact per-1M "in · out", or ''. */
 function catalogPricing(entry: OpenRouterCatalogEntry): string {
+  // perMillion (openRouter.ts) is the single per-token → per-1M conversion;
+  // this only formats the converted rate for display.
   const fmt = (v?: string): string | null => {
-    // Empty string is malformed — Number('') is 0, which would read as "free".
-    if (v === undefined || v.trim() === '') return null;
-    const n = Number(v);
-    if (!Number.isFinite(n) || n < 0) return null;
-    return `$${(n * 1e6).toLocaleString(undefined, { maximumFractionDigits: 4 })}/1M`;
+    const n = perMillion(v);
+    return n === undefined ? null : `$${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}/1M`;
   };
   const inStr = fmt(entry.pricing?.prompt);
   const outStr = fmt(entry.pricing?.completion);
