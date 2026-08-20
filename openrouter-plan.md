@@ -1,7 +1,103 @@
 # OpenRouter First-Class Backend Plan
 
-**Status:** Onboarding + dashboard cleanup shipped (v1.32.0 + v1.32.2). Dashboard data research done → [docs/openrouter-api-research.md](./docs/openrouter-api-research.md). **Dashboard approach decided: Option A — model collection** (see below). **Phase 1 (cost data plane) and Phase 2 (model-collection dashboard) LANDED in v1.32.2.** Phase 3 (activity ledger) is **DEFERRED** (endpoint undocumented + management-key scope) — see the Phase 3 note below. The OpenRouter plan's goals are complete; this document is the record.
-**Date:** 2026-08-16
+**Status (2026-08-20):** Onboarding, cost data plane, model-collection dashboard, provider pinning, and routing modes (Standard/Nitro/Exacto) are all SHIPPED. Provider-level token evaluation research is done (live API verification) — see [Provider-Level Token Evaluation](#provider-level-token-evaluation-2026-08-20-verified-live-against-the-api). Phase 3 (activity ledger) stays **DEFERRED** (undocumented endpoint + management-key scope). The plan's core goals are complete; this document is the running record.
+
+**Where we are now → NEXT STEP (not yet implemented):** clamp the output budget to the **pinned provider's** reported `max_completion_tokens` at pin time. This is the one genuine token gap left (details below). Everything else is shipped.
+
+---
+
+## Current Status & Next Steps (read this first)
+
+### Shipped (all verified, committed; some not yet pushed)
+
+| Area | State | Commits |
+|---|---|---|
+| Onboarding + exact-model metadata | ✔ shipped (v1.32.0/v1.32.2) | — |
+| Cost data plane (`usage.cost`, BYOK) | ✔ shipped (v1.32.2) | — |
+| Model-collection dashboard (account + per-model nodes) | ✔ shipped (v1.32.2) | 17a7d70 (unpushed) |
+| Provider pinning (`provider.only`) | ✔ shipped | a3e2269, 26d5b03 |
+| Provider list + pricing no-stall fixes | ✔ shipped | 6e92d48 |
+| **Routing modes (Standard/Nitro/Exacto)** | ✔ shipped | 6754048, 27ce297, f283bbe, d3d6157 (unpushed) |
+| Usage tracking keys on BASE wire id (not the routing-suffixed id) | ✔ shipped (real bug fix) | f283bbe (unpushed) |
+
+### Next step (identified gap, NOT yet implemented)
+
+**Pinned-provider output clamp.** Auto routing is safe (OpenRouter self-filters providers by context/`max_tokens` at request time — verified). But `provider.only: [tag]` removes the fallback pool: if the pinned provider's `max_completion_tokens` < our `max_tokens`, the request fails hard. Concrete: default `maxOutputTokens` 4096 vs **Together's 2,048 cap** on `meta-llama/llama-3.3-70b-instruct` → dead request. Fix: when a provider is pinned, clamp the stored output budget to that provider's reported `max_completion_tokens` at pin time (the `/endpoints` data is already fetched in Model Settings). No request-time HTTP, no per-endpoint memory map. Open question before implementing: store the clamped ceiling as the model's `maxOutputTokens` (simple, but a later provider switch must re-clamp), or keep a separate `providerOutputCap` field keyed to the pin (cleaner, more config surface). See [Provider-Level Token Evaluation](#provider-level-token-evaluation-2026-08-20-verified-live-against-the-api).
+
+### Deferred / out of scope (no change)
+
+- **Phase 3 activity ledger** — `GET /api/v1/activity` undocumented + needs a management key scope we don't carry. Revisit only if documented under the regular key.
+- **`allow_fallbacks: false` / `provider.order`** — not implemented; do not add without product direction.
+- **`X-Generation-Id` / generation diagnostics** — deferred.
+- **Responses API / Agent SDK** — separate protocols; out of scope.
+
+---
+
+## Provider-Level Token Evaluation (2026-08-20, verified live against the API)
+
+### What the providers actually report
+
+`GET /api/v1/models/{id}/endpoints` returns **per-provider** `context_length` and `max_completion_tokens` that differ wildly for the same model — the catalog's single `context_length`/`top_provider.max_completion_tokens` is NOT what every provider can serve. Live examples:
+
+**`deepseek/deepseek-v3.2`**
+| Provider | context_length | max_completion_tokens |
+|---|---|---|
+| GMICloud (`gmicloud/fp8`) | 163,840 | null |
+| StreamLake (`streamlake/fp8`) | 128,000 | 64,000 |
+| DigitalOcean | 163,840 | 28,000 |
+| DeepInfra (`deepinfra/fp4`) | 163,840 | 16,384 |
+| Alibaba (`alibaba/fp8`) | 131,072 | 65,536 (max_prompt_tokens 98,304!) |
+| **SambaNova** | **32,768** | **7,168** |
+
+**`meta-llama/llama-3.3-70b-instruct`**
+| Provider | context_length | max_completion_tokens |
+|---|---|---|
+| Together (`together`) | 131,072 | **2,048** |
+| SambaNova (`sambanova-turbo`) | 131,072 | **3,072** |
+| Cloudflare | 24,000 | 24,000 |
+| CoreWeave | 128,000 | 128,000 |
+
+`OpenRouterModelEndpoint` currently captures `maxCompletionTokens` but **not** `context_length`, and the captured cap is never used for budget derivation.
+
+### Conclusion 1 — Auto routing is safe, no per-endpoint token map needed
+
+OpenRouter **already filters providers at request time** (verified in the provider-routing + errors docs):
+
+- Setting `max_tokens` → *"OpenRouter will only route to providers that support a response of that length."*
+- Context fit → the `constraint_filtered` error code's `excluded_by` vocabulary includes **`context_length`** — a provider whose window can't fit prompt+output is excluded, not 400'd.
+
+So for **Auto** routing, the catalog-level `context_length`/`max_completion_tokens` we already use are sufficient: low-cap providers (Together 2,048, SambaNova 7,168) are silently dropped from the pool when our `max_tokens` exceeds them. We do **not** need to keep token settings per selected endpoint in memory for Auto.
+
+### Conclusion 2 — the Auto Router cannot route you to a tiny-context model
+
+`openrouter/auto` (and `openrouter/auto-beta`) is a **meta-model**: live-verified `GET /api/v1/models/openrouter/auto/endpoints` → `"endpoints":[]`, and the catalog entry has **no `context_length`**. Our strict no-context-no-model policy already **refuses to configure it** (`resolveOpenRouterRuntimeLimits` throws). It cannot be added, so it cannot silently route to a 10%-context model.
+
+### Conclusion 3 — THE genuine gap: pinned provider removes the fallback pool
+
+Pinning `provider.only: [tag]` makes OpenRouter try **only** that provider — no fallback to a bigger-cap provider. If the pinned provider's `max_completion_tokens` < our `max_tokens`, the request fails hard (the 400 family this plan has been eliminating). This is the one place provider-level token data actually constrains us.
+
+**Proposed fix (see Next Step above):** clamp the output budget to the pinned provider's `max_completion_tokens` at pin time.
+
+---
+
+## Routing Modes: Standard / Nitro / Exacto (SHIPPED 2026-08-20)
+
+Routing modes are how OpenRouter **sorts/chooses among providers** when routing is Auto. Verified against live docs:
+
+- **Standard** (default, no suffix) — price-weighted load balancing.
+- **Nitro** — `:nitro` suffix: sort by throughput **and** admit priority service-tier endpoints. Superset of `provider.sort: "throughput"`.
+- **Exacto** — `:exacto` suffix: quality-first provider ordering from tool-calling-reliability signals. A **virtual variant** — no separate endpoint pool, works on any model.
+- (`:floor` also exists — price + flex tier — deliberately NOT exposed in the UI.)
+
+**Design (implemented):**
+- These are model-id **suffixes** (`slug:nitro`, `slug:exacto`), applied to the **wire id at request time only**. The base `vllmModelId` stays canonical — catalog/metadata resolution and the provider-list lookup are unaffected.
+- **Pinned provider disables routing mode** (sorting a single provider is meaningless). The webview greys the Routing dropdown live when a provider is selected — no save-and-re-render.
+- **Standard maps to omission on save** — the default must not pollute every config with `routingMode: "standard"`.
+- **Usage/cost tracking keys on the BASE wire id**, never the suffixed id — otherwise a routed model's dashboard counters fragment (real bug found + fixed, `f283bbe`).
+
+Config surface: `routingMode?: 'standard' | 'nitro' | 'exacto'` per model (validated; `validateConfig` warns on anything else). Request path (`requestBuilder.ts`) appends the suffix only when OpenRouter + Auto + non-standard. Tests: `test/requestBuilder.test.ts`, `test/serverSettingsWebview.test.ts`, `test/providerAutoContinue.test.ts`.
+
+
 
 ## Goal
 
@@ -263,3 +359,7 @@ OpenRouter routes each request to a provider (Anthropic, OpenAI, a host, etc.). 
 - The provider is stored **per model** (a new optional `provider` field) and applied at request time as `provider.only: [slug]` on the chat body — NOT as a model-id suffix. The wire model id stays the canonical identity, so metadata resolution is unaffected.
 
 **Shipped scope (2026-08-20, commits a3e2269 + 26d5b03):** `provider.only` only — `allow_fallbacks: false` (strict mode) and `provider.order` (preference lists) are NOT implemented. Do not add them without product direction. Full spec, implementation notes, and the pricing follow-up: [docs/feature-ideas.md → OpenRouter Provider Selection](./docs/feature-ideas.md).
+
+**Routing modes (2026-08-20, commits 6754048 → d3d6157):** Standard/Nitro/Exacto are model-id **suffixes** (`:nitro`/`:exacto`) applied to the wire id at request time when routing is Auto — NOT provider names (provider names are never model suffixes; `:nitro`/`:exacto`/`:floor` are the only documented shortcuts). See [Routing Modes](#routing-modes-standard--nitro--exacto-shipped-2026-08-20) at the top.
+
+**Token-gap follow-up (2026-08-20, NOT yet implemented):** provider-level token evaluation (see [Provider-Level Token Evaluation](#provider-level-token-evaluation-2026-08-20-verified-live-against-the-api)) confirmed the pinned provider's `max_completion_tokens` can be below our `max_tokens` — with the fallback pool removed by `provider.only`, that's a hard failure. The next step is to clamp the output budget to the pinned provider's reported cap at pin time.
