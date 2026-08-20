@@ -172,4 +172,69 @@ describe('buildRequest', () => {
     );
     expect(result.mergedOptions.provider).toBeUndefined();
   });
+
+  it('appends the routing-mode suffix to the wire id for OpenRouter Auto routing (nitro/exacto)', () => {
+    // Routing mode is a per-model OpenRouter setting that sorts providers when
+    // routing is Auto. The suffix goes on the WIRE id only — the base id stays
+    // canonical for metadata resolution.
+    const result = buildRequest(
+      model,
+      [] as any,
+      opts(),
+      {
+        models: [{ id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter', routingMode: 'nitro' }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(result.vllmModelId).toBe('deepseek/deepseek-v4-pro-0813:nitro');
+    expect(result.mergedOptions.provider).toBeUndefined(); // Auto routing, no pin
+  });
+
+  it('does not append a routing suffix when a provider is pinned (sorting one provider is meaningless)', () => {
+    const result = buildRequest(
+      model,
+      [] as any,
+      opts(),
+      {
+        models: [{
+          id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', serverUrl: 'https://openrouter.ai/api',
+          serverType: 'openrouter', provider: 'deepseek', routingMode: 'exacto',
+        }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    // Pinned provider → provider.only is set, no routing suffix on the id.
+    expect(result.mergedOptions.provider).toEqual({ only: ['deepseek'] });
+    expect(result.vllmModelId).toBe('deepseek/deepseek-v4-pro-0813');
+  });
+
+  it('does not append a routing suffix for standard mode or non-OpenRouter backends', () => {
+    // Standard (default) → no suffix.
+    const standard = buildRequest(
+      model,
+      [] as any,
+      opts(),
+      {
+        models: [{ id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter', routingMode: 'standard' }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(standard.vllmModelId).toBe('deepseek/deepseek-v4-pro-0813');
+
+    // Non-OpenRouter → routingMode must never leak into the wire id.
+    const vllm = buildRequest(
+      model,
+      [] as any,
+      opts(),
+      {
+        models: [{ id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', serverUrl: 'http://host:8000', routingMode: 'nitro' }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(vllm.vllmModelId).toBe('deepseek/deepseek-v4-pro-0813');
+  });
 });

@@ -5,6 +5,7 @@
 ### Added
 
 - **OpenRouter provider selection** — Model Settings has a Provider dropdown per OpenRouter model (Auto, or pin a specific provider from the model's list).
+- **OpenRouter routing mode** — Model Settings has a Routing dropdown per OpenRouter model (Standard / Nitro / Exacto), active when routing is Auto.
 - **Dashboard: OpenRouter model details** — each model node shows its provider (with status + uptime), per-1M pricing, and total context; the Account node shows Invested Total / Available and usage over time.
 
 ### Fixed

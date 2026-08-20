@@ -71,6 +71,17 @@ export interface ModelConfig {
    */
   provider?: string;
   /**
+   * OpenRouter-only: how OpenRouter sorts/chooses among the eligible providers
+   * for this model when routing is Auto (no `provider` pinned).
+   * `'standard'`/omitted = default price-weighted load balancing (no suffix);
+   * `'nitro'` = throughput-first + priority tier (wire id gets `:nitro`);
+   * `'exacto'` = quality/tool-calling-first sorting (wire id gets `:exacto`).
+   * Meaningless (and disabled in the UI) when `provider` is pinned — the suffix
+   * is appended to the WIRE id at request time only; `vllmModelId` stays the
+   * base slug so catalog/metadata resolution is never affected.
+   */
+  routingMode?: 'standard' | 'nitro' | 'exacto';
+  /**
    * HTTP headers sent with every request to this model's server (auth, routing).
    * Isolated: used only for this model's server, never shared with other servers.
    */
@@ -698,6 +709,7 @@ const CLEARABLE_ON_EMPTY: readonly (keyof ModelConfig)[] = [
   'defaultParams',
   'systemMessageReplacementsFile',
   'provider',
+  'routingMode',
 ] as const;
 
 /**
