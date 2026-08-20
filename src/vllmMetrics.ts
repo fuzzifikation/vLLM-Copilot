@@ -20,11 +20,13 @@ import { buildRequestHeaders } from './fetchRetry.js';
 import { resolveRuntimeLimits } from './runtimeLimits.js';
 import {
   fetchOpenRouterAccount,
+  fetchOpenRouterModelEndpoints,
   resolveOpenRouterLimitsFromCatalog,
   PermanentContextError,
   OpenRouterModelNotFoundError,
   type OpenRouterAccount,
   type OpenRouterModelData,
+  type OpenRouterModelEndpoint,
 } from './openRouter.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -75,6 +77,9 @@ export interface ServerMetrics {
   contextByModel?: Record<string, number>;
   /** OpenRouter account/key health from `GET /api/v1/key` (relay node). */
   account?: OpenRouterAccount;
+  /** OpenRouter per-model provider lists from `GET /api/v1/models/{id}/endpoints`
+   *  (relay nodes). modelId → providers with per-1M pricing, matched by tag. */
+  providersByModel?: Record<string, OpenRouterModelEndpoint[]>;
 }
 
 // Raw parsed data from /metrics — richer than ServerMetrics
@@ -346,6 +351,10 @@ export class ServerMetricsEngine {
   private resolvedContextByModel = new Map<string, number | null | undefined>();
   /** Earliest ms timestamp at which a transient context-resolve failure may retry, per model. */
   private contextRetryAtByModel = new Map<string, number>();
+  /** Cached per-model provider lists (OpenRouter `/endpoints`). modelId → providers. */
+  private providersByModelCache = new Map<string, OpenRouterModelEndpoint[]>();
+  /** Earliest ms at which a failed provider fetch may retry, per model. */
+  private providersRetryAtByModel = new Map<string, number>();
   /** Array of callbacks so subscribers don't need to coordinate. */
   private callbacks: Array<(aggregated: ServerMetrics, raw: ServerRawData) => void> = [];
 
@@ -428,6 +437,12 @@ export class ServerMetricsEngine {
     }
     for (const key of [...this.contextRetryAtByModel.keys()]) {
       if (!active.has(key)) this.contextRetryAtByModel.delete(key);
+    }
+    for (const key of [...this.providersByModelCache.keys()]) {
+      if (!active.has(key)) this.providersByModelCache.delete(key);
+    }
+    for (const key of [...this.providersRetryAtByModel.keys()]) {
+      if (!active.has(key)) this.providersRetryAtByModel.delete(key);
     }
   }
 
@@ -526,6 +541,39 @@ export class ServerMetricsEngine {
           if (aggregated.maxModelLen === null) aggregated.maxModelLen = resolved;
         }
         if (Object.keys(contextByModel).length > 0) aggregated.contextByModel = contextByModel;
+      }
+
+      // OpenRouter relay: per-model provider pricing from
+      // `GET /api/v1/models/{id}/endpoints` (public + unauthenticated — the same
+      // call Model Settings uses for the provider dropdown). Fetched ONCE per
+      // engine lifetime, like per-model context: pricing is static enough that a
+      // slightly stale rate beats hammering N endpoints every poll. A failure
+      // retries after the same bounded backoff as context resolution; a missing
+      // or empty list yields no row — the dashboard hides pricing rather than
+      // fabricating it. Only models with cached lists are exposed, matched by id.
+      if (this.serverType === 'openrouter' && aggregated.online && this.modelIds.length > 0) {
+        const pending = this.modelIds.filter((id) => {
+          if (this.providersByModelCache.has(id)) return false;
+          return (this.providersRetryAtByModel.get(id) ?? 0) <= Date.now();
+        });
+        if (pending.length > 0) {
+          const settled = await Promise.allSettled(pending.map((id) => fetchOpenRouterModelEndpoints(id)));
+          for (let i = 0; i < pending.length; i++) {
+            const id = pending[i];
+            const s = settled[i];
+            if (s.status === 'fulfilled') {
+              if (s.value.length > 0) this.providersByModelCache.set(id, s.value);
+            } else {
+              this.providersRetryAtByModel.set(id, Date.now() + CONTEXT_RESOLVE_RETRY_MS);
+            }
+          }
+        }
+        const providersByModel: Record<string, OpenRouterModelEndpoint[]> = {};
+        for (const id of this.modelIds) {
+          const cached = this.providersByModelCache.get(id);
+          if (cached && cached.length > 0) providersByModel[id] = cached;
+        }
+        if (Object.keys(providersByModel).length > 0) aggregated.providersByModel = providersByModel;
       }
 
       this._lastAggregated = aggregated;

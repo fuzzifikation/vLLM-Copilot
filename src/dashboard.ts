@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { getConfig, resolveServerConfig, normalizeServerUrl, findModelConfig, serverFingerprint, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
-import type { OpenRouterAccount } from './openRouter.js';
+import { perMillion, type OpenRouterAccount, type OpenRouterModelEndpoint } from './openRouter.js';
 import {
   getLastRequest, getServerUsage, getServerCost, hasServerUsage, onUsageStoreDidChange,
   computeCost, findModelCost, formatCost, formatCostFine, formatCostSummary, fmtCount, emptyCounts,
@@ -22,6 +22,12 @@ function summaryLine(m: ServerMetrics): string {
   if (m.runningRequests != null) parts.push(`${m.runningRequests} running`);
   if (m.waitingRequests != null && m.waitingRequests > 0) parts.push(`${m.waitingRequests} waiting`);
   return parts.join('  ·  ') || 'idle';
+}
+
+/** Format a per-token rate string as per-1M USD ("$0.73/1M"), or null when unparseable. */
+function perMillionRate(rate?: string): string | null {
+  const n = perMillion(rate);
+  return n === undefined ? null : `$${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}/1M`;
 }
 
 /** A server node in the tree (collapsible, shows metrics as children) */
@@ -786,6 +792,57 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       ));
     }
 
+    // Provider + Pricing — the exact provider OpenRouter routes to (pinned in
+    // Model Settings) and its per-1M rates. When a provider is pinned, show ITS
+    // reported rates from `/endpoints` (tag matched verbatim); otherwise (Auto)
+    // fall back to the model's configured catalog rates as an estimate. All
+    // values come from the API/config verbatim — never derived, never guessed.
+    const pinnedProvider = entry?.provider;
+    const endpoints = this.relayProviders(e.fp, e.modelId);
+    const pinned = pinnedProvider
+      ? endpoints?.find(ep => ep.tag === pinnedProvider)
+      : undefined;
+    if (pinnedProvider) {
+      const label = pinned
+        ? pinned.providerName + (pinned.quantization && pinned.quantization !== 'unknown' ? ` (${pinned.quantization})` : '')
+        : pinnedProvider; // list not loaded — the tag itself, never invented
+      items.push(new MetricTreeItem(
+        'Provider',
+        label,
+        'cloud',
+        'Routing pinned to this provider via `provider: { only: [tag] }` (set in Model Settings).',
+      ));
+    }
+    let priceParts: string[] | undefined;
+    let priceSource = '';
+    if (pinned?.pricing) {
+      const inStr = perMillionRate(pinned.pricing.prompt);
+      const outStr = perMillionRate(pinned.pricing.completion);
+      const cacheStr = perMillionRate(pinned.pricing.input_cache_read);
+      if (inStr || outStr) {
+        priceParts = [`in ${inStr ?? '—'}`, `out ${outStr ?? '—'}`];
+        if (cacheStr) priceParts.push(`cached ${cacheStr}`);
+        priceSource = `Per-1M rates reported by the pinned provider "${pinned.tag}" (${pinned.providerName}).`;
+      }
+    }
+    if (!priceParts && entry?.cost) {
+      const fmtRate = (n?: number): string | null =>
+        n === undefined ? null : `$${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}/1M`;
+      const inStr = fmtRate(entry.cost.input);
+      const outStr = fmtRate(entry.cost.output);
+      const cacheStr = fmtRate(entry.cost.cachedInput);
+      if (inStr || outStr) {
+        priceParts = [`in ${inStr ?? '—'}`, `out ${outStr ?? '—'}`];
+        if (cacheStr) priceParts.push(`cached ${cacheStr}`);
+        priceSource = pinnedProvider
+          ? 'Per-1M rates from the model config (provider list not loaded).'
+          : 'Per-1M estimated rates from the model config (Auto routing).';
+      }
+    }
+    if (priceParts) {
+      items.push(new MetricTreeItem('Pricing', priceParts.join('  ·  '), 'credit-card', priceSource));
+    }
+
     // Token usage — today + overall (same split as the Token Usage node).
     const usage = getServerUsage(normalizeServerUrl(e.serverUrl));
     const todayCounts = usage.today[e.modelId] ?? emptyCounts();
@@ -1030,6 +1087,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     return this.subscriptions
       .find(s => s.fp === fp)
       ?.metrics.contextByModel?.[modelId];
+  }
+
+  /** The cached provider list (with per-1M pricing) for a relay model, if fetched. */
+  private relayProviders(fp: string, modelId: string): OpenRouterModelEndpoint[] | undefined {
+    return this.subscriptions
+      .find(s => s.fp === fp)
+      ?.metrics.providersByModel?.[modelId];
   }
 
   /**

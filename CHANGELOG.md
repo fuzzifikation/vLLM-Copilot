@@ -5,6 +5,7 @@
 ### Added
 
 - **OpenRouter provider selection in Model Settings** — a Provider dropdown (after the Model select) lists the exact providers OpenRouter exposes for that model (`/api/v1/models/{id}/endpoints`), with **Auto** as the default. Picking one pins routing to that provider via the request-body `provider: { only: [tag] }` — the tag used verbatim, never derived. Available for OpenRouter models only; non-OpenRouter models and unconfigured providers are untouched.
+- **Dashboard shows an OpenRouter model's Provider + per-1M Pricing** — when a provider is pinned (Model Settings), the model node shows that exact provider and its reported per-token rates from `/endpoints` (converted to per-1M); when Auto, it falls back to the model's configured catalog rates as an estimate. All values come from the API/config verbatim.
 
 ### Fixed
 
