@@ -602,6 +602,8 @@ export interface OpenRouterModelEndpoint {
   maxCompletionTokens?: number | null;
   /** Server health: 0 = operational, -2 = degraded/unavailable (informational). */
   status?: number;
+  /** Reported uptime over the last day, as a percentage 0-100 (e.g. 99.97). */
+  uptimeLast1d?: number;
 }
 
 /**
@@ -666,6 +668,7 @@ export async function fetchOpenRouterModelEndpoints(
         pricing,
         maxCompletionTokens: typeof entry.max_completion_tokens === 'number' ? entry.max_completion_tokens : undefined,
         status: typeof entry.status === 'number' ? entry.status : undefined,
+        uptimeLast1d: typeof entry.uptime_last_1d === 'number' ? entry.uptime_last_1d : undefined,
       });
     }
     return endpoints;
@@ -761,9 +764,20 @@ export interface OpenRouterAccount {
   limit?: number | null;
   limit_remaining?: number | null;
   usage?: number;
+  usage_daily?: number;
+  usage_weekly?: number;
   usage_monthly?: number;
   byok_usage?: number;
+  byok_usage_monthly?: number;
+  /** ISO timestamp when this key expires, or null for never. */
+  expires_at?: string | null;
+  /** ISO timestamp when the credit limit resets, or null when not on a reset cycle. */
+  limit_reset?: string | null;
   is_free_tier?: boolean;
+  is_management_key?: boolean;
+  is_provisioning_key?: boolean;
+  /** Whether BYOK spend counts against the credit limit. */
+  include_byok_in_limit?: boolean;
 }
 
 /** Timeout for the authenticated account-health probe. */
@@ -794,6 +808,44 @@ export async function fetchOpenRouterAccount(
   try {
     const payload = await response.json() as { data?: OpenRouterAccount };
     // `typeof [] === 'object'` — reject array-shaped data explicitly.
+    if (!payload.data || typeof payload.data !== 'object' || Array.isArray(payload.data)) return undefined;
+    return payload.data;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * OpenRouter account budget from `GET /api/v1/credits` — total credits purchased
+ * and total usage (the account-level "money in vs money out", independent of the
+ * per-key `limit`/`limit_remaining` which are null for unlimited keys). Verified
+ * live: `{ total_credits: 8, total_usage: 0.0009 }` for a key whose `limit` is
+ * null. Requires a valid `Authorization` header (same per-model key).
+ */
+export interface OpenRouterCredits {
+  total_credits?: number;
+  total_usage?: number;
+}
+
+/**
+ * Fetch the account budget from `GET /api/v1/credits`. Same best-effort
+ * discipline as {@link fetchOpenRouterAccount}: plain fetch + timeout, NO retry,
+ * failure → undefined (the dashboard hides the rows rather than fabricating).
+ */
+export async function fetchOpenRouterCredits(
+  requestHeaders: Record<string, string> = {},
+): Promise<OpenRouterCredits | undefined> {
+  const url = buildEndpoint(OPENROUTER_API_BASE, 'v1/credits');
+  const headers = buildRequestHeaders(undefined, requestHeaders);
+  let response: Response;
+  try {
+    response = await fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(ACCOUNT_TIMEOUT_MS) });
+  } catch {
+    return undefined;
+  }
+  if (!response.ok) return undefined;
+  try {
+    const payload = await response.json() as { data?: OpenRouterCredits };
     if (!payload.data || typeof payload.data !== 'object' || Array.isArray(payload.data)) return undefined;
     return payload.data;
   } catch {

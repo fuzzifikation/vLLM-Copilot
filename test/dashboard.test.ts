@@ -60,13 +60,19 @@ const openRouterFetch = vi.fn(async (url: unknown) => {
       { id: 'catalog-model-a' },
     ] });
   }
-  if (u.endsWith('/v1/key')) return jsonResponse({ data: { label: 'my-key', limit: 10, limit_remaining: 3.5, usage: 100, is_free_tier: false } });
+  if (u.endsWith('/v1/key')) return jsonResponse({ data: { label: 'my-key', limit: 10, limit_remaining: 3.5, usage: 100, usage_monthly: 4, usage_weekly: 2, usage_daily: 1, byok_usage: 0, byok_usage_monthly: 0, is_free_tier: false, expires_at: '2027-01-15T00:00:00Z', limit_reset: '2026-09-01T00:00:00Z' } });
+  if (u.endsWith('/v1/credits')) return jsonResponse({ data: { total_credits: 10, total_usage: 3.5 } });
   if (u.includes('/endpoints')) {
     const id = decodeURIComponent(u.split('/v1/models/')[1]?.split('/endpoints')[0] ?? '');
     if (id === 'deepseek/deepseek-chat') {
       return jsonResponse({ data: { id, endpoints: [
-        { tag: 'deepseek', provider_name: 'DeepSeek', quantization: 'unknown', status: 0, pricing: { prompt: '0.00000066', completion: '0.00000198', input_cache_read: '0.000000022' } },
-        { tag: 'alibaba', provider_name: 'Alibaba', quantization: 'unknown', status: 0, pricing: { prompt: '0.000000726', completion: '0.000002178' } },
+        { tag: 'deepseek', provider_name: 'DeepSeek', quantization: 'unknown', status: 0, uptime_last_1d: 99.97, pricing: { prompt: '0.00000066', completion: '0.00000198', input_cache_read: '0.000000022' } },
+        { tag: 'alibaba', provider_name: 'Alibaba', quantization: 'unknown', status: 0, uptime_last_1d: 99.8, pricing: { prompt: '0.000000726', completion: '0.000002178' } },
+      ] } });
+    }
+    if (id === 'author/degraded') {
+      return jsonResponse({ data: { id, endpoints: [
+        { tag: 'slow', provider_name: 'SlowNet', quantization: 'fp8', status: -2, uptime_last_1d: 91.4, pricing: { prompt: '0.0000005', completion: '0.0000015' } },
       ] } });
     }
     return jsonResponse({ data: { id, endpoints: [] } });
@@ -277,7 +283,7 @@ describe('DashboardTreeProvider', () => {
 
     await vi.waitFor(async () => {
       const children = await provider.getChildren();
-      const serverNode = children.find(c => (c as any).label === 'openrouter.ai:'); // shortUrl → "host:port" (empty port)
+      const serverNode = children.find(c => (c as any).label === 'openrouter.ai'); // shortUrl omits empty port
       expect(serverNode).toBeDefined();
       const metrics = await provider.getChildren(serverNode as any);
       const labels = metrics.map(m => (m as any).label as string);
@@ -287,8 +293,9 @@ describe('DashboardTreeProvider', () => {
       // Account health + one node per configured model, rendered directly.
       expect(labels).toContain('Account');
       expect(labels).not.toContain('Model Collection'); // container removed
-      // The server is still online and usable.
-      expect((serverNode as any).description).not.toContain('Offline');
+      // The server is still online and usable — and shows NO description behind it
+      // (a relay has no running/waiting-request gauges, so "idle" would be fake).
+      expect((serverNode as any).description).toBeUndefined();
 
       // Account node shows credits remaining.
       const accountNode = metrics.find(m => (m as any).label === 'Account');
@@ -296,6 +303,13 @@ describe('DashboardTreeProvider', () => {
       const accountRows = await provider.getChildren(accountNode as any);
       expect(accountRows.some(r => (r as any).label === 'Credits Remaining')).toBe(true);
       expect((accountRows.find(r => (r as any).label === 'Credits Remaining') as any).description).toBe('$3.50');
+      // Total budget from /api/v1/credits — the account-level money.
+      expect((accountRows.find(r => (r as any).label === 'Invested Total') as any).description).toBe('$10.00');
+      expect((accountRows.find(r => (r as any).label === 'Available') as any).description).toBe('$6.50');
+      // Total Used is arithmetic (Invested − Available) — deliberately not a row.
+      expect(accountRows.some(r => (r as any).label === 'Total Used')).toBe(false);
+      // Account node collapsed description prefers the available budget.
+      expect((accountNode as any).description).toBe('$6.50 available');
 
       // Each configured model is a direct child, labeled by displayName.
       const modelLabels = labels.filter(l => l === 'Nemotron' || l === 'DeepSeek');
@@ -305,11 +319,12 @@ describe('DashboardTreeProvider', () => {
       expect(String((nemotron as any).id)).not.toContain('dashboard-secret');
       expect(String((deepseek as any).id)).not.toContain('dashboard-secret');
 
-      // Each model node has its OWN context window from the per-model resolve.
-      expect((nemotron as any).description).toBe('1M'); // fmtCount(1000000)
-      expect((deepseek as any).description).toBe('164k'); // fmtCount(163840)
+      // Model nodes show NO collapsed description — the context window at a glance
+      // isn't intuitive; neither model has a pinned provider, so nothing is shown.
+      expect((nemotron as any).description).toBeUndefined();
+      expect((deepseek as any).description).toBeUndefined();
 
-      // Expand a model node — model-level rows (context, output, caps, modes).
+      // Expand a model node — model-level rows (context+output, caps).
       const nemotronRows = await provider.getChildren(nemotron as any);
       const rowLabels = nemotronRows.map(r => (r as any).label as string);
       expect(rowLabels).toContain('Context Window');
@@ -360,21 +375,24 @@ describe('DashboardTreeProvider', () => {
 
     await vi.waitFor(async () => {
       const children = await provider.getChildren();
-      const serverNode = children.find(c => (c as any).label === 'openrouter.ai:');
+      const serverNode = children.find(c => (c as any).label === 'openrouter.ai');
       const metrics = await provider.getChildren(serverNode as any);
       // The model node is a DIRECT child of the relay server (no container).
       const nemotron = metrics.find(m => (m as any).label === 'Nemotron');
 
       const rows = await provider.getChildren(nemotron as any);
       const rowLabels = rows.map(r => (r as any).label as string);
-      // Model-level rows from config metadata.
+      // Model-level rows from config metadata. Context and Output are one row now.
       expect(rowLabels).toContain('Context Window');
-      expect(rowLabels).toContain('Max Output');
+      expect(rowLabels).not.toContain('Max Output'); // merged into Context Window
+      const ctxRow = rows.find(r => (r as any).label === 'Context Window');
+      expect((ctxRow as any).description).toBe('Total 1M  ·  Output 4k'); // fmtCount(1000000) + fmtCount(4096)
       expect(rowLabels).toContain('Capabilities');
       expect(rowLabels).toContain('Modes');
-      // Cost row: actual spend ($0.0012, fine precision) beats the per-1M estimate.
+      // Cost row: actual spend (fine precision) beats the per-1M estimate. One
+      // recorded request → same figure in both today and all-time slots.
       const costRow = rows.find(r => (r as any).label === 'Cost');
-      expect((costRow as any).description).toBe('$0.0012 today');
+      expect((costRow as any).description).toBe('$0.0012 today and $0.0012 total');
       // Token rows for the recorded request.
       expect(rowLabels).toContain('Tokens Today');
     });
@@ -397,19 +415,54 @@ describe('DashboardTreeProvider', () => {
 
     await vi.waitFor(async () => {
       const children = await provider.getChildren();
-      const serverNode = children.find(c => (c as any).label === 'openrouter.ai:');
+      const serverNode = children.find(c => (c as any).label === 'openrouter.ai');
       const metrics = await provider.getChildren(serverNode as any);
       const deepseek = metrics.find(m => (m as any).label === 'DeepSeek');
 
       const rows = await provider.getChildren(deepseek as any);
-      // Provider row: the pinned provider's label from /endpoints (matched by tag).
+      // Provider row: the pinned provider's label from /endpoints (matched by tag),
+      // plus the reported 1-day uptime percentage.
       const providerRow = rows.find(r => (r as any).label === 'Provider');
-      expect((providerRow as any).description).toBe('DeepSeek');
-      // Pricing row: the PINNED provider's reported per-1M rates, not the config estimate.
+      expect((providerRow as any).description).toBe('DeepSeek  ·  99.97% uptime');
+      // Provider is the FIRST row; the collapsed model description shows the
+      // routing identity as "<model> run by <provider>".
+      expect(rows[0]).toBe(providerRow);
+      expect((deepseek as any).description).toBe('run by DeepSeek');
+      // Pricing (1M) row: the PINNED provider's reported per-1M rates, no /1M suffix.
       // Formatting is locale-independent (en-US forced) — hardcode the expectation.
-      const pricingRow = rows.find(r => (r as any).label === 'Pricing');
-      expect((pricingRow as any).description).toBe('in $0.66/1M  ·  out $1.98/1M  ·  cached $0.022/1M');
+      const pricingRow = rows.find(r => (r as any).label === 'Pricing (1M)');
+      expect((pricingRow as any).description).toBe('in $0.66  ·  out $1.98  ·  cached $0.022');
       expect(String((pricingRow as any).tooltip)).toContain('reported by the pinned provider "deepseek"');
+    });
+  });
+
+  it('shows a red status dot and uptime for a degraded pinned provider', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [
+        {
+          id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'author/degraded', serverType: 'openrouter', displayName: 'Degraded',
+          capabilities: { toolCalling: true, imageInput: false }, maxOutputTokens: 16000,
+          provider: 'slow',
+        },
+      ],
+    };
+    vi.stubGlobal('fetch', openRouterFetch);
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 'openrouter.ai');
+      const metrics = await provider.getChildren(serverNode as any);
+      const model = metrics.find(m => (m as any).label === 'Degraded');
+
+      const rows = await provider.getChildren(model as any);
+      const providerRow = rows.find(r => (r as any).label === 'Provider');
+      // Status -2 = degraded → red dot icon; uptime shown as percentage.
+      expect((providerRow as any).description).toBe('SlowNet (fp8)  ·  91.40% uptime');
+      const icon = (providerRow as any).iconPath as any;
+      expect(icon?.id).toBe('circle-filled');
+      expect(String(icon?.color?.id)).toBe('charts.red');
     });
   });
 
@@ -430,16 +483,16 @@ describe('DashboardTreeProvider', () => {
 
     await vi.waitFor(async () => {
       const children = await provider.getChildren();
-      const serverNode = children.find(c => (c as any).label === 'openrouter.ai:');
+      const serverNode = children.find(c => (c as any).label === 'openrouter.ai');
       const metrics = await provider.getChildren(serverNode as any);
       const deepseek = metrics.find(m => (m as any).label === 'DeepSeek');
 
       const rows = await provider.getChildren(deepseek as any);
       const rowLabels = rows.map(r => (r as any).label as string);
       expect(rowLabels).not.toContain('Provider'); // Auto = no pinned provider
-      const pricingRow = rows.find(r => (r as any).label === 'Pricing');
+      const pricingRow = rows.find(r => (r as any).label === 'Pricing (1M)');
       // Auto estimate comes from the model's configured per-1M rates.
-      expect((pricingRow as any).description).toBe('in $1/1M  ·  out $2/1M');
+      expect((pricingRow as any).description).toBe('in $1  ·  out $2');
       expect(String((pricingRow as any).tooltip)).toContain('Auto routing');
     });
   });
@@ -512,9 +565,9 @@ describe('DashboardTreeProvider', () => {
       const modelNodes = await provider.getChildren(usageNode as any);
       const modelNode = modelNodes.find(m => (m as any).label === 'Friendly M1');
       expect(modelNode).toBeDefined();
-      // fresh 800k×$1 + cached 200k×$0.5 + out 500k×$2 = $1.90. Just recorded, so the
-      // recording window is under 0.1 days → today-only summary.
-      expect((modelNode as any).description).toBe('$1.90 today');
+      // fresh 800k×$1 + cached 200k×$0.5 + out 500k×$2 = $1.90. Derived from the
+      // one recorded request → same figure in both today and all-time slots.
+      expect((modelNode as any).description).toBe('$1.90 today and $1.90 total');
       expect(modelNodes.find(m => (m as any).label === 'm1')).toBeUndefined(); // wire id hidden
 
       // Today + Overall rows under the model — token-only (price is on the model line above).
@@ -555,8 +608,9 @@ describe('DashboardTreeProvider', () => {
       const usageNode = metrics.find(m => (m as any).label === 'Token Usage and Cost');
       const modelNodes = await provider.getChildren(usageNode as any);
       const modelNode = modelNodes.find(m => (m as any).label === 'Friendly M1');
-      // Actual $3.50 beats the $1.90 estimate.
-      expect((modelNode as any).description).toBe('$3.50 today');
+      // Actual $3.50 beats the $1.90 estimate. One recorded request → same in
+      // today and total slots.
+      expect((modelNode as any).description).toBe('$3.50 today and $3.50 total');
     });
   });
 

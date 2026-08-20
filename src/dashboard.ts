@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { getConfig, resolveServerConfig, normalizeServerUrl, findModelConfig, serverFingerprint, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
-import { perMillion, formatPerMillionUsd, type OpenRouterAccount, type OpenRouterModelEndpoint } from './openRouter.js';
+import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from './openRouter.js';
 import {
   getLastRequest, getServerUsage, getServerCost, hasServerUsage, onUsageStoreDidChange,
   computeCost, findModelCost, formatCost, formatCostFine, formatCostSummary, fmtCount, emptyCounts,
@@ -22,6 +22,14 @@ function summaryLine(m: ServerMetrics): string {
   if (m.runningRequests != null) parts.push(`${m.runningRequests} running`);
   if (m.waitingRequests != null && m.waitingRequests > 0) parts.push(`${m.waitingRequests} waiting`);
   return parts.join('  ·  ') || 'idle';
+}
+
+/** Deterministic ISO date (YYYY-MM-DD) — locale-independent, unlike toLocaleDateString. */
+function isoDate(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return d.toISOString().slice(0, 10);
 }
 
 /** A server node in the tree (collapsible, shows metrics as children) */
@@ -53,13 +61,17 @@ class ServerTreeItem extends vscode.TreeItem {
     super(displayName, vscode.TreeItemCollapsibleState.Collapsed);
     this.iconPath = statusIcon;
     this.id = `server:${key}`;
-    // No "degraded" label — every backend is a first-class dashboard citizen.
-    this.description = metrics.online ? summaryLine(metrics) : 'Offline';
     // OpenRouter is a relay, not a server: /v1/models is the whole catalog (not
     // "the server's models") and any context window here is one arbitrary
     // configured model's — wrong scope to present as server-wide. Suppress both
-    // until the model-collection restructure (Phase 2) lands.
+    // until the model-collection restructure (Phase 2) lands. Also: a relay has
+    // no running/waiting-request gauges, so "idle" would be a fabricated stat —
+    // show NO description behind an online OpenRouter server.
     const isOpenRouterRelay = serverType === 'openrouter';
+    // No "degraded" label — every backend is a first-class dashboard citizen.
+    this.description = metrics.online
+      ? (isOpenRouterRelay ? undefined : summaryLine(metrics))
+      : 'Offline';
     const modelsLine = isOpenRouterRelay ? '' : `\n*${metrics.models.join(', ') || 'no models'}*`;
     const contextLine = isOpenRouterRelay || metrics.maxModelLen == null
       ? ''
@@ -100,6 +112,8 @@ class OpenRouterAccountTreeItem extends vscode.TreeItem {
   constructor(
     public readonly serverUrl: string,
     public readonly account: OpenRouterAccount,
+    /** Total-budget info from /api/v1/credits (may be undefined on a failed probe). */
+    public readonly credits: OpenRouterCredits | undefined,
     /** Identity fingerprint — the account is per-key, so two identities on one URL differ. */
     public readonly fp: string,
   ) {
@@ -107,9 +121,20 @@ class OpenRouterAccountTreeItem extends vscode.TreeItem {
     this.iconPath = new vscode.ThemeIcon('account');
     this.id = `openRouterAccount:${serverGroupKey(fp)}`;
     const remaining = account.limit_remaining;
-    this.description = remaining != null
-      ? `${formatCost(remaining, 'USD')} remaining`
-      : (account.is_free_tier ? 'free tier' : undefined);
+    // Prefer the real budget (credits loaded − used) for the one-liner; fall back
+    // to the per-key remaining / free-tier / monthly usage when that's absent.
+    const budgetRemaining = credits?.total_credits != null && credits?.total_usage != null
+      ? Math.max(0, credits.total_credits - credits.total_usage)
+      : undefined;
+    this.description = budgetRemaining != null
+      ? `${formatCost(budgetRemaining, 'USD')} available`
+      : remaining != null
+        ? `${formatCost(remaining, 'USD')} remaining`
+        : account.is_free_tier
+          ? 'free tier'
+          : account.usage_monthly != null
+            ? `usage ${formatCost(account.usage_monthly, 'USD')}/mo`
+            : undefined;
     this.tooltip = new vscode.MarkdownString('OpenRouter account/key health. Reflects the credential this server was configured with.');
   }
 }
@@ -120,25 +145,30 @@ class OpenRouterModelTreeItem extends vscode.TreeItem {
     public readonly serverUrl: string,
     public readonly modelId: string,
     modelLabel: string,
-    contextWindow: number | undefined,
+    /** Pinned provider label shown as the collapsed description — or undefined (nothing). */
+    providerLabel: string | undefined,
     /** Identity fingerprint — the model belongs to exactly one credential identity. */
     public readonly fp: string,
   ) {
     super(modelLabel, vscode.TreeItemCollapsibleState.Collapsed);
-    if (contextWindow !== undefined) this.description = fmtCount(contextWindow);
+    // Collapsed one-liner: "<Model> run by <Provider>" — the routing identity
+    // tells who actually serves this model. Nothing when no provider is pinned.
+    if (providerLabel) this.description = `run by ${providerLabel}`;
     this.iconPath = new vscode.ThemeIcon('symbol-class');
     this.id = `openRouterModel:${serverGroupKey(fp)}:${modelId}`;
-    this.tooltip = new vscode.MarkdownString(`${modelLabel} — click for model-level detail (context, capabilities, pricing, usage).`);
+    this.tooltip = new vscode.MarkdownString(`${modelLabel} — click for model-level detail (provider, pricing, context, capabilities, usage).`);
   }
 }
 
 /** A metric row (label: value) */
 class MetricTreeItem extends vscode.TreeItem {
-  constructor(label: string, value: string, icon?: string, tooltip?: string) {
+  constructor(label: string, value: string, icon?: string, tooltip?: string, iconColor?: vscode.ThemeColor) {
     super(label, vscode.TreeItemCollapsibleState.None);
     this.description = value;
     if (icon) {
-      this.iconPath = new vscode.ThemeIcon(icon);
+      this.iconPath = iconColor
+        ? new vscode.ThemeIcon(icon, iconColor)
+        : new vscode.ThemeIcon(icon);
     }
     this.tooltip = tooltip ?? `${label}: ${value}`;
   }
@@ -516,7 +546,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     const isOpenRouterRelay = serverType === 'openrouter';
     if (isOpenRouterRelay) {
       if (m.account) {
-        items.push(new OpenRouterAccountTreeItem(serverUrl ?? '', m.account, fp ?? ''));
+        items.push(new OpenRouterAccountTreeItem(serverUrl ?? '', m.account, m.credits, fp ?? ''));
       }
       items.push(...this.getRelayModelTreeItems(serverUrl ?? '', fp ?? ''));
     } else {
@@ -684,6 +714,18 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
   private getOpenRouterAccountChildren(e: OpenRouterAccountTreeItem): MetricTreeItem[] {
     const items: MetricTreeItem[] = [];
     const a = e.account;
+    // ── Account budget (from /api/v1/credits) — the account-level money, present
+    // even when the per-key limit is null (unlimited). `total_credits` = money
+    // ever loaded (Invested Total); available = loaded − spent (the API's
+    // total_usage), floored at 0. "Total Used" is deliberately NOT shown — it is
+    // pure arithmetic (Invested − Available) and would be redundant noise.
+    const c = e.credits;
+    if (c?.total_credits != null) {
+      items.push(new MetricTreeItem('Invested Total', formatCost(c.total_credits, 'USD'), 'credit-card', 'Total credits ever loaded into this account (all top-ups), from /api/v1/credits.'));
+    }
+    if (c?.total_credits != null && c?.total_usage != null) {
+      items.push(new MetricTreeItem('Available', formatCost(Math.max(0, c.total_credits - c.total_usage), 'USD'), 'pulse', 'Invested total minus total usage (floor 0) — what you can still spend.'));
+    }
     if (a.limit_remaining != null) {
       items.push(new MetricTreeItem('Credits Remaining', formatCost(a.limit_remaining, 'USD'), 'credit-card', 'OpenRouter credits available on this key.'));
     }
@@ -696,11 +738,32 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     if (a.usage_monthly != null) {
       items.push(new MetricTreeItem('Usage (monthly)', formatCost(a.usage_monthly, 'USD'), 'calendar', 'Credits used this UTC month.'));
     }
+    if (a.usage_weekly != null) {
+      items.push(new MetricTreeItem('Usage (weekly)', formatCost(a.usage_weekly, 'USD'), 'calendar', 'Credits used this UTC week.'));
+    }
+    if (a.usage_daily != null) {
+      items.push(new MetricTreeItem('Usage (today)', formatCost(a.usage_daily, 'USD'), 'calendar', 'Credits used today (UTC).'));
+    }
     if (a.byok_usage != null) {
       items.push(new MetricTreeItem('BYOK Usage', formatCost(a.byok_usage, 'USD'), 'key', 'Usage billed directly to your upstream provider (BYOK), not OpenRouter credits.'));
     }
+    if (a.byok_usage_monthly != null) {
+      items.push(new MetricTreeItem('BYOK Usage (monthly)', formatCost(a.byok_usage_monthly, 'USD'), 'key', 'BYOK usage billed this UTC month.'));
+    }
     if (a.is_free_tier) {
       items.push(new MetricTreeItem('Free Tier', 'yes', 'star', 'This account has never paid — subject to free-tier rate limits.'));
+    }
+    if (a.is_management_key || a.is_provisioning_key) {
+      const kind = a.is_management_key ? 'Management' : 'Provisioning';
+      items.push(new MetricTreeItem('Key Type', kind, 'key', 'Key role: Management keys control the account; Provisioning keys are for automated provisioning. Standard keys have no role.'));
+    }
+    const expiry = isoDate(a.expires_at);
+    if (expiry) {
+      items.push(new MetricTreeItem('Key Expires', expiry, 'calendar', 'This API key expires on this date. Rotate before then.'));
+    }
+    const limitReset = isoDate(a.limit_reset);
+    if (limitReset) {
+      items.push(new MetricTreeItem('Limit Resets', limitReset, 'refresh', 'The credit limit resets to its full value on this date.'));
     }
     if (a.label) {
       items.push(new MetricTreeItem('Key Label', a.label, 'tag', 'The label OpenRouter stores for this API key.'));
@@ -720,29 +783,118 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       if (!modelId || seen.has(modelId)) continue; // dedupe shared wire ids
       seen.add(modelId);
       const label = model.displayName || model.id || modelId;
-      const contextWindow = this.relayContextWindow(fp, modelId);
-      items.push(new OpenRouterModelTreeItem(serverUrl, modelId, label, contextWindow, fp));
+      // Collapsed description: the pinned provider's name (or nothing). The
+      // provider is the routing identity — the context window is not intuitive
+      // as a one-liner, so show it only in the expanded Context+Output row.
+      const pinnedProvider = model.provider;
+      let providerLabel: string | undefined;
+      if (pinnedProvider) {
+        const endpoints = this.relayProviders(fp, modelId);
+        const pinned = endpoints?.find(ep => ep.tag === pinnedProvider);
+        providerLabel = pinned
+          ? pinned.providerName + (pinned.quantization && pinned.quantization !== 'unknown' ? ` (${pinned.quantization})` : '')
+          : pinnedProvider; // list not loaded — the tag itself, never invented
+      }
+      items.push(new OpenRouterModelTreeItem(serverUrl, modelId, label, providerLabel, fp));
     }
     return items;
   }
 
-  /** Children of an OpenRouter model node: its own model-level rows. */
+  /** Children of an OpenRouter model node: provider, pricing, context, caps, modes, cost, usage. */
   private getOpenRouterModelChildren(e: OpenRouterModelTreeItem): MetricTreeItem[] {
     const items: MetricTreeItem[] = [];
     const entry = this.getRelayModels(e.fp)
       .find(m => (m.vllmModelId ?? m.id) === e.modelId);
 
-    // Context window — from the per-model engine resolve (cached for the engine
-    // lifetime). Show the row only when resolved; a transient failure hides it
-    // and a later poll retries (see vllmMetrics contextByModel).
-    const contextWindow = this.relayContextWindow(e.fp, e.modelId);
-    if (contextWindow !== undefined) {
-      items.push(new MetricTreeItem('Context Window', fmtCount(contextWindow), 'layers', 'Maximum context length (input + output) this model reports.'));
+    // Provider — the exact provider OpenRouter routes to (pinned in Model
+    // Settings), matched by tag against the `/endpoints` list. FIRST row: the
+    // routing identity is the most important fact about the model.
+    const pinnedProvider = entry?.provider;
+    const endpoints = this.relayProviders(e.fp, e.modelId);
+    const pinned = pinnedProvider
+      ? endpoints?.find(ep => ep.tag === pinnedProvider)
+      : undefined;
+    if (pinnedProvider) {
+      const label = pinned
+        ? pinned.providerName + (pinned.quantization && pinned.quantization !== 'unknown' ? ` (${pinned.quantization})` : '')
+        : pinnedProvider; // list not loaded — the tag itself, never invented
+      // Provider health dot + uptime — mirror the server node's colored circle.
+      // status: 0 = operational (green), -2 = degraded (red); uptime_last_1d is
+      // a percentage 0-100. Only when the provider list is loaded (pinned defined).
+      const status = pinned?.status;
+      const uptime = pinned?.uptimeLast1d;
+      let statusIcon: string | undefined;
+      let statusColor: vscode.ThemeColor | undefined;
+      if (status !== undefined) {
+        statusIcon = 'circle-filled';
+        statusColor = status === 0
+          ? new vscode.ThemeColor('charts.green')
+          : new vscode.ThemeColor('charts.red');
+      }
+      const value = uptime !== undefined
+        ? `${label}  ·  ${uptime.toFixed(2)}% uptime`
+        : label;
+      items.push(new MetricTreeItem(
+        'Provider',
+        value,
+        statusIcon ?? 'cloud',
+        'Routing pinned to this provider via `provider: { only: [tag] }` (set in Model Settings). Status + 1-day uptime reported by OpenRouter.',
+        statusColor,
+      ));
     }
 
-    // Output budget — from the model config (saved at onboarding from top_provider).
-    if (entry?.maxOutputTokens != null) {
-      items.push(new MetricTreeItem('Max Output', fmtCount(entry.maxOutputTokens), 'symbol-parameter', 'Model\'s reported output ceiling.'));
+    // Pricing (1M) — the pinned provider's reported per-1M rates from
+    // `/endpoints`; Auto falls back to the model's configured catalog rates as
+    // an estimate. All values come from the API/config verbatim — never derived.
+    // The row label carries the "(1M)" so the per-price `/1M` suffix is dropped.
+    let priceParts: string[] | undefined;
+    let priceSource = '';
+    if (pinned?.pricing) {
+      const inRate = perMillion(pinned.pricing.prompt);
+      const outRate = perMillion(pinned.pricing.completion);
+      const cacheRate = perMillion(pinned.pricing.input_cache_read);
+      const parts: string[] = [];
+      if (inRate !== undefined) parts.push(`in ${formatUsdRate(inRate)}`);
+      if (outRate !== undefined) parts.push(`out ${formatUsdRate(outRate)}`);
+      if (cacheRate !== undefined) parts.push(`cached ${formatUsdRate(cacheRate)}`);
+      if (parts.length > 0) {
+        priceParts = parts;
+        priceSource = `Per-1M rates reported by the pinned provider "${pinned.tag}" (${pinned.providerName}).`;
+      }
+    }
+    if (!priceParts && entry?.cost) {
+      const parts: string[] = [];
+      if (entry.cost.input !== undefined) parts.push(`in ${formatUsdRate(entry.cost.input)}`);
+      if (entry.cost.output !== undefined) parts.push(`out ${formatUsdRate(entry.cost.output)}`);
+      if (entry.cost.cachedInput !== undefined) parts.push(`cached ${formatUsdRate(entry.cost.cachedInput)}`);
+      if (parts.length > 0) {
+        priceParts = parts;
+        priceSource = pinnedProvider
+          ? 'Per-1M rates from the model config (provider list not loaded).'
+          : 'Per-1M estimated rates from the model config (Auto routing).';
+      }
+    }
+    if (priceParts) {
+      items.push(new MetricTreeItem('Pricing (1M)', priceParts.join('  ·  '), 'credit-card', priceSource));
+    }
+
+    // Context Window + Output — one row combining the per-model context window
+    // (from the engine resolve) and the saved output budget. Both belong together:
+    // they define the model's usable envelope. "Total" prefixes the context so it
+    // balances the following "Output" (Total context vs output budget).
+    const contextWindow = this.relayContextWindow(e.fp, e.modelId);
+    const maxOutput = entry?.maxOutputTokens;
+    if (contextWindow !== undefined && maxOutput != null) {
+      items.push(new MetricTreeItem(
+        'Context Window',
+        `Total ${fmtCount(contextWindow)}  ·  Output ${fmtCount(maxOutput)}`,
+        'layers',
+        'Total context length (input + output) and the configured output ceiling.',
+      ));
+    } else if (contextWindow !== undefined) {
+      items.push(new MetricTreeItem('Context Window', `Total ${fmtCount(contextWindow)}`, 'layers', 'Total context length (input + output) this model reports.'));
+    } else if (maxOutput != null) {
+      items.push(new MetricTreeItem('Max Output', fmtCount(maxOutput), 'symbol-parameter', 'Model\'s reported output ceiling.'));
     }
 
     // Capabilities — from the model config (saved at onboarding).
@@ -767,15 +919,10 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     const { today: todayCost, overall: overallCost, currency, hasActual } =
       this.modelCostFor(e.serverUrl, e.modelId, entry?.cost);
     if (todayCost !== undefined || overallCost !== undefined) {
-      const summary = formatCostSummary(
-        todayCost,
-        overallCost,
-        currency,
-        getModelStartedAt(normalizeServerUrl(e.serverUrl), e.modelId),
-      );
-      // Honest fallback: show whichever slot has a value, never a fabricated $0.
-      // Inside the guard above at least one slot is a number, so this is total.
-      const value = summary ?? formatCostFine(todayCost ?? overallCost!, currency);
+      // Honest: show exactly what the API/store reports — today and/or total,
+      // never a fabricated window rate.
+      const value = formatCostSummary(todayCost, overallCost, currency)
+        ?? formatCostFine(todayCost ?? overallCost!, currency);
       items.push(new MetricTreeItem(
         'Cost',
         value,
@@ -784,55 +931,6 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
           ? 'Actual OpenRouter cost (usage.cost) where reported; per-1M estimate for slots without reported spend.'
           : 'Estimated cost from the model\'s configured per-1M rates.',
       ));
-    }
-
-    // Provider + Pricing — the exact provider OpenRouter routes to (pinned in
-    // Model Settings) and its per-1M rates. When a provider is pinned, show ITS
-    // reported rates from `/endpoints` (tag matched verbatim); otherwise (Auto)
-    // fall back to the model's configured catalog rates as an estimate. All
-    // values come from the API/config verbatim — never derived, never guessed.
-    const pinnedProvider = entry?.provider;
-    const endpoints = this.relayProviders(e.fp, e.modelId);
-    const pinned = pinnedProvider
-      ? endpoints?.find(ep => ep.tag === pinnedProvider)
-      : undefined;
-    if (pinnedProvider) {
-      const label = pinned
-        ? pinned.providerName + (pinned.quantization && pinned.quantization !== 'unknown' ? ` (${pinned.quantization})` : '')
-        : pinnedProvider; // list not loaded — the tag itself, never invented
-      items.push(new MetricTreeItem(
-        'Provider',
-        label,
-        'cloud',
-        'Routing pinned to this provider via `provider: { only: [tag] }` (set in Model Settings).',
-      ));
-    }
-    let priceParts: string[] | undefined;
-    let priceSource = '';
-    if (pinned?.pricing) {
-      const inStr = formatPerMillionUsd(perMillion(pinned.pricing.prompt));
-      const outStr = formatPerMillionUsd(perMillion(pinned.pricing.completion));
-      const cacheStr = formatPerMillionUsd(perMillion(pinned.pricing.input_cache_read));
-      if (inStr || outStr) {
-        priceParts = [`in ${inStr ?? '—'}`, `out ${outStr ?? '—'}`];
-        if (cacheStr) priceParts.push(`cached ${cacheStr}`);
-        priceSource = `Per-1M rates reported by the pinned provider "${pinned.tag}" (${pinned.providerName}).`;
-      }
-    }
-    if (!priceParts && entry?.cost) {
-      const inStr = formatPerMillionUsd(entry.cost.input);
-      const outStr = formatPerMillionUsd(entry.cost.output);
-      const cacheStr = formatPerMillionUsd(entry.cost.cachedInput);
-      if (inStr || outStr) {
-        priceParts = [`in ${inStr ?? '—'}`, `out ${outStr ?? '—'}`];
-        if (cacheStr) priceParts.push(`cached ${cacheStr}`);
-        priceSource = pinnedProvider
-          ? 'Per-1M rates from the model config (provider list not loaded).'
-          : 'Per-1M estimated rates from the model config (Auto routing).';
-      }
-    }
-    if (priceParts) {
-      items.push(new MetricTreeItem('Pricing', priceParts.join('  ·  '), 'credit-card', priceSource));
     }
 
     // Token usage — today + overall (same split as the Token Usage node).
@@ -1028,9 +1126,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       const label = entry?.displayName || entry?.id || modelId;
       // Cost: actual reported (OpenRouter) when present, else the per-1M estimate.
       const { today, overall, currency } = this.modelCostFor(e.serverUrl, modelId, entry?.cost);
-      // Collapsed description: "$11.51 today and $31.13 in 3.1 days" — today's
-      // cost plus the all-time cost over the recording window (startedAt).
-      const summary = formatCostSummary(today, overall, currency, getModelStartedAt(e.serverUrl, modelId));
+      // Collapsed description: "$X today and $Y total" — exactly what the
+      // API/store reports, never a fabricated window rate.
+      const summary = formatCostSummary(today, overall, currency);
       return new ModelUsageTreeItem(e.serverUrl, modelId, label, summary);
     });
   }

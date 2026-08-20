@@ -4,23 +4,22 @@
 
 ### Added
 
-- **OpenRouter provider selection in Model Settings** — a Provider dropdown (after the Model select) lists the exact providers OpenRouter exposes for that model (`/api/v1/models/{id}/endpoints`), with **Auto** as the default. Picking one pins routing to that provider via the request-body `provider: { only: [tag] }` — the tag used verbatim, never derived. Available for OpenRouter models only; non-OpenRouter models and unconfigured providers are untouched.
-- **Dashboard shows an OpenRouter model's Provider + per-1M Pricing** — when a provider is pinned (Model Settings), the model node shows that exact provider and its reported per-token rates from `/endpoints` (converted to per-1M); when Auto, it falls back to the model's configured catalog rates as an estimate. All values come from the API/config verbatim.
+- **OpenRouter provider selection** — Model Settings has a Provider dropdown per OpenRouter model (Auto, or pin a specific provider from the model's list).
+- **Dashboard: OpenRouter model details** — each model node shows its provider (with status + uptime), per-1M pricing, and total context; the Account node shows Invested Total / Available and usage over time.
 
 ### Fixed
 
-- **OpenRouter models that report a completion cap at/near the context window no longer break every request** — ~12% of the catalog (e.g. `dots-studio/dots-3-note-preview:free`) reports `max_completion_tokens` equal to or near the full window. Trusting that cap set the output budget to the whole window, which 400s on the first real request (prompt + output > context). A reported cap is now trusted only when it leaves real input headroom (≥10% of the window); degenerate caps fall back to the 10% safe budget. Genuine caps (e.g. 384k on a 1M window) are preserved.
-- **Provider pricing lookup no longer stalls the Dashboard or Model Settings** — the `/endpoints` fetches (10s timeout) ran unbound inside the metrics tick and sequentially in Model Settings, so a hung request could freeze the dashboard refresh or settings-open for up to 10s per model. Both now run in parallel and race a 2s bound (same discipline as the account probe) — pricing is display-only, never worth stalling the UI.
-- **OpenRouter provider list loads in Model Settings** — the `/api/v1/models/{id}/endpoints` lookup kept the model id's `/` as an encoded `%2F`, which OpenRouter's gateway rejects with 404, so the Provider dropdown fell back to "only Auto". The id is now split on `/` and each segment encoded, keeping the route structure intact (variants like `:free` still pass through).
-- **OpenRouter models with no reported output cap no longer break every request** — the output ceiling now falls back to 10% of the context window (hard-capped at 81920) instead of the full window, which made output + input exceed the context limit (OpenRouter 400 "…1048575 in the output") and return nothing. Mirrors the HF auto-configure factor.
+- **OpenRouter models with a full-window output cap no longer fail every request** — the output budget is capped to leave input headroom.
+- **OpenRouter models without a reported output cap no longer return nothing** — output falls back to 10% of the context window instead of the full window (which 400'd).
+- **OpenRouter Provider dropdown no longer stuck on "only Auto"** — the provider list lookup was 404-ing; it loads now.
+- **Selecting "Auto" in the Provider dropdown actually clears the pinned provider** instead of storing an empty value.
 
 ### Changed
 
-- **Token counts render with a fixed US grouping (`1,000,000`)** — every `toLocaleString()` in onboarding, auto-config summaries, and logs now forces `en-US`, so counts never render `1.000.000` (German-style) on non-US locales. Deterministic output, greppable/diffable logs, one convention everywhere.
-- **Per-1M rates render with a fixed US decimal (`$0.66/1M`)** — prices now force `en-US` formatting so a `$` amount never shows a comma decimal (`$0,66`) on non-US locales. Shared formatters (`formatUsdRate`/`formatPerMillionUsd`) feed the onboarding picker, the confirm dialog, and the dashboard pricing rows from one authority.
-- **OpenRouter Add flow asks only for the API key** — the custom-headers prompt is gone (expert headers are set via the model config in settings).
-- **Pasting a full OpenRouter model-page URL skips the catalog picker** — the model resolves straight to the confirm/save dialog instead of pre-selecting and auto-accepting on Enter. A bare `/api` base or slug still shows the typeahead.
-- **Model Settings shows `serverType` next to the server** — ordered general → specific (Server Type → Server → Model), instead of buried below the model's fields.
+- **Prices and token counts render consistently in every locale** (US decimal/grouping) instead of locale-dependent `$0,66` / `1.000.000`.
+- **OpenRouter Add flow simplified** — asks only for the API key; pasting a model-page URL skips the picker.
+- **Dashboard cost shows today and/or total** as reported, instead of an invented per-day window rate.
+- **Model Settings layout** — `serverType` sits next to the server (general → specific), instead of buried below the model's fields.
 
 ## v1.32.2 — Per-model identity & actionable server errors
 

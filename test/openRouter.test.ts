@@ -5,6 +5,7 @@ import {
   normalizeOpenRouterModel,
   fetchOpenRouterModel,
   fetchOpenRouterAccount,
+  fetchOpenRouterCredits,
   resolveOpenRouterRuntimeLimits,
   autoConfigureOpenRouterModel,
   fetchOpenRouterModelEndpoints,
@@ -547,8 +548,8 @@ describe('fetchOpenRouterModelEndpoints', () => {
       data: {
         id: 'deepseek/deepseek-v4-pro-0813',
         endpoints: [
-          { name: 'Together | deepseek/deepseek-v4-pro-20260813', provider_name: 'Together', tag: 'together', quantization: 'unknown', max_completion_tokens: null, status: 0, pricing: { prompt: '0.00000132', completion: '0.00000396', input_cache_read: '0.00000013' } },
-          { name: 'GMICloud | deepseek/deepseek-v4-pro-20260813', provider_name: 'GMICloud', tag: 'gmicloud/fp8', quantization: 'fp8', max_completion_tokens: null, status: 0, pricing: { prompt: '0.000001188', completion: '0.000003564', input_cache_read: '0.0000000396' } },
+          { name: 'Together | deepseek/deepseek-v4-pro-20260813', provider_name: 'Together', tag: 'together', quantization: 'unknown', max_completion_tokens: null, status: 0, uptime_last_1d: 99.97, pricing: { prompt: '0.00000132', completion: '0.00000396', input_cache_read: '0.00000013' } },
+          { name: 'GMICloud | deepseek/deepseek-v4-pro-20260813', provider_name: 'GMICloud', tag: 'gmicloud/fp8', quantization: 'fp8', max_completion_tokens: null, status: 0, uptime_last_1d: 99.8, pricing: { prompt: '0.000001188', completion: '0.000003564', input_cache_read: '0.0000000396' } },
         ],
       },
     }),
@@ -568,8 +569,8 @@ describe('fetchOpenRouterModelEndpoints', () => {
     );
     // tag is the routing slug, preserved verbatim; provider_name is the label.
     expect(endpoints).toEqual([
-      expect.objectContaining({ tag: 'together', providerName: 'Together' }),
-      expect.objectContaining({ tag: 'gmicloud/fp8', providerName: 'GMICloud', quantization: 'fp8' }),
+      expect.objectContaining({ tag: 'together', providerName: 'Together', status: 0, uptimeLast1d: 99.97 }),
+      expect.objectContaining({ tag: 'gmicloud/fp8', providerName: 'GMICloud', quantization: 'fp8', status: 0, uptimeLast1d: 99.8 }),
     ]);
   });
 
@@ -760,5 +761,48 @@ describe('fetchOpenRouterAccount', () => {
   it('returns undefined on a network failure (probe is best-effort)', async () => {
     fetchSpy.mockRejectedValueOnce(new TypeError('fetch failed'));
     expect(await fetchOpenRouterAccount(keyHeaders)).toBeUndefined();
+  });
+});
+
+// ── fetchOpenRouterCredits ────────────────────────────────────────────────
+
+describe('fetchOpenRouterCredits', () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  const keyHeaders = { Authorization: 'Bearer sk-test' };
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns the total budget (credits + usage) from /api/v1/credits', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: { total_credits: 10, total_usage: 3.5 } }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const credits = await fetchOpenRouterCredits(keyHeaders);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `${OPENROUTER_API_BASE}/v1/credits`,
+      expect.objectContaining({ method: 'GET', headers: keyHeaders }),
+    );
+    expect(credits).toEqual({ total_credits: 10, total_usage: 3.5 });
+  });
+
+  it('returns undefined on a non-OK response (bad key) — never fabricates', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(null, { status: 401 }));
+    expect(await fetchOpenRouterCredits(keyHeaders)).toBeUndefined();
+  });
+
+  it('returns undefined when the payload has no usable data object', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    expect(await fetchOpenRouterCredits(keyHeaders)).toBeUndefined();
+  });
+
+  it('returns undefined on a network failure (probe is best-effort)', async () => {
+    fetchSpy.mockRejectedValueOnce(new TypeError('fetch failed'));
+    expect(await fetchOpenRouterCredits(keyHeaders)).toBeUndefined();
   });
 });

@@ -14,6 +14,7 @@ function loadWebview(
   extraServers: any[] = [],
   providersByModel: Record<string, any[]> = {},
   serverType?: string,
+  initialProvider?: string,
 ) {
   const dom = new JSDOM(
     '<!doctype html><body>' +
@@ -36,6 +37,7 @@ function loadWebview(
       vllmModelId: 'wire-model',
       serverUrl: 'http://server:8000',
       ...(serverType ? { serverType } : {}),
+      ...(initialProvider !== undefined ? { provider: initialProvider } : {}),
       defaultParams: { parallel_tool_calls: true },
       modelModes,
     }],
@@ -206,6 +208,29 @@ describe('Model Settings webview', () => {
 
     const save = [...posted].reverse().find((message: any) => message.type === 'save');
     expect(save.config.provider).toBe('gmicloud/fp8');
+  });
+
+  it('clears the provider back to Auto (empty value) on save', () => {
+    const { dom, posted } = loadWebview(
+      {},
+      ['wire-model'],
+      [],
+      { 'wire-model': [{ tag: 'gmicloud/fp8', providerName: 'GMICloud', quantization: 'fp8' }] },
+      'openrouter',
+      'gmicloud/fp8',
+    );
+    const document = dom.window.document;
+    const provider = document.querySelector<HTMLSelectElement>('select[data-f="provider"]')!;
+    // The model already has a pinned provider; the dropdown pre-selects it.
+    expect(provider.value).toBe('gmicloud/fp8');
+    // Switch back to "Auto" (the empty option) and save — must send '' so the
+    // store's normalizeModelEntry deletes the key (undefined/omitted = Auto).
+    provider.value = '';
+    provider.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    document.getElementById('saveBtn')!.click();
+
+    const save = [...posted].reverse().find((message: any) => message.type === 'save');
+    expect(save.config.provider).toBe('');
   });
 
   it('renders only Auto when the provider list is unavailable (no fabricated options)', () => {
