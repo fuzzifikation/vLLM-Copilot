@@ -533,6 +533,11 @@
     // If a provider is pinned, drop the mode — sorting a single provider is
     // meaningless, and the request path ignores it anyway; keep the config honest.
     if (u.provider) u.routingMode = '';
+    // "Standard" is the DEFAULT — semantically identical to omitting the field
+    // (config doc: `'standard'`/omitted = default price-weighted routing). Storing
+    // it explicitly would pollute every Auto-routed OpenRouter config with a
+    // meaningless value. Map it to the empty-string CLEAR signal → delete.
+    if (u.routingMode === 'standard') u.routingMode = '';
     const caps = {};
     document.querySelectorAll('[data-k]').forEach(el => {
       if (el.dataset.k === 'caps.toolCalling') caps.toolCalling = el.checked;

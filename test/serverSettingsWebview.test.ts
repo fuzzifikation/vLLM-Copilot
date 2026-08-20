@@ -307,6 +307,24 @@ describe('Model Settings webview', () => {
     expect(save.config.routingMode).toBe('exacto');
   });
 
+  it('maps Standard to the clear signal on save — the default must not pollute the config', () => {
+    // "Standard" is the DEFAULT routing mode, semantically identical to omitting
+    // the field. Saving with it selected must send '' (→ delete), not a redundant
+    // `routingMode: "standard"` on every Auto-routed OpenRouter config.
+    const { dom, posted } = loadWebview({}, ['wire-model'], [], {}, 'openrouter');
+    const document = dom.window.document;
+    const routing = document.querySelector<HTMLSelectElement>('select[data-f="routingMode"]')!;
+    expect(routing.value).toBe('standard'); // default selection
+    // Make the form dirty so Save All is enabled.
+    const displayName = document.querySelector<HTMLInputElement>('input[data-f="displayName"]')!;
+    displayName.value = 'edited';
+    displayName.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    document.getElementById('saveBtn')!.click();
+
+    const save = [...posted].reverse().find((message: any) => message.type === 'save');
+    expect(save.config.routingMode).toBe(''); // '' → normalizeModelEntry deletes the key
+  });
+
   it('drops the routing mode on save when a provider is pinned (Auto-only setting)', () => {
     const { dom, posted } = loadWebview(
       {},
