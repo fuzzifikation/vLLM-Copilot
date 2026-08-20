@@ -454,17 +454,16 @@ describe('ServerMetricsEngine registry lifecycle', () => {
 
   it('resolves the context window per-backend for non-vLLM servers', async () => {
     // Non-vLLM backends don't report max_model_len on /v1/models. The engine must
-    // fall back to the per-backend resolver (e.g. OpenRouter's exact-model
-    // endpoint) so the dashboard shows the real window.
+    // fall back to the OpenRouter catalog resolver (exact id match) so the
+    // dashboard shows the real window.
     const urls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
       const u = String(url);
       urls.push(u);
       if (u.endsWith('/v1/models')) {
-        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
-      }
-      if (u.includes('/v1/model/nvidia/nemotron-3.5-lightning')) {
-        return new Response(JSON.stringify({ data: { context_length: 1000000 } }), { status: 200 });
+        // The catalog is the OpenRouter metadata source — the configured model
+        // id appears as its own full entry (with context_length).
+        return new Response(JSON.stringify({ data: [{ id: 'nvidia/nemotron-3.5-lightning:free', context_length: 1000000 }] }), { status: 200 });
       }
       return new Response(null, { status: 404 });
     }));
@@ -490,13 +489,11 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
       const u = String(url);
       if (u.endsWith('/v1/models')) {
-        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
-      }
-      if (u.includes('/v1/model/nvidia/nemotron-3.5-lightning')) {
-        return new Response(JSON.stringify({ data: { context_length: 1000000 } }), { status: 200 });
-      }
-      if (u.includes('/v1/model/deepseek/deepseek-chat')) {
-        return new Response(JSON.stringify({ data: { context_length: 163840 } }), { status: 200 });
+        // Catalog with both configured models as distinct full entries.
+        return new Response(JSON.stringify({ data: [
+          { id: 'nvidia/nemotron-3.5-lightning:free', context_length: 1000000 },
+          { id: 'deepseek/deepseek-chat', context_length: 163840 },
+        ] }), { status: 200 });
       }
       return new Response(null, { status: 404 });
     }));
@@ -585,10 +582,11 @@ describe('ServerMetricsEngine registry lifecycle', () => {
   });
 
   it('retries a TRANSIENT context-resolve failure after the backoff and recovers', async () => {
-    // A 404 on the resolver endpoint is transient (the model may be temporarily
-    // unavailable). The engine must retry after the bounded backoff and recover
-    // once the endpoint works again — a one-off blip must not disable context
-    // for the session.
+    // The per-model transient/backoff path still exists for backends that make a
+    // per-model HTTP call (Ollama /api/ps here). A transient failure must be
+    // retried after the bounded backoff and recover — a one-off blip must not
+    // disable context for the session. (OpenRouter resolution is in-memory from
+    // the shared catalog, so it has no per-model transient path.)
     vi.useFakeTimers();
     let resolverHits = 0;
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
@@ -596,20 +594,20 @@ describe('ServerMetricsEngine registry lifecycle', () => {
       if (u.endsWith('/v1/models')) {
         return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
       }
-      if (u.includes('/v1/model/')) {
+      if (u.endsWith('/api/ps')) {
         resolverHits++;
         // Exhaust fetchWithRetry's initial attempt + one pre-stream retry so
         // the first metrics tick still observes a transient failure. A later
         // engine poll succeeds after the context backoff.
         return resolverHits <= 2
           ? new Response(null, { status: 429 })
-          : new Response(JSON.stringify({ data: { context_length: 1000000 } }), { status: 200 });
+          : new Response(JSON.stringify({ models: [{ model: 'qwen', name: 'qwen:latest', context_length: 32768 }] }), { status: 200 });
       }
       return new Response(null, { status: 404 });
     }));
 
     const url = 'http://or-transient:8000';
-    const engine = getMetricsEngine(url, {}, 'openrouter', ['nvidia/nemotron-3.5-lightning:free']);
+    const engine = getMetricsEngine(url, {}, 'ollama', ['qwen']);
     // One subscription stays alive across both polls so the engine isn't
     // disposed between them.
     const polls: Array<ReturnType<ServerMetricsEngine['getCachedAggregated']>> = [];
@@ -622,87 +620,170 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     // Advance past the 60s retry backoff + a poll interval so the next poll
     // re-attempts the resolve and succeeds.
     await vi.advanceTimersByTimeAsync(60_000 + 16_000);
-    expect(polls.some(p => p?.maxModelLen === 1000000)).toBe(true);
+    expect(polls.some(p => p?.maxModelLen === 32768)).toBe(true);
     sub.dispose();
     vi.useRealTimers();
   });
 
-  it('does NOT retry a PERMANENT context-resolve failure', async () => {
-    // A model that reports no context bound is permanently unresolvable —
-    // retrying forever would hammer the API for a value that can never appear.
+  it('does NOT retry a PERMANENT context-resolve failure (catalog entry present but no window)', async () => {
+    // OpenRouter resolves in-memory from the shared catalog. A model that IS
+    // listed but reports no usable window is genuinely unresolvable
+    // (PermanentContextError) — retrying forever would hammer for a value that
+    // can never appear. It is cached as null and never re-attempted, so even a
+    // LATER catalog that gains a window does NOT self-heal (it's permanent).
     vi.useFakeTimers();
-    let resolverHits = 0;
+    let catalogFetches = 0;
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
       const u = String(url);
       if (u.endsWith('/v1/models')) {
-        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
-      }
-      if (u.includes('/v1/model/')) {
-        resolverHits++;
-        // Model exists but reports NO context bound → permanent validation error.
-        return new Response(JSON.stringify({ data: { id: 'm1' } }), { status: 200 });
+        catalogFetches++;
+        if (catalogFetches <= 2) {
+          // Entry exists but reports NO context bound → permanent miss.
+          return new Response(JSON.stringify({ data: [{ id: 'nvidia/nemotron-3.5-lightning:free' }] }), { status: 200 });
+        }
+        // Later polls: the entry NOW reports a window. A permanent miss must NOT
+        // be re-resolved — the cache holds `null` and never retries.
+        return new Response(JSON.stringify({ data: [{ id: 'nvidia/nemotron-3.5-lightning:free', context_length: 1000000 }] }), { status: 200 });
       }
       return new Response(null, { status: 404 });
     }));
 
     const url = 'http://or-permanent:8000';
     const engine = getMetricsEngine(url, {}, 'openrouter', ['nvidia/nemotron-3.5-lightning:free']);
-    await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
-      const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
-      setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
-    });
+    const polls: Array<ReturnType<ServerMetricsEngine['getCachedAggregated']>> = [];
+    const sub = engine.subscribe((agg) => { polls.push(agg); });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(polls[0]?.maxModelLen).toBeNull(); // permanent miss
 
-    // Advance well past the backoff + several poll intervals — the resolver
-    // must NOT be hit again (permanent failures are never retried).
+    // Even after the catalog starts reporting a window, the permanent-null cache
+    // is never re-attempted — the model stays unresolvable.
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(resolverHits).toBe(1);
+    expect(polls.every(p => p?.maxModelLen === null)).toBe(true); // never resolves
+    sub.dispose();
     vi.useRealTimers();
   });
 
-  it('does NOT retry a 404 from the exact-model endpoint (wrong slug — permanent)', async () => {
-    // Regression: a bad/retired OpenRouter slug returns 404, which used to be
-    // classified transient and re-probed every 60s forever. It is permanent.
+  it('rechecks an id ABSENT from the OpenRouter catalog on every poll and resolves once it appears', async () => {
+    // Regression: an id absent from a snapshot used to be cached as permanent.
+    // The catalog is re-fetched every poll, so an absent id is rechecked at no
+    // extra HTTP cost — a transiently incomplete catalog or propagation delay
+    // must not permanently disable context. It is never guessed/derived.
     vi.useFakeTimers();
-    let resolverHits = 0;
+    let catalogFetches = 0;
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
       const u = String(url);
       if (u.endsWith('/v1/models')) {
-        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
-      }
-      if (u.includes('/v1/model/')) {
-        resolverHits++;
-        // fetchWithRetry retries once on 5xx, but 404 is non-retryable → throws
-        // immediately with "HTTP 404" → PermanentContextError.
-        return new Response(null, { status: 404 });
+        catalogFetches++;
+        if (catalogFetches <= 2) {
+          // Early polls: the catalog does NOT contain the configured model yet.
+          return new Response(JSON.stringify({ data: [{ id: 'some/other-model' }] }), { status: 200 });
+        }
+        // A later poll: the model appears in the catalog → it must resolve.
+        return new Response(JSON.stringify({ data: [{ id: 'nvidia/nemotron-3.5-lightning:free', context_length: 1000000 }] }), { status: 200 });
       }
       return new Response(null, { status: 404 });
     }));
 
     const url = 'http://or-404:8000';
-    const engine = getMetricsEngine(url, {}, 'openrouter', ['bad/not-a-real-model']);
-    await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
-      const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
-      setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
-    });
+    const engine = getMetricsEngine(url, {}, 'openrouter', ['nvidia/nemotron-3.5-lightning:free']);
+    const polls: Array<ReturnType<ServerMetricsEngine['getCachedAggregated']>> = [];
+    const sub = engine.subscribe((agg) => { polls.push(agg); });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(polls[0]?.maxModelLen).toBeNull(); // absent this poll
 
-    await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(resolverHits).toBe(1); // never re-probed
+    // Advance past several polls; the engine rechecks the now-present model and
+    // resolves it (no per-model API call — it uses the shared catalog).
+    await vi.advanceTimersByTimeAsync(3 * 16_000);
+    expect(polls.some(p => p?.maxModelLen === 1000000)).toBe(true);
+    sub.dispose();
     vi.useRealTimers();
   });
 
-  it('never re-fetches a successfully resolved context window on later ticks', async () => {
-    // The whole point of the cache: a loaded model's window is static, so the
-    // exact-model API must be hit exactly once, not every poll.
+  it('reports a malformed OpenRouter catalog as an error, not an online empty server', async () => {
+    // Regression: a 200 whose body is not { data: [...] } used to read as an
+    // online relay with no models. It is a protocol failure — the engine must
+    // surface it as an error (not online) and recover once the catalog is valid.
     vi.useFakeTimers();
-    let resolverHits = 0;
+    let catalogFetches = 0;
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
       const u = String(url);
       if (u.endsWith('/v1/models')) {
-        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+        catalogFetches++;
+        if (catalogFetches === 1) {
+          // Malformed body — a 200 that is not { data: [...] }.
+          return new Response(JSON.stringify({ something: 'else' }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ data: [{ id: 'nvidia/nemotron-3.5-lightning:free', context_length: 1000000 }] }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const url = 'http://or-malformed:8000';
+    const engine = getMetricsEngine(url, {}, 'openrouter', ['nvidia/nemotron-3.5-lightning:free']);
+    const polls: Array<ReturnType<ServerMetricsEngine['getCachedAggregated']>> = [];
+    const sub = engine.subscribe((agg) => { polls.push(agg); });
+    await vi.advanceTimersByTimeAsync(0);
+    // First poll: malformed catalog → not online, with an error message.
+    expect(polls[0]?.online).toBe(false);
+    expect(polls[0]?.error).toContain('malformed');
+
+    // Next poll: valid catalog → online and the model resolves.
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(polls.some(p => p?.online === true)).toBe(true);
+    expect(polls.some(p => p?.maxModelLen === 1000000)).toBe(true);
+    sub.dispose();
+    vi.useRealTimers();
+  });
+
+  it('reports an EMPTY successful OpenRouter catalog as malformed, not online', async () => {
+    // Regression: a 200 with an empty body used to bypass the catalog validator
+    // (the shape check was inside `if (modelsText)`) and read as an online empty
+    // server. Every successful OpenRouter response must be shape-validated.
+    vi.useFakeTimers();
+    let catalogFetches = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        catalogFetches++;
+        if (catalogFetches === 1) {
+          return new Response('', { status: 200 }); // 200 with an empty body
+        }
+        return new Response(JSON.stringify({ data: [{ id: 'nvidia/nemotron-3.5-lightning:free', context_length: 1000000 }] }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const url = 'http://or-empty:8000';
+    const engine = getMetricsEngine(url, {}, 'openrouter', ['nvidia/nemotron-3.5-lightning:free']);
+    const polls: Array<ReturnType<ServerMetricsEngine['getCachedAggregated']>> = [];
+    const sub = engine.subscribe((agg) => { polls.push(agg); });
+    await vi.advanceTimersByTimeAsync(0);
+    // First poll: empty 200 → malformed → not online, with an error message.
+    expect(polls[0]?.online).toBe(false);
+    expect(polls[0]?.error).toContain('malformed');
+
+    // Next poll: valid catalog → online and the model resolves.
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(polls.some(p => p?.online === true)).toBe(true);
+    expect(polls.some(p => p?.maxModelLen === 1000000)).toBe(true);
+    sub.dispose();
+    vi.useRealTimers();
+  });
+
+  it('resolves OpenRouter windows from the shared catalog, never a per-model API', async () => {
+    // Option B: OpenRouter context windows come from the relay's /v1/models
+    // probe (the catalog), reused in one pass. No per-model /v1/model/ calls.
+    vi.useFakeTimers();
+    let modelEndpointHits = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [
+          { id: 'nvidia/nemotron-3.5-lightning:free', context_length: 1000000 },
+        ] }), { status: 200 });
       }
       if (u.includes('/v1/model/')) {
-        resolverHits++;
-        return new Response(JSON.stringify({ data: { context_length: 1000000 } }), { status: 200 });
+        modelEndpointHits++;
       }
       return new Response(null, { status: 404 });
     }));
@@ -712,14 +793,14 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     const polls: Array<ReturnType<ServerMetricsEngine['getCachedAggregated']>> = [];
     const sub = engine.subscribe((agg) => { polls.push(agg); });
 
-    await vi.advanceTimersByTimeAsync(0); // initial tick resolves
+    await vi.advanceTimersByTimeAsync(0); // initial tick resolves from catalog
     expect(polls[0]?.maxModelLen).toBe(1000000);
-    expect(resolverHits).toBe(1);
 
-    // Several poll intervals later the window is cached — the resolver must not
-    // be hit again.
+    // Several poll intervals later the window is cached and no per-model API is
+    // ever called — the shared catalog serves all models.
     await vi.advanceTimersByTimeAsync(3 * 16_000);
-    expect(resolverHits).toBe(1);
+    expect(modelEndpointHits).toBe(0);
+    expect(polls[0]?.maxModelLen).toBe(1000000);
     sub.dispose();
     vi.useRealTimers();
   });
@@ -730,13 +811,11 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
       const u = String(url);
       if (u.endsWith('/v1/models')) {
-        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
-      }
-      const match = u.match(/\/v1\/model\/([^/]+)\/([^/]+)/);
-      if (match) {
-        const modelId = `${match[1]}/${match[2]}`;
-        resolved.push(modelId);
-        return new Response(JSON.stringify({ data: { context_length: 1000000 } }), { status: 200 });
+        // Catalog with every configured model as its own full entry.
+        return new Response(JSON.stringify({ data: [
+          { id: 'a/model-a', context_length: 1000000 },
+          { id: 'b/model-b', context_length: 1000000 },
+        ] }), { status: 200 });
       }
       return new Response(null, { status: 404 });
     }));
@@ -745,24 +824,23 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     const engine = getMetricsEngine(url, {}, 'openrouter', ['a/model-a']);
     const sub = engine.subscribe(() => {});
     await vi.advanceTimersByTimeAsync(0);
-    expect(resolved).toContain('a/model-a');
+    expect(engine.getCachedAggregated()?.contextByModel).toHaveProperty('a/model-a');
 
     // Add a model — it resolves on the next tick.
     engine.setModelIds(['a/model-a', 'b/model-b']);
     await vi.advanceTimersByTimeAsync(16_000);
-    expect(resolved).toContain('b/model-b');
+    expect(engine.getCachedAggregated()?.contextByModel).toHaveProperty('b/model-b');
 
     // Remove a model — it stops being resolved and its cache is pruned.
     engine.setModelIds(['a/model-a']);
-    const countBefore = resolved.length;
     await vi.advanceTimersByTimeAsync(3 * 16_000);
-    expect(resolved.length).toBe(countBefore); // no re-resolves of anything
+    expect(engine.getCachedAggregated()?.contextByModel).not.toHaveProperty('b/model-b');
 
     // Re-adding the removed model re-resolves (its cache was pruned, not stale).
     engine.setModelIds(['a/model-a', 'b/model-b']);
     await vi.advanceTimersByTimeAsync(16_000);
-    const bHits = resolved.filter(m => m === 'b/model-b').length;
-    expect(bHits).toBe(2); // first add + re-add after prune
+    expect(engine.getCachedAggregated()?.contextByModel).toHaveProperty('b/model-b');
+    expect(resolved).toHaveLength(0); // resolution is in-memory — no per-model calls
     sub.dispose();
     vi.useRealTimers();
   });

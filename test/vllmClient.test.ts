@@ -117,38 +117,39 @@ describe('VllmClient retry logic (via getModelContextWindow)', () => {
       .rejects.toThrow(/vLLM model "test-model"/);
   });
 
-  it('openrouter: resolves limits from the exact-model endpoint via the module', async () => {
+  it('openrouter: resolves limits from the model catalog by EXACT id via the module', async () => {
     const calls: Array<string> = [];
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((url: any) => {
       const u = String(url);
       calls.push(u);
       return Promise.resolve(jsonResponse(200, {
-        data: {
-          id: 'deepseek/deepseek-chat',
-          context_length: 163840,
-          top_provider: { context_length: 128000, max_completion_tokens: 16000 },
-          per_request_limits: null,
-        },
+        data: [
+          { id: 'deepseek/deepseek-chat', context_length: 163840, top_provider: { context_length: 128000, max_completion_tokens: 16000 }, per_request_limits: null },
+        ],
       }));
     });
     const client = new VllmClient(makeContext(), makeOutput());
     const limits = await client.getModelContextWindow('openrouter', 'ignored', {}, 'deepseek/deepseek-chat');
     expect(limits.contextWindow).toBe(128000);
     expect(limits.maxOutputTokens).toBe(16000);
-    // The module owns the OpenRouter API base; `serverUrl` is ignored.
-    expect(calls).toEqual(['https://openrouter.ai/api/v1/model/deepseek/deepseek-chat']);
+    // The module owns the OpenRouter API base; `serverUrl` is ignored, and the
+    // catalog (/v1/models) is the deterministic metadata source.
+    expect(calls).toEqual(['https://openrouter.ai/api/v1/models']);
   });
 
-  it('openrouter: variant is stripped for the lookup but preserved in the fetch', async () => {
+  it('openrouter: resolves a :free id to the FREE catalog entry by exact match', async () => {
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((url: any) => {
       return Promise.resolve(jsonResponse(200, {
-        data: { id: 'deepseek/deepseek-chat', context_length: 8192 },
+        data: [
+          { id: 'deepseek/deepseek-chat', context_length: 163840, pricing: { prompt: '0.000000274', completion: '0.0000010287' } },
+          { id: 'deepseek/deepseek-chat:free', context_length: 8192, pricing: { prompt: '0', completion: '0' } },
+        ],
       }));
     });
     const client = new VllmClient(makeContext(), makeOutput());
     const limits = await client.getModelContextWindow('openrouter', 'ignored', {}, 'deepseek/deepseek-chat:free');
-    expect(limits.contextWindow).toBe(8192);
-    expect(String(fetchSpy.mock.calls[0][0])).toBe('https://openrouter.ai/api/v1/model/deepseek/deepseek-chat');
+    expect(limits.contextWindow).toBe(8192); // the FREE entry's window, not the paid model's
+    expect(String(fetchSpy.mock.calls[0][0])).toBe('https://openrouter.ai/api/v1/models');
   });
 
   it('lmstudio: reads the live loaded-instance context_length, else max_context_length', async () => {

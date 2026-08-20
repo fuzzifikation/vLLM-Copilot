@@ -47,25 +47,29 @@ The source of truth is OpenRouter's current OpenAPI specification and official d
 | Endpoint | Use |
 |---|---|
 | `POST /api/v1/chat/completions` | Shared chat data plane |
-| `GET /api/v1/model/{author}/{slug}` | Public exact-model lookup for onboarding and refresh — **singular `model`**, unauthenticated, returns `{ "data": { ...model fields... } }` (verified live) |
+| `GET /api/v1/models` | **Authoritative metadata source** — the full model CATALOG. Every model VARIANT is its own entry keyed by its exact `id` (e.g. `author/slug:free` and `author/slug` are separate entries with separate metadata). Public and unauthenticated (verified live). |
 | `GET /api/v1/generation?id=...` | Deferred post-hoc generation diagnostics (see Deferred note) |
 | `GET /api/v1/key` | Used — dashboard relay Account node (credits/limits/free-tier) |
 | `POST /api/v1/responses` | Deferred separate protocol |
+
+> **Note on the exact-model endpoint (`GET /api/v1/model/{author}/{slug}`):** deliberately NOT used. It resolves variants inconsistently (some `:free` variants 404), and deriving a lookup slug from the requested id could resolve a **DIFFERENT** model than the user picked — silently charging them for a model they didn't choose. Metadata is resolved deterministically from the catalog by matching the requested id **verbatim**.
 
 `serverUrl = https://openrouter.ai/api` composes correctly with the existing `buildEndpoint()` helper.
 
 The existing Chat body is compatible. OpenRouter documents `max_tokens`, standard OpenAI messages and tools, reasoning fields, routing controls, and plugins. Do not translate or strip fields specifically for OpenRouter unless a contract test demonstrates a rejection.
 
-The exact-model response is normalized as follows:
+The catalog response is normalized as follows:
 
-- Unwrap the top-level `data` object; ignore unknown fields and invalid optional numbers.
+- Each catalog entry is keyed by its exact `id`; match the requested id **verbatim** — no slug derivation, no fallback. A `:free` pick always resolves to the free entry, never the paid model.
 - Keep the requested slug as the wire ID, including aliases and variants (`:free`, dated `canonical_slug`).
 - Resolve the runtime context from `per_request_limits.context_tokens` first — it is the API's enforceable per-request bound, not an invented budget — falling back to `context_length`, then `top_provider.context_length`. Reject only when **no** positive bound is reported. **Live verification (2026-08-17): `per_request_limits` is `null` for every sampled catalog model including the auto router — the field is a defensive nicety, the real chain is `context_length` → `top_provider.context_length`.**
 - Compute the output ceiling from the smallest positive value among `top_provider.max_completion_tokens`, `per_request_limits.completion_tokens`, and the context-window safety bound.
 - Derive tools, image input, reasoning modes, defaults, and estimated per-million USD rates from the returned model fields. Ignore unknown fields and invalid optional numbers. **Live: `pricing.prompt`/`completion` are per-token USD strings; `-1` means unknown (dynamic routers) and must not become a rate.**
 - Treat `usage.cost` as the authoritative request charge; catalog pricing is only an estimate.
+- A **malformed `200` catalog** (missing `data` array / invalid payload) is a transient protocol failure and THROWS — it is never treated as an empty authoritative catalog. Entries without a string `id` are dropped.
+- An id **absent from the current catalog snapshot** throws `OpenRouterModelNotFoundError`. The metrics engine rechecks it on the next poll (the catalog is already re-fetched), so a transiently incomplete catalog or propagation delay self-heals. An entry that **exists but reports no window** throws `PermanentContextError` (never retried). Never guess at a corrected slug.
 
-**Variants 404 on the exact-model endpoint — lookup uses the base slug, chat keeps the full id.** Despite the OpenAPI claiming variant support (`gpt-4:free`), the live endpoint 404s every variant/alias suffix tested (`:free` on llama-3.3 and solar-pro-3, `~latest`, `~author/...` prefix, and even some dated `canonical_slug`s) while the base slug always resolves. `:free` ids ARE valid chat ids (free-router responses echo `model: "...:free"`), so: strip the suffix for the metadata lookup (`/api/v1/model/{author}/{slug}` with the base slug) and preserve the full requested id for chat. This is implemented in `src/openRouter.ts` (`parseOpenRouterModelRef`).
+**Variants are separate catalog entries — resolve by exact id, no suffix stripping.** The catalog lists every variant as its own entry keyed by its exact `id`, so matching the requested id verbatim guarantees a `:free` pick resolves to the free entry (verified live: `cohere/north-mini-code:free` reports `pricing: "0"`). There is NO suffix stripping for the lookup and NO base-slug fallback — that would silently resolve a different (paid) model. `:free` ids are valid chat ids (free-router responses echo `model: "...:free"`), so `requestedId` keeps the full input for chat. This is implemented in `src/openRouter.ts` (`parseOpenRouterModelRef` + `normalizeOpenRouterFromCatalog`).
 
 Streaming matches the shared parser: keep-alive comments, `[DONE]`, reasoning/content/tool deltas, an empty-choice final usage chunk, and top-level mid-stream errors. Bounded pre-stream `Retry-After` handling for 429/503 is landed: one retry, at most 10 seconds, cancellation-aware, and never after partial output. Preserve `error.metadata.error_type`; `X-Generation-Id` remains deferred below.
 
@@ -119,19 +123,19 @@ interface RuntimeModelLimits {
 }
 ```
 
-Existing backends return their current context result and no output ceiling. The OpenRouter case calls the exact-model endpoint and returns both limits. `deriveTokenBudget()` clamps the configured output preference to the reported ceiling, preserving at least one input token. Only the OpenRouter arm remains — the contract itself is done.
+Existing backends return their current context result and no output ceiling. The OpenRouter case resolves both limits from the shared model catalog (see below). `deriveTokenBudget()` clamps the configured output preference to the reported ceiling, preserving at least one input token. Only the OpenRouter arm remains — the contract itself is done.
 
 ### OpenRouter Control Plane
 
-Keep OpenRouter-specific parsing and normalization in one small module — **LANDED in `src/openRouter.ts`** (see the variant-404 correction above):
+Keep OpenRouter-specific parsing and normalization in one small module — **LANDED in `src/openRouter.ts`** (see the catalog resolution above):
 
 - Accept `author/model`, `author/model:variant`, `~author/family-latest`, or a verified `https://openrouter.ai/...` model-page URL.
 - Ignore query strings, fragments, and a trailing slash on verified OpenRouter URLs. Reject unrelated hosts, reserved paths, and malformed values instead of guessing.
-- Fetch `GET /api/v1/model/{author}/{slug}` with each path segment encoded and with the model's optional headers.
-- Preserve the requested ID for chat. The exact endpoint 404s on variant/alias suffixes (verified live), so the LOOKUP uses the base slug while `requestedId` keeps the full input for chat. (`alias_target` is not consumed — the wire type only carries the fields the normalizer reads.)
+- Fetch `GET /api/v1/models` (the catalog) with the model's optional headers, then match the requested id **verbatim** against the catalog (`normalizeOpenRouterFromCatalog`). No per-model endpoint, no slug derivation, no fallback. The metrics engine reuses its relay `/v1/models` probe as the catalog (`resolveOpenRouterLimitsFromCatalog`) so all models resolve in one pass.
+- Preserve the requested ID for chat; `requestedId` keeps the full input (variants intact).
 - Normalize only fields the existing config consumes: display name, family, capabilities, reasoning modes, default parameters, estimated rates, expiration, and runtime limits.
 - Do not add a catalog cache. `VllmClient` remains the sole configuration cache owner.
-- Exports: `parseOpenRouterModelRef`, `normalizeOpenRouterModel`, `fetchOpenRouterModel`, `resolveOpenRouterRuntimeLimits`. The last is the arm the shared `resolveRuntimeLimits` switch will call. Coverage: `test/openRouter.test.ts` (26 tests).
+- Exports: `parseOpenRouterModelRef`, `normalizeOpenRouterModel`, `fetchOpenRouterModel`, `fetchOpenRouterCatalog`, `normalizeOpenRouterFromCatalog`, `resolveOpenRouterLimitsFromCatalog`, `resolveOpenRouterRuntimeLimits`. The last is the arm the shared `resolveRuntimeLimits` switch calls; the catalog variants serve the engine's shared-catalog resolution. Coverage: `test/openRouter.test.ts`.
 
 ### Reasoning Modes — LANDED (full OpenRouter `reasoning` object)
 
@@ -245,15 +249,17 @@ Do not rename `VllmClient`, add a backend registry, or reorganize existing backe
 - Leave `X-OpenRouter-Metadata` disabled by default. Users may opt in through per-model headers.
 - Do not send `session_id` until VS Code exposes a stable, appropriate conversation identifier.
 
-## Provider Routing — Decision Record (2026-08-20)
+## Provider Routing — Decision Record (2026-08-20, REVISED)
 
-OpenRouter routes each request to a provider (Anthropic, OpenAI, a host, etc.); a model id can carry a `:provider` suffix to force one. Today the extension treats the provider as invisible passthrough — the wire id is sent verbatim, and there is no way to choose a provider in the UI.
+OpenRouter routes each request to a provider (Anthropic, OpenAI, a host, etc.). Today the extension treats the provider as invisible passthrough — the wire id is sent verbatim, and there is no way to choose a provider in the UI.
+
+**Contract (corrected 2026-08-20):** OpenRouter selects providers via the request body's `provider` object — force one provider with `provider.only: [slug]` (plus `allow_fallbacks: false` when strict), or prefer several with `provider.order: [slug, ...]`. Only documented shortcuts such as `:nitro` and `:floor` are model-id suffixes; provider names are **not** model suffixes. The model catalog entry does not expose the per-model provider list.
 
 **Decision (fixed — do not revisit without product direction):**
 - **No provider picker in the Add Server flow.** Onboarding stays model-only.
 - **Provider choice lives in Model Settings only**, as a dropdown shown **when an OpenRouter model is selected**.
-- The dropdown lists **only the providers available for that specific model** (never the whole catalog).
+- The dropdown lists **only the providers available for that specific model** (never the whole catalog), sourced from the model-endpoints API — not a model-id suffix.
 - **`Auto` (default)** = let OpenRouter route; a manual choice forces routing to that provider.
-- The provider is stored **per model** (a new optional `provider` field) and applied as a `:provider` suffix on the wire id at request time. The base id remains the canonical identity; metadata lookup strips the suffix (like the existing `:free` handling).
+- The provider is stored **per model** (a new optional `provider` field) and applied at request time as `provider.only: [slug]` (+ `allow_fallbacks: false` when strict) on the chat body — NOT as a model-id suffix. The wire model id stays the canonical identity, so metadata resolution is unaffected.
 
-This is a future feature, not yet implemented. Full spec (API field, config, UI, request-time suffix, open questions): [docs/feature-ideas.md → OpenRouter Provider Selection](./docs/feature-ideas.md).
+This is a future feature, not yet implemented. Full spec (API field, config, UI, request-body `provider` object, open questions): [docs/feature-ideas.md → OpenRouter Provider Selection](./docs/feature-ideas.md).

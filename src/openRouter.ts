@@ -1,23 +1,32 @@
 /**
- * OpenRouter control plane: input parsing, exact-model metadata lookup, and
- * normalization into the fields the extension's config consumes.
+ * OpenRouter control plane: input parsing, model-catalog metadata resolution,
+ * and normalization into the fields the extension's config consumes.
  *
  * The ONLY vendor-specific path in the OpenRouter backend. Chat requests and
  * responses flow through the shared OpenAI-compatible data plane; this module
  * exists so onboarding/refresh can resolve a model's runtime limits, capabilities,
- * reasoning modes, defaults, and estimated rates from OpenRouter's exact-model API
- * instead of guessing or fabricating.
+ * reasoning modes, defaults, and estimated rates deterministically from
+ * OpenRouter's MODEL CATALOG instead of guessing or fabricating.
  *
  * Verified against the live API (2026-08-17) + official OpenAPI:
- * - `GET /api/v1/model/{author}/{slug}` returns `{ data: { ...model fields... } }`,
- *   unauthenticated. Path segments must be URL-encoded.
+ * - Metadata is resolved from `GET /api/v1/models` — the authoritative catalog.
+ *   Every model VARIANT is its own entry keyed by its exact `id` (e.g.
+ *   `author/slug:free` and `author/slug` are separate entries with separate
+ *   metadata). Matching the requested id verbatim therefore guarantees a
+ *   `:free` pick resolves to the free entry, never the paid model. NO slug
+ *   derivation, NO fallback, NO guessing.
+ * - The exact-model endpoint (`/api/v1/model/{author}/{slug}`) is deliberately
+ *   NOT used: it resolves variants inconsistently (some `:free` variants 404),
+ *   and deriving a lookup slug could resolve a DIFFERENT model than the one the
+ *   user picked — silently charging them for a model they didn't choose.
  * - `per_request_limits` is null for essentially every catalog model (incl. the
  *   auto router) — the plan's "resolve first" field is a defensive nicety, not the
  *   working path. The real chain is `context_length` → `top_provider.context_length`.
- * - Variant/alias suffixes (`:free`, `:thinking`, `~latest`) 404 on the metadata
- *   endpoint even though the docs claim support; the BASE slug always resolves.
- *   `:free` etc. ARE valid chat ids (free-router responses echo `model: "...:free"`).
- *   => Strip the suffix for the LOOKUP, preserve the full requested id for CHAT.
+ * - A model absent from the CURRENT catalog snapshot throws
+ *   `OpenRouterModelNotFoundError`. The metrics engine treats this as "not yet
+ *   resolved" and rechecks on the next poll (the catalog is already re-fetched),
+ *   while a catalog entry that reports no context bound throws
+ *   `PermanentContextError` (never retried).
  * - `pricing.prompt`/`completion` are per-token USD strings; `-1` means unknown
  *   (dynamic routers). Estimated per-1M rates = value × 1e6.
  * - Reasoning is toggled via `reasoning: { enabled, effort }` (Chat Completions).
@@ -42,6 +51,21 @@ export class PermanentContextError extends Error {
   }
 }
 
+/**
+ * The requested model id is absent from the CURRENT catalog snapshot. Unlike
+ * `PermanentContextError` (an entry exists but is unusable — never retried),
+ * this means the id wasn't in this particular `/v1/models` response. The catalog
+ * is re-fetched every poll, so a metrics engine treats this as "recheck next
+ * tick" rather than caching a permanent miss — a transiently incomplete catalog
+ * or propagation delay must not permanently disable context for a model.
+ */
+export class OpenRouterModelNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OpenRouterModelNotFoundError';
+  }
+}
+
 /** OpenRouter's API base — composes with `buildEndpoint` like any other server. */
 export const OPENROUTER_API_BASE = 'https://openrouter.ai/api';
 
@@ -61,7 +85,7 @@ export function isOpenRouterUrl(serverUrl: string): boolean {
   }
 }
 
-/** Timeout for the exact-model metadata GET (same budget as other metadata probes). */
+/** Timeout for the catalog metadata GET (same budget as other metadata probes). */
 const METADATA_TIMEOUT_MS = 10000;
 
 /** Top-level reserved paths on openrouter.ai that are NOT model pages. */
@@ -99,9 +123,10 @@ function thinkModeLabel(effort: string): string {
  * Rejects (with a message, never guessed at): unrelated hosts, reserved paths,
  * malformed values, and anything that isn't exactly `author/slug`.
  *
- * The lookup slug is the variant-stripped BASE slug — variants 404 on the
- * metadata endpoint (verified live). `requestedId` keeps the full input so chat
- * can address the variant the user actually picked.
+ * `requestedId` keeps the full input so chat can address the variant the user
+ * actually picked. Metadata resolution does NOT derive a lookup slug from this
+ * — it matches `requestedId` verbatim against the model catalog, so a `:free`
+ * pick can never resolve to the paid model (they are separate catalog entries).
  */
 export function parseOpenRouterModelRef(
   input: string,
@@ -151,7 +176,8 @@ export function parseOpenRouterModelRef(
     requestedId = `${tilde ? '~' : ''}${segments.join('/')}`;
   }
 
-  // Variant/alias suffixes are NOT part of the metadata lookup — the base slug is.
+  // `requestedId` is the exact catalog id used for CHAT and for the metadata
+  // lookup (matched verbatim against the catalog — no slug derivation).
   const baseSlug = slug.split(':')[0];
 
   return { requestedId, author, slug: baseSlug };
@@ -181,10 +207,10 @@ export function parseOpenRouterBranchInput(
 }
 
 /**
- * The exact-model wire shape (the `data` object returned by
- * `GET /api/v1/model/{author}/{slug}`). Fields are permissive — the API adds
- * fields within `v1`, and unknown optional values are ignored — but only the
- * consumed subset is typed here.
+ * A single catalog entry's wire shape (each element of the `data` array from
+ * `GET /api/v1/models`). Fields are permissive — the API adds fields within
+ * `v1`, and unknown optional values are ignored — but only the consumed
+ * subset is typed here.
  */
 export interface OpenRouterModelData {
   id?: string;
@@ -220,7 +246,7 @@ export interface OpenRouterModelData {
 }
 
 /**
- * The normalized result of an exact-model lookup — only fields the extension's
+ * The normalized result of a catalog resolution — only fields the extension's
  * config consumes. There is deliberately no `family`: OpenRouter's
  * `instruct_type` is a chat-template name, not a model family, so the caller's
  * existing family heuristic/preset handles it.
@@ -264,7 +290,7 @@ function supports(data: OpenRouterModelData, param: string): boolean {
 }
 
 /**
- * Normalize a fetched exact-model payload into extension-config fields.
+ * Normalize a single catalog entry into extension-config fields.
  * Pure — no I/O — so it is unit-testable in isolation.
  *
  * @throws Error with an actionable message when the model reports NO positive
@@ -402,49 +428,115 @@ export function normalizeOpenRouterModel(
 }
 
 /**
- * Fetch the exact-model metadata for a requested id and normalize it.
+ * Fetch OpenRouter's full model catalog (`GET /api/v1/models`) — the
+ * authoritative, deterministic source for model metadata. Every model VARIANT is
+ * its own entry keyed by its exact `id`, so exact-id matching never conflates a
+ * `:free` pick with the paid model. This is what metadata resolution matches
+ * against — never a derived slug.
+ *
+ * The payload is validated: a `200` whose body is not `{ data: [...] }` (or
+ * whose `data` is not an array) is treated as a malformed protocol response and
+ * THROWS — it is never treated as an empty authoritative catalog. Entries
+ * without a string `id` are dropped (they can never match an exact id anyway).
+ *
+ * Public and unauthenticated. Throws on HTTP/network failure and on malformed
+ * payloads; `fetchWithRetry` retries transient failures once.
+ */
+export async function fetchOpenRouterCatalog(): Promise<OpenRouterModelData[]> {
+  const url = buildEndpoint(OPENROUTER_API_BASE, 'v1/models');
+  const response = await fetchWithRetry(
+    url,
+    { method: 'GET', signal: AbortSignal.timeout(METADATA_TIMEOUT_MS) },
+    {},
+  );
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} ${response.statusText} from ${url}`);
+  }
+  const payload = await response.json() as unknown;
+  const data = (payload as { data?: unknown })?.data;
+  if (!Array.isArray(data)) {
+    throw new Error(
+      `Malformed OpenRouter catalog from ${url}: expected { data: [...] }, got an invalid payload. ` +
+      `This is a transient protocol failure, not an empty model list.`
+    );
+  }
+  // Defensive: an entry without a string id can never match an exact id, so
+  // drop it rather than risk it being misreported as "model not found".
+  return data.filter((m): m is OpenRouterModelData =>
+    !!m && typeof m === 'object' && typeof (m as { id?: unknown }).id === 'string');
+}
+
+/**
+ * Find a catalog entry by EXACT id match and normalize it. The catalog is the
+ * deterministic metadata source: every model VARIANT is its own entry keyed by
+ * its exact `id`, so matching the requested id verbatim guarantees a `:free`
+ * pick resolves to the free entry, never the paid model. No slug derivation, no
+ * fallback.
+ *
+ * @throws OpenRouterModelNotFoundError when the id is absent from THIS catalog
+ *   snapshot (the model isn't listed here — the metrics engine rechecks next
+ *   poll since the catalog is re-fetched). A catalog entry that exists but
+ *   reports no usable context throws `PermanentContextError` (never retried).
+ */
+export function normalizeOpenRouterFromCatalog(
+  catalog: OpenRouterModelData[],
+  requestedId: string,
+): OpenRouterModelInfo {
+  const parsed = parseOpenRouterModelRef(requestedId);
+  if ('error' in parsed) throw new PermanentContextError(parsed.error);
+
+  const entry = catalog.find((m) => m.id === parsed.requestedId);
+  if (!entry) {
+    throw new OpenRouterModelNotFoundError(
+      `OpenRouter model "${parsed.requestedId}" not found in the current OpenRouter catalog. ` +
+      `Model ids must match a listed entry exactly — variants like ":free" are separate catalog entries and must be included.`
+    );
+  }
+  return normalizeOpenRouterModel(entry, parsed.requestedId);
+}
+
+/**
+ * Resolve a requested id's metadata from the catalog and normalize it.
  *
  * @param requestedId - Full model id the user wants (variants preserved for chat).
- * @param requestHeaders - The model's isolated request headers (auth). The exact
- *   endpoint is unauthenticated, but the request may carry optional headers.
+ * @param requestHeaders - The model's isolated request headers (auth).
  * @returns Normalized model info; throws on network/HTTP/parse failure and when
- *   the model reports no positive context bound.
+ *   the model is absent from the catalog or reports no positive context bound.
  */
 export async function fetchOpenRouterModel(
   requestedId: string,
   requestHeaders: Record<string, string> = {},
 ): Promise<OpenRouterModelInfo> {
-  const parsed = parseOpenRouterModelRef(requestedId);
-  if ('error' in parsed) throw new Error(parsed.error);
-
-  const url = buildEndpoint(
-    OPENROUTER_API_BASE,
-    `v1/model/${encodeURIComponent(parsed.author)}/${encodeURIComponent(parsed.slug)}`
-  );
-  let response: Response;
+  // DETERMINISTIC metadata resolution — no slug guessing, no fallback. Resolve
+  // from the model CATALOG (`GET /api/v1/models`), matching the requested id
+  // verbatim (see normalizeOpenRouterFromCatalog). The exact-model endpoint
+  // (`/api/v1/model/{author}/{slug}`) is NOT used: it resolves variants
+  // inconsistently, and deriving a lookup slug could resolve a DIFFERENT model
+  // than the one the user picked (a `:free` choice could silently become the
+  // paid model).
+  let catalog: OpenRouterModelData[];
   try {
-    response = await fetchWithRetry(
-      url,
-      { method: 'GET', signal: AbortSignal.timeout(METADATA_TIMEOUT_MS) },
-      requestHeaders,
-    );
+    catalog = await fetchOpenRouterCatalog();
   } catch (err) {
-    // Wrap with model context so a failed lookup is actionable, matching the
-    // other backends' "model X has no window: GET <url>" convention. A 404 means
-    // the slug is wrong/retired — retrying can never fix it, so classify it
-    // permanent (the metrics engine must not re-probe it every poll).
     const detail = err instanceof Error ? err.message : String(err);
-    const msg = `OpenRouter model "${requestedId}" lookup failed: GET ${url} — ${detail}`;
-    if (msg.includes('HTTP 404')) {
-      throw new PermanentContextError(msg);
-    }
-    throw new Error(msg);
+    throw new Error(`OpenRouter model "${requestedId}" lookup failed: GET ${OPENROUTER_API_BASE}/v1/models — ${detail}`);
   }
-  const payload = await response.json() as { data?: OpenRouterModelData };
-  if (!payload.data || typeof payload.data !== 'object') {
-    throw new PermanentContextError(`OpenRouter exact-model lookup for "${requestedId}" returned no data payload.`);
-  }
-  return normalizeOpenRouterModel(payload.data, parsed.requestedId);
+  return normalizeOpenRouterFromCatalog(catalog, requestedId);
+}
+
+/**
+ * Resolve an OpenRouter model's runtime limits from an ALREADY-FETCHED catalog
+ * (the metrics engine reuses its relay `/v1/models` probe as the catalog). Same
+ * exact-id semantics as {@link fetchOpenRouterModel}, but no extra HTTP call.
+ * @throws OpenRouterModelNotFoundError when the id is absent from this snapshot
+ *   (the metrics engine rechecks next poll); `PermanentContextError` when an
+ *   entry exists but reports no usable context.
+ */
+export function resolveOpenRouterLimitsFromCatalog(
+  catalog: OpenRouterModelData[],
+  requestedId: string,
+): RuntimeModelLimits {
+  return normalizeOpenRouterFromCatalog(catalog, requestedId).runtimeLimits;
 }
 
 /**
@@ -460,7 +552,7 @@ export async function resolveOpenRouterRuntimeLimits(
 }
 
 /**
- * Auto-configure an OpenRouter model from its exact-model metadata — the ONLY
+ * Auto-configure an OpenRouter model from its catalog metadata — the ONLY
  * discovery source for this backend. HF chat-template sniffing cannot express
  * OpenRouter's `reasoning` object (effort ladder, mandatory, default_enabled)
  * or `supported_parameters`, so routing OpenRouter through the HuggingFace
@@ -471,8 +563,9 @@ export async function resolveOpenRouterRuntimeLimits(
  * Mirrors `runOpenRouterAddFlow`'s config assembly so Add and Auto-Configure
  * cannot drift: same field mapping, same authoritative `maxOutputTokens`.
  *
- * @throws when the exact-model lookup fails (network/404) or the model reports
- *   no positive context bound — the strict no-context-no-model policy.
+ * @throws when the catalog fetch fails (network), the id is absent from the
+ *   catalog, or the model reports no positive context bound — the strict
+ *   no-context-no-model policy.
  */
 export async function autoConfigureOpenRouterModel(
   modelId: string,
@@ -508,7 +601,7 @@ export async function autoConfigureOpenRouterModel(
   }
   if (info.expirationDate) summary.push(`Expires: ${info.expirationDate}`);
   summary.push('');
-  summary.push('Note: Configured from OpenRouter exact-model metadata (authoritative for this backend).');
+  summary.push('Note: Configured from OpenRouter catalog metadata (authoritative for this backend).');
   return { modelConfig, summary };
 }
 

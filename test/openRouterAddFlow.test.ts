@@ -4,7 +4,7 @@ import {
   registerAddServerModelCommand,
   runOpenRouterAddFlow,
   pickOpenRouterModel,
-  fetchOpenRouterCatalog,
+  projectCatalog,
   buildOpenRouterSummary,
 } from '../src/commands/addServerFlow.js';
 import * as configStore from '../src/configStore.js';
@@ -12,8 +12,9 @@ import * as configStore from '../src/configStore.js';
 /**
  * Tests for the OpenRouter onboarding branch of the Add-server flow: host-only
  * routing (openrouter.ai), server → key & headers → model-pick ordering, catalog
- * typeahead with prefill from a pasted model-page URL, free-text fallback,
- * duplicate handling, and the save shape (serverType/URL/headers/limits).
+ * typeahead with prefill from a pasted model-page URL, one catalog snapshot
+ * (no free-text fallback / no double download), duplicate handling, and the
+ * save shape (serverType/URL/headers/limits).
  */
 
 const provider = { clearCache: vi.fn() } as any;
@@ -42,27 +43,46 @@ const NEMOTRON_METADATA = {
   reasoning: { mandatory: false },
 };
 
+// The catalog is the AUTHORITATIVE metadata source: every model VARIANT is its
+// own full entry keyed by exact `id` (verified live — this is what `/v1/models`
+// actually returns). Metadata resolution matches the requested id VERBATIM, so
+// `:free` and the base model are distinct entries with distinct pricing.
 const CATALOG = {
   data: [
-    { id: 'nvidia/nemotron-3.5-lightning', name: 'NVIDIA: Nemotron 3.5 Lightning', context_length: 1000000, pricing: { prompt: '0.00000008', completion: '0.0000002' } },
-    { id: 'nvidia/nemotron-3.5-lightning:free', name: 'NVIDIA: Nemotron 3.5 Lightning (free)', context_length: 1000000, pricing: { prompt: '0', completion: '0' } },
-    { id: 'deepseek/deepseek-chat', name: 'DeepSeek V3', context_length: 163840, pricing: { prompt: '0.000000274', completion: '0.0000010287' } },
+    {
+      ...NEMOTRON_METADATA,
+      id: 'nvidia/nemotron-3.5-lightning',
+      name: 'NVIDIA: Nemotron 3.5 Lightning',
+      pricing: { prompt: '0.00000008', completion: '0.0000002' },
+    },
+    {
+      ...NEMOTRON_METADATA,
+      id: 'nvidia/nemotron-3.5-lightning:free',
+      name: 'NVIDIA: Nemotron 3.5 Lightning (free)',
+    },
+    {
+      id: 'deepseek/deepseek-chat',
+      name: 'DeepSeek V3',
+      context_length: 163840,
+      top_provider: { context_length: 163840, max_completion_tokens: null },
+      per_request_limits: null,
+      pricing: { prompt: '0.000000274', completion: '0.0000010287' },
+      supported_parameters: ['reasoning', 'tools'],
+    },
   ],
 };
 
-/** Standard fetch stub: catalog at /v1/models, exact-model at /v1/model/... */
+/** Standard fetch stub: the catalog at /v1/models is the ONLY metadata source. */
 function stubOpenRouterFetch() {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: any) => {
     const u = String(url);
     if (u.endsWith('/v1/models')) return jsonResponse(CATALOG);
-    if (u.includes('/v1/model/nvidia/nemotron-3.5-lightning')) return jsonResponse({ data: NEMOTRON_METADATA });
-    // A non-catalog slug typed through the "use typed" row still needs metadata.
-    if (u.includes('/v1/model/some/typo-model')) {
-      return jsonResponse({ data: { ...NEMOTRON_METADATA, id: 'some/typo-model', canonical_slug: 'some/typo-model' } });
-    }
     return jsonResponse({}, 404);
   });
 }
+
+/** The catalog projected to the picker's narrow entry shape (what the flow passes to the picker). */
+const PROJECTED = projectCatalog(CATALOG.data);
 
 /** Mock the config surfaces the save path touches (configStore + workspace config). */
 function mockSaveSurfaces(chatUpdate = vi.fn().mockResolvedValue(undefined)) {
@@ -154,9 +174,10 @@ describe('runOpenRouterAddFlow', () => {
     const keyCall = inputBoxSpy.mock.calls[0][0] as any;
     expect(keyCall.validateInput).toBeDefined();
     expect(keyCall.validateInput('')).toBe('An API key is required.');
-    // Model was PICKED (not taken from the URL) — metadata used the variant-stripped base slug.
+    // Model was PICKED (not taken from the URL) — metadata resolved from the
+    // catalog by EXACT id match (the :free entry, never the paid base model).
     expect(fetchSpy).toHaveBeenCalledWith(
-      'https://openrouter.ai/api/v1/model/nvidia/nemotron-3.5-lightning',
+      'https://openrouter.ai/api/v1/models',
       expect.objectContaining({ method: 'GET' }),
     );
     expect(resolveSpy).toHaveBeenCalledWith(
@@ -203,24 +224,27 @@ describe('runOpenRouterAddFlow', () => {
     );
   });
 
-  it('degrades to a plain input box when the catalog is unreachable', async () => {
+  it('fails clearly (no guessing) when the catalog cannot be loaded — no picker, nothing saved', async () => {
+    // The catalog is the authoritative metadata source. If it can't be loaded,
+    // the flow fails up front rather than collecting an id it cannot size/save.
+    // There is NO free-text fallback and no per-model metadata download.
     const out = freshOutput();
     const fetchSpy = stubOpenRouterFetch();
-    // Catalog fetch fails → fallback input box supplies the id. Order: key, headers, then fallback model.
-    fetchSpy.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    const errorSpy = vi.spyOn(vscode.window, 'showErrorMessage').mockResolvedValue(undefined);
+    fetchSpy.mockRejectedValue(new Error('ECONNREFUSED'));
     inputBoxSpy
-      .mockResolvedValueOnce('sk-or-v1-test')                    // API key
-      .mockResolvedValueOnce('')                                  // headers
-      .mockResolvedValueOnce('nvidia/nemotron-3.5-lightning:free'); // fallback model input
+      .mockResolvedValueOnce('sk-or-v1-test') // API key
+      .mockResolvedValueOnce('');             // headers
     infoSpy.mockResolvedValue('Save to Settings' as any);
 
     await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/api', []);
 
-    expect(inputBoxSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Add OpenRouter Model' }));
+    // No model picker (and no free-text input box) — the flow stops at the catalog.
     expect(createQuickPickSpy).not.toHaveBeenCalled();
-    expect(resolveSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ vllmModelId: 'nvidia/nemotron-3.5-lightning:free' }),
-    );
+    expect(inputBoxSpy).toHaveBeenCalledTimes(2); // key + headers only
+    expect(resolveSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Couldn't load the OpenRouter model catalog"));
+    expect(out.appendLine).toHaveBeenCalledWith(expect.stringContaining('[ERROR] OpenRouter model catalog unavailable'));
   });
 
   it('aborts when the key prompt is cancelled', async () => {
@@ -272,9 +296,9 @@ describe('runOpenRouterAddFlow', () => {
     qpStub._fireAccept();
     await flow;
 
-    // Metadata lookup used the base slug — proving it parsed as a URL, not a bare slug.
+    // Metadata resolved from the catalog by exact id (parsed as a URL, not a bare slug).
     expect(fetchSpy).toHaveBeenCalledWith(
-      'https://openrouter.ai/api/v1/model/nvidia/nemotron-3.5-lightning',
+      'https://openrouter.ai/api/v1/models',
       expect.objectContaining({ method: 'GET' }),
     );
     expect(resolveSpy).toHaveBeenCalledWith(
@@ -382,12 +406,10 @@ describe('runOpenRouterAddFlow', () => {
 describe('pickOpenRouterModel', () => {
   let createQuickPickSpy: ReturnType<typeof vi.spyOn>;
   let qpStub: any;
-  let inputBoxSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     qpStub = makeQuickPickStub();
     createQuickPickSpy = vi.spyOn(vscode.window, 'createQuickPick').mockReturnValue(qpStub);
-    inputBoxSpy = vi.spyOn(vscode.window, 'showInputBox').mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -396,9 +418,7 @@ describe('pickOpenRouterModel', () => {
   });
 
   it('filters the catalog via quick pick and returns the selected id', async () => {
-    const out = freshOutput();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(CATALOG));
-    const p = pickOpenRouterModel(out);
+    const p = pickOpenRouterModel(PROJECTED);
     await vi.waitFor(() => expect(qpStub._accept).toBeDefined());
 
     // Catalog items loaded (id label, name description, ctx·price detail) with filter-as-you-type.
@@ -417,9 +437,7 @@ describe('pickOpenRouterModel', () => {
   });
 
   it('pre-fills the filter box from a model-page URL', async () => {
-    const out = freshOutput();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(CATALOG));
-    const p = pickOpenRouterModel(out, 'nvidia/nemotron-3.5-lightning:free');
+    const p = pickOpenRouterModel(PROJECTED, 'nvidia/nemotron-3.5-lightning:free');
     await vi.waitFor(() => expect(qpStub._accept).toBeDefined());
     expect(qpStub.value).toBe('nvidia/nemotron-3.5-lightning:free');
     qpStub.selectedItems = [{ label: 'nvidia/nemotron-3.5-lightning:free' } as any];
@@ -427,10 +445,21 @@ describe('pickOpenRouterModel', () => {
     await expect(p).resolves.toBe('nvidia/nemotron-3.5-lightning:free');
   });
 
+  it('rejects a typed id that is not in the catalog (no free-text fallback)', async () => {
+    const p = pickOpenRouterModel(PROJECTED);
+    await vi.waitFor(() => expect(qpStub._accept).toBeDefined());
+    // Type a valid-looking but non-catalog id and accept without selecting. The
+    // catalog is authoritative — a model that isn't in the snapshot cannot be
+    // sized or saved, so the picker must NOT fall back to the typed value.
+    qpStub.value = 'some/non-catalog-model';
+    qpStub.selectedItems = [];
+    qpStub.activeItems = [];
+    qpStub._fireAccept();
+    await expect(p).resolves.toBeUndefined();
+  });
+
   it('resolves undefined when the picker is cancelled', async () => {
-    const out = freshOutput();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(CATALOG));
-    const p = pickOpenRouterModel(out);
+    const p = pickOpenRouterModel(PROJECTED);
     await vi.waitFor(() => expect(qpStub._hide).toBeDefined());
     qpStub._fireHide();
     await expect(p).resolves.toBeUndefined();
@@ -441,46 +470,31 @@ describe('pickOpenRouterModel', () => {
     // which fires onDidHide. If the handler resolved AFTER dispose, onDidHide's
     // resolve(undefined) would clobber the accepted label — clicking a model
     // would read as "cancelled". The stub's dispose fires onDidHide like VS Code.
-    const out = freshOutput();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(CATALOG));
-    const p = pickOpenRouterModel(out);
+    const p = pickOpenRouterModel(PROJECTED);
     await vi.waitFor(() => expect(qpStub._accept).toBeDefined());
     const nemotron = qpStub.items.find((i: any) => i.label === 'nvidia/nemotron-3.5-lightning:free');
     qpStub.selectedItems = [nemotron];
     qpStub._fireAccept(); // accept handler disposes → fires onDidHide internally
     await expect(p).resolves.toBe('nvidia/nemotron-3.5-lightning:free');
   });
-
-  it('falls back to a plain input box when the catalog is empty', async () => {
-    const out = freshOutput();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ data: [] }));
-    inputBoxSpy.mockResolvedValueOnce('nvidia/nemotron-3.5-lightning:free');
-
-    const result = await pickOpenRouterModel(out);
-
-    expect(inputBoxSpy).toHaveBeenCalled();
-    expect(createQuickPickSpy).not.toHaveBeenCalled();
-    expect(result).toBe('nvidia/nemotron-3.5-lightning:free');
-  });
 });
 
-describe('fetchOpenRouterCatalog', () => {
+describe('projectCatalog', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it('returns the data array from the public /v1/models endpoint', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(CATALOG));
-    const catalog = await fetchOpenRouterCatalog();
-    expect(fetchSpy).toHaveBeenCalledWith('https://openrouter.ai/api/v1/models', expect.anything());
-    expect(catalog[0].id).toBe('nvidia/nemotron-3.5-lightning');
-    expect(catalog).toHaveLength(3);
-  });
-
-  it('throws on an HTTP error so the caller can degrade to free-text', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({}, 500));
-    await expect(fetchOpenRouterCatalog()).rejects.toThrow(/HTTP 500/);
+  it('projects full catalog entries down to the subset the picker renders', () => {
+    const projected = projectCatalog(CATALOG.data as any);
+    expect(projected[0]).toEqual({
+      id: 'nvidia/nemotron-3.5-lightning',
+      name: 'NVIDIA: Nemotron 3.5 Lightning',
+      context_length: 1000000,
+      pricing: { prompt: '0.00000008', completion: '0.0000002' },
+    });
+    // Picker entries carry only id/name/context/pricing — no capabilities/modes.
+    expect(Object.keys(projected[0])).toEqual(['id', 'name', 'context_length', 'pricing']);
   });
 });
 
@@ -613,33 +627,30 @@ describe('registerAddServerModelCommand — OpenRouter routing', () => {
     expect(provider.clearCache).toHaveBeenCalled();
   });
 
-  it('pre-fills the free-text input with the pasted model when the catalog is unreachable', async () => {
-    // A catalog failure must NOT strand the pasted URL: the free-text fallback
-    // still receives the derived model ref so the flow completes.
+  it('fails clearly (no guessing, no free-text) when the catalog is unreachable via the command', async () => {
+    // The catalog is the only deterministic metadata source. If it can't be
+    // loaded, the flow stops up front with a clear error and never saves a model
+    // it can't size. There is no free-text fallback and no per-model download.
     const out = freshOutput();
+    const errorSpy = vi.spyOn(vscode.window, 'showErrorMessage').mockResolvedValue(undefined);
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: any) => {
       const u = String(url);
       if (u.includes('/v1/models')) throw new TypeError('fetch failed'); // catalog unreachable
-      if (u.includes('/v1/model/nvidia/nemotron-3.5-lightning')) return jsonResponse({ data: NEMOTRON_METADATA });
       return jsonResponse({}, 404);
     });
     inputBoxSpy
       .mockResolvedValueOnce('https://openrouter.ai/nvidia/nemotron-3.5-lightning:free') // server URL
       .mockResolvedValueOnce('sk-or-v1-test')                                            // API key
-      .mockResolvedValueOnce('')                                                        // headers
-      .mockResolvedValueOnce('nvidia/nemotron-3.5-lightning:free');                     // free-text model input (pre-filled)
+      .mockResolvedValueOnce('');                                                        // headers
     infoSpy.mockResolvedValue('Save to Settings' as any);
 
     registerAddServerModelCommand({} as any, provider, out);
     await (vscode as any).commands._run('vllm-copilot.addServerModel');
 
-    // The free-text input box was pre-filled with the derived model ref.
-    // Match the EXACT title — the API-key/headers boxes are "… — API Key" etc.
-    const freeTextCall = inputBoxSpy.mock.calls.find((c: any) => c[0]?.title === 'Add OpenRouter Model');
-    expect(freeTextCall).toBeDefined();
-    expect(freeTextCall[0].value).toBe('nvidia/nemotron-3.5-lightning:free');
-    expect(resolveSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ serverType: 'openrouter', vllmModelId: 'nvidia/nemotron-3.5-lightning:free' }),
-    );
+    // No picker, no free-text input box, no save — the flow stops at the catalog.
+    expect(createQuickPickSpy).not.toHaveBeenCalled();
+    expect(inputBoxSpy).toHaveBeenCalledTimes(3); // server URL + key + headers
+    expect(resolveSpy).not.toHaveBeenCalledWith(expect.objectContaining({ serverType: 'openrouter' }));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Couldn't load the OpenRouter model catalog"));
   });
 });

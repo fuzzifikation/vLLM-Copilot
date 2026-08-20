@@ -5,7 +5,7 @@
 </a>
 
 # vLLM-Copilot
-[![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot) [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
+[![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot) [![OpenRouter Supported](https://img.shields.io/badge/OpenRouter-Supported-00B3A6?logo=openrouter&logoColor=white)](https://openrouter.ai) [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
 
 **Run any vLLM model natively inside GitHub Copilot. No workarounds, no missing features.**
 **New: OpenRouter support as a first rate endpoint!**
@@ -143,9 +143,9 @@ So if you already have OpenRouter open in a browser tab, **grab the URL straight
 
 1. **Server URL:** paste `https://openrouter.ai` (or any model page from the table above).
 2. **API key:** enter your key from [openrouter.ai/keys](https://openrouter.ai/keys). It is stored in the model's `requestHeaders` as `Authorization: Bearer <key>` and never leaves trusted extension code.
-3. **Pick the model:** choose from the ~415-model catalog (filter-as-you-type). The extension resolves each model's metadata from OpenRouter's **public** exact-model API — real context window, output ceiling, tool calling, pricing, and reasoning modes. No guessing.
+3. **Pick the model:** choose from the ~415-model catalog (filter-as-you-type). The extension resolves each model's metadata from OpenRouter's **public model catalog** (`/api/v1/models`) by matching the id exactly — real context window, output ceiling, tool calling, pricing, and reasoning modes. No guessing.
 
-The `:free` suffix on a model ID is a **routing variant**, not part of the model identity — it is stripped for the metadata lookup (variants 404 on the exact-model endpoint) but preserved for chat. Free routes are rate-limited — if a request feels dead, it's the free tier, not the extension. Your OpenRouter **credits** show on the dashboard as an account row per server.
+The `:free` suffix on a model ID is a **routing variant** and its own catalog entry — it is preserved for both chat and metadata resolution, so a `:free` pick can never silently resolve to the paid model. Free routes are rate-limited — if a request feels dead, it's the free tier, not the extension. Your OpenRouter **credits** show on the dashboard as an account row per server.
 
 Manual config works the same way — each entry is self-contained:
 
@@ -160,6 +160,18 @@ Manual config works the same way — each entry is self-contained:
   }
 }
 ```
+
+**Power users — attribution headers (optional):** OpenRouter's public [rankings](https://openrouter.ai/rankings) attribute traffic to a site/app via two headers. The extension never sends them automatically, but you can add them to the model's `requestHeaders` (the Add flow also prompts for optional custom headers):
+
+```json
+"requestHeaders": {
+  "Authorization": "Bearer sk-or-v1-YOUR_KEY",
+  "HTTP-Referer": "https://your-app.example.com",
+  "X-OpenRouter-Title": "Your App Name"
+}
+```
+
+This is purely for attribution/rankings — chat works fine without them. Most users can ignore this.
 
 **Every backend gets:** native Copilot integration (chat, tools, vision, streaming), model modes, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue on empty responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
 

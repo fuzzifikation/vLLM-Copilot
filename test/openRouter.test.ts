@@ -8,6 +8,8 @@ import {
   resolveOpenRouterRuntimeLimits,
   autoConfigureOpenRouterModel,
   PermanentContextError,
+  OpenRouterModelNotFoundError,
+  fetchOpenRouterCatalog,
   OPENROUTER_API_BASE,
   type OpenRouterModelData,
 } from '../src/openRouter.js';
@@ -343,8 +345,56 @@ describe('normalizeOpenRouterModel', () => {
 describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
-  function jsonResponse(status: number, body: unknown): Response {
-    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  /** Catalog entries sharing the exact-model shape `OpenRouterModelData`. */
+  const CATALOG = [
+    {
+      id: 'deepseek/deepseek-chat',
+      name: 'DeepSeek V3',
+      context_length: 163840,
+      top_provider: { context_length: 128000, max_completion_tokens: 16000 },
+      per_request_limits: null,
+    },
+    {
+      id: 'deepseek/deepseek-chat:free',
+      name: 'DeepSeek V3 (free)',
+      context_length: 163840,
+      pricing: { prompt: '0', completion: '0' },
+      top_provider: { context_length: 128000, max_completion_tokens: 16000 },
+      per_request_limits: null,
+    },
+    {
+      id: 'openai/gpt-4',
+      name: 'GPT-4',
+      context_length: 8192,
+      top_provider: { max_completion_tokens: 4096 },
+      per_request_limits: null,
+    },
+    {
+      id: 'cohere/north-mini-code:free',
+      name: 'Cohere North Mini Code (free)',
+      context_length: 256000,
+      pricing: { prompt: '0', completion: '0' },
+      top_provider: { context_length: 256000, max_completion_tokens: 64000 },
+      per_request_limits: null,
+    },
+    {
+      id: 'cohere/north-mini-code',
+      name: 'Cohere North Mini Code (paid)',
+      context_length: 256000,
+      pricing: { prompt: '0.0000005', completion: '0.000002' },
+      top_provider: { context_length: 256000, max_completion_tokens: 64000 },
+      per_request_limits: null,
+    },
+  ];
+
+  function catalogResponse(): Response {
+    return new Response(JSON.stringify({ data: CATALOG }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+
+  /** Fresh catalog response per call — Response bodies are single-use. */
+  function mockCatalogFetch(): ReturnType<typeof vi.spyOn> {
+    fetchSpy.mockImplementation(() => Promise.resolve(catalogResponse()));
+    return fetchSpy;
   }
 
   beforeEach(() => {
@@ -354,57 +404,93 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
     vi.restoreAllMocks();
   });
 
-  it('fetches the exact-model endpoint with the base slug and unwraps data', async () => {
-    fetchSpy.mockResolvedValueOnce(
-      jsonResponse(200, {
-        data: {
-          id: 'deepseek/deepseek-chat',
-          name: 'DeepSeek V3',
-          context_length: 163840,
-          top_provider: { context_length: 128000, max_completion_tokens: 16000 },
-          per_request_limits: null,
-        },
-      }),
-    );
+  it('resolves metadata by EXACT catalog id match — a :free pick uses the FREE entry, never the paid one', async () => {
+    mockCatalogFetch();
 
-    const info = await fetchOpenRouterModel('deepseek/deepseek-chat:free');
+    const info = await fetchOpenRouterModel('cohere/north-mini-code:free');
     expect(fetchSpy).toHaveBeenCalledWith(
-      `${OPENROUTER_API_BASE}/v1/model/deepseek/deepseek-chat`,
+      `${OPENROUTER_API_BASE}/v1/models`,
       expect.objectContaining({ method: 'GET' }),
     );
+    // Free entry has pricing "0" → cost estimated at $0; the paid model is NOT
+    // consulted. wireModelId preserves the exact :free id for chat.
+    expect(info.wireModelId).toBe('cohere/north-mini-code:free');
+    expect(info.runtimeLimits).toEqual({ contextWindow: 256000, maxOutputTokens: 64000 });
+    expect(info.cost?.input).toBe(0);
+    expect(info.cost?.output).toBe(0);
+  });
+
+  it('resolves a variant-free id by exact catalog match', async () => {
+    mockCatalogFetch();
+    const info = await fetchOpenRouterModel('deepseek/deepseek-chat');
+    expect(info.wireModelId).toBe('deepseek/deepseek-chat');
     expect(info.runtimeLimits).toEqual({ contextWindow: 128000, maxOutputTokens: 16000 });
+  });
+
+  it('resolves a :free id to the FREE catalog entry (distinct from the base)', async () => {
+    mockCatalogFetch();
+    const info = await fetchOpenRouterModel('deepseek/deepseek-chat:free');
     expect(info.wireModelId).toBe('deepseek/deepseek-chat:free');
+    // Free entry → $0 estimated rates, proving it did NOT resolve to the paid base model.
+    expect(info.cost?.input).toBe(0);
+    expect(info.cost?.output).toBe(0);
   });
 
-  it('throws an actionable error when the payload has no data object', async () => {
-    fetchSpy.mockResolvedValueOnce(jsonResponse(200, { data: null }));
-    await expect(fetchOpenRouterModel('deepseek/deepseek-chat')).rejects.toThrow(/no data payload/);
+  it('classifies an id NOT in the catalog as OpenRouterModelNotFoundError (recheckable, not permanent)', async () => {
+    mockCatalogFetch();
+    // Absent from this snapshot → OpenRouterModelNotFoundError. The metrics
+    // engine rechecks next poll (the catalog is re-fetched); it is NOT a
+    // permanent miss and NOT a guessed/derived slug.
+    await expect(fetchOpenRouterModel('bad/not-a-real-model')).rejects.toBeInstanceOf(OpenRouterModelNotFoundError);
+    await expect(fetchOpenRouterModel('bad/not-a-real-model')).rejects.toThrow(/not found in the current OpenRouter catalog/);
+    await expect(fetchOpenRouterModel('bad/not-a-real-model')).rejects.not.toBeInstanceOf(PermanentContextError);
   });
 
-  it('classifies a 404 as a PermanentContextError (wrong slug — never retryable)', async () => {
-    fetchSpy.mockRejectedValue(new Error('HTTP 404: Not Found — {"error":{"message":"Model not found"}}'));
-    await expect(fetchOpenRouterModel('bad/not-a-real-model')).rejects.toBeInstanceOf(PermanentContextError);
+  it('classifies a catalog ENTRY with no context bound as PermanentContextError', async () => {
+    // The model IS listed, but its entry reports no usable context → genuinely
+    // unresolvable, never retried (unlike an absent id).
+    const noWindow = [{ id: 'openai/gpt-4', name: 'GPT-4' }]; // no context_length / top_provider
+    fetchSpy.mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ data: noWindow }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    ));
+    await expect(fetchOpenRouterModel('openai/gpt-4')).rejects.toBeInstanceOf(PermanentContextError);
   });
 
-  it('classifies a missing data payload as a PermanentContextError', async () => {
-    fetchSpy.mockResolvedValueOnce(jsonResponse(200, { data: null }));
-    await expect(fetchOpenRouterModel('deepseek/deepseek-chat')).rejects.toBeInstanceOf(PermanentContextError);
+  it('treats a malformed catalog payload (missing data array) as a transient failure, never an empty list', async () => {
+    // A 200 whose body is not `{ data: [...] }` is a protocol/proxy failure. It
+    // must THROW (→ the metrics engine treats it as transient/not-yet-resolved),
+    // NOT be silently interpreted as an empty authoritative catalog (which
+    // would make every model look "not found").
+    fetchSpy.mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ something: 'else' }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    ));
+    await expect(fetchOpenRouterCatalog()).rejects.toThrow(/Malformed OpenRouter catalog/);
   });
 
-  it('wraps a fetch/HTTP failure with model + lookup URL context', async () => {
+  it('drops catalog entries without a string id (they can never match) but keeps valid ones', async () => {
+    const mixed = [
+      { id: 'openai/gpt-4', context_length: 8192 },
+      { name: 'no-id-entry' },
+      { id: 123 as unknown },
+    ];
+    fetchSpy.mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ data: mixed }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    ));
+    const catalog = await fetchOpenRouterCatalog();
+    expect(catalog).toHaveLength(1);
+    expect(catalog[0].id).toBe('openai/gpt-4');
+  });
+
+  it('wraps a catalog fetch/HTTP failure with model + catalog URL context', async () => {
     // fetchWithRetry retries once on a network error, so reject BOTH attempts.
-    fetchSpy.mockRejectedValue(new Error('HTTP 404: Not Found — {"error":{"message":"Model not found"}}'));
+    fetchSpy.mockRejectedValue(new Error('Network error: ECONNREFUSED'));
     await expect(fetchOpenRouterModel('deepseek/deepseek-chat')).rejects.toThrow(
-      /OpenRouter model "deepseek\/deepseek-chat" lookup failed.*deepseek-chat.*Model not found/,
+      /OpenRouter model "deepseek\/deepseek-chat" lookup failed.*v1\/models/,
     );
   });
 
   it('resolveOpenRouterRuntimeLimits returns only the limits', async () => {
-    fetchSpy.mockResolvedValueOnce(
-      jsonResponse(200, {
-        data: { context_length: 8192, top_provider: { max_completion_tokens: 4096 } },
-      }),
-    );
+    mockCatalogFetch();
     const limits = await resolveOpenRouterRuntimeLimits('openai/gpt-4');
     expect(limits).toEqual({ contextWindow: 8192, maxOutputTokens: 4096 });
   });
@@ -425,27 +511,40 @@ describe('autoConfigureOpenRouterModel', () => {
   const jsonResponse = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
+  /** Full catalog fixture for auto-configure tests. */
+  const CATALOG = [
+    {
+      id: 'x-ai/grok-4.6',
+      name: 'Grok 4.6',
+      context_length: 500000,
+      top_provider: { context_length: 500000, max_completion_tokens: null },
+      per_request_limits: null,
+      supported_parameters: ['tools', 'reasoning', 'reasoning_effort'],
+      architecture: { input_modalities: ['text'] },
+      reasoning: {
+        mandatory: true,
+        default_enabled: true,
+        supported_efforts: ['xhigh', 'high', 'medium', 'low'],
+        default_effort: 'high',
+      },
+      pricing: { prompt: '0.000003', completion: '0.000015' },
+    },
+    {
+      id: 'meta-llama/llama-3.3-70b-instruct',
+      context_length: 131072,
+      top_provider: { context_length: 131072 },
+    },
+    {
+      id: 'meta-llama/llama-3.3-70b-instruct:free',
+      context_length: 131072,
+      top_provider: { context_length: 131072 },
+    },
+  ];
+
+  const catalogResponse = () => jsonResponse(200, { data: CATALOG });
+
   it('builds config + summary from the reasoning object (grok-like mandatory ladder)', async () => {
-    fetchSpy.mockResolvedValueOnce(
-      jsonResponse(200, {
-        data: {
-          id: 'x-ai/grok-4.6',
-          name: 'Grok 4.6',
-          context_length: 500000,
-          top_provider: { context_length: 500000, max_completion_tokens: null },
-          per_request_limits: null,
-          supported_parameters: ['tools', 'reasoning', 'reasoning_effort'],
-          architecture: { input_modalities: ['text'] },
-          reasoning: {
-            mandatory: true,
-            default_enabled: true,
-            supported_efforts: ['xhigh', 'high', 'medium', 'low'],
-            default_effort: 'high',
-          },
-          pricing: { prompt: '0.000003', completion: '0.000015' },
-        },
-      }),
-    );
+    fetchSpy.mockResolvedValue(catalogResponse());
 
     const { modelConfig, summary } = await autoConfigureOpenRouterModel('x-ai/grok-4.6');
 
@@ -471,23 +570,15 @@ describe('autoConfigureOpenRouterModel', () => {
     expect(text).not.toContain('HuggingFace');
   });
 
-  it('passes per-model headers to the lookup and preserves variant chat ids', async () => {
-    fetchSpy.mockResolvedValueOnce(
-      jsonResponse(200, {
-        data: {
-          id: 'meta-llama/llama-3.3-70b-instruct',
-          context_length: 131072,
-          top_provider: { context_length: 131072 },
-        },
-      }),
-    );
+  it('passes per-model headers to the catalog lookup and preserves variant chat ids', async () => {
+    fetchSpy.mockResolvedValue(catalogResponse());
     const headers = { Authorization: 'Bearer sk-test' };
 
     const { modelConfig } = await autoConfigureOpenRouterModel('meta-llama/llama-3.3-70b-instruct:free', headers);
 
-    // Lookup uses the base slug; the chat id keeps the variant.
+    // Catalog lookup by exact id; the chat id keeps the :free variant.
     expect(fetchSpy).toHaveBeenCalledWith(
-      `${OPENROUTER_API_BASE}/v1/model/meta-llama/llama-3.3-70b-instruct`,
+      `${OPENROUTER_API_BASE}/v1/models`,
       expect.anything(),
     );
     expect(modelConfig.vllmModelId).toBe('meta-llama/llama-3.3-70b-instruct:free');
