@@ -18,7 +18,7 @@ Usage and system-message capture continue after a failed write, with no one-time
 - Group provider discovery metadata fetches per server instead of per model.
 - Consolidate the duplicate OpenRouter per-token → per-1M pricing conversion.
 - Move the OpenRouter onboarding flow out of the oversized generic Add Server module (behavior-preserving).
-- Add a DOM harness for Deep-Dive webview behavior (Server Settings already has one).
+- Add a DOM harness for Deep-Dive webview behavior (Model Settings already has one).
 
 ## Accepted product decisions
 

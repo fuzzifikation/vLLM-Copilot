@@ -298,15 +298,15 @@ describe('registerTestAndRefreshModelsCommand', () => {
     expect(executeSpy).toHaveBeenCalledWith('workbench.action.openSettings', 'http.proxy');
   });
 
-  it('hints to open Server Settings when a reachable server has no matching model', async () => {
+  it('hints to open Model Settings when a reachable server has no matching model', async () => {
     vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 's-model' }]);
     fetchFn.mockResolvedValue(jsonResponse({ data: [{ id: 'other-model' }] }));
-    warningSpy.mockResolvedValue('Open Server Settings' as any);
+    warningSpy.mockResolvedValue('Open Model Settings' as any);
 
     await run();
 
     expect(warningSpy).toHaveBeenCalledWith(
-      expect.stringContaining('model(s) not configured in settings.json'), 'Open Server Settings'
+      expect.stringContaining('model(s) not configured in settings.json'), 'Open Model Settings'
     );
     expect(executeSpy).toHaveBeenCalledWith('vllm-copilot.serverSettings.focus');
   });

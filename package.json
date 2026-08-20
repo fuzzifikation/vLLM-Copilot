@@ -66,7 +66,7 @@
         {
           "id": "vllm-copilot.serverSettings",
           "type": "webview",
-          "name": "Server Settings",
+          "name": "Model Settings",
           "icon": "$(settings-gear)"
         }
       ]

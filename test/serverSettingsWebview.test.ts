@@ -8,7 +8,10 @@ const script = fs.readFileSync(
   'utf8',
 );
 
-function loadWebview(modelModes: Record<string, Record<string, unknown>>) {
+function loadWebview(
+  modelModes: Record<string, Record<string, unknown>>,
+  serverModelIds: string[] = ['wire-model'],
+) {
   const dom = new JSDOM(
     '<!doctype html><body>' +
       '<div id="root"></div>' +
@@ -26,7 +29,7 @@ function loadWebview(modelModes: Record<string, Record<string, unknown>>) {
       type: 'data',
       servers: [{
         url: 'http://server:8000',
-        serverModelIds: ['wire-model'],
+        serverModelIds,
         models: [{
           id: 'model-config',
           vllmModelId: 'wire-model',
@@ -56,7 +59,7 @@ async function flush(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 0));
 }
 
-describe('Server Settings webview', () => {
+describe('Model Settings webview', () => {
   it('posts boolean false values as booleans, not strings', () => {
     const { dom, posted } = loadWebview({
       Think: { parallel_tool_calls: true },
@@ -98,5 +101,29 @@ describe('Server Settings webview', () => {
     await flush();
     expect(codingCard.dataset.mn).toBe('Coding');
     expect(document.getElementById('modalBody')!.textContent).toContain('already exists');
+  });
+
+  it('marks configured models not running on the server as inactive', () => {
+    // Server reports only 'wire-model'; the configured model's wire id matches,
+    // so it is ACTIVE and must NOT carry an (inactive) marker.
+    const { dom } = loadWebview({}, ['wire-model']);
+    const select = dom.window.document.querySelector<HTMLSelectElement>('#mSel')!;
+    const option = [...select.options].find(o => o.value === 'model-config')!;
+    expect(option.textContent).toBe('wire-model');
+
+    // Server reports a DIFFERENT set — the configured model is stale/inactive.
+    const { dom: dom2 } = loadWebview({}, ['some-other-model']);
+    const select2 = dom2.window.document.querySelector<HTMLSelectElement>('#mSel')!;
+    const option2 = [...select2.options].find(o => o.value === 'model-config')!;
+    expect(option2.textContent).toBe('wire-model (inactive)');
+  });
+
+  it('does not mark models inactive when the server probe reported nothing', () => {
+    // Empty serverModelIds = probe failed / non-`/v1/models` backend — "unknown",
+    // not "inactive". No marker should be added.
+    const { dom } = loadWebview({}, []);
+    const select = dom.window.document.querySelector<HTMLSelectElement>('#mSel')!;
+    const option = [...select.options].find(o => o.value === 'model-config')!;
+    expect(option.textContent).toBe('wire-model');
   });
 });

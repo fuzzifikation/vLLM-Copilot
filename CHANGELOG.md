@@ -5,15 +5,20 @@
 ### Fixed
 
 - **Server errors state the HTTP code and the server's real message** — e.g. `Server error [402]. This request requires more credits, or fewer max_tokens…` — instead of a generic "vLLM server problem" or raw JSON. No backend-specific wording, and the message is no longer cut off.
-- **Server Settings and Connection Diagnostics work with authenticated and `/v1`-suffixed servers** — trusted headers reach the host-side model probe without entering webview state, equivalent URL spellings share one canonical server, and an older refresh can no longer overwrite newer settings.
+- **Model Settings and Connection Diagnostics work with authenticated and `/v1`-suffixed servers** — trusted headers reach the host-side model probe without entering webview state, equivalent URL spellings share one canonical server, and an older refresh can no longer overwrite newer settings.
 - **Clean Copilot Sessions targets the active VS Code installation** — Stable, Insiders, VSCodium, portable, and custom user-data roots are derived from the running extension host instead of hardcoding Stable's storage path.
-- **Server Settings preserves boolean `false` and rejects duplicate modes** — falsey JSON values keep their real types, and add/rename/save guards prevent one mode from silently overwriting another.
+- **Model Settings preserves boolean `false` and rejects duplicate modes** — falsey JSON values keep their real types, and add/rename/save guards prevent one mode from silently overwriting another.
 - **Model discovery cannot restore stale cache entries after a settings change** — invalidated in-flight discovery retries against the current configuration instead of publishing its old model list.
 - **Invalid numeric settings no longer suppress requests** — retry counts/timeouts/token budgets are normalized to finite safe values, and URI schemes are recognized case-insensitively.
 - **Last Request context percentages use the server-reported window** — reducing `maxInputTokens` to reserve headroom no longer makes the dashboard overstate context utilization.
 - **Transient 429/503 responses honor bounded `Retry-After`** — one pre-stream retry waits up to 10 seconds (1.5 seconds when absent/invalid), longer requested waits fail immediately, and cancellation interrupts the backoff.
 - **Dead response-logging surface removed** — `FileLogger.logResponse()` and `VllmClient.getResponseHeaders()` had no production callers but claimed full-traffic capture; both are gone.
 - **Update Auth no longer creates idle metrics engines** — pushing new auth headers to a metrics engine is update-if-present only, so it can't leak a zero-subscriber registry entry when no dashboard/deep-dive is open.
+
+### Changed
+
+- **"Server Settings" is now "Model Settings"** — the per-model editor is renamed to reflect that it configures individual models (server settings belong to the provider, not this extension). Internal identifiers and the command IDs are unchanged.
+- **Model Settings flags stale configured models** — a configured model whose wire id isn't reported by the server is marked `(inactive)` in the model dropdown, so it's clear it won't serve requests. When the server probe fails (unreachable or a non-`/v1/models` backend), nothing is marked — "unknown", not "inactive".
 
 ## v1.32.0 — OpenRouter backend & configurable first-response timeout
 

@@ -244,3 +244,16 @@ Do not rename `VllmClient`, add a backend registry, or reorganize existing backe
 - Leave provider data policy controlled by the user's OpenRouter account and request parameters; do not silently force ZDR or data-collection filters.
 - Leave `X-OpenRouter-Metadata` disabled by default. Users may opt in through per-model headers.
 - Do not send `session_id` until VS Code exposes a stable, appropriate conversation identifier.
+
+## Provider Routing — Decision Record (2026-08-20)
+
+OpenRouter routes each request to a provider (Anthropic, OpenAI, a host, etc.); a model id can carry a `:provider` suffix to force one. Today the extension treats the provider as invisible passthrough — the wire id is sent verbatim, and there is no way to choose a provider in the UI.
+
+**Decision (fixed — do not revisit without product direction):**
+- **No provider picker in the Add Server flow.** Onboarding stays model-only.
+- **Provider choice lives in Model Settings only**, as a dropdown shown **when an OpenRouter model is selected**.
+- The dropdown lists **only the providers available for that specific model** (never the whole catalog).
+- **`Auto` (default)** = let OpenRouter route; a manual choice forces routing to that provider.
+- The provider is stored **per model** (a new optional `provider` field) and applied as a `:provider` suffix on the wire id at request time. The base id remains the canonical identity; metadata lookup strips the suffix (like the existing `:free` handling).
+
+This is a future feature, not yet implemented. Full spec (API field, config, UI, request-time suffix, open questions): [docs/feature-ideas.md → OpenRouter Provider Selection](./docs/feature-ideas.md).

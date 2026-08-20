@@ -385,8 +385,8 @@ export function registerTestAndRefreshModelsCommand(
         0
       );
       const configurePick = await vscode.window.showWarningMessage(
-        `${noMatchWithModels.length} reachable server(s) host ${unconfiguredCount} model(s) not configured in settings.json. Configure them in Server Settings to use them in Copilot.`,
-        'Open Server Settings'
+        `${noMatchWithModels.length} reachable server(s) host ${unconfiguredCount} model(s) not configured in settings.json. Configure them in Model Settings to use them in Copilot.`,
+        'Open Model Settings'
       );
       if (configurePick) {
         await vscode.commands.executeCommand('vllm-copilot.serverSettings.focus');

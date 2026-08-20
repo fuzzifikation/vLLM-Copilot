@@ -13,7 +13,7 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 | Field | Default | Description |
 |-------|:-------:|-------------|
 | `serverUrl` | — | **Required.** Server URL (OpenAI-compatible). Each model targets its own server. |
-| `serverType` | `vllm` | Backend protocol. `vllm` \| `lmstudio` \| `llamacpp` \| `ollama` \| `openrouter`. **Set automatically by Add Server**, and auto-detected in Server Settings for unconfigured models (from `/v1/models`, or a configured sibling's type). Missing always means `vllm`. Manual third-party entries must set this — the extension never probes at runtime. |
+| `serverType` | `vllm` | Backend protocol. `vllm` \| `lmstudio` \| `llamacpp` \| `ollama` \| `openrouter`. **Set automatically by Add Server**, and auto-detected in Model Settings for unconfigured models (from `/v1/models`, or a configured sibling's type). Missing always means `vllm`. Manual third-party entries must set this — the extension never probes at runtime. |
 | `requestHeaders` | `{}` | HTTP headers for this server (auth, routing). **Isolated** — never shared across servers. |
 | `id` | — | **Required.** Unique entry key. Add flow sets this to `"<model> on <host>"`. |
 | `vllmModelId` | same as `id` | Actual model ID on the vLLM server (for aliases). |
@@ -385,7 +385,7 @@ The extension ships with four pre-built replacement files that transform Copilot
 | **Sarcastic Robot** | `prompt-replacements/prompt-replacements-sarcastic-robot.json` | Brilliant, condescending, politically incorrect. Finds human code amusingly primitive — but fixes it anyway. |
 | **Spartan** | `prompt-replacements/prompt-replacements-spartan.json` | Absolute minimalism. Zero fluff. Short answers. Code first, words only when necessary. |
 
-**Usage:** In the **vLLM Server Settings** sidebar, pick a model and choose a personality from the dropdown in the model's **General** section. Or use `Ctrl+Shift+P` → **Set Model Personality**. Picking a personality copies it into the extension's **global storage** (`personalities/`) so it follows you across workspaces and survives extension upgrades. **Default (no personality)** clears the replacement and restores Copilot's original system prompt.
+**Usage:** In the **vLLM Model Settings** sidebar, pick a model and choose a personality from the dropdown in the model's **General** section. Or use `Ctrl+Shift+P` → **Set Model Personality**. Picking a personality copies it into the extension's **global storage** (`personalities/`) so it follows you across workspaces and survives extension upgrades. **Default (no personality)** clears the replacement and restores Copilot's original system prompt.
 
 Or set the path manually on the model entry:
 
