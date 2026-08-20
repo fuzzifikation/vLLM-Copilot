@@ -188,6 +188,8 @@ describe('buildRequest', () => {
       output,
     );
     expect(result.vllmModelId).toBe('deepseek/deepseek-v4-pro-0813:nitro');
+    // The tracking/canonical id stays BASE — usage/cost must not fragment on the suffix.
+    expect(result.wireModelId).toBe('deepseek/deepseek-v4-pro-0813');
     expect(result.mergedOptions.provider).toBeUndefined(); // Auto routing, no pin
   });
 
@@ -208,6 +210,7 @@ describe('buildRequest', () => {
     // Pinned provider → provider.only is set, no routing suffix on the id.
     expect(result.mergedOptions.provider).toEqual({ only: ['deepseek'] });
     expect(result.vllmModelId).toBe('deepseek/deepseek-v4-pro-0813');
+    expect(result.wireModelId).toBe('deepseek/deepseek-v4-pro-0813');
   });
 
   it('does not append a routing suffix for standard mode or non-OpenRouter backends', () => {
@@ -223,6 +226,7 @@ describe('buildRequest', () => {
       output,
     );
     expect(standard.vllmModelId).toBe('deepseek/deepseek-v4-pro-0813');
+    expect(standard.wireModelId).toBe('deepseek/deepseek-v4-pro-0813');
 
     // Non-OpenRouter → routingMode must never leak into the wire id.
     const vllm = buildRequest(
@@ -236,5 +240,6 @@ describe('buildRequest', () => {
       output,
     );
     expect(vllm.vllmModelId).toBe('deepseek/deepseek-v4-pro-0813');
+    expect(vllm.wireModelId).toBe('deepseek/deepseek-v4-pro-0813');
   });
 });

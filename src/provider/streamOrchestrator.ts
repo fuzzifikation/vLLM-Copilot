@@ -69,7 +69,7 @@ export async function runChatResponse(
     const streamOverride = resolveOverrideForModel(config.models || [], model.id);
     const maxRetries = resolveModelSettings(streamOverride).autoContinueRetries;
 
-    const { vllmModelId, openaiMessages, mergedOptions, serverConfig } =
+    const { vllmModelId, wireModelId, openaiMessages, mergedOptions, serverConfig } =
       buildRequest(model, processedMessages, options, config, output);
 
     // Auto-continue retry loop: initial attempt + up to maxRetries retries.
@@ -120,7 +120,7 @@ export async function runChatResponse(
         attemptStartTime,
         outcome,
         serverConfig.serverUrl,
-        vllmModelId,
+        wireModelId,
         output,
         fileLogger,
         contextWindow,

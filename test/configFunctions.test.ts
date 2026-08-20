@@ -185,6 +185,18 @@ describe('validateConfig', () => {
     expect(warnings.some(w => w.includes('serverType'))).toBe(true);
   });
 
+  it('accepts every known routing mode without warning', () => {
+    for (const routingMode of ['standard', 'nitro', 'exacto']) {
+      const warnings = validateConfig(withModel({ routingMode }));
+      expect(warnings.some(w => w.includes('routingMode'))).toBe(false);
+    }
+  });
+
+  it('warns on an unknown routing mode', () => {
+    const warnings = validateConfig(withModel({ routingMode: 'turbo' }));
+    expect(warnings.some(w => w.includes('routingMode'))).toBe(true);
+  });
+
   it('warns on maxOutputTokens <= 0', () => {
     expect(validateConfig(withModel({ maxOutputTokens: 0 })).length).toBeGreaterThan(0);
     expect(validateConfig(withModel({ maxOutputTokens: -1 })).length).toBeGreaterThan(0);

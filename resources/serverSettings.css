@@ -35,6 +35,10 @@ summary::before { content: '\25B6'; font-size: 0.7em; }
 details[open] > summary::before { content: '\25BC'; }
 .section-body { padding: 6px; }
 .field { margin-bottom: 8px; }
+/* `hidden` must always win: any display rule on the same element would otherwise
+   override the UA's `[hidden]{display:none}` and leak a hidden control. The
+   routing-mode hint relies on this toggle (see syncRoutingMode). */
+[hidden] { display: none !important; }
 .field label { display: block; font-size: 0.8em; color: var(--vscode-descriptionForeground); margin-bottom: 2px; }
 .field-hint { font-size: 0.75em; color: var(--vscode-descriptionForeground); margin-top: 2px; }
 .mode-card { border: 1px solid var(--vscode-input-border); padding: 6px; margin-bottom: 6px; background: var(--vscode-editor-background); }
