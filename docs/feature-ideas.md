@@ -140,27 +140,26 @@ Since the model list is small (typically < 20 entries) and the server is local/c
 **Category:** Vitamin (OpenRouter UX)
 **Status:** Planned — not implemented. Decision recorded in [openrouter-plan.md](../openrouter-plan.md).
 
-**What:** When an **OpenRouter** model is selected in Model Settings, show a **provider dropdown** below the model. It lists only the **providers available for that specific model** (not the whole catalog), with an **Auto** (default) option. Choosing a provider persists it on the model config and is applied as a routing suffix on the wire model id at request time.
+**What:** When an **OpenRouter** model is selected in Model Settings, show a **provider dropdown** below the model. It lists only the **providers available for that specific model** (not the whole catalog), with an **Auto** (default) option. Choosing a provider persists it on the model config and is applied at request time through OpenRouter's request-body `provider` object.
 
 **Key decisions (fixed, do not revisit without product direction):**
 - **No provider picker in the Add Server flow.** The Add flow keeps its model-only pick. Provider choice is a Model Settings refinement, not an onboarding concern.
 - **Per-model, not global.** The provider is stored per model (alongside `serverUrl`, `vllmModelId`, headers) and applies only to that model.
-- **"Auto" is the default.** `Auto` = let OpenRouter route (no suffix). A manual choice forces routing to that provider.
+- **"Auto" is the default.** `Auto` = let OpenRouter route. A manual choice forces routing to that provider.
 - **Scope to the selected model's providers.** The dropdown shows only the providers OpenRouter exposes for the currently selected model — never the full provider list.
 
-**Suggested implementation:**
-1. Extend `normalizeOpenRouterModel`/`fetchOpenRouterModel` (`src/openRouter.ts`) to also return the model's provider list from the exact-model API (`data:provider`, plus the `data:provider` routing data if present).
+**Suggested implementation (contract-corrected 2026-08-20):**
+1. Source the per-model provider list from the model-endpoints API (`GET /api/v1/models/{author}/{slug}/endpoints`), NOT from a model-id suffix. The catalog entry does not carry the provider list.
 2. Add a `provider?: string` field to the OpenRouter model config (default `undefined` = Auto).
 3. Model Settings webview: when `serverType === 'openrouter'`, render the provider dropdown from the fetched provider list + Auto.
-4. At request time (`requestBuilder.ts`), when `provider` is set, send the wire id with a `:provider` suffix (e.g. `openai/gpt-5:anthropic`). The base id stays the canonical identity; the suffix only affects routing.
-5. Keep the metadata lookup on the **base** id (strip the provider suffix like the existing `:free` handling).
+4. At request time (`requestBuilder.ts`), when `provider` is set, send `provider: { only: [slug] }` (and `allow_fallbacks: false` when the user wants strict) in the chat body — do NOT append `:provider` to the wire model id. The model id stays the canonical identity, so metadata resolution and context windows are unaffected.
 
 **Open questions:**
-- Which OpenRouter API field is authoritative for a model's available providers, and does it require auth?
+- Which OpenRouter API is authoritative for a model's available providers, and does it require auth?
 - Should a manual provider choice be validated against the current provider list on model settings save, or just passed through?
-- Does the provider suffix interact with the existing `:free` routing variant (e.g. `:provider:free` vs `:free:provider` ordering)?
+- Does `provider.only` interact with the `:free` routing variant (e.g. free models must route through the free-tier provider)?
 
-**Effort:** Low-medium. One config field, one dropdown in the existing Model Settings webview, one suffix append in the request builder, and a metadata field return. No new webview or transport.
+**Effort:** Low-medium. One config field, one dropdown in the existing Model Settings webview, one `provider`-object injection in the request builder, and one provider-list endpoint.
 
 ---
 

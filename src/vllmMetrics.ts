@@ -18,7 +18,14 @@ import * as vscode from 'vscode';
 import { buildEndpoint, normalizeServerUrl, type ServerType } from './config.js';
 import { buildRequestHeaders } from './fetchRetry.js';
 import { resolveRuntimeLimits } from './vllmClient.js';
-import { fetchOpenRouterAccount, PermanentContextError, type OpenRouterAccount } from './openRouter.js';
+import {
+  fetchOpenRouterAccount,
+  resolveOpenRouterLimitsFromCatalog,
+  PermanentContextError,
+  OpenRouterModelNotFoundError,
+  type OpenRouterAccount,
+  type OpenRouterModelData,
+} from './openRouter.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -329,9 +336,12 @@ export class ServerMetricsEngine {
   /**
    * Cached per-backend context window, per model (non-vLLM only).
    * modelId → `undefined` = not yet attempted (or transient failure awaiting
-   * retry); `null` = permanently unresolvable (validation failure — never
-   * retry); number = resolved value. OpenRouter is a relay: each configured
-   * model has its OWN context window, so this is a map, not a scalar.
+   * retry); `null` = permanently unresolvable (a catalog entry that reports no
+   * usable window — never retried); number = resolved value. OpenRouter is a
+   * relay: each configured model has its OWN context window, so this is a map,
+   * not a scalar. For OpenRouter, an id ABSENT from the current catalog is not
+   * cached at all (`undefined`) — the catalog is re-fetched every poll, so the
+   * engine rechecks it next tick instead of caching a permanent miss.
    */
   private resolvedContextByModel = new Map<string, number | null | undefined>();
   /** Earliest ms timestamp at which a transient context-resolve failure may retry, per model. */
@@ -445,8 +455,8 @@ export class ServerMetricsEngine {
       // Resolve the per-backend context window(s), only for non-vLLM backends
       // and only while the server is online. A loaded model's context window is
       // static, so a SUCCESSFUL resolve is cached for the engine's lifetime —
-      // never re-resolve it every poll (that would hammer OpenRouter's exact-model
-      // API or llama.cpp /props / Ollama /api/ps forever). Failures are classified:
+      // never re-resolve it every poll (that would hammer llama.cpp /props or
+      // Ollama /api/ps forever). Failures are classified:
       //   - validation failure (model reports no window) → permanent, never retry;
       //   - transient failure (network, 429/5xx, timeout) → retry after a bounded
       //     backoff so a one-off blip doesn't disable context for the session.
@@ -456,6 +466,13 @@ export class ServerMetricsEngine {
       // row/tooltip; per-model windows ride in `contextByModel`.
       if (this.serverType !== 'vllm') {
         const contextByModel: Record<string, number> = {};
+        // OpenRouter optimization: the relay's `/v1/models` probe IS the model
+        // catalog (every variant is its own full entry). Reuse that SAME
+        // response to resolve all models' windows in one pass — no per-model
+        // catalog re-download (the catalog is ~500KB for ~415 models).
+        const openRouterCatalog = this.serverType === 'openrouter'
+          ? raw.models as OpenRouterModelData[]
+          : undefined;
         for (const modelId of this.modelIds) {
           const cached = this.resolvedContextByModel.get(modelId);
           let resolved = cached;
@@ -463,7 +480,9 @@ export class ServerMetricsEngine {
             const retryAt = this.contextRetryAtByModel.get(modelId) ?? 0;
             if (!aggregated.online || Date.now() < retryAt) continue;
             try {
-              resolved = (await resolveRuntimeLimits(this.serverType, this.serverUrl, this.requestHeaders, modelId)).contextWindow;
+              resolved = openRouterCatalog
+                ? resolveOpenRouterLimitsFromCatalog(openRouterCatalog, modelId).contextWindow
+                : (await resolveRuntimeLimits(this.serverType, this.serverUrl, this.requestHeaders, modelId)).contextWindow;
               // Defend the cache against a resolver that returns a non-number
               // without throwing: storing `undefined` would look like "not
               // attempted" and re-fire every tick, skipping the backoff.
@@ -473,8 +492,15 @@ export class ServerMetricsEngine {
                 this.resolvedContextByModel.set(modelId, null);
               }
             } catch (err) {
+              if (err instanceof OpenRouterModelNotFoundError) {
+                // Absent from THIS catalog snapshot. The catalog is already
+                // re-fetched every poll, so recheck next tick rather than
+                // caching a permanent miss — a transiently incomplete catalog
+                // or propagation delay must not disable context. No extra HTTP.
+                continue;
+              }
               if (isPermanentContextError(err)) {
-                this.resolvedContextByModel.set(modelId, null); // unresolvable — stop retrying
+                this.resolvedContextByModel.set(modelId, null); // entry reports no window — unresolvable, stop retrying
               } else {
                 this.contextRetryAtByModel.set(modelId, Date.now() + CONTEXT_RESOLVE_RETRY_MS); // transient — retry later
               }
@@ -681,15 +707,34 @@ async function fetchAllEndpoints(
   const modelNames: string[] = [];
   let maxModelLen: number | null = null;
   let parsedModels: Array<Record<string, unknown>> = [];
-  if (modelsText) {
-    const modelsData = parseJsonSafe<{ data?: Array<Record<string, unknown>> }>(modelsText);
-    if (modelsData?.data) {
-      parsedModels = modelsData.data;
-      for (const m of parsedModels) {
-        if (typeof m.id === 'string') modelNames.push(m.id);
-        if (typeof m.max_model_len === 'number' && m.max_model_len > 0) maxModelLen = m.max_model_len;
-      }
+  let malformedOpenRouterCatalog = false;
+  if (serverType === 'openrouter' && v1ModelsRes.ok) {
+    // OpenRouter's /v1/models IS the authoritative catalog. Apply the same
+    // boundary as fetchOpenRouterCatalog() to EVERY successful response,
+    // including an empty body: a 200/204 that is not `{ data: [...] }` is a
+    // malformed protocol response, never a healthy empty catalog — otherwise a
+    // broken relay body would read as an online server with no models. Entries
+    // without a string id are dropped (they can never match an exact id).
+    let data: unknown;
+    if (modelsText) {
+      data = parseJsonSafe<{ data?: unknown }>(modelsText)?.data;
     }
+    if (!Array.isArray(data)) {
+      malformedOpenRouterCatalog = true;
+    } else {
+      parsedModels = (data as Array<Record<string, unknown>>).filter(
+        (m) => !!m && typeof m === 'object' && typeof (m as { id?: unknown }).id === 'string',
+      );
+    }
+  } else if (modelsText) {
+    const modelsData = parseJsonSafe<{ data?: Array<Record<string, unknown>> }>(modelsText);
+    if (Array.isArray(modelsData?.data)) {
+      parsedModels = modelsData.data;
+    }
+  }
+  for (const m of parsedModels) {
+    if (typeof m.id === 'string') modelNames.push(m.id);
+    if (typeof m.max_model_len === 'number' && m.max_model_len > 0) maxModelLen = m.max_model_len;
   }
 
   // ── Parse Version (used by both aggregated and raw) ──
@@ -714,14 +759,18 @@ async function fetchAllEndpoints(
   // every non-vLLM server appear offline — hiding the degraded notice, measured
   // throughput, Last Request, and Token Usage nodes even though chat works.
   const probeRes = isVllm ? healthRes : v1ModelsRes;
-  const online = probeRes.ok;
+  // A reachable OpenRouter relay that returns a malformed catalog is NOT a
+  // healthy server — report it as an error instead of an online empty catalog.
+  const online = isVllm ? probeRes.ok : (probeRes.ok && !malformedOpenRouterCatalog);
   const errorStr = online
     ? undefined
-    : probeRes.status === 0
-      ? 'Cannot connect'
-      : isVllm
-        ? `Health check failed: ${probeRes.status}`
-        : `${serverType} /v1/models failed: ${probeRes.status}`;
+    : malformedOpenRouterCatalog
+      ? `OpenRouter /v1/models returned a malformed catalog (expected { data: [...] })`
+      : probeRes.status === 0
+        ? 'Cannot connect'
+        : isVllm
+          ? `Health check failed: ${probeRes.status}`
+          : `${serverType} /v1/models failed: ${probeRes.status}`;
 
   // ── Health body (for deep-dive) ──
   const healthBody = online && healthRes.ok ? await healthRes.text() : undefined;

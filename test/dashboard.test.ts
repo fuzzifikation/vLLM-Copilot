@@ -46,15 +46,21 @@ const nonVllmOnlineFetch = vi.fn(async (url: unknown) => {
 });
 
 /**
- * Fetch stub for an OpenRouter relay: /v1/models serves the catalog, /v1/key
- * serves account health, and the exact-model endpoint serves per-model context.
+ * Fetch stub for an OpenRouter relay: /v1/models serves the whole catalog
+ * (each configured model is its own entry with a context window — this is the
+ * shared catalog the dashboard resolves windows from), /v1/key serves account
+ * health.
  */
 const openRouterFetch = vi.fn(async (url: unknown) => {
   const u = String(url);
-  if (u.endsWith('/v1/models')) return jsonResponse({ data: [{ id: 'catalog-model-a' }] });
+  if (u.endsWith('/v1/models')) {
+    return jsonResponse({ data: [
+      { id: 'nvidia/nemotron-3.5-lightning:free', context_length: 1000000 },
+      { id: 'deepseek/deepseek-chat', context_length: 163840 },
+      { id: 'catalog-model-a' },
+    ] });
+  }
   if (u.endsWith('/v1/key')) return jsonResponse({ data: { label: 'my-key', limit: 10, limit_remaining: 3.5, usage: 100, is_free_tier: false } });
-  if (u.includes('/v1/model/nvidia/nemotron-3.5-lightning')) return jsonResponse({ data: { context_length: 1000000 } });
-  if (u.includes('/v1/model/deepseek/deepseek-chat')) return jsonResponse({ data: { context_length: 163840 } });
   return new Response(null, { status: 404 });
 });
 

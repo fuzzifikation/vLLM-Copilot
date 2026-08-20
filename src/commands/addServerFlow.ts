@@ -11,8 +11,10 @@ import { fetchWithTimeout, resolveModelConfigForAddSafely } from './hfDiscovery.
 import {
   OPENROUTER_API_BASE,
   parseOpenRouterBranchInput,
-  fetchOpenRouterModel,
+  normalizeOpenRouterFromCatalog,
+  fetchOpenRouterCatalog as fetchOpenRouterCatalogFull,
   isOpenRouterUrl,
+  type OpenRouterModelData,
   type OpenRouterModelInfo,
 } from '../openRouter.js';
 
@@ -140,18 +142,19 @@ export interface OpenRouterCatalogEntry {
 }
 
 /**
- * Fetch OpenRouter's model catalog — public, no auth needed. Backs the
- * typeahead picker. Throws on HTTP/network failure; the caller degrades to
- * free-text input rather than blocking onboarding on the catalog.
+ * Project a full catalog entry down to the subset the typeahead picker renders.
+ * The full snapshot is kept by the flow for exact-id metadata resolution, so the
+ * catalog is fetched exactly once per onboarding.
  */
-export async function fetchOpenRouterCatalog(): Promise<OpenRouterCatalogEntry[]> {
-  const url = buildEndpoint(OPENROUTER_API_BASE, 'v1/models');
-  const resp = await fetchWithTimeout(url, { timeoutMs: 10000 });
-  if (!resp.ok) {
-    throw new Error(`HTTP ${resp.status} ${resp.statusText} from ${url}`);
-  }
-  const data = await resp.json() as { data?: OpenRouterCatalogEntry[] };
-  return data.data ?? [];
+export function projectCatalog(full: OpenRouterModelData[]): OpenRouterCatalogEntry[] {
+  return full.map((entry) => ({
+    id: entry.id ?? '',
+    name: entry.name,
+    context_length: entry.context_length ?? undefined,
+    pricing: entry.pricing
+      ? { prompt: entry.pricing.prompt ?? undefined, completion: entry.pricing.completion ?? undefined }
+      : undefined,
+  }));
 }
 
 /** Render a catalog entry's per-token pricing as compact per-1M "in · out", or ''. */
@@ -170,56 +173,28 @@ function catalogPricing(entry: OpenRouterCatalogEntry): string {
 }
 
 /**
- * Model picker for the OpenRouter branch: filter-as-you-type over the live catalog.
- * VS Code's quick pick matches the model id (label) and, via `matchOnDescription` /
- * `matchOnDetail`, the model name and ctx/price detail. Returns the chosen model id,
- * or `undefined` on cancel. When the catalog is unreachable/empty the picker degrades
- * to a plain input box — the catalog is a convenience, never a gate.
+ * Model picker for the OpenRouter branch: filter-as-you-type over a catalog
+ * snapshot. VS Code's quick pick matches the model id (label) and, via
+ * `matchOnDescription` / `matchOnDetail`, the model name and ctx/price detail.
+ * Returns the chosen model id, or `undefined` on cancel.
+ *
+ * The catalog is REQUIRED and authoritative — metadata resolution reuses the
+ * SAME snapshot. There is deliberately NO free-text fallback: a model that isn't
+ * in the catalog cannot be sized or saved, so the flow fetches the catalog
+ * before showing the picker rather than collecting an id it can't confirm.
  * @internal Exported for testing.
  */
-export async function pickOpenRouterModel(output: vscode.OutputChannel, prefill?: string): Promise<string | undefined> {
-  let catalog: OpenRouterCatalogEntry[] = [];
-  try {
-    catalog = await fetchOpenRouterCatalog();
-  } catch (err) {
-    output.appendLine(`[WARN] OpenRouter catalog fetch failed, using free-text input: ${describeError(err)}`);
-  }
-
-  // No catalog → a plain input box, still pre-filled with the derived model ref
-  // (the pasted URL must work even when the catalog is unreachable).
-  if (catalog.length === 0) {
-    const typed = await vscode.window.showInputBox({
-      title: 'Add OpenRouter Model',
-      prompt: 'Enter a model id or model-page URL (e.g. nvidia/nemotron-3.5-lightning:free or https://openrouter.ai/nvidia/nemotron-3.5-lightning:free)',
-      placeHolder: 'author/model[:variant]',
-      value: prefill ?? '',
-      ignoreFocusOut: true,
-      validateInput: (v) => {
-        if (!v.trim()) return 'Model reference is required';
-        const r = parseOpenRouterBranchInput(v);
-        return 'error' in r ? r.error : undefined;
-      },
-    });
-    if (typed === undefined) {
-      output.appendLine('[INFO] Add OpenRouter model cancelled — no model reference entered.');
-      return undefined; // cancelled
-    }
-    const parsed = parseOpenRouterBranchInput(typed);
-    if ('error' in parsed) {
-      output.appendLine(`[ERROR] Invalid OpenRouter model reference: ${parsed.error}`);
-      output.show(true);
-      vscode.window.showErrorMessage(`Invalid OpenRouter model reference: ${parsed.error}`);
-      return undefined;
-    }
-    return parsed.requestedId;
-  }
-
+export async function pickOpenRouterModel(
+  catalog: OpenRouterCatalogEntry[],
+  prefill?: string,
+): Promise<string | undefined> {
   // Catalog present → filter-as-you-type. A pasted model-page URL pre-fills and
   // PRE-SELECTS the matching item so Enter confirms it directly — VS Code does
   // NOT populate `selectedItems` from a programmatic `.value` (it fills
   // `activeItems`), so relying on selectedItems alone silently cancelled the flow
-  // when the user pressed Enter on a prefill. The accept handler also falls back
-  // to the active item and to parsing the typed filter value.
+  // when the user pressed Enter on a prefill. The accept handler falls back to
+  // the active item — but NEVER to parsing the typed filter value (no free-text
+  // fallback: the catalog stays the authoritative source).
   const items: vscode.QuickPickItem[] = catalog.map((entry) => ({
     label: entry.id,
     description: entry.name ?? '',
@@ -258,15 +233,13 @@ export async function pickOpenRouterModel(output: vscode.OutputChannel, prefill?
       qp.dispose();
     };
     qp.onDidAccept(() => {
+      // Only a real catalog item can be accepted. Every pickable label is a
+      // projected catalog entry id, so this is inherently catalog-scoped — there
+      // is deliberately NO free-text fallback. A typed id that isn't in the
+      // snapshot has no active item, so finish(undefined) and the flow exits as
+      // "no model selected" (a model outside the catalog cannot be sized/saved).
       const picked = qp.selectedItems[0] ?? qp.activeItems[0];
-      let label: string | undefined = picked?.label;
-      if (!label && qp.value.trim()) {
-        // Free-typed id or a prefill absent from the catalog — accept it if it
-        // parses (the exact-model metadata lookup validates it afterwards).
-        const parsed = parseOpenRouterBranchInput(qp.value);
-        label = 'error' in parsed ? undefined : parsed.requestedId;
-      }
-      finish(label);
+      finish(picked?.label);
     });
     qp.onDidHide(() => finish(undefined));
     qp.show();
@@ -338,13 +311,25 @@ export async function runOpenRouterAddFlow(
     return;
   }
 
-  // 2. Pick the model from the catalog. The URL input is a SERVER; if it was a
-  //    full openrouter.ai model-page URL, extract the model and pre-fill the
-  //    picker — the user still confirms the pick (typing narrows the ~415-model
-  //    list). The model is never taken from the URL directly.
+  // 2. Fetch the catalog ONCE and keep the full snapshot. The picker projects it
+  //    for typeahead and metadata normalization matches the picked id against the
+  //    SAME snapshot — so the ~500KB catalog is downloaded a single time and there
+  //    is no selection→confirmation race. The catalog is REQUIRED (metadata is
+  //    authoritative): if it can't be loaded, fail here rather than collect an id
+  //    that cannot be sized/saved.
   const parsed = parseOpenRouterBranchInput(urlInput);
   const prefill = 'error' in parsed ? undefined : parsed.requestedId;
-  const requestedId = await pickOpenRouterModel(output, prefill);
+  let fullCatalog: OpenRouterModelData[];
+  try {
+    fullCatalog = await fetchOpenRouterCatalogFull();
+  } catch (err) {
+    const detail = describeError(err);
+    output.appendLine(`[ERROR] OpenRouter model catalog unavailable: ${detail}`);
+    output.show(true);
+    vscode.window.showErrorMessage(`Couldn't load the OpenRouter model catalog. ${detail}`);
+    return;
+  }
+  const requestedId = await pickOpenRouterModel(projectCatalog(fullCatalog), prefill);
   if (!requestedId) {
     output.appendLine('[WARN] OpenRouter add cancelled — no model selected.');
     output.show(true);
@@ -352,10 +337,10 @@ export async function runOpenRouterAddFlow(
   }
   output.appendLine(`[INFO] OpenRouter model: ${requestedId}`);
 
-  // 3. Resolve exact metadata (unauthenticated — the endpoint is public).
+  // 3. Resolve exact metadata from the SAME catalog snapshot (no re-download).
   let info: OpenRouterModelInfo;
   try {
-    info = await fetchOpenRouterModel(requestedId);
+    info = normalizeOpenRouterFromCatalog(fullCatalog, requestedId);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     output.appendLine(`[ERROR] OpenRouter metadata lookup failed: ${detail}`);

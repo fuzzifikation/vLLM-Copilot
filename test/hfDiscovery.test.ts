@@ -250,9 +250,10 @@ describe('resolveModelConfigForAdd', () => {
   it('routes OpenRouter models to exact-model discovery — no HF, no presets, no fabricated cap', async () => {
     seedNoPresets();
     const fetchFn = vi.fn(async (url: string) => {
-      if (String(url).includes('/v1/model/x-ai/grok-4.6')) {
+      if (String(url).endsWith('/v1/models')) {
+        // The catalog is the deterministic metadata source (exact-id match).
         return jsonResponse({
-          data: {
+          data: [{
             id: 'x-ai/grok-4.6',
             name: 'Grok 4.6',
             context_length: 500000,
@@ -263,7 +264,7 @@ describe('resolveModelConfigForAdd', () => {
               supported_efforts: ['xhigh', 'high', 'medium', 'low'],
               default_effort: 'high',
             },
-          },
+          }],
         });
       }
       return jsonResponse({}, 404);
@@ -277,11 +278,11 @@ describe('resolveModelConfigForAdd', () => {
     );
 
     expect(result).not.toBeNull();
-    // The exact-model endpoint is the ONLY call — HF and the local-server
-    // /v1/models catalog are never touched, and no preset dialog is shown.
-    expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/v1/model/x-ai/grok-4.6'))).toBe(true);
+    // The OpenRouter catalog (/v1/models) is the ONLY call — HF and the
+    // local-server probe are never touched, and no preset dialog is shown.
+    expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/v1/models'))).toBe(true);
+    expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/v1/model/'))).toBe(false);
     expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/api/models/'))).toBe(false);
-    expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/v1/models'))).toBe(false);
     expect(infoSpy).not.toHaveBeenCalled();
     // Thinking modes came from the reasoning object, not fabricated.
     expect(result!.modelConfig.modelModes?.['Think (High)']).toEqual({ reasoning: { enabled: true, effort: 'high' } });

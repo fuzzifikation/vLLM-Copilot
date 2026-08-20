@@ -371,12 +371,12 @@ The current dashboard is **server-centric** (one engine per server, one set of m
 
 | Endpoint | Auth | Data | Dashboard use |
 |---|---|---|---|
-| `GET /api/v1/models` | none | catalog (full schema §1) | picker + model rows |
-| `GET /api/v1/model/{a}/{s}` | none | single model (same schema) | context, pricing, caps, benchmarks |
+| `GET /api/v1/models` | none | catalog (full schema §1) | picker + model rows; **also the sole metadata-resolution source** (exact-id match) |
+| `GET /api/v1/model/{a}/{s}` | none | single model (same schema) | context, pricing, caps, benchmarks — **NOT used for resolution** (resolves variants inconsistently; a derived slug could resolve a different model) |
 | `POST /api/v1/chat/completions` | key | response + final `usage` | **actual cost/tokens per request** |
 | `GET /api/v1/key` | key | credits, usage, free-tier | account health row |
 | `GET /api/v1/activity` | key (mgmt?) | per-model daily aggregates | cost tracker |
 | `GET /api/v1/generation?id=` | key | full per-request diagnostics | follow-up diagnostics |
-| `GET /api/v1/endpoints` | ? | available endpoints per request | routing insight |
+| `GET /api/v1/models/{a}/{s}/endpoints` | ? | endpoints (providers) available for one model | provider picker |
 
 **OpenAPI spec:** `https://openrouter.ai/docs/openapi/openapi.yaml` (fetched 2026-08-19, ~1.3MB). Docs index: `https://openrouter.ai/docs/llms.txt`.
