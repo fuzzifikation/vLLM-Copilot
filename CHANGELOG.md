@@ -9,6 +9,7 @@
 ### Fixed
 
 - **OpenRouter provider list loads in Model Settings** — the `/api/v1/models/{id}/endpoints` lookup kept the model id's `/` as an encoded `%2F`, which OpenRouter's gateway rejects with 404, so the Provider dropdown fell back to "only Auto". The id is now split on `/` and each segment encoded, keeping the route structure intact (variants like `:free` still pass through).
+- **OpenRouter models with no reported output cap no longer break every request** — the output ceiling now falls back to 10% of the context window (hard-capped at 81920) instead of the full window, which made output + input exceed the context limit (OpenRouter 400 "…1048575 in the output") and return nothing. Mirrors the HF auto-configure factor.
 
 ### Changed
 

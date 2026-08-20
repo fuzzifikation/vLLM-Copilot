@@ -249,17 +249,17 @@ Do not rename `VllmClient`, add a backend registry, or reorganize existing backe
 - Leave `X-OpenRouter-Metadata` disabled by default. Users may opt in through per-model headers.
 - Do not send `session_id` until VS Code exposes a stable, appropriate conversation identifier.
 
-## Provider Routing — Decision Record (2026-08-20, REVISED)
+## Provider Routing — Decision Record (2026-08-20, REVISED; IMPLEMENTED 2026-08-20)
 
-OpenRouter routes each request to a provider (Anthropic, OpenAI, a host, etc.). Today the extension treats the provider as invisible passthrough — the wire id is sent verbatim, and there is no way to choose a provider in the UI.
+OpenRouter routes each request to a provider (Anthropic, OpenAI, a host, etc.). Before this feature the extension treated the provider as invisible passthrough — the wire id was sent verbatim with no way to choose a provider in the UI. Now Model Settings exposes a per-model Provider dropdown.
 
-**Contract (corrected 2026-08-20):** OpenRouter selects providers via the request body's `provider` object — force one provider with `provider.only: [slug]` (plus `allow_fallbacks: false` when strict), or prefer several with `provider.order: [slug, ...]`. Only documented shortcuts such as `:nitro` and `:floor` are model-id suffixes; provider names are **not** model suffixes. The model catalog entry does not expose the per-model provider list.
+**Contract (corrected 2026-08-20):** OpenRouter selects providers via the request body's `provider` object — force one provider with `provider.only: [slug]` (plus `allow_fallbacks: false` when strict), or prefer several with `provider.order: [slug, ...]`. Only documented shortcuts such as `:nitro` and `:floor` are model-id suffixes; provider names are **not** model suffixes. The model catalog entry does not expose the per-model provider list — the model-endpoints API (`GET /api/v1/models/{id}/endpoints`) does.
 
 **Decision (fixed — do not revisit without product direction):**
 - **No provider picker in the Add Server flow.** Onboarding stays model-only.
 - **Provider choice lives in Model Settings only**, as a dropdown shown **when an OpenRouter model is selected**.
 - The dropdown lists **only the providers available for that specific model** (never the whole catalog), sourced from the model-endpoints API — not a model-id suffix.
 - **`Auto` (default)** = let OpenRouter route; a manual choice forces routing to that provider.
-- The provider is stored **per model** (a new optional `provider` field) and applied at request time as `provider.only: [slug]` (+ `allow_fallbacks: false` when strict) on the chat body — NOT as a model-id suffix. The wire model id stays the canonical identity, so metadata resolution is unaffected.
+- The provider is stored **per model** (a new optional `provider` field) and applied at request time as `provider.only: [slug]` on the chat body — NOT as a model-id suffix. The wire model id stays the canonical identity, so metadata resolution is unaffected.
 
-This is a future feature, not yet implemented. Full spec (API field, config, UI, request-body `provider` object, open questions): [docs/feature-ideas.md → OpenRouter Provider Selection](./docs/feature-ideas.md).
+**Shipped scope (2026-08-20, commits a3e2269 + 26d5b03):** `provider.only` only — `allow_fallbacks: false` (strict mode) and `provider.order` (preference lists) are NOT implemented. Do not add them without product direction. Full spec, implementation notes, and the pricing follow-up: [docs/feature-ideas.md → OpenRouter Provider Selection](./docs/feature-ideas.md).
