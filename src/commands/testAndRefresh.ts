@@ -307,7 +307,7 @@ export function registerTestAndRefreshModelsCommand(
       const lines = okResults.map(r => {
         const names = r.matched.map(m => m.vllmModelId).join(', ');
         const ctx = r.matched[0]?.maxModelLen
-          ? ` (${r.matched[0].maxModelLen.toLocaleString()} ctx)`
+          ? ` (${r.matched[0].maxModelLen.toLocaleString('en-US')} ctx)`
           : r.matched[0]?.ctxError
             ? ' (⚠ no context — not served)'
             : '';

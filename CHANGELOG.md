@@ -14,6 +14,7 @@
 
 ### Changed
 
+- **Token counts render with a fixed US grouping (`1,000,000`)** — every `toLocaleString()` in onboarding, auto-config summaries, and logs now forces `en-US`, so counts never render `1.000.000` (German-style) on non-US locales. Deterministic output, greppable/diffable logs, one convention everywhere.
 - **Per-1M rates render with a fixed US decimal (`$0.66/1M`)** — prices now force `en-US` formatting so a `$` amount never shows a comma decimal (`$0,66`) on non-US locales. Shared formatters (`formatUsdRate`/`formatPerMillionUsd`) feed the onboarding picker, the confirm dialog, and the dashboard pricing rows from one authority.
 - **OpenRouter Add flow asks only for the API key** — the custom-headers prompt is gone (expert headers are set via the model config in settings).
 - **Pasting a full OpenRouter model-page URL skips the catalog picker** — the model resolves straight to the confirm/save dialog instead of pre-selecting and auto-accepting on Enter. A bare `/api` base or slug still shows the typeahead.
