@@ -126,7 +126,6 @@ export function buildRequest(
     mergedOptions.provider = { only: [providerTag] };
     output.appendLine(`[INFO] Model "${model.id}" → OpenRouter provider pinned: "${providerTag}" (provider.only)`);
   }
-
   // Log model mode diagnostic info to output channel for debugging
   output.appendLine(`[DEBUG] Model ${model.id}: modelConfiguration=${JSON.stringify(modelConfiguration)}, override.modelModes=${override?.modelModes ? Object.keys(override.modelModes).join(', ') : 'none'}, selectedMode=${selectedMode ?? 'none'}`);
 
@@ -138,8 +137,21 @@ export function buildRequest(
     output.appendLine(`[WARN] Model has modelModes configured but none was selected for ${model.id}`);
   }
 
-  // Resolve the vLLM server model ID: use vllmModelId from override if set, otherwise fall back to preset id
-  const vllmModelId = resolveVllmModelId(override) || model.id;
+  // Resolve the vLLM server model ID: use vllmModelId from override if set, otherwise fall back to preset id.
+  // OpenRouter routing mode: when the model is OpenRouter, routing is Auto (no
+  // pinned provider), and a non-standard routing mode is set, append the mode's
+  // variant suffix (`:nitro` / `:exacto`) to the WIRE id. This is how OpenRouter
+  // requests the routing-mode sort. The base id stays canonical — `vllmModelId`
+  // is never mutated, so catalog/metadata resolution is unaffected; only the
+  // id sent in the chat request carries the suffix. A pinned provider disables
+  // the mode (sorting a single provider is meaningless), so no suffix.
+  let vllmModelId = resolveVllmModelId(override) || model.id;
+  const isOpenRouter = resolveServerType(override) === 'openrouter';
+  const routingMode = override?.routingMode;
+  if (isOpenRouter && !providerTag && routingMode && routingMode !== 'standard') {
+    vllmModelId = `${vllmModelId}:${routingMode}`;
+    output.appendLine(`[INFO] Model "${model.id}" → OpenRouter routing mode "${routingMode}" (wire id ${vllmModelId})`);
+  }
 
   // Resolve per-model server config (serverUrl + isolated request headers + transport
   // + backend type). Missing serverType resolves to 'vllm' — zero behavior change

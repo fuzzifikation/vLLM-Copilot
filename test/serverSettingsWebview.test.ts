@@ -15,6 +15,7 @@ function loadWebview(
   providersByModel: Record<string, any[]> = {},
   serverType?: string,
   initialProvider?: string,
+  initialRoutingMode?: string,
 ) {
   const dom = new JSDOM(
     '<!doctype html><body>' +
@@ -38,6 +39,7 @@ function loadWebview(
       serverUrl: 'http://server:8000',
       ...(serverType ? { serverType } : {}),
       ...(initialProvider !== undefined ? { provider: initialProvider } : {}),
+      ...(initialRoutingMode !== undefined ? { routingMode: initialRoutingMode } : {}),
       defaultParams: { parallel_tool_calls: true },
       modelModes,
     }],
@@ -240,5 +242,67 @@ describe('Model Settings webview', () => {
     expect(provider).not.toBeNull();
     expect([...provider.options].map(o => o.value)).toEqual(['']);
     expect([...provider.options].map(o => o.textContent)).toEqual(['Auto']);
+  });
+
+  it('renders the routing-mode dropdown for OpenRouter models with Standard/Nitro/Exacto', () => {
+    const { dom } = loadWebview({}, ['wire-model'], [], {}, 'openrouter');
+    const document = dom.window.document;
+    const routing = document.querySelector<HTMLSelectElement>('select[data-f="routingMode"]')!;
+    expect(routing).not.toBeNull();
+    expect([...routing.options].map(o => o.value)).toEqual(['standard', 'nitro', 'exacto']);
+    expect([...routing.options].map(o => o.textContent)).toEqual(['Standard', 'Nitro', 'Exacto']);
+    // Enabled (not disabled) when routing is Auto — no provider pinned.
+    expect(routing.disabled).toBe(false);
+    // Standard is the default.
+    expect(routing.value).toBe('standard');
+  });
+
+  it('pre-selects the saved routing mode', () => {
+    const { dom } = loadWebview({}, ['wire-model'], [], {}, 'openrouter', undefined, 'nitro');
+    const document = dom.window.document;
+    const routing = document.querySelector<HTMLSelectElement>('select[data-f="routingMode"]')!;
+    expect(routing.value).toBe('nitro');
+  });
+
+  it('disables the routing dropdown when a provider is pinned', () => {
+    const { dom } = loadWebview({}, ['wire-model'], [], { 'wire-model': [{ tag: 'gmicloud/fp8', providerName: 'GMICloud' }] }, 'openrouter', 'gmicloud/fp8');
+    const document = dom.window.document;
+    const routing = document.querySelector<HTMLSelectElement>('select[data-f="routingMode"]')!;
+    expect(routing.disabled).toBe(true);
+  });
+
+  it('persists the routing mode on save', () => {
+    const { dom, posted } = loadWebview({}, ['wire-model'], [], {}, 'openrouter');
+    const document = dom.window.document;
+    const routing = document.querySelector<HTMLSelectElement>('select[data-f="routingMode"]')!;
+    routing.value = 'exacto';
+    routing.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    document.getElementById('saveBtn')!.click();
+
+    const save = [...posted].reverse().find((message: any) => message.type === 'save');
+    expect(save.config.routingMode).toBe('exacto');
+  });
+
+  it('drops the routing mode on save when a provider is pinned (Auto-only setting)', () => {
+    const { dom, posted } = loadWebview(
+      {},
+      ['wire-model'],
+      [],
+      { 'wire-model': [{ tag: 'gmicloud/fp8', providerName: 'GMICloud' }] },
+      'openrouter',
+      'gmicloud/fp8',
+      'nitro',
+    );
+    const document = dom.window.document;
+    const routing = document.querySelector<HTMLSelectElement>('select[data-f="routingMode"]')!;
+    expect(routing.disabled).toBe(true); // pinned provider → disabled
+    // Make the form dirty so Save All Changes is enabled (it's disabled until an edit).
+    const displayName = document.querySelector<HTMLInputElement>('input[data-f="displayName"]')!;
+    displayName.value = 'edited';
+    displayName.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    document.getElementById('saveBtn')!.click();
+
+    const save = [...posted].reverse().find((message: any) => message.type === 'save');
+    expect(save.config.routingMode).toBe(''); // cleared — '' reaches the store → delete
   });
 });

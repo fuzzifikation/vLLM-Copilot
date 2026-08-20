@@ -242,6 +242,19 @@
       if (endpoints.length === 0) {
         h += '<div class="field-hint">Provider list unavailable — only Auto. Check the connection and reopen Model Settings.</div>';
       }
+      // Routing mode — how OpenRouter sorts among providers when routing is Auto.
+      // Standard (default) = price-weighted load balancing; Nitro = throughput-first;
+      // Exacto = quality/tool-calling-first. Only meaningful when no provider is
+      // pinned (sorting a single provider is meaningless) — disabled then.
+      const routingDisabled = !!mc.provider;
+      h += '<label>Routing</label><select data-f="routingMode"' + (routingDisabled ? ' disabled' : '') + '>';
+      h += '<option value="standard"' + (!mc.routingMode || mc.routingMode === 'standard' ? ' selected' : '') + '>Standard</option>';
+      h += '<option value="nitro"' + (mc.routingMode === 'nitro' ? ' selected' : '') + '>Nitro</option>';
+      h += '<option value="exacto"' + (mc.routingMode === 'exacto' ? ' selected' : '') + '>Exacto</option>';
+      h += '</select>';
+      if (routingDisabled) {
+        h += '<div class="field-hint">Routing is fixed when a provider is pinned — set Provider to Auto to choose a routing mode.</div>';
+      }
     }
     h += '</div>';
 
@@ -495,6 +508,10 @@
       // `0` is a real value and stays (e.g. streamInactivityTimeout 0 = infinite).
       u[k] = el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value;
     });
+    // Routing mode is only meaningful when routing is Auto (no pinned provider).
+    // If a provider is pinned, drop the mode — sorting a single provider is
+    // meaningless, and the request path ignores it anyway; keep the config honest.
+    if (u.provider) u.routingMode = '';
     const caps = {};
     document.querySelectorAll('[data-k]').forEach(el => {
       if (el.dataset.k === 'caps.toolCalling') caps.toolCalling = el.checked;
