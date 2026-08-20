@@ -17,7 +17,7 @@
 import * as vscode from 'vscode';
 import { buildEndpoint, normalizeServerUrl, serverFingerprint, type ServerType } from './config.js';
 import { buildRequestHeaders } from './fetchRetry.js';
-import { resolveRuntimeLimits } from './vllmClient.js';
+import { resolveRuntimeLimits } from './runtimeLimits.js';
 import {
   fetchOpenRouterAccount,
   resolveOpenRouterLimitsFromCatalog,

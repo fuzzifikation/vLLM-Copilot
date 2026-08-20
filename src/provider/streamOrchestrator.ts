@@ -96,7 +96,7 @@ export async function runChatResponse(
       // request-wide `startTime` still drives overall post-stream diagnostics.
       const attemptStartTime = Date.now();
       // Continuation mode (continue_final_message) is a vLLM-only feature. For
-      // secondary backends buildChatBody strips those flags but KEEPS the assistant
+      // secondary backends' chat protocol strips those flags but KEEPS the assistant
       // prefill — so a colon-continuation would send the partial text as a COMPLETE
       // assistant turn and the server would regenerate from scratch, making the user see
       // the partial text twice. Non-vLLM backends always retry in nudge mode.
@@ -151,7 +151,7 @@ export async function runChatResponse(
 
       // Grow the prefill: a colon-truncated reply continues from everything streamed so far.
       // Only for vLLM (true continuation mode). For secondary backends the partial text
-      // must NOT be replayed as a completed assistant turn — buildChatBody strips the
+      // must NOT be replayed as a completed assistant turn — the chat protocol strips the
       // continuation flags there, so the server would regenerate and duplicate output.
       // An empty response contributes nothing, keeping assistantPrefill empty (nudge mode).
       if (outcome.hadContent && serverConfig.serverType === 'vllm') {

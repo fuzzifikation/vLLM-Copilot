@@ -427,6 +427,15 @@ describe('pickOpenRouterModel', () => {
     const nemotron = items.find((i) => i.label === 'nvidia/nemotron-3.5-lightning:free')!;
     expect(nemotron.description).toBe('NVIDIA: Nemotron 3.5 Lightning (free)');
     expect(nemotron.detail).toContain('ctx');
+    // Pricing detail comes from the SHARED per-token → per-1M conversion
+    // (perMillion in openRouter.ts), not a second implementation here. The
+    // :free variant is priced at zero; the paid variant converts nonzero.
+    // toLocaleString is locale-dependent, so format the expectation with the
+    // same options the picker uses (existing pattern in this file).
+    const fmtRate = (n: number) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}/1M`;
+    expect(nemotron.detail).toContain(`in ${fmtRate(0)} · out ${fmtRate(0)}`);
+    const paid = items.find((i) => i.label === 'nvidia/nemotron-3.5-lightning')!;
+    expect(paid.detail).toContain(`in ${fmtRate(0.08)} · out ${fmtRate(0.2)}`);
     expect(qpStub.matchOnDescription).toBe(true);
     expect(qpStub.matchOnDetail).toBe(true);
     expect(qpStub.value).toBe(''); // no prefill

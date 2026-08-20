@@ -1,10 +1,17 @@
 # Changelog
 
-## Unreleased
+## v1.32.2 — Per-model identity & actionable server errors
 
 ### Fixed
 
 - **Server errors state the HTTP code and the server's real message** — e.g. `Server error [402]. This request requires more credits, or fewer max_tokens…` — instead of a generic "vLLM server problem" or raw JSON. No backend-specific wording, and the message is no longer cut off.
+- **Per-model credentials are respected as server identity** — models sharing a URL with different auth are separate logical servers: Model Settings probes each identity with its own headers, the Dashboard shows each as its own node, and Deep-Dive uses the exact tree-item credentials (never the first model's). Auto-Configure keeps the selected identity when adding an unconfigured server model.
+
+### Changed
+
+- **OpenRouter catalog metadata is public** — the `/v1/models` lookup is unauthenticated, so per-model headers are no longer threaded through it.
+- **OpenRouter per-token → per-1M pricing conversion consolidated** — one shared helper (`perMillion`) feeds both the normalized model's `cost` and the onboarding picker display (no behavior change).
+- **`VllmClient` responsibilities split without changing its provider API** — runtime metadata resolution, wire validation/body adaptation, and streaming transport now have focused owners; `VllmClient` remains the configuration-cache façade.
 
 ## v1.32.0 — OpenRouter backend & configurable first-response timeout
 

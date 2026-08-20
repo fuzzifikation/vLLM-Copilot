@@ -274,8 +274,13 @@ export interface OpenRouterModelInfo {
   expirationDate?: string;
 }
 
-/** Convert a per-token USD pricing string to a per-1M rate; `-1`/invalid → undefined. */
-function perMillion(rate?: string | null): number | undefined {
+/**
+ * Single per-token → per-1M USD conversion. `-1` (unknown, dynamic routers) and
+ * malformed values → undefined. Shared authority: the normalized model's
+ * `cost` block and the onboarding picker's `$X/1M` display both convert through
+ * this, so the two surfaces cannot drift on what a price string means.
+ */
+export function perMillion(rate?: string | null): number | undefined {
   if (typeof rate !== 'string') return undefined;
   // Empty string is malformed — `Number('')` is 0, which would read as "free".
   if (rate.trim() === '') return undefined;

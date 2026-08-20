@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { ModelConfig, ServerType } from '../config.js';
 import { buildEndpoint } from '../config.js';
 import { describeError } from '../messageConverter.js';
-import { resolveRuntimeLimits } from '../vllmClient.js';
+import { resolveRuntimeLimits } from '../runtimeLimits.js';
 import { autoConfigureOpenRouterModel } from '../openRouter.js';
 import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig } from './presets.js';
 

@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { getConfig, buildEndpoint, findModelConfigIndex, resolveServerConfig, toPublicModelConfig, serverFingerprint, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
 import { patchModelConfig, type ModelIdentity } from './configStore.js';
-import { detectServerTypeFromV1Models } from './vllmClient.js';
+import { detectServerTypeFromV1Models } from './runtimeLimits.js';
 
 // Re-exported so the existing test import surface (serverSettingsView.test.ts)
 // keeps working after the helper moved to config.ts.
