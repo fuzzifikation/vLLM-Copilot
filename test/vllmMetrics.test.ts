@@ -561,6 +561,42 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     expect(aggregated?.account).toBeUndefined(); // no credits invented
   });
 
+  it('captures per-model provider pricing from /endpoints for an OpenRouter relay', async () => {
+    // Each configured model fetches its provider list (tag/provider_name +
+    // per-1M pricing) from the public /endpoints endpoint, keyed by model id.
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'deepseek/deepseek-chat', context_length: 163840 }] }), { status: 200 });
+      }
+      if (u.includes('/endpoints')) {
+        return new Response(JSON.stringify({
+          data: {
+            id: 'deepseek/deepseek-chat',
+            endpoints: [
+              { tag: 'deepseek', provider_name: 'DeepSeek', quantization: 'unknown', status: 0, pricing: { prompt: '0.00000066', completion: '0.00000198', input_cache_read: '0.000000022' } },
+              { tag: 'alibaba', provider_name: 'Alibaba', quantization: 'unknown', status: 0, pricing: { prompt: '0.000000726', completion: '0.000002178' } },
+            ],
+          },
+        }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const url = 'http://or-pricing:8000';
+    const engine = getMetricsEngine(url, {}, 'openrouter', ['deepseek/deepseek-chat']);
+    const aggregated = await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
+      const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
+      setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
+    });
+
+    expect(aggregated?.online).toBe(true);
+    expect(aggregated?.providersByModel?.['deepseek/deepseek-chat']).toEqual([
+      expect.objectContaining({ tag: 'deepseek', providerName: 'DeepSeek', pricing: { prompt: '0.00000066', completion: '0.00000198', input_cache_read: '0.000000022' } }),
+      expect.objectContaining({ tag: 'alibaba', providerName: 'Alibaba' }),
+    ]);
+  });
+
   it('leaves the context window null when the per-backend resolver fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
       const u = String(url);

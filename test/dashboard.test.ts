@@ -61,6 +61,16 @@ const openRouterFetch = vi.fn(async (url: unknown) => {
     ] });
   }
   if (u.endsWith('/v1/key')) return jsonResponse({ data: { label: 'my-key', limit: 10, limit_remaining: 3.5, usage: 100, is_free_tier: false } });
+  if (u.includes('/endpoints')) {
+    const id = decodeURIComponent(u.split('/v1/models/')[1]?.split('/endpoints')[0] ?? '');
+    if (id === 'deepseek/deepseek-chat') {
+      return jsonResponse({ data: { id, endpoints: [
+        { tag: 'deepseek', provider_name: 'DeepSeek', quantization: 'unknown', status: 0, pricing: { prompt: '0.00000066', completion: '0.00000198', input_cache_read: '0.000000022' } },
+        { tag: 'alibaba', provider_name: 'Alibaba', quantization: 'unknown', status: 0, pricing: { prompt: '0.000000726', completion: '0.000002178' } },
+      ] } });
+    }
+    return jsonResponse({ data: { id, endpoints: [] } });
+  }
   return new Response(null, { status: 404 });
 });
 
@@ -367,6 +377,72 @@ describe('DashboardTreeProvider', () => {
       expect((costRow as any).description).toBe('$0.0012 today');
       // Token rows for the recorded request.
       expect(rowLabels).toContain('Tokens Today');
+    });
+  });
+
+  it('shows the pinned provider and its reported per-1M pricing on an OpenRouter model node', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [
+        {
+          id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-chat', serverType: 'openrouter', displayName: 'DeepSeek',
+          capabilities: { toolCalling: true, imageInput: false }, maxOutputTokens: 16000,
+          provider: 'deepseek', // pinned in Model Settings
+          cost: { input: 9, output: 9, cachedInput: 9, currency: 'USD' }, // must NOT be used — the pinned provider wins
+        },
+      ],
+    };
+    vi.stubGlobal('fetch', openRouterFetch);
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 'openrouter.ai:');
+      const metrics = await provider.getChildren(serverNode as any);
+      const deepseek = metrics.find(m => (m as any).label === 'DeepSeek');
+
+      const rows = await provider.getChildren(deepseek as any);
+      // Provider row: the pinned provider's label from /endpoints (matched by tag).
+      const providerRow = rows.find(r => (r as any).label === 'Provider');
+      expect((providerRow as any).description).toBe('DeepSeek');
+      // Pricing row: the PINNED provider's reported per-1M rates, not the config estimate.
+      // The per-1M formatter is locale-dependent (same as the picker), so format
+      // the expectation with the identical toLocaleString the source uses.
+      const rate = (n: number) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}/1M`;
+      const pricingRow = rows.find(r => (r as any).label === 'Pricing');
+      expect((pricingRow as any).description).toBe(`in ${rate(0.66)}  ·  out ${rate(1.98)}  ·  cached ${rate(0.022)}`);
+      expect(String((pricingRow as any).tooltip)).toContain('reported by the pinned provider "deepseek"');
+    });
+  });
+
+  it('falls back to config-rate estimate pricing when Auto and hides the Provider row', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [
+        {
+          id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-chat', serverType: 'openrouter', displayName: 'DeepSeek',
+          capabilities: { toolCalling: true, imageInput: false }, maxOutputTokens: 16000,
+          // no provider → Auto routing
+          cost: { input: 1, output: 2, currency: 'USD' },
+        },
+      ],
+    };
+    vi.stubGlobal('fetch', openRouterFetch);
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 'openrouter.ai:');
+      const metrics = await provider.getChildren(serverNode as any);
+      const deepseek = metrics.find(m => (m as any).label === 'DeepSeek');
+
+      const rows = await provider.getChildren(deepseek as any);
+      const rowLabels = rows.map(r => (r as any).label as string);
+      expect(rowLabels).not.toContain('Provider'); // Auto = no pinned provider
+      const pricingRow = rows.find(r => (r as any).label === 'Pricing');
+      // Auto estimate comes from the model's configured per-1M rates.
+      expect((pricingRow as any).description).toBe('in $1/1M  ·  out $2/1M');
+      expect(String((pricingRow as any).tooltip)).toContain('Auto routing');
     });
   });
 
