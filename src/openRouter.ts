@@ -362,18 +362,30 @@ export function normalizeOpenRouterModel(
   }
   const contextWindow = Math.min(...contextCandidates);
 
-  // Output ceiling: smallest positive of the reported completion caps, clamped to
-  // the context window so output can never exceed what the model can hold. When
-  // NO cap is reported (the common case — null for essentially every catalog
-  // model), fall back to 10% of the context window (hard-capped) instead of the
-  // FULL window, so output + input never exceeds the window the prompt shares.
+  // Output ceiling: the smallest positive reported completion cap, but ONLY when
+  // it leaves real input headroom. A cap at/near the window degenerates to
+  // "output = whole window", which 400s on the first real request — output is
+  // reserved against the SAME window as the prompt, so any nonzero input pushes
+  // prompt + output over the limit (the exact failure the 10% fallback exists to
+  // prevent; live catalog: ~12% of models report max_completion_tokens >= the
+  // window). Degenerate caps (>= 90% of the window) carry no safety information
+  // → fall back to the same 10%-of-window safe budget as the no-cap case.
+  // Genuine caps that leave >= 10% of the window for input (e.g. 384k on a 1M
+  // window) are preserved verbatim — never over-restricted.
+  const safeOutputBudget = Math.min(
+    Math.floor(contextWindow * OUTPUT_TOKEN_FACTOR),
+    OUTPUT_TOKEN_CAP,
+  );
   const reportedOutputCaps = [
     data.top_provider?.max_completion_tokens,
     data.per_request_limits?.completion_tokens,
   ].filter(isPositive);
-  const maxOutputTokens = reportedOutputCaps.length > 0
-    ? Math.min(...reportedOutputCaps, contextWindow)
-    : Math.min(Math.floor(contextWindow * OUTPUT_TOKEN_FACTOR), OUTPUT_TOKEN_CAP);
+  const trustedOutputCaps = reportedOutputCaps.filter(
+    (cap) => cap < contextWindow * (1 - OUTPUT_TOKEN_FACTOR),
+  );
+  const maxOutputTokens = trustedOutputCaps.length > 0
+    ? Math.min(...trustedOutputCaps)
+    : safeOutputBudget;
 
   // ── Capabilities ──
   const toolCalling = supports(data, 'tools');
