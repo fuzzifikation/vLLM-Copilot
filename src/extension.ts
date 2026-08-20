@@ -187,11 +187,17 @@ export async function activate(context: vscode.ExtensionContext) {
           vscode.window.showErrorMessage('Server URL not provided.');
           return;
         }
-        // Resolve requestHeaders from first model config pointing at this server
+        // When launched from the dashboard tree node, the item carries this
+        // server identity's EXACT credentials (per-model headers — a URL may host
+        // several identities). Fall back to the first model pointing at the URL
+        // for programmatic/string invocations.
+        const fromTreeItem = typeof arg !== 'string' && arg?.requestHeaders;
         const config = vscode.workspace.getConfiguration('vllm-copilot');
         const models = config.get<any[]>('models') || [];
         const firstModel = models.find(m => m.serverUrl === serverUrl);
-        const serverType = resolveServerType(firstModel);
+        const serverType = fromTreeItem
+          ? (arg.serverType ?? 'vllm')
+          : resolveServerType(firstModel);
         // Deep-Dive is a vLLM metrics view — non-vLLM backends don't expose
         // /metrics, so the panel would be all empty rows. Guard even though the
         // context menu already hides it for non-vLLM servers (defense in depth).
@@ -201,7 +207,9 @@ export async function activate(context: vscode.ExtensionContext) {
           );
           return;
         }
-        const headers = firstModel ? (resolveServerConfig(firstModel).requestHeaders ?? {}) : {};
+        const headers = fromTreeItem
+          ? arg.requestHeaders
+          : (firstModel ? (resolveServerConfig(firstModel).requestHeaders ?? {}) : {});
         openDeepDive(serverUrl, headers, serverType, context, outputChannel);
       }),
     );

@@ -15,7 +15,7 @@
  */
 
 import * as vscode from 'vscode';
-import { buildEndpoint, normalizeServerUrl, type ServerType } from './config.js';
+import { buildEndpoint, normalizeServerUrl, serverFingerprint, type ServerType } from './config.js';
 import { buildRequestHeaders } from './fetchRetry.js';
 import { resolveRuntimeLimits } from './vllmClient.js';
 import {
@@ -354,6 +354,9 @@ export class ServerMetricsEngine {
   /** Whether the OpenRouter account probe last succeeded — for transition logging. */
   private accountProbeSucceeded: boolean | undefined;
 
+  /** Registry key this engine is registered under (identity fingerprint). */
+  private registryKey = '';
+
   constructor(
     private serverUrl: string,
     private requestHeaders: Record<string, string>,
@@ -362,6 +365,16 @@ export class ServerMetricsEngine {
     private output?: vscode.OutputChannel,
   ) {
     this.modelIds = [...modelIds];
+  }
+
+  /** Set the registry key (called by getMetricsEngine / updateMetricsEngineHeaders). */
+  setRegistryKey(key: string): void {
+    this.registryKey = key;
+  }
+
+  /** The canonical server URL this engine fetches (used for registry re-keying). */
+  getServerUrl(): string {
+    return this.serverUrl;
   }
 
   /** Latest aggregated metrics (synchronous, may be null before first poll). */
@@ -423,9 +436,10 @@ export class ServerMetricsEngine {
     this.subscriberCount = 0;
     this.callbacks = [];
     this.stopPolling();
-    // Prevent registry from returning this disposed zombie
-    if (engineRegistry.get(this.serverUrl) === this) {
-      engineRegistry.delete(this.serverUrl);
+    // Prevent registry from returning this disposed zombie. The registry is
+    // keyed by identity (URL + headers), so the engine's own key is used.
+    if (this.registryKey && engineRegistry.get(this.registryKey) === this) {
+      engineRegistry.delete(this.registryKey);
     }
   }
 
@@ -573,17 +587,22 @@ function getPollSettingMs(): number {
 
 // ─── Engine Registry ────────────────────────────────────────────────
 
-/** Module-level map of server URL → engine. */
+/** Module-level map of server identity → engine. Keyed by URL + header
+ * fingerprint, NOT URL alone — headers are per-model, so two models sharing a
+ * URL with different credentials/scopes are DIFFERENT logical servers and each
+ * gets its own engine (one model's credentials must never drive a sibling's
+ * metrics). Hand-edited URL spellings of the same server still share one
+ * engine because the fingerprint is computed over the canonical URL. */
 const engineRegistry = new Map<string, ServerMetricsEngine>();
 
 /**
- * Get or create a {@link ServerMetricsEngine} for the given server.
+ * Get or create a {@link ServerMetricsEngine} for the given server identity.
  * Engines are shared across the dashboard and deep-dive views via this registry.
  * The engine is disposed-rece when the last subscriber unsubscribes.
  *
- * When an engine already exists for the given URL, its request headers are
- * updated with the provided values (so auth changes propagate without needing
- * to unsubscribe/resubscribe).
+ * The registry is keyed by URL + header fingerprint, so distinct credentials
+ * on one URL get independent engines. Re-use with the SAME identity updates
+ * backend type/output in place; a different identity is a separate engine.
  *
  * @param serverUrl - The vLLM server URL
  * @param requestHeaders - Auth/routing headers for this server
@@ -598,17 +617,19 @@ export function getMetricsEngine(
   // Key engines by the canonical server URL (scheme added, trailing slash and
   // trailing /v1 stripped) so hand-edited variants of the same server — e.g.
   // `http://host:8000`, `http://host:8000/`, `http://host:8000/v1` — share one
-  // engine instead of spawning duplicate pollers against the same physical
-  // vLLM process. The engine stores the canonical URL too, so endpoint fetch
-  // and the registry removal in dispose() agree on identity.
-  const key = normalizeServerUrl(serverUrl);
+  // engine, plus the header fingerprint so different credential sets on one URL
+  // stay separate. The engine stores the canonical URL for fetching; the key is
+  // its registry identity.
+  const canonical = normalizeServerUrl(serverUrl);
+  const key = serverFingerprint(canonical, requestHeaders ?? {});
   let engine = engineRegistry.get(key);
   if (!engine) {
-    engine = new ServerMetricsEngine(key, requestHeaders ?? {}, serverType, modelIds, output);
+    engine = new ServerMetricsEngine(canonical, requestHeaders ?? {}, serverType, modelIds, output);
+    engine.setRegistryKey(key);
     engineRegistry.set(key, engine);
   } else {
     if (requestHeaders && Object.keys(requestHeaders).length > 0) {
-      // Update headers on re-use so auth changes propagate
+      // Update headers on re-use so auth changes propagate (same identity)
       engine.setHeaders(requestHeaders);
     }
     // Update backend type on re-use so a dashboard/deep-dive opened for a
@@ -626,19 +647,33 @@ export function getMetricsEngine(
 }
 
 /**
- * Update request headers on an existing metrics engine, if one is already
- * registered for this server. Unlike {@link getMetricsEngine}, this never
- * creates an engine — it exists so header-only updates (e.g. Update Auth)
- * don't leak a zero-subscriber registry entry. No-op when no engine exists.
+ * Update request headers on existing metrics engines for this server, if any.
+ * Unlike {@link getMetricsEngine}, this never creates an engine — it exists so
+ * header-only updates (e.g. Update Auth) don't leak a zero-subscriber registry
+ * entry. No-op when no engine exists.
+ *
+ * Update Auth converges ALL models on a URL to the same headers, so every
+ * engine registered for that URL is updated in place and re-keyed to the new
+ * identity. (Two pre-update identities on one URL become one identity.)
  *
  * @param serverUrl - The vLLM server URL (canonicalized internally)
  * @param requestHeaders - New auth/routing headers
  */
 export function updateMetricsEngineHeaders(serverUrl: string, requestHeaders: Record<string, string>): void {
-  const key = normalizeServerUrl(serverUrl);
-  const engine = engineRegistry.get(key);
-  if (engine) {
-    engine.setHeaders(requestHeaders);
+  const canonical = normalizeServerUrl(serverUrl);
+  const newKey = serverFingerprint(canonical, requestHeaders ?? {});
+  // Collect first — we mutate the map while iterating.
+  const targets: Array<[string, ServerMetricsEngine]> = [];
+  for (const [key, engine] of engineRegistry) {
+    if (normalizeServerUrl(engine.getServerUrl()) === canonical) targets.push([key, engine]);
+  }
+  for (const [oldKey, engine] of targets) {
+    engine.setHeaders(requestHeaders ?? {});
+    engine.setRegistryKey(newKey);
+    if (oldKey !== newKey) {
+      engineRegistry.delete(oldKey);
+      engineRegistry.set(newKey, engine);
+    }
   }
 }
 

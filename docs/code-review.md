@@ -1,6 +1,6 @@
 # Known Bugs And Improvements
 
-Only current outstanding work is tracked here. Fixed items → [CHANGELOG.md](./CHANGELOG.md). Feature ideas → [docs/feature-ideas.md](./docs/feature-ideas.md).
+Only current outstanding work is tracked here. Fixed items → [CHANGELOG.md](../CHANGELOG.md). Feature ideas → [feature-ideas.md](./feature-ideas.md).
 Do not bump version without asking.
 
 ---
@@ -9,11 +9,9 @@ Do not bump version without asking.
 
 ### Fix soon — after 1.32.1
 
-1. **Respect per-model header identity in Model Settings.** Do not let the first configured model's credentials define probing and inactive status for every model sharing a URL. Group by URL + relevant header identity or report probe status per model.
-2. **Remove obsolete OpenRouter plumbing.** Reduce parsed references to the fields production uses; remove unused `author`/stripped `slug` results and either remove ignored header parameters or deliberately support and test them. Rename tests so their claims match their assertions.
-3. **Finish the request-construction extraction, then split `VllmClient`.** First establish the request builder as the single body-construction owner. Then separate runtime-limit resolution, server validation, and streaming. Splitting earlier would spread the current mixed responsibilities across more files without improving ownership.
-4. **Consolidate OpenRouter normalization helpers.** Keep one per-token → per-1M conversion and one catalog-entry validator. Avoid adding a generic provider framework while only one backend needs these rules.
-5. **Add behavioral coverage where TypeScript cannot help.** Add the Deep-Dive DOM harness and targeted tests for multiple header identities on one canonical URL.
+1. **Finish the request-construction extraction, then split `VllmClient`.** First establish the request builder as the single body-construction owner. Then separate runtime-limit resolution, server validation, and streaming. Splitting earlier would spread the current mixed responsibilities across more files without improving ownership.
+2. **Consolidate OpenRouter normalization helpers.** Keep one per-token → per-1M conversion and one catalog-entry validator. Avoid adding a generic provider framework while only one backend needs these rules.
+3. **Add behavioral coverage where TypeScript cannot help.** Add the Deep-Dive DOM harness.
 
 ### Ignore for now
 
@@ -33,12 +31,6 @@ Prioritize in this order: **wrong behavior → dishonest failure classification 
 
 ### P3 - optional persistence failures are Output-only
 Usage and system-message capture continue after a failed write, with no one-time visible warning that the data won't survive restart. Keep chat non-failing; add a restrained failure state only if it has operational value.
-
-### P3 - Model Settings server probes are first-model-header dependent
-`ServerSettingsViewProvider.refreshWebview()` correctly groups equivalent URL spellings under one canonical server, but stores only the first model's `requestHeaders` for the shared `/v1/models` probe. Headers are per-model in this project. If two models share a URL but use different credentials/scopes, probe results, backend detection, and `(inactive)` labels depend on configuration order. Either probe per distinct header identity or represent probe status per model; do not imply one model's credentials describe every sibling.
-
-### Non-blocking - old exact-endpoint plumbing remains
-`parseOpenRouterModelRef()` still returns unused `author` and variant-stripped `slug` fields; `requestHeaders` are threaded through `fetchOpenRouterModel()`, `resolveOpenRouterRuntimeLimits()`, and `autoConfigureOpenRouterModel()` but are dropped by `fetchOpenRouterCatalog()`. A test named "passes per-model headers" only checks the URL and therefore passes while no headers are sent. Remove the dead fields/parameters or make the header behavior real and assert it. → see Fix soon #2.
 
 ## Deferred architecture
 

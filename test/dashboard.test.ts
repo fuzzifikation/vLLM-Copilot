@@ -184,6 +184,37 @@ describe('DashboardTreeProvider', () => {
     expect(labels.filter(l => l === 's:8000')).toHaveLength(1);
   });
 
+  it('treats two header identities on one URL as separate server nodes', async () => {
+    // Per-model credentials: two models share a URL but carry different keys.
+    // They are DIFFERENT logical servers — each must get its own node, probed
+    // with its own credentials (never the first model's headers for the other).
+    (vscode as any).workspace._mockConfig = {
+      models: [
+        { id: 'a', serverUrl: 'http://gw:8000', vllmModelId: 'm-a', requestHeaders: { Authorization: 'Bearer secret-a' } },
+        { id: 'b', serverUrl: 'http://gw:8000', vllmModelId: 'm-b', requestHeaders: { Authorization: 'Bearer secret-b' } },
+      ],
+    };
+    const fetchMock = vi.fn(async (url: unknown, _init?: RequestInit) => {
+      if (String(url).endsWith('/v1/models')) return jsonResponse({ data: [{ id: 'probe' }] });
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    provider.setVisible(true);
+    await settle();
+
+    const labels = await rootLabels(provider);
+    expect(labels).toContain('gw:8000 (identity 1)');
+    expect(labels).toContain('gw:8000 (identity 2)');
+
+    // Each identity was probed with its OWN credentials.
+    const authHeaders = fetchMock.mock.calls.map(([, init]) =>
+      (init?.headers as Record<string, string> | undefined)?.Authorization
+    );
+    expect(authHeaders).toContain('Bearer secret-a');
+    expect(authHeaders).toContain('Bearer secret-b');
+  });
+
   it('renders online server metric rows from a completed poll', async () => {
     (vscode as any).workspace._mockConfig = {
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
@@ -218,12 +249,14 @@ describe('DashboardTreeProvider', () => {
       models: [
         {
           id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', serverType: 'openrouter', displayName: 'Nemotron',
+          requestHeaders: { Authorization: 'Bearer dashboard-secret' },
           capabilities: { toolCalling: true, imageInput: false }, maxOutputTokens: 4096,
           modelModes: { 'Think (High)': { reasoning: { enabled: true, effort: 'high' } }, 'No Think': { reasoning: { enabled: false } } },
           cost: { input: 0.2, output: 0.4 },
         },
         {
           id: 'm2', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-chat', serverType: 'openrouter', displayName: 'DeepSeek',
+          requestHeaders: { Authorization: 'Bearer dashboard-secret' },
           capabilities: { toolCalling: true, imageInput: true }, maxOutputTokens: 16000,
         },
       ],
@@ -249,6 +282,7 @@ describe('DashboardTreeProvider', () => {
 
       // Account node shows credits remaining.
       const accountNode = metrics.find(m => (m as any).label === 'Account');
+      expect(String((accountNode as any).id)).not.toContain('dashboard-secret');
       const accountRows = await provider.getChildren(accountNode as any);
       expect(accountRows.some(r => (r as any).label === 'Credits Remaining')).toBe(true);
       expect((accountRows.find(r => (r as any).label === 'Credits Remaining') as any).description).toBe('$3.50');
@@ -258,6 +292,8 @@ describe('DashboardTreeProvider', () => {
       expect(modelLabels).toEqual(['Nemotron', 'DeepSeek']);
       const nemotron = metrics.find(m => (m as any).label === 'Nemotron');
       const deepseek = metrics.find(m => (m as any).label === 'DeepSeek');
+      expect(String((nemotron as any).id)).not.toContain('dashboard-secret');
+      expect(String((deepseek as any).id)).not.toContain('dashboard-secret');
 
       // Each model node has its OWN context window from the per-model resolve.
       expect((nemotron as any).description).toBe('1M'); // fmtCount(1000000)

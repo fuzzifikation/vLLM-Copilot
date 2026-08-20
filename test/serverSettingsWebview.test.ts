@@ -11,6 +11,7 @@ const script = fs.readFileSync(
 function loadWebview(
   modelModes: Record<string, Record<string, unknown>>,
   serverModelIds: string[] = ['wire-model'],
+  extraServers: any[] = [],
 ) {
   const dom = new JSDOM(
     '<!doctype html><body>' +
@@ -24,21 +25,23 @@ function loadWebview(
     postMessage: (message: unknown) => posted.push(message),
   });
   dom.window.eval(script);
+  const servers = [{
+    key: 'srv-k1',
+    url: 'http://server:8000',
+    serverModelIds,
+    models: [{
+      id: 'model-config',
+      vllmModelId: 'wire-model',
+      serverUrl: 'http://server:8000',
+      defaultParams: { parallel_tool_calls: true },
+      modelModes,
+    }],
+  }, ...extraServers];
   dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
     data: {
       type: 'data',
-      servers: [{
-        url: 'http://server:8000',
-        serverModelIds,
-        models: [{
-          id: 'model-config',
-          vllmModelId: 'wire-model',
-          serverUrl: 'http://server:8000',
-          defaultParams: { parallel_tool_calls: true },
-          modelModes,
-        }],
-      }],
-      selectedServerUrl: 'http://server:8000',
+      servers,
+      selectedServerKey: servers[0].key,
       selectedModelId: 'model-config',
       knownParams: {
         parallel_tool_calls: {
@@ -125,5 +128,33 @@ describe('Model Settings webview', () => {
     const select = dom.window.document.querySelector<HTMLSelectElement>('#mSel')!;
     const option = [...select.options].find(o => o.value === 'model-config')!;
     expect(option.textContent).toBe('wire-model');
+  });
+
+  it('disambiguates multiple header identities sharing one URL', () => {
+    const { dom, posted } = loadWebview({}, ['wire-model'], [{
+      key: 'srv-k2',
+      url: 'http://server:8000',
+      serverModelIds: ['model-b'],
+      // Legacy configs may have no explicit id; identity uses the same
+      // id-or-vllmModelId fallback as the rest of Model Settings.
+      models: [{ vllmModelId: 'model-b', serverUrl: 'http://server:8000' }],
+    }]);
+    const select = dom.window.document.querySelector<HTMLSelectElement>('#sSel')!;
+    expect(select.options).toHaveLength(2);
+    // Both options are disambiguated so the two identities are explicit.
+    expect(select.options[0].value).toBe('srv-k1');
+    expect(select.options[0].textContent).toBe('http://server:8000 (identity 1)');
+    expect(select.options[1].value).toBe('srv-k2');
+    expect(select.options[1].textContent).toBe('http://server:8000 (identity 2)');
+
+    select.value = 'srv-k2';
+    select.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    dom.window.document.getElementById('autoConfigureBtn')!.click();
+    const action = posted.find((message: any) => message.type === 'autoConfigure');
+    expect(action).toMatchObject({
+      serverUrl: 'http://server:8000',
+      id: 'model-b',
+      identityModelId: 'model-b',
+    });
   });
 });

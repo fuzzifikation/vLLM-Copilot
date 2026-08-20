@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { createHash } from 'node:crypto';
 import * as vscode from 'vscode';
 import type { WireStructuredOutputConfig } from './types.js';
 
@@ -333,6 +334,32 @@ export function resolveServerConfig(
     serverUrl: override?.serverUrl ? normalizeServerUrl(override.serverUrl) : '',
     requestHeaders: override?.requestHeaders ? sanitizeRequestHeaders(override.requestHeaders) : {},
   };
+}
+
+/**
+ * Build a deterministic fingerprint for a server identity from its URL and auth
+ * headers. Two model configs that point to the same server (same URL + same
+ * headers) produce the same fingerprint and are treated as one logical server;
+ * models sharing a URL but with different credentials/scopes are DIFFERENT
+ * logical servers and must never share a probe, engine, or status.
+ *
+ * The fingerprint embeds header VALUES — never send it to an untrusted surface
+ * (webview DOM, logs). Use {@link serverGroupKey} for a non-reversible key.
+ */
+export function serverFingerprint(url: string, headers: Record<string, string>): string {
+  const sorted = Object.entries(headers)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify([url, sorted]);
+}
+
+/**
+ * Deterministic, non-reversible identity key for a server group. The raw
+ * fingerprint embeds header values, so only a hash is exposed to untrusted
+ * surfaces (webview DOM, tree item ids). Stable across refreshes as long as the
+ * URL and headers don't change.
+ */
+export function serverGroupKey(fingerprint: string): string {
+  return 'srv-' + createHash('sha256').update(fingerprint).digest('hex');
 }
 
 /**

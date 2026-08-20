@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { getMetricsEngine } from './vllmMetrics.js';
 import type { ServerRawData } from './vllmMetrics.js';
-import { normalizeServerUrl, type ServerType } from './config.js';
+import { normalizeServerUrl, serverFingerprint, serverGroupKey, type ServerType } from './config.js';
 
 interface ReadyMessage {
   type: 'ready';
@@ -22,10 +22,11 @@ export function openDeepDive(
   context: vscode.ExtensionContext,
   outputChannel: vscode.OutputChannel,
 ): void {
-  // Panels are keyed by the NORMALIZED URL so `http://host:8000`,
-  // `http://host:8000/`, and `http://host:8000/v1` share one panel — matching
-  // how metrics engines are keyed (getMetricsEngine → normalizeServerUrl).
-  const panelKey = normalizeServerUrl(serverUrl);
+  // Panels are keyed by server IDENTITY (normalized URL + header fingerprint)
+  // so `http://host:8000`, `http://host:8000/`, and `http://host:8000/v1` share
+  // one panel — matching the metrics engine — while two identities on one URL
+  // (different per-model credentials) get separate panels with their own auth.
+  const panelKey = serverGroupKey(serverFingerprint(normalizeServerUrl(serverUrl), requestHeaders));
   // If a panel for this server is already open, reveal it
   const existing = openPanels.get(panelKey);
   if (existing) {

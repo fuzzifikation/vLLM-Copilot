@@ -888,8 +888,9 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     await vi.advanceTimersByTimeAsync(16_000);
 
     updateMetricsEngineHeaders(url, { Authorization: 'Bearer new' });
-    // The registry still holds the SAME engine (not a fresh one)…
-    expect(getMetricsEngine(url)).toBe(engine);
+    // The registry still holds the SAME engine, re-keyed under the NEW identity
+    // (looked up with the new headers, not a fresh one)…
+    expect(getMetricsEngine(url, { Authorization: 'Bearer new' })).toBe(engine);
     // …and the next poll uses the updated header.
     fetchMock.mockClear();
     await vi.advanceTimersByTimeAsync(16_000);
@@ -899,6 +900,43 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     expect(authHeaders).toContain('Bearer new');
 
     sub.dispose();
+    vi.useRealTimers();
+  });
+
+  it('keys engines by identity so different credentials on one URL stay separate', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (url: unknown, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const url = 'http://identity-isolation:8000';
+    const engineA = getMetricsEngine(url, { Authorization: 'Bearer secret-a' }, 'openrouter', ['m1']);
+    const engineB = getMetricsEngine(url, { Authorization: 'Bearer secret-b' }, 'openrouter', ['m2']);
+
+    // Distinct credentials on one URL → DISTINCT engines (never one engine
+    // polling with the wrong model's headers).
+    expect(engineA).not.toBe(engineB);
+
+    const subA = engineA.subscribe(() => {});
+    const subB = engineB.subscribe(() => {});
+    await vi.advanceTimersByTimeAsync(16_000);
+
+    const authHeaders = fetchMock.mock.calls.map(([, init]) =>
+      (init?.headers as Record<string, string> | undefined)?.Authorization
+    );
+    expect(authHeaders).toContain('Bearer secret-a');
+    expect(authHeaders).toContain('Bearer secret-b');
+
+    // Same URL + same headers re-uses ONE engine (no duplicate pollers).
+    expect(getMetricsEngine(url, { Authorization: 'Bearer secret-a' }, 'openrouter')).toBe(engineA);
+
+    subA.dispose();
+    subB.dispose();
     vi.useRealTimers();
   });
 });
