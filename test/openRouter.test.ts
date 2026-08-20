@@ -529,9 +529,10 @@ describe('fetchOpenRouterModelEndpoints', () => {
 
     const endpoints = await fetchOpenRouterModelEndpoints('deepseek/deepseek-v4-pro-0813');
 
-    // The URL uses the exact model id (encoded) — no derivation.
+    // The URL keeps the id's `/` as a literal path separator (encoding it to
+    // %2F 404s on OpenRouter's gateway) — no derivation, just segment-safe encoding.
     expect(fetchSpy).toHaveBeenCalledWith(
-      'https://openrouter.ai/api/v1/models/deepseek%2Fdeepseek-v4-pro-0813/endpoints',
+      'https://openrouter.ai/api/v1/models/deepseek/deepseek-v4-pro-0813/endpoints',
       expect.objectContaining({ method: 'GET' }),
     );
     // tag is the routing slug, preserved verbatim; provider_name is the label.
@@ -575,8 +576,10 @@ describe('fetchOpenRouterModelEndpoints', () => {
     ));
 
     const endpoints = await fetchOpenRouterModelEndpoints('nvidia/nemotron-3-ultra-550b-a55b:free');
+    // `/` stays a literal path separator; the `:free` colon is escaped but the
+    // route keeps its `author/slug:free` structure (OpenRouter accepts both).
     expect(fetchSpy).toHaveBeenCalledWith(
-      'https://openrouter.ai/api/v1/models/nvidia%2Fnemotron-3-ultra-550b-a55b%3Afree/endpoints',
+      'https://openrouter.ai/api/v1/models/nvidia/nemotron-3-ultra-550b-a55b%3Afree/endpoints',
       expect.objectContaining({ method: 'GET' }),
     );
     expect(endpoints).toEqual([expect.objectContaining({ tag: 'nvidia', providerName: 'Nvidia' })]);

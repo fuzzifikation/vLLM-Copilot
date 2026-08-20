@@ -587,7 +587,14 @@ export interface OpenRouterModelEndpoint {
 export async function fetchOpenRouterModelEndpoints(
   requestedId: string,
 ): Promise<OpenRouterModelEndpoint[]> {
-  const url = `${OPENROUTER_API_BASE}/v1/models/${encodeURIComponent(requestedId)}/endpoints`;
+  // The id is `author/slug` — the `/` is a PATH SEPARATOR and must stay literal:
+  // OpenRouter routes on the real slash, and an encoded `%2F` (what a naive
+  // `encodeURIComponent(requestedId)` produces) 404s on their gateway. Encode
+  // each segment separately so the route keeps its structure while stray
+  // characters (and the `:free` variant's colon) are still escaped. The id is
+  // used as-is, segment-wise — no slug derivation, no guessing.
+  const encodedId = requestedId.split('/').map((seg) => encodeURIComponent(seg)).join('/');
+  const url = `${OPENROUTER_API_BASE}/v1/models/${encodedId}/endpoints`;
   try {
     const response = await fetchWithRetry(
       url,
