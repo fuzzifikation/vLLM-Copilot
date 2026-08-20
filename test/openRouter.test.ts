@@ -19,11 +19,7 @@ import {
 describe('parseOpenRouterBranchInput', () => {
   it('passes a fully-qualified model-page URL straight through', () => {
     const r = parseOpenRouterBranchInput('https://openrouter.ai/nvidia/nemotron-3.5-lightning:free');
-    expect(r).toEqual({
-      requestedId: 'nvidia/nemotron-3.5-lightning:free',
-      author: 'nvidia',
-      slug: 'nemotron-3.5-lightning',
-    });
+    expect(r).toEqual({ requestedId: 'nvidia/nemotron-3.5-lightning:free' });
   });
 
   it('treats a scheme-less openrouter.ai base as a base reference (error → catalog picker)', () => {
@@ -34,20 +30,12 @@ describe('parseOpenRouterBranchInput', () => {
 
   it('resolves a scheme-less openrouter.ai model-page URL as a URL, not a bare slug', () => {
     const r = parseOpenRouterBranchInput('openrouter.ai/nvidia/nemotron-3.5-lightning:free');
-    expect(r).toEqual({
-      requestedId: 'nvidia/nemotron-3.5-lightning:free',
-      author: 'nvidia',
-      slug: 'nemotron-3.5-lightning',
-    });
+    expect(r).toEqual({ requestedId: 'nvidia/nemotron-3.5-lightning:free' });
   });
 
   it('leaves a bare author/slug on a non-openrouter host on the slug path', () => {
     const r = parseOpenRouterBranchInput('nvidia/nemotron-3.5-lightning:free');
-    expect(r).toEqual({
-      requestedId: 'nvidia/nemotron-3.5-lightning:free',
-      author: 'nvidia',
-      slug: 'nemotron-3.5-lightning',
-    });
+    expect(r).toEqual({ requestedId: 'nvidia/nemotron-3.5-lightning:free' });
   });
 });
 
@@ -56,31 +44,27 @@ describe('parseOpenRouterBranchInput', () => {
 describe('parseOpenRouterModelRef', () => {
   it('parses a plain author/slug and preserves it as the requested id', () => {
     const r = parseOpenRouterModelRef('deepseek/deepseek-chat');
-    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat', author: 'deepseek', slug: 'deepseek-chat' });
+    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 
   it('strips a variant suffix for the LOOKUP but preserves the full id for CHAT', () => {
     const r = parseOpenRouterModelRef('meta-llama/llama-3.3-70b-instruct:free');
-    expect(r).toEqual({
-      requestedId: 'meta-llama/llama-3.3-70b-instruct:free',
-      author: 'meta-llama',
-      slug: 'llama-3.3-70b-instruct',
-    });
+    expect(r).toEqual({ requestedId: 'meta-llama/llama-3.3-70b-instruct:free' });
   });
 
   it('parses a ~family-latest alias: strips ~ for lookup, keeps it for chat', () => {
     const r = parseOpenRouterModelRef('~deepseek/family-latest');
-    expect(r).toEqual({ requestedId: '~deepseek/family-latest', author: 'deepseek', slug: 'family-latest' });
+    expect(r).toEqual({ requestedId: '~deepseek/family-latest' });
   });
 
   it('parses a model-page URL, ignoring query, fragment, and trailing slash', () => {
     const r = parseOpenRouterModelRef('https://openrouter.ai/deepseek/deepseek-chat?x=1#frag/');
-    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat', author: 'deepseek', slug: 'deepseek-chat' });
+    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 
   it('accepts the www subdomain', () => {
     const r = parseOpenRouterModelRef('https://www.openrouter.ai/deepseek/deepseek-chat');
-    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat', author: 'deepseek', slug: 'deepseek-chat' });
+    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 
   it('rejects unrelated hosts', () => {
@@ -101,27 +85,27 @@ describe('parseOpenRouterModelRef', () => {
 
   it('trims trailing slashes in the bare form so the chat id is clean', () => {
     const r = parseOpenRouterModelRef('deepseek/deepseek-chat/');
-    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat', author: 'deepseek', slug: 'deepseek-chat' });
+    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 
   it('trims leading slashes in the bare form (pasted /author/model)', () => {
     const r = parseOpenRouterModelRef('/deepseek/deepseek-chat');
-    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat', author: 'deepseek', slug: 'deepseek-chat' });
+    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 
   it('preserves the ~ alias prefix in the chat id but strips it for the lookup', () => {
     const r = parseOpenRouterModelRef('~deepseek/family-latest/');
-    expect(r).toEqual({ requestedId: '~deepseek/family-latest', author: 'deepseek', slug: 'family-latest' });
+    expect(r).toEqual({ requestedId: '~deepseek/family-latest' });
   });
 
   it('collapses internal double slashes so the chat id is clean', () => {
     const r = parseOpenRouterModelRef('deepseek//deepseek-chat');
-    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat', author: 'deepseek', slug: 'deepseek-chat' });
+    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 
   it('trims spaces around the slash in the bare form (pasted "author / model")', () => {
     const r = parseOpenRouterModelRef('deepseek / deepseek-chat');
-    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat', author: 'deepseek', slug: 'deepseek-chat' });
+    expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 });
 
@@ -570,13 +554,13 @@ describe('autoConfigureOpenRouterModel', () => {
     expect(text).not.toContain('HuggingFace');
   });
 
-  it('passes per-model headers to the catalog lookup and preserves variant chat ids', async () => {
+  it('preserves variant chat ids; catalog lookup is public (no per-model headers)', async () => {
     fetchSpy.mockResolvedValue(catalogResponse());
-    const headers = { Authorization: 'Bearer sk-test' };
 
-    const { modelConfig } = await autoConfigureOpenRouterModel('meta-llama/llama-3.3-70b-instruct:free', headers);
+    const { modelConfig } = await autoConfigureOpenRouterModel('meta-llama/llama-3.3-70b-instruct:free');
 
-    // Catalog lookup by exact id; the chat id keeps the :free variant.
+    // Catalog lookup by exact id; the chat id keeps the :free variant. The
+    // catalog is public/unauthenticated, so no per-model headers are sent.
     expect(fetchSpy).toHaveBeenCalledWith(
       `${OPENROUTER_API_BASE}/v1/models`,
       expect.anything(),

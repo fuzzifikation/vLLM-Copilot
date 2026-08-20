@@ -130,7 +130,7 @@ function thinkModeLabel(effort: string): string {
  */
 export function parseOpenRouterModelRef(
   input: string,
-): { requestedId: string; author: string; slug: string } | { error: string } {
+): { requestedId: string } | { error: string } {
   const trimmed = input.trim();
   if (!trimmed) return { error: 'Model reference is empty.' };
 
@@ -177,23 +177,23 @@ export function parseOpenRouterModelRef(
   }
 
   // `requestedId` is the exact catalog id used for CHAT and for the metadata
-  // lookup (matched verbatim against the catalog — no slug derivation).
-  const baseSlug = slug.split(':')[0];
-
-  return { requestedId, author, slug: baseSlug };
+  // lookup (matched verbatim against the catalog — no slug derivation). The
+  // `author`/`slug` segments above are internal parsing detail; only
+  // `requestedId` is exposed (nothing downstream consumes the split).
+  return { requestedId };
 }
 
 /**
  * Extract the model reference from an OpenRouter Add-flow URL input. The model
- * is always PICKED from the catalog; this only produces the picker's prefill
- * (and validates the free-text fallback box). A scheme-less OpenRouter base or
- * model-page URL (`openrouter.ai/api`, `openrouter.ai/author/slug`) would
- * mis-parse as a bare slug — detect the `openrouter.ai` host and parse it as a
- * URL instead. Routing is host-only (`isOpenRouterUrl`); this never routes.
+ * is always PICKED from the catalog; this only produces the picker's prefill. A
+ * scheme-less OpenRouter base or model-page URL (`openrouter.ai/api`,
+ * `openrouter.ai/author/slug`) would mis-parse as a bare slug — detect the
+ * `openrouter.ai` host and parse it as a URL instead. Routing is host-only
+ * (`isOpenRouterUrl`); this never routes.
  */
 export function parseOpenRouterBranchInput(
   input: string,
-): { requestedId: string; author: string; slug: string } | { error: string } {
+): { requestedId: string } | { error: string } {
   const trimmed = input.trim();
   if (/^https?:\/\//i.test(trimmed)) return parseOpenRouterModelRef(trimmed);
   let host: string | null = null;
@@ -499,14 +499,13 @@ export function normalizeOpenRouterFromCatalog(
  * Resolve a requested id's metadata from the catalog and normalize it.
  *
  * @param requestedId - Full model id the user wants (variants preserved for chat).
- * @param requestHeaders - The model's isolated request headers (auth).
  * @returns Normalized model info; throws on network/HTTP/parse failure and when
  *   the model is absent from the catalog or reports no positive context bound.
+ *
+ * The catalog endpoint is public and unauthenticated, so no per-model headers
+ * are sent (threading them here would be dead).
  */
-export async function fetchOpenRouterModel(
-  requestedId: string,
-  requestHeaders: Record<string, string> = {},
-): Promise<OpenRouterModelInfo> {
+export async function fetchOpenRouterModel(requestedId: string): Promise<OpenRouterModelInfo> {
   // DETERMINISTIC metadata resolution — no slug guessing, no fallback. Resolve
   // from the model CATALOG (`GET /api/v1/models`), matching the requested id
   // verbatim (see normalizeOpenRouterFromCatalog). The exact-model endpoint
@@ -543,11 +542,8 @@ export function resolveOpenRouterLimitsFromCatalog(
  * Resolve only the runtime limits for an OpenRouter model — the arm the shared
  * `resolveRuntimeLimits` switch will call. Thin wrapper over the full lookup.
  */
-export async function resolveOpenRouterRuntimeLimits(
-  requestedId: string,
-  requestHeaders: Record<string, string> = {},
-): Promise<RuntimeModelLimits> {
-  const info = await fetchOpenRouterModel(requestedId, requestHeaders);
+export async function resolveOpenRouterRuntimeLimits(requestedId: string): Promise<RuntimeModelLimits> {
+  const info = await fetchOpenRouterModel(requestedId);
   return info.runtimeLimits;
 }
 
@@ -569,9 +565,8 @@ export async function resolveOpenRouterRuntimeLimits(
  */
 export async function autoConfigureOpenRouterModel(
   modelId: string,
-  requestHeaders: Record<string, string> = {},
 ): Promise<{ modelConfig: ModelConfig; summary: string[] }> {
-  const info = await fetchOpenRouterModel(modelId, requestHeaders);
+  const info = await fetchOpenRouterModel(modelId);
   const modelConfig: ModelConfig = {
     id: modelId,
     vllmModelId: info.wireModelId,

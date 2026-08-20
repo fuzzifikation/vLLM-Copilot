@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from '../config.js';
-import { resolveConfigId, resolveVllmModelId, normalizeServerUrl, buildModelId } from '../config.js';
+import { resolveConfigId, resolveVllmModelId, normalizeServerUrl, buildModelId, serverFingerprint } from '../config.js';
 import { replaceModelConfig, type IdentifiedModelConfig } from '../configStore.js';
 import { resolveModelConfigForAddSafely } from './hfDiscovery.js';
 import { confirmAndSaveAddedModel, type ClearCacheProvider } from './addServerFlow.js';
@@ -15,7 +15,7 @@ export function registerAutoConfigureModelCommand(
   provider: ClearCacheProvider,
   output: vscode.OutputChannel
 ): vscode.Disposable {
-  return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { serverUrl?: string; id?: string }) => {
+  return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { serverUrl?: string; id?: string; identityModelId?: string }) => {
     const config = vscode.workspace.getConfiguration('vllm-copilot');
     const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
     if (existing.length === 0) {
@@ -31,12 +31,17 @@ export function registerAutoConfigureModelCommand(
 
     if (argServerUrl && argModelId) {
       const argServerNorm = normalizeServerUrl(argServerUrl);
+      const identitySibling = arg.identityModelId
+        ? existing.find(m => resolveConfigId(m) === arg.identityModelId && m.serverUrl && normalizeServerUrl(m.serverUrl) === argServerNorm)
+        : undefined;
       // Called with explicit server + model identity (e.g. from Server Settings
       // webview). The webview keys everything by the extension `id`; for an
       // unconfigured server-reported model that id is just the server model id.
       modelConfig = existing.find(
         m => resolveConfigId(m) === argModelId && m.serverUrl &&
-             normalizeServerUrl(m.serverUrl) === argServerNorm
+             normalizeServerUrl(m.serverUrl) === argServerNorm &&
+             (!identitySibling || serverFingerprint(argServerNorm, m.requestHeaders ?? {}) ===
+               serverFingerprint(argServerNorm, identitySibling.requestHeaders ?? {}))
       );
       vllmId = resolveVllmModelId(modelConfig) || argModelId;
 
@@ -46,7 +51,7 @@ export function registerAutoConfigureModelCommand(
         // Auto-configure it as a NEW model — borrow auth from a sibling model on
         // the same server. That sibling is guaranteed to exist: the server group
         // only appears in the webview because it has at least one configured model.
-        const sibling = existing.find(
+        const sibling = identitySibling ?? existing.find(
           m => m.serverUrl && normalizeServerUrl(m.serverUrl) === argServerNorm
         );
         const serverUrl = normalizeServerUrl(sibling?.serverUrl ?? argServerUrl);

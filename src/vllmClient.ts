@@ -113,9 +113,9 @@ export async function resolveRuntimeLimits(
     case 'openrouter': {
       // OpenRouter is a fixed managed remote — the module owns the API base, so
       // `serverUrl` is deliberately ignored here. `modelId` is the full requested
-      // wire id (variants like `:free` preserved); the module strips the variant
-      // for the metadata lookup and keeps it for chat.
-      return resolveOpenRouterRuntimeLimits(modelId, requestHeaders);
+      // wire id (variants like `:free` preserved); the metadata comes from the
+      // public catalog (no per-model headers needed).
+      return resolveOpenRouterRuntimeLimits(modelId);
     }
   }
 }

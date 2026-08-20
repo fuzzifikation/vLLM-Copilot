@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { ServerSettingsViewProvider, resolveDetectedServerType } from '../src/serverSettingsView.js';
+import { ServerSettingsViewProvider, resolveDetectedServerType, serverGroupKey } from '../src/serverSettingsView.js';
+import { serverFingerprint } from '../src/commands.js';
 import { ModelConfig } from '../src/config.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -565,6 +566,56 @@ describe('ServerSettingsViewProvider', () => {
       expect(payload.servers[0].models[0].serverUrl).toBe('http://secure:8000');
     });
 
+    it('probes each header identity independently on one canonical URL', async () => {
+      const postMessage = vi.fn().mockResolvedValue(true);
+      (provider as any).view = { webview: { postMessage } };
+      (provider as any).isWebviewReady = true;
+      mockContext.extensionUri = { fsPath: 'extension' };
+      mockContext.globalStorageUri = { fsPath: 'global-storage' };
+      vscode.workspace._mockConfig = {
+        get: (key: string) => key === 'models'
+          ? [
+              { id: 'a', vllmModelId: 'a', serverUrl: 'http://gw:8000/v1', requestHeaders: { Authorization: 'Bearer secret-a' } },
+              { id: 'b', vllmModelId: 'b', serverUrl: 'http://gw:8000/', requestHeaders: { Authorization: 'Bearer secret-b' } },
+            ]
+          : undefined,
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+      // Two different header identities on one canonical URL → two logical
+      // servers, each probed with its own credentials (never the first model's
+      // headers standing in for a sibling).
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'a' }, { id: 'shared' }] }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'b' }, { id: 'shared' }] }), { status: 200 }));
+
+      await (provider as any).refreshWebview();
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(fetchSpy).toHaveBeenNthCalledWith(
+        1,
+        'http://gw:8000/v1/models',
+        expect.objectContaining({ headers: { Authorization: 'Bearer secret-a' } }),
+      );
+      expect(fetchSpy).toHaveBeenNthCalledWith(
+        2,
+        'http://gw:8000/v1/models',
+        expect.objectContaining({ headers: { Authorization: 'Bearer secret-b' } }),
+      );
+
+      const payload = postMessage.mock.calls[0][0];
+      expect(payload.servers).toHaveLength(2);
+      expect(payload.servers[0].url).toBe('http://gw:8000');
+      expect(payload.servers[1].url).toBe('http://gw:8000');
+      // Distinct identities get distinct keys; each group is labelled against
+      // its own probe, and raw header values never reach the webview DOM.
+      expect(payload.servers[0].key).not.toBe(payload.servers[1].key);
+      expect(payload.servers[0].serverModelIds).toEqual(['a', 'shared']);
+      expect(payload.servers[1].serverModelIds).toEqual(['b', 'shared']);
+      expect(payload.servers[0].models[0]).not.toHaveProperty('requestHeaders');
+      expect(JSON.stringify(payload)).not.toContain('secret-a');
+      expect(JSON.stringify(payload)).not.toContain('secret-b');
+    });
+
     it('discards an older refresh that finishes after a newer one', async () => {
       const postMessage = vi.fn().mockResolvedValue(true);
       (provider as any).view = { webview: { postMessage } };
@@ -630,5 +681,22 @@ describe('resolveDetectedServerType', () => {
 
   it('returns undefined for a fully inconclusive endpoint with no siblings at all', () => {
     expect(resolveDetectedServerType([], [])).toBeUndefined();
+  });
+});
+
+describe('serverGroupKey', () => {
+  it('is deterministic, distinct per header identity, and leaks no header values', () => {
+    const fpA = serverFingerprint('http://gw:8000', { Authorization: 'Bearer secret-a' });
+    const fpB = serverFingerprint('http://gw:8000', { Authorization: 'Bearer secret-b' });
+    const kA1 = serverGroupKey(fpA);
+    const kA2 = serverGroupKey(fpA);
+    const kB = serverGroupKey(fpB);
+    expect(kA1).toBe(kA2);
+    expect(kA1).not.toBe(kB);
+    expect(kA1).toMatch(/^srv-/);
+    // The key must not be (or contain) the raw fingerprint, which embeds secrets.
+    expect(kA1).not.toContain('Bearer');
+    expect(kA1).not.toContain('secret-a');
+    expect(kA1).not.toBe(fpA);
   });
 });

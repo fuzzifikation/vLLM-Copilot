@@ -186,4 +186,52 @@ describe('registerAutoConfigureModelCommand', () => {
     );
     expect(provider.clearCache).toHaveBeenCalled();
   });
+
+  it('borrows auth from the selected identity when one URL has multiple credentials', async () => {
+    const siblings = [
+      {
+        id: 'identity-a',
+        vllmModelId: 'model-a',
+        serverUrl: 'http://host:8000',
+        requestHeaders: { Authorization: 'Bearer secret-a' },
+      },
+      {
+        id: 'identity-b',
+        vllmModelId: 'model-b',
+        serverUrl: 'http://host:8000',
+        requestHeaders: { Authorization: 'Bearer secret-b' },
+      },
+    ];
+    vscode.workspace._mockConfig = {
+      get: (key: string) => (key === 'models' ? siblings : undefined),
+      update: chatUpdate,
+      inspect: () => ({ defaultValue: 'none' }),
+    };
+    resolveSpy = vi.spyOn(hfDiscovery, 'resolveModelConfigForAddSafely').mockResolvedValue({
+      modelConfig: { id: 'new-model', vllmModelId: 'new-model' },
+      summary: ['discovered'],
+    });
+    infoSpy.mockResolvedValue('Save to Settings' as any);
+
+    registerAutoConfigureModelCommand({} as any, provider, output);
+    await (vscode as any).commands._run('vllm-copilot.autoConfigureModel', {
+      serverUrl: 'http://host:8000',
+      id: 'new-model',
+      identityModelId: 'identity-b',
+    });
+
+    expect(resolveSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'new-model',
+      'http://host:8000',
+      { Authorization: 'Bearer secret-b' },
+      undefined,
+      undefined,
+      undefined,
+    );
+    expect(replaceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ requestHeaders: { Authorization: 'Bearer secret-b' } }),
+    );
+  });
 });

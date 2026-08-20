@@ -52,8 +52,8 @@
       const prevServer = S.selServer;
       const prevModel = S.selModel;
       S.servers = e.data.servers;
-      S.selServer = S.servers.some(s => s.url === prevServer) ? prevServer : e.data.selectedServerUrl;
-      const sv = S.servers.find(s => s.url === S.selServer);
+      S.selServer = S.servers.some(s => s.key === prevServer) ? prevServer : e.data.selectedServerKey;
+      const sv = S.servers.find(s => s.key === S.selServer);
       const modelExists = !!sv && [...(sv.models || []).map(m => m.id || m.vllmModelId), ...(sv.serverModelIds || [])].includes(prevModel);
       S.selModel = modelExists ? prevModel : e.data.selectedModelId;
       S.knownParams = e.data.knownParams || {};
@@ -82,6 +82,13 @@
   vscode.postMessage({ type: 'ready' });
 
   function E(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  // Selection is keyed by server-group identity (a URL may host several header
+  // identities). Messages that target a server need the real display URL.
+  function selServerUrl() {
+    const sv = S.servers.find(s => s.key === S.selServer) || S.servers[0];
+    return sv ? sv.url : '';
+  }
 
   function showModal(html, onOk) {
     const overlay = document.getElementById('modal');
@@ -125,8 +132,8 @@
       r.innerHTML = '<p class="empty-state">No servers configured. Run "Add vLLM Server & Model" first.</p>';
       return;
     }
-    const sv = S.servers.find(s => s.url === S.selServer) || S.servers[0];
-    if (sv.url !== S.selServer) S.selServer = sv.url;
+    const sv = S.servers.find(s => s.key === S.selServer) || S.servers[0];
+    if (sv.key !== S.selServer) S.selServer = sv.key;
 
     // Combined model list: configured models (keyed by the extension `id`) plus
     // server-reported models that have no configured entry (keyed by the server
@@ -166,7 +173,18 @@
 
     let h = '<div class="selector-row">';
     h += '<label>Server</label><select id="sSel">';
-    S.servers.forEach(s => { h += '<option' + (s.url === S.selServer ? ' selected' : '') + '>' + E(s.url) + '</option>'; });
+    // A URL may host several header identities (per-model credentials). The option
+    // VALUE is the group key; the label shows the URL, disambiguated when more
+    // than one identity shares it.
+    const urlCount = {};
+    S.servers.forEach(s => { urlCount[s.url] = (urlCount[s.url] || 0) + 1; });
+    const urlSeen = {};
+    S.servers.forEach(s => {
+      const n = (urlSeen[s.url] || 0) + 1;
+      urlSeen[s.url] = n;
+      const label = urlCount[s.url] > 1 ? s.url + ' (identity ' + n + ')' : s.url;
+      h += '<option value="' + E(s.key) + '"' + (s.key === S.selServer ? ' selected' : '') + '>' + E(label) + '</option>';
+    });
     h += '</select>';
     h += '<label>Model (vllmModelId)</label><select id="mSel">';
     // Option VALUE is the extension `id` (the key for personalities/settings);
@@ -284,8 +302,8 @@
         // The host answers with a full re-render; the data handler preserves the
         // draft (merges state) whenever the form is dirty, so no flag is needed here.
         vscode.postMessage(targetPath === ''
-          ? { type: 'applyPersonality', serverUrl: S.selServer, id: S.selModel, clear: true }
-          : { type: 'applyPersonality', serverUrl: S.selServer, id: S.selModel, sourcePath: sourcePath });
+          ? { type: 'applyPersonality', serverUrl: selServerUrl(), id: S.selModel, clear: true }
+          : { type: 'applyPersonality', serverUrl: selServerUrl(), id: S.selModel, sourcePath: sourcePath });
       };
     }
     const captureCb = document.getElementById('captureCb');
@@ -302,11 +320,19 @@
     dirty = false;
     setDirtyUI();
     const autoCfgBtn = document.getElementById('autoConfigureBtn');
-    if (autoCfgBtn) autoCfgBtn.onclick = () => vscode.postMessage({ type: 'autoConfigure', serverUrl: S.selServer, id: S.selModel });
+    if (autoCfgBtn) autoCfgBtn.onclick = () => {
+      const sv = S.servers.find(s => s.key === S.selServer);
+      vscode.postMessage({
+        type: 'autoConfigure',
+        serverUrl: selServerUrl(),
+        id: S.selModel,
+        identityModelId: sv && sv.models && sv.models[0] ? configKey(sv.models[0]) : undefined,
+      });
+    };
     const rmBtn = document.getElementById('removeModelBtn');
     if (rmBtn) rmBtn.onclick = async () => {
-      if (await webviewConfirm('Remove model "' + S.selModel + '" from ' + S.selServer + '?')) {
-        vscode.postMessage({ type: 'removeModel', serverUrl: S.selServer, id: S.selModel });
+      if (await webviewConfirm('Remove model "' + S.selModel + '" from ' + selServerUrl() + '?')) {
+        vscode.postMessage({ type: 'removeModel', serverUrl: selServerUrl(), id: S.selModel });
       }
     };
   }
@@ -480,7 +506,7 @@
       if (v !== undefined) dp[k] = v;
     });
     u.defaultParams = Object.keys(dp).length ? dp : ''; // '' = explicit clear (all params removed)
-    u.serverUrl = S.selServer;
+    u.serverUrl = selServerUrl();
     u.vllmModelId = mc.vllmModelId || mc.id;
     u.id = mc.id || mc.vllmModelId;
     pendingSave = true;

@@ -7,9 +7,13 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveServerType } from '../config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveServerType, serverFingerprint } from '../config.js';
 import type { ModelConfig } from '../config.js';
 import type { VllmModel } from '../types.js';
+
+// Re-exported so the root `commands.ts` facade (and tests importing it) keep a
+// single stable import surface for the server-identity helper.
+export { serverFingerprint } from '../config.js';
 import { describeError } from '../messageConverter.js';
 import { resolveRuntimeLimits } from '../vllmClient.js';
 import { runDiagnostics, formatReport } from '../diagnostics.js';
@@ -40,18 +44,6 @@ interface ServerGroup {
   serverUrl: string;
   requestHeaders: Record<string, string>;
   models: ModelConfig[];
-}
-
-/**
- * Build a deterministic fingerprint for a server from its URL and auth headers.
- * Two model configs that point to the same server (same URL + same headers)
- * produce the same fingerprint and are tested together.
- * @internal Exported for testing.
- */
-export function serverFingerprint(url: string, headers: Record<string, string>): string {
-  const sorted = Object.entries(headers)
-    .sort(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify([url, sorted]);
 }
 
 /**

@@ -133,6 +133,22 @@ Since the model list is small (typically < 20 entries) and the server is local/c
 
 ## 🛡️ Token & Credit Usage Tracker
 
+**Category:** Painkiller (transparency)
+**Status:** ✅ **Implemented** — see [`src/usageStore.ts`](../src/usageStore.ts), the dashboard **Token Usage** node, and [docs/configuration-reference.md](../docs/configuration-reference.md) → *Token Usage & Cost*.
+
+**What (as built):** A persistent counter showing cumulative token consumption (input, output, cached, reasoning) and estimated cost per model — per session, per day, or total. Displayed in the dashboard's **Token Usage** node under each server, live (no poll-interval lag), with a per-server **Reset Usage** action. Cost is derived at render time from optional per-model `cost` rates (per 1M tokens, in USD or AI Credits).
+
+**How it's built:**
+- A single ingestion point (`recordRequest` in `src/usageStore.ts`) runs at the completion of every prompt carrying a usage payload. It both stores the server's **Last Request** and accumulates the **Today / Session / Total** counters per `(server, model)`.
+- **Live UI:** the store fires one change event (`onUsageStoreDidChange`) that the dashboard subscribes to, so both the Last Request and Token Usage nodes re-render immediately — no poll-interval lag (this also fixed a pre-existing staleness bug in the Last Request node).
+- **Persistence:** day buckets + all-time totals in `globalState` (`vllm-copilot.usage.v1`), serialized writes, 90-day retention. Session counters are in-memory.
+- **Cost:** optional per-model `cost` rates (`input` / `output` / `cachedInput`, per 1M tokens, `currency` label default `USD`). Derived at render time — never stored, so editing a rate re-prices all history. Supports `"AI Credits"` display for Copilot-picker comparison.
+- **Reset:** per-server row in the Token Usage node, plus a `vLLM-Copilot: Reset Usage` palette command (all / per-server scope). Last Request survives a reset.
+
+**What it is NOT:** This is not a replacement for server-side metrics (`/metrics`). The vLLM `/metrics` endpoint already reports cumulative token counts from server start. This tracker is about *client-side* usage that the user can see without looking at the metrics endpoint, and that survives restarts of individual vLLM server instances.
+
+**Deferred:** a status bar item showing "tokens used today" (the tree node already delivers the value).
+
 ---
 
 ## ✨ OpenRouter Provider Selection (in Model Settings)
@@ -163,21 +179,55 @@ Since the model list is small (typically < 20 entries) and the server is local/c
 
 ---
 
-**Category:** Painkiller (transparency)
-**Status:** ✅ **Implemented** — see [`src/usageStore.ts`](../src/usageStore.ts), the dashboard **Token Usage** node, and [docs/configuration-reference.md](../docs/configuration-reference.md) → *Token Usage & Cost*.
+## ✨ Shareable Model-Mode Profiles (team task presets)
 
-**What (as built):** A persistent counter showing cumulative token consumption (input, output, cached, reasoning) and estimated cost per model — per session, per day, or total. Displayed in the dashboard's **Token Usage** node under each server, live (no poll-interval lag), with a per-server **Reset Usage** action. Cost is derived at render time from optional per-model `cost` rates (per 1M tokens, in USD or AI Credits).
+**Category:** Vitamin (team workflow)
+**Status:** Idea — not implemented.
 
-**How it's built:**
-- A single ingestion point (`recordRequest` in `src/usageStore.ts`) runs at the completion of every prompt carrying a usage payload. It both stores the server's **Last Request** and accumulates the **Today / Session / Total** counters per `(server, model)`.
-- **Live UI:** the store fires one change event (`onUsageStoreDidChange`) that the dashboard subscribes to, so both the Last Request and Token Usage nodes re-render immediately — no poll-interval lag (this also fixed a pre-existing staleness bug in the Last Request node).
-- **Persistence:** day buckets + all-time totals in `globalState` (`vllm-copilot.usage.v1`), serialized writes, 90-day retention. Session counters are in-memory.
-- **Cost:** optional per-model `cost` rates (`input` / `output` / `cachedInput`, per 1M tokens, `currency` label default `USD`). Derived at render time — never stored, so editing a rate re-prices all history. Supports `"AI Credits"` display for Copilot-picker comparison.
-- **Reset:** per-server row in the Token Usage node, plus a `vLLM-Copilot: Reset Usage` palette command (all / per-server scope). Last Request survives a reset.
+**What:** Make model modes *shareable* across a team. Today a mode is a per-model, per-user setting. For the enterprise/team audience, the value is defining a task profile once (e.g. "Precise Code", "Deep Reasoning", "Structured JSON") and having every engineer on the team pick it from the Copilot model picker without each person hand-copying JSON.
 
-**What it is NOT:** This is not a replacement for server-side metrics (`/metrics`). The vLLM `/metrics` endpoint already reports cumulative token counts from server start. This tracker is about *client-side* usage that the user can see without looking at the metrics endpoint, and that survives restarts of individual vLLM server instances.
+**Why it matters (moat + team adoption):**
+- Model modes are already a differentiator (BYOK can't send arbitrary body params). Making them **shareable** multiplies their value: one operator defines the presets, the whole team gets consistent behavior.
+- Lowers the onboarding cost for the enterprise story ("run Copilot against your own vLLM servers for many users").
+- Pure moat — BYOK has no equivalent concept at all.
 
-**Deferred:** a status bar item showing "tokens used today" (the tree node already delivers the value).
+**Design directions (pick one, don't build all):**
+- **Import/export of a `modelModes` block** as a JSON snippet that can be pasted into the Model Settings UI or a settings file — simplest, works with existing per-model storage.
+- **A team-level presets file** (e.g. an optional `teamModes` or referenced presets JSON) that Model Settings can load and apply to a model, distinct from the bundled per-model presets.
+- **Named, shared task profiles** stored once and referenced by many models, rather than duplicated per model.
+
+**Open questions:**
+- Where should shared profiles live — global storage, a workspace file, or a referenced JSON like `systemMessageReplacementsFile` already does?
+- Are profiles model-agnostic (a "Precise Code" preset applies to any model) or model-scoped (per family)?
+- How do shared profiles merge with per-model overrides if both define the same param?
+
+**Effort:** Low (import/export) to Medium (shared profile store + Model Settings UI).
+
+---
+
+## 🛡️ Cost Governance: Per-Model Budgets & Alerts
+
+**Category:** Painkiller (enterprise cost control)
+**Status:** Idea — not implemented.
+
+**What:** Build on the existing Token Usage & Cost tracker to add **budgets and thresholds** — warn when a model or team exceeds a spend limit (per day / per month), and optionally block new requests once a hard cap is hit.
+
+**Why it matters:**
+- The tracker already records actual spend (`usage.cost` for OpenRouter, derived rates otherwise). Budgets turn that data from *reporting* into *governance* — the thing an enterprise operator actually needs.
+- Differentiates against BYOK, which has no cost tracking at all.
+- Aligns with the professional positioning; only worth building if there's evidence users want it (per the repo's "ignore for now" rule, don't pre-build).
+
+**Scope options (pick the smallest useful slice):**
+- **Soft alert:** show a warning row/badge when a model's spend passes a configured threshold this period.
+- **Hard cap:** refuse new requests to a model once its cap is reached (with an override).
+- **Per-model vs per-server vs per-team:** a threshold lives on a model entry, or is aggregated across a server.
+
+**Open questions:**
+- Is a per-model soft alert the minimal first slice, or does a hard block need to ship together for the feature to be credible?
+- Where does the threshold live in config, and does it need a UI in Model Settings or just a settings field?
+- Interaction with OpenRouter's own account-level limits and `usage.cost` reporting.
+
+**Effort:** Low (soft alert on existing tracker) to Medium (hard cap + request-time enforcement + UI).
 
 ---
 

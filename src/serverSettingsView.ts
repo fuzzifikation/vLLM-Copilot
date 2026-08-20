@@ -5,9 +5,13 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getConfig, buildEndpoint, findModelConfigIndex, resolveServerConfig, toPublicModelConfig, type ModelConfig, type ServerType } from './config.js';
+import { getConfig, buildEndpoint, findModelConfigIndex, resolveServerConfig, toPublicModelConfig, serverFingerprint, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
 import { patchModelConfig, type ModelIdentity } from './configStore.js';
 import { detectServerTypeFromV1Models } from './vllmClient.js';
+
+// Re-exported so the existing test import surface (serverSettingsView.test.ts)
+// keeps working after the helper moved to config.ts.
+export { serverGroupKey } from './config.js';
 import {
   discoverPersonalities,
   ensureGlobalPersonality,
@@ -55,6 +59,13 @@ const KNOWN_PARAMS: Record<string, { label: string; type: 'number' | 'string' | 
 };
 
 interface ServerGroup {
+  /**
+   * Stable webview identity for this group. Headers are per-model, so a URL may
+   * host several logical servers (different credentials/scopes). The key is a
+   * hash of the URL + header fingerprint — never the fingerprint itself, which
+   * embeds header values that must not reach the webview DOM.
+   */
+  key: string;
   url: string;
   models: ModelConfig[];
   serverModelIds: string[];
@@ -109,6 +120,8 @@ interface WebviewAction {
   serverUrl: string;
   /** Extension `id` of the target model config (or the server model id when unconfigured). */
   id?: string;
+  /** Configured sibling identifying the selected URL + header identity. */
+  identityModelId?: string;
 }
 
 type FromWebviewMessage = ReadyMessage | SaveMessage | ApplyPersonalityMessage | SetSystemMessageCaptureMessage | WebviewAction;
@@ -161,6 +174,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
             await vscode.commands.executeCommand('vllm-copilot.autoConfigureModel', {
               serverUrl: msg.serverUrl,
               id: msg.id,
+              identityModelId: msg.identityModelId,
             });
           } else if (msg.type === 'removeModel') {
             await vscode.commands.executeCommand('vllm-copilot.removeModel', {
@@ -226,7 +240,12 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     if (!view || !this.isWebviewReady) return;
     const generation = ++this.refreshGeneration;
     const config = await getConfig(this.context);
+    // Group by URL + header fingerprint, not URL alone. Headers are per-model in
+    // this project — two models sharing a URL with different credentials/scopes
+    // are DIFFERENT logical servers. Each group is probed (and labelled) with its
+    // own credentials; one model's headers must never describe a sibling.
     const serverMap = new Map<string, {
+      url: string;
       models: ModelConfig[];
       publicModels: ModelConfig[];
       requestHeaders: Record<string, string>;
@@ -235,10 +254,11 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       if (!model.serverUrl) continue;
       const resolved = resolveServerConfig(model);
       if (!resolved.serverUrl) continue;
-      let existing = serverMap.get(resolved.serverUrl);
+      const fp = serverFingerprint(resolved.serverUrl, resolved.requestHeaders);
+      let existing = serverMap.get(fp);
       if (!existing) {
-        existing = { models: [], publicModels: [], requestHeaders: resolved.requestHeaders };
-        serverMap.set(resolved.serverUrl, existing);
+        existing = { url: resolved.serverUrl, models: [], publicModels: [], requestHeaders: resolved.requestHeaders };
+        serverMap.set(fp, existing);
       }
       existing.models.push(model);
       // Public projection: header values never reach the webview DOM.
@@ -248,7 +268,8 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       });
     }
     const servers: ServerGroup[] = await Promise.all(
-      Array.from(serverMap.entries()).map(async ([url, group]) => {
+      Array.from(serverMap.entries()).map(async ([fp, group]) => {
+        const url = group.url;
         // Fetch server model IDs from /v1/models (same endpoint Add Server probes).
         // Also detect the backend from the response so unconfigured models can be
         // added with the correct serverType instead of silently defaulting to vllm.
@@ -274,7 +295,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
         // /v1/models signature — when the endpoint signal is inconclusive (or unreachable),
         // adopt the persisted serverType of a configured sibling on the same server.
         const detectedServerType = resolveDetectedServerType(entries, group.models);
-        return { url, models: group.publicModels, serverModelIds, detectedServerType };
+        return { key: serverGroupKey(fp), url, models: group.publicModels, serverModelIds, detectedServerType };
       }),
     );
     const firstServer = servers[0];
@@ -318,7 +339,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     view.webview.postMessage({
       type: 'data',
       servers,
-      selectedServerUrl: firstServer?.url || '',
+      selectedServerKey: firstServer?.key || '',
       selectedModelId: firstModel,
       knownParams: KNOWN_PARAMS,
       personalities,

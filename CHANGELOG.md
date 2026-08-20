@@ -1,26 +1,10 @@
 # Changelog
 
-## v1.32.1 — Bug fixes — 2026-08-20
+## Unreleased
 
 ### Fixed
 
-- **OpenRouter metadata resolves from the model catalog, matched by exact id** — a `:free` pick can never silently resolve to the paid model (fixes `cohere/north-mini-code:free` failing). Malformed catalogs fail loudly rather than reading as empty; a model absent from one snapshot is rechecked on the next poll.
-- **OpenRouter context windows resolve from the shared catalog** — one `/v1/models` probe per poll instead of a per-model HTTP call (~500KB less per poll).
-- **Server errors show the HTTP code and the server's real message** instead of a generic wrapper.
-- **Model Settings and Connection Diagnostics work with authenticated and `/v1`-suffixed servers** — trusted headers stay host-side, URL spellings share one canonical server, and an older refresh can't overwrite newer settings.
-- **Clean Copilot Sessions targets the active VS Code install** — Stable/Insiders/VSCodium/portable roots derived from the running extension host.
-- **Model Settings preserves boolean `false` and rejects duplicate modes**.
-- **Model discovery can't restore stale cache after a settings change** — in-flight retries use the current config.
-- **Invalid numeric settings no longer suppress requests** — normalized to safe finite values; URI schemes matched case-insensitively.
-- **Last Request context percentages use the server-reported window** — reserving headroom no longer overstates utilization.
-- **Transient 429/503 honor bounded `Retry-After`** — one pre-stream retry, up to 10s (1.5s when absent); longer waits fail fast; cancellation interrupts the backoff.
-- **Dead response-logging surface removed** — `FileLogger.logResponse()` / `VllmClient.getResponseHeaders()` had no callers.
-- **Update Auth no longer leaks idle metrics engines**.
-
-### Changed
-
-- **"Server Settings" is now "Model Settings"** — the per-model editor is renamed to reflect that it configures individual models. Command IDs are unchanged.
-- **Model Settings flags stale configured models `(inactive)`** when the server no longer reports them; nothing is flagged when the probe fails ("unknown", not "inactive").
+- **Server errors state the HTTP code and the server's real message** — e.g. `Server error [402]. This request requires more credits, or fewer max_tokens…` — instead of a generic "vLLM server problem" or raw JSON. No backend-specific wording, and the message is no longer cut off.
 
 ## v1.32.0 — OpenRouter backend & configurable first-response timeout
 

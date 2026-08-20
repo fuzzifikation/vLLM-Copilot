@@ -333,7 +333,8 @@ export async function resolveModelConfigForAdd(
   // never mixes in HuggingFace (the Add flow's dedicated branch and this shared
   // resolver stay in sync).
   if (serverType === 'openrouter') {
-    return autoConfigureOpenRouterModel(modelId, requestHeaders);
+    // Catalog metadata is public/unauthenticated — no per-model headers sent.
+    return autoConfigureOpenRouterModel(modelId);
   }
 
   const presets = await loadModelPresets(context.extensionUri);
