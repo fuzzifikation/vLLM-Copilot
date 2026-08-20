@@ -76,10 +76,12 @@ describe('discoverModels', () => {
   it('passes the resolved serverType into the resolver and builds model info', async () => {
     const output = makeOutput();
     const spy = vi.fn(async () => ({ contextWindow: 8192 }));
+    const onModelDiscovered = vi.fn();
     const models = await discoverModels(
       [{ id: 'm1', serverUrl: server, family: 'test-family' }],
       { getModelContextWindow: spy },
       output,
+      onModelDiscovered,
     );
     expect(spy).toHaveBeenCalledWith('vllm', server, {}, 'm1');
     expect(models).toHaveLength(1);
@@ -88,6 +90,7 @@ describe('discoverModels', () => {
     // Default maxOutputTokens=4096 leaves 4096 for input at 8192 context.
     expect(models[0].maxInputTokens).toBeGreaterThan(0);
     expect(models[0].maxInputTokens + models[0].maxOutputTokens).toBe(8192);
+    expect(onModelDiscovered).toHaveBeenCalledWith('m1', 8192);
     expect(lines(output)).toContain('Loaded 1 model(s)');
   });
 

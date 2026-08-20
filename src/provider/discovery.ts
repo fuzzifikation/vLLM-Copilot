@@ -30,6 +30,7 @@ export async function discoverModels(
   modelOverrides: ModelConfig[],
   client: Pick<ProviderClient, 'getModelContextWindow'>,
   output: vscode.OutputChannel,
+  onModelDiscovered?: (modelId: string, contextWindow: number) => void,
 ): Promise<vscode.LanguageModelChatInformation[]> {
   // Process each model: fetch context window from server, build info, or record error.
   // All models are queried in parallel so discovery time = max(server latencies), not sum.
@@ -38,6 +39,7 @@ export async function discoverModels(
       const id = override.id || resolveVllmModelId(override) || '(unnamed model)';
       return {
         model: null,
+        contextWindow: null,
         error: `[WARN] Model "${id}" has no serverUrl and will be skipped. Add one or run "Add vLLM Server & Model".`,
       };
     }
@@ -72,12 +74,14 @@ export async function discoverModels(
             `[WARN] Model "${modelId}" — family estimated as "${family}" from org-name fallback (no preset/HuggingFace family available). Family is informational only; use a preset or run auto-discovery for authoritative values.`
           );
         }),
+        contextWindow: limits.contextWindow,
         error: null,
       };
     } catch (err) {
       const id = override.id || vllmModelId || '(unnamed model)';
       return {
         model: null,
+        contextWindow: null,
         error: `[WARN] Model "${id}" skipped: ${describeError(err)}`,
       };
     }
@@ -90,9 +94,10 @@ export async function discoverModels(
   // reject (a rejection here would be a programming error inside the map
   // callback, not a model-skipping condition). `Promise.all` is honest: there is
   // no rejected branch to handle.
-  for (const { model, error } of results) {
+  for (const { model, contextWindow, error } of results) {
     if (model) {
       models.push(model);
+      if (contextWindow !== null) onModelDiscovered?.(model.id, contextWindow);
     }
     if (error) {
       output.appendLine(error);

@@ -32,6 +32,11 @@ describe('normalizeServerUrl', () => {
     expect(normalizeServerUrl('https://example.com')).toBe('https://example.com');
   });
 
+  it('recognizes and canonicalizes URI schemes case-insensitively', () => {
+    expect(normalizeServerUrl('HTTPS://example.com/v1')).toBe('https://example.com');
+    expect(normalizeServerUrl('HTTP://localhost:8000/')).toBe('http://localhost:8000');
+  });
+
   it('removes trailing slash when scheme is present', () => {
     expect(normalizeServerUrl('https://example.com/')).toBe('https://example.com');
   });

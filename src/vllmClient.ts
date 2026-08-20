@@ -275,9 +275,9 @@ export class VllmClient {
   }
 
   /** Shared retry callbacks used by getModelContextWindow and chatCompletionStream. */
-  private get retryCallbacks(): { onRetry: (error: string) => void; onRetrySuccess: (status: number) => void } {
+  private get retryCallbacks(): { onRetry: (error: string, delayMs: number) => void; onRetrySuccess: (status: number) => void } {
     return {
-      onRetry: (error) => this.output.appendLine(`[WARN] ${error}, retrying in 1500ms…`),
+      onRetry: (error, delayMs) => this.output.appendLine(`[WARN] ${error}, retrying in ${delayMs}ms…`),
       onRetrySuccess: (status) => this.output.appendLine(`[INFO] Retry succeeded — received HTTP ${status}`),
     };
   }
@@ -527,17 +527,6 @@ export class VllmClient {
         seenNonSystem = true;
       }
     }
-  }
-
-  /**
-   * Extract response headers as a plain Record for logging.
-   */
-  private getResponseHeaders(response: Response): Record<string, string> {
-    const headers: Record<string, string> = {};
-    for (const [key, value] of response.headers.entries()) {
-      headers[key] = value;
-    }
-    return headers;
   }
 
   /**

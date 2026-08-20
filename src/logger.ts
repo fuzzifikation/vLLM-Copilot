@@ -153,36 +153,9 @@ export class FileLogger implements vscode.Disposable {
   }
 
   /**
-   * Log a response from the vLLM server.
-   * Writes: status, URL, headers, and body — everything as-is.
-   * This is an expert-level debug tool: no redaction, no guarding.
-   * @param status - HTTP status code
-   * @param url - Request URL
-   * @param headers - Response headers (logged as-is)
-   * @param data - Response body (logged as-is)
-   */
-  logResponse(status: number, url: string, headers?: Record<string, string>, data?: any): void {
-    if (!this.logStream) return;
-
-    const ts = new Date().toISOString().slice(11, 23);
-    const lines: string[] = [`${ts}] RES ${status} ${url}`];
-
-    if (headers) {
-      lines.push(`  HEADERS: ${JSON.stringify(headers)}`);
-    }
-
-    if (data) {
-      const dataStr = JSON.stringify(data);
-      lines.push(`  BODY: ${truncate(dataStr, this.logBodyLimit)}`);
-    }
-
-    this.logStream.write(`[${lines.join('\n')}\n`);
-  }
-
-  /**
    * Log a failed request (error response or network failure).
    * Captures HTTP error responses and network errors that never reach
-   * the happy-path logResponse call.
+   * the happy-path path.
    * @param method - HTTP method (GET, POST, etc.)
    * @param url - Full request URL
    * @param status - HTTP status code (0 if no HTTP response was received)

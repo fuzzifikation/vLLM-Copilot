@@ -226,11 +226,11 @@ describe('VllmClient retry logic (via getModelContextWindow)', () => {
       .rejects.toThrow(/Ollama model "qwen" is not loaded/);
   });
 
-  it('rejects on 429 (not retryable)', async () => {
+  it('retries once then rejects on persistent 429', async () => {
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(alwaysReturn(429, {}) as any);
     const client = new VllmClient(makeContext(), makeOutput());
     await expect(client.getModelContextWindow('vllm', 'http://test', {}, 'test-model')).rejects.toThrow();
-    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it('rejects on non-retryable 400', async () => {

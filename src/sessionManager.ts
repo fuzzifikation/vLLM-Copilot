@@ -5,11 +5,16 @@ import { DatabaseSync } from 'node:sqlite';
 import * as vscode from 'vscode';
 
 let outputChannel: vscode.OutputChannel | undefined;
+let activeVsCodeUserRoot: string | undefined;
 /** Buffer for log messages produced before setSessionManagerOutput() is called. */
 const preInitQueue: Array<{ level: string; msg: string }> = [];
 
-export function setSessionManagerOutput(channel: vscode.OutputChannel): void {
+export function setSessionManagerOutput(
+  channel: vscode.OutputChannel,
+  extensionGlobalStoragePath: string,
+): void {
   outputChannel = channel;
+  activeVsCodeUserRoot = userDataRootFromGlobalStorage(extensionGlobalStoragePath);
   // Flush any messages that accumulated before init
   for (const entry of preInitQueue) {
     outputChannel.appendLine(`[sessionManager] [${entry.level}] ${entry.msg}`);
@@ -44,12 +49,26 @@ const CHAT_KEYS = [
 
 // ── Path helpers (cross-platform) ──────────────────────────────────────────
 
+/**
+ * Derive the active VS Code user-data root from this extension's global storage:
+ * `<user-data>/User/globalStorage/<publisher.extension>` → `<user-data>/User`.
+ * This follows the running product automatically (Stable, Insiders, VSCodium,
+ * portable/custom `--user-data-dir`) instead of guessing its directory name.
+ */
+export function userDataRootFromGlobalStorage(extensionGlobalStoragePath: string): string {
+  return path.dirname(path.dirname(path.resolve(extensionGlobalStoragePath)));
+}
+
 function vsCodeRoot(): string {
+  if (activeVsCodeUserRoot) return activeVsCodeUserRoot;
+
+  // Defensive fallback for direct module use before extension activation.
   const home = os.homedir();
   const p = os.platform();
-  if (p === 'win32') return path.join(home, 'AppData', 'Roaming', 'Code', 'User');
-  if (p === 'darwin') return path.join(home, 'Library', 'Application Support', 'Code', 'User');
-  return path.join(home, '.config', 'Code', 'User');
+  const productDir = /insiders/i.test(vscode.env.appName) ? 'Code - Insiders' : 'Code';
+  if (p === 'win32') return path.join(home, 'AppData', 'Roaming', productDir, 'User');
+  if (p === 'darwin') return path.join(home, 'Library', 'Application Support', productDir, 'User');
+  return path.join(home, '.config', productDir, 'User');
 }
 
 function globalDbPath(): string {

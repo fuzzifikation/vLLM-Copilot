@@ -92,7 +92,7 @@ describe('FileLogger', () => {
   });
 
   it('logs response body as-is (no redaction - expert debug tool)', async () => {
-    logger.logResponse(200, 'https://host/api', undefined, { api_key: 'leak', items: [1, 2, 3] });
+    logger.logRequest('POST', 'https://host/api', undefined, { api_key: 'leak', items: [1, 2, 3] });
     const content = await readLog();
     expect(content).toContain('"api_key":"leak"');
     expect(content).toContain('"items":[1,2,3]');
@@ -149,7 +149,6 @@ describe('FileLogger when disabled', () => {
     expect(logger.isActive()).toBe(false);
     // These should all be no-ops, not throw
     logger.logRequest('GET', 'https://host');
-    logger.logResponse(200, 'https://host');
     logger.logStreamChunk(1, 'x');
     logger.logStreamFinish('stop');
     logger.close();
