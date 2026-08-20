@@ -21,6 +21,18 @@
     if (saveBtn) saveBtn.disabled = !dirty;
     if (revertBtn) revertBtn.disabled = !dirty;
   }
+  // Routing mode only applies when routing is Auto. Called on render (initial
+  // paint) and whenever the Provider dropdown changes, so the Routing dropdown
+  // tracks the LIVE provider selection instead of the last-saved config.
+  function syncRoutingMode() {
+    const provider = document.querySelector('select[data-f="provider"]');
+    const routing = document.querySelector('select[data-f="routingMode"]');
+    const hint = document.getElementById('routingHint');
+    if (!provider || !routing) return;
+    const pinned = provider.value !== '';
+    routing.disabled = pinned;
+    if (hint) hint.hidden = !pinned;
+  }
   // Field edits bubble input/change from inside #root. Navigation and auto-applied
   // controls are excluded: the server/model selects (their re-render resets dirty)
   // and the personality dropdown + capture toggle (auto-save via their own handlers).
@@ -246,15 +258,16 @@
       // Standard (default) = price-weighted load balancing; Nitro = throughput-first;
       // Exacto = quality/tool-calling-first. Only meaningful when no provider is
       // pinned (sorting a single provider is meaningless) — disabled then.
+      // The disabled state is re-synced LIVE when the Provider dropdown changes
+      // (see syncRoutingMode) so the user doesn't have to save-and-re-render to
+      // pick a mode — this initial value only reflects the persisted config.
       const routingDisabled = !!mc.provider;
       h += '<label>Routing</label><select data-f="routingMode"' + (routingDisabled ? ' disabled' : '') + '>';
       h += '<option value="standard"' + (!mc.routingMode || mc.routingMode === 'standard' ? ' selected' : '') + '>Standard</option>';
       h += '<option value="nitro"' + (mc.routingMode === 'nitro' ? ' selected' : '') + '>Nitro</option>';
       h += '<option value="exacto"' + (mc.routingMode === 'exacto' ? ' selected' : '') + '>Exacto</option>';
       h += '</select>';
-      if (routingDisabled) {
-        h += '<div class="field-hint">Routing is fixed when a provider is pinned — set Provider to Auto to choose a routing mode.</div>';
-      }
+      h += '<div class="field-hint" id="routingHint"' + (routingDisabled ? '' : ' hidden') + '>Routing is fixed when a provider is pinned — set Provider to Auto to choose a routing mode.</div>';
     }
     h += '</div>';
 
@@ -318,6 +331,14 @@
 
     document.getElementById('sSel').onchange = () => { S.selServer = document.getElementById('sSel').value; render(); };
     document.getElementById('mSel').onchange = () => { S.selModel = document.getElementById('mSel').value; render(); };
+    // Routing mode only makes sense when routing is Auto. The Provider dropdown
+    // and Routing dropdown are sibling fields, so react to the provider's LIVE
+    // selection — no save-and-re-render needed to enable/disable routing.
+    const providerSelect = document.querySelector('select[data-f="provider"]');
+    if (providerSelect) {
+      providerSelect.onchange = () => syncRoutingMode();
+      syncRoutingMode();
+    }
     const pSel = document.getElementById('personalitySel');
     if (pSel) {
       const activeName = S.activePersonalities[S.selModel] || '';
