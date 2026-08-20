@@ -20,11 +20,13 @@ import { buildRequestHeaders } from './fetchRetry.js';
 import { resolveRuntimeLimits } from './runtimeLimits.js';
 import {
   fetchOpenRouterAccount,
+  fetchOpenRouterCredits,
   fetchOpenRouterModelEndpoints,
   resolveOpenRouterLimitsFromCatalog,
   PermanentContextError,
   OpenRouterModelNotFoundError,
   type OpenRouterAccount,
+  type OpenRouterCredits,
   type OpenRouterModelData,
   type OpenRouterModelEndpoint,
 } from './openRouter.js';
@@ -77,6 +79,8 @@ export interface ServerMetrics {
   contextByModel?: Record<string, number>;
   /** OpenRouter account/key health from `GET /api/v1/key` (relay node). */
   account?: OpenRouterAccount;
+  /** OpenRouter account budget from `GET /api/v1/credits` — total credits & usage. */
+  credits?: OpenRouterCredits;
   /** OpenRouter per-model provider lists from `GET /api/v1/models/{id}/endpoints`
    *  (relay nodes). modelId → providers with per-1M pricing, matched by tag. */
   providersByModel?: Record<string, OpenRouterModelEndpoint[]>;
@@ -761,9 +765,13 @@ async function fetchAllEndpoints(
   // CONCURRENTLY with the endpoint fetches — it has its own timeout and must
   // never stall the metrics cycle behind a slow /api/v1/key. Fails silently
   // (bad/missing key, transient) → undefined → the dashboard hides the account
-  // rows rather than fabricating credits.
+  // rows rather than fabricating credits. Same for the account budget
+  // (`GET /api/v1/credits`), fired alongside.
   const accountPromise = serverType === 'openrouter'
     ? fetchOpenRouterAccount(requestHeaders)
+    : Promise.resolve(undefined);
+  const creditsPromise = serverType === 'openrouter'
+    ? fetchOpenRouterCredits(requestHeaders)
     : Promise.resolve(undefined);
 
   // Vary the inquiry by backend. vLLM exposes the full set: /health, /v1/models,
@@ -867,14 +875,20 @@ async function fetchAllEndpoints(
   // ── Health body (for deep-dive) ──
   const healthBody = online && healthRes.ok ? await healthRes.text() : undefined;
 
-  // ── OpenRouter relay: account/key health (awaited here so the endpoint
-  // ── fetches above ran in parallel — never a serial stall). The probe is
-  // display-only and re-runs every tick, so a late/slow result is worthless:
-  // bound it below the poll interval so a hung /api/v1/key can't stretch the
-  // cadence. (The probe never rejects — it returns undefined on failure.)
-  const account = await Promise.race([
-    accountPromise,
-    new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
+  // ── OpenRouter relay: account/key health + budget (awaited here so the
+  // ── endpoint fetches above ran in parallel — never a serial stall). The probes
+  // are display-only and re-run every tick, so a late/slow result is worthless:
+  // bound them below the poll interval so a hung endpoint can't stretch the
+  // cadence. (The probes never reject — they return undefined on failure.)
+  const [account, credits] = await Promise.all([
+    Promise.race([
+      accountPromise,
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
+    ]),
+    Promise.race([
+      creditsPromise,
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
+    ]),
   ]);
 
   // ── Build ServerMetrics (aggregated, for dashboard) ──
@@ -884,7 +898,7 @@ async function fetchAllEndpoints(
   const allModels = [...new Set([...modelNames, ...aggregated.models])];
 
   const serverMetrics: ServerMetrics = online
-    ? { online: true, version, ...aggregated, models: allModels, maxModelLen, account }
+    ? { online: true, version, ...aggregated, models: allModels, maxModelLen, account, credits }
     : emptyMetrics(errorStr ?? 'Unknown error');
 
   // ── Build ServerRawData (raw, for deep-dive) ──
@@ -1079,7 +1093,10 @@ export function fmtTokPerSec(tokPerSec: number | null): string {
 export function shortUrl(url: string): string {
   try {
     const u = new URL(url);
-    return `${u.hostname}:${u.port}`;
+    // Omit the port when it's empty (URL constructor leaves `:` for a stripped
+    // default port like 443) — `openrouter.ai` should render without a trailing
+    // colon, not `openrouter.ai:`.
+    return u.port ? `${u.hostname}:${u.port}` : u.hostname;
   } catch {
     return url.replace(/\/+$/, '');
   }

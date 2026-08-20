@@ -449,29 +449,25 @@ export function formatCostFine(value: number, currency?: string): string {
 }
 
 /**
- * Compact collapsed-node summary: `$11.51 today and $31.13 in 3.1 days` — the
- * model's today cost and its all-time cost over the recording window (now −
- * startedAt, 1 decimal). Falls back to today-only when the overall cost or
- * start time is unknown (legacy data) or the window is under 0.1 days.
+ * Compact cost summary: `$11.51 today and $31.13 total` — shows exactly what
+ * the API/store reports. "Today" only when a today figure exists, "Total" only
+ * when an all-time figure exists, both joined when both exist. NO fabricated
+ * window math (the old "in N days" phrasing divided total spend by an invented
+ * recording window — a rate, not a fact). `undefined` when neither figure
+ * exists. Sub-cent costs use fine precision so they never collapse to $0.00.
  */
 export function formatCostSummary(
   todayCost: number | undefined,
   overallCost: number | undefined,
   currency: string | undefined,
-  startedAt: number | undefined,
 ): string | undefined {
-  if (todayCost === undefined) return undefined;
-  // Per-request costs are often sub-cent ($0.0007); `formatCost`'s 2 decimals
-  // would collapse them to $0.00 — the exact number this summary exists to show.
-  // Credits keep 2 decimals (their display is pinned), real currencies use the
-  // adaptive fine formatter.
+  if (todayCost === undefined && overallCost === undefined) return undefined;
   const isCredits = (currency ?? 'USD').toLowerCase() === 'ai credits';
   const fmt = (v: number) => isCredits ? formatCost(v, currency) : formatCostFine(v, currency);
-  const today = `${fmt(todayCost)} today`;
-  if (overallCost === undefined || startedAt === undefined) return today;
-  const days = (Date.now() - startedAt) / 86_400_000;
-  if (days < 0.1) return today;
-  return `${today} and ${fmt(overallCost)} in ${days.toFixed(1)} days`;
+  const parts: string[] = [];
+  if (todayCost !== undefined) parts.push(`${fmt(todayCost)} today`);
+  if (overallCost !== undefined) parts.push(`${fmt(overallCost)} total`);
+  return parts.join(' and ');
 }
 
 /**

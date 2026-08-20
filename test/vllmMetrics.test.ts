@@ -433,10 +433,10 @@ describe('fmtTokPerSec', () => {
 });
 
 describe('shortUrl', () => {
-  it('extracts hostname:port', () => {
+  it('extracts hostname:port, omitting an empty port', () => {
     expect(shortUrl('http://localhost:8000')).toBe('localhost:8000');
-    // URL constructor strips default ports (443 for https)
-    expect(shortUrl('https://example.com:443/v1')).toBe('example.com:');
+    // URL constructor strips default ports (443 for https) → no trailing colon.
+    expect(shortUrl('https://example.com:443/v1')).toBe('example.com');
     expect(shortUrl('https://example.com:8443/v1')).toBe('example.com:8443');
   });
   it('falls back to stripped URL on invalid input', () => {
@@ -536,6 +536,28 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     });
 
     expect(aggregated?.account).toEqual({ label: 'my-key', limit: 10, limit_remaining: 3.5, usage: 100, is_free_tier: false });
+  });
+
+  it('captures the OpenRouter account budget (total credits + usage) from /api/v1/credits', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 });
+      }
+      if (u.endsWith('/v1/credits')) {
+        return new Response(JSON.stringify({ data: { total_credits: 10, total_usage: 3.5 } }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const url = 'http://or-credits:8000';
+    const engine = getMetricsEngine(url, { Authorization: 'Bearer sk-test' }, 'openrouter', ['m1']);
+    const aggregated = await new Promise<ReturnType<ServerMetricsEngine['getCachedAggregated']>>((resolve, reject) => {
+      const sub = engine.subscribe((agg) => { resolve(agg); sub.dispose(); });
+      setTimeout(() => { sub.dispose(); reject(new Error('tick timeout')); }, 2000);
+    });
+
+    expect(aggregated?.credits).toEqual({ total_credits: 10, total_usage: 3.5 });
   });
 
   it('degrades account health to undefined on a bad key (no fabricated credits)', async () => {

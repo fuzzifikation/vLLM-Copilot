@@ -362,26 +362,24 @@ describe('cost derivation', () => {
     expect(formatCostFine(42, 'AI Credits')).toBe('42.00 credits');
   });
 
-  it('formatCostSummary renders today + overall over the recording window', () => {
-    const now = Date.now();
-    expect(formatCostSummary(undefined, undefined, undefined, undefined)).toBeUndefined();
-    // no startedAt (legacy data) → today only
-    expect(formatCostSummary(11.51, 31.13, 'USD', undefined)).toBe('$11.51 today');
-    // recording window under 0.1 days → today only (no "0.0 days")
-    expect(formatCostSummary(11.51, 31.13, 'USD', now - 60_000)).toBe('$11.51 today');
-    // ~3.1-day window
-    expect(formatCostSummary(11.51, 31.13, 'USD', now - 3.1 * 86_400_000)).toBe('$11.51 today and $31.13 in 3.1 days');
-    // AI Credits keep the suffix wording (31.13 < 100 keeps 2 decimals)
-    expect(formatCostSummary(12, 31.13, 'AI Credits', now - 3.1 * 86_400_000)).toBe('12.00 credits today and 31.13 credits in 3.1 days');
+  it('formatCostSummary renders today + total — exactly what the API/store reports', () => {
+    expect(formatCostSummary(undefined, undefined, undefined)).toBeUndefined();
+    // Only a today figure → today only.
+    expect(formatCostSummary(11.51, undefined, 'USD')).toBe('$11.51 today');
+    // Only a total figure → total only.
+    expect(formatCostSummary(undefined, 31.13, 'USD')).toBe('$31.13 total');
+    // Both → joined.
+    expect(formatCostSummary(11.51, 31.13, 'USD')).toBe('$11.51 today and $31.13 total');
+    // AI Credits keep the suffix wording.
+    expect(formatCostSummary(12, 31.13, 'AI Credits')).toBe('12.00 credits today and 31.13 credits total');
   });
 
   it('formatCostSummary keeps sub-cent precision for real currencies (no $0.00 collapse)', () => {
     // Regression: actual OpenRouter costs are often $0.0007 — 2-decimal
     // formatCost collapsed the summary to "$0.00 today". Fine precision must
     // survive so the primary display shows the real spend.
-    const now = Date.now();
-    expect(formatCostSummary(0.0007, 0.0012, 'USD', now - 3.1 * 86_400_000)).toBe('$0.0007 today and $0.0012 in 3.1 days');
-    expect(formatCostSummary(0.0007, undefined, 'USD', undefined)).toBe('$0.0007 today');
+    expect(formatCostSummary(0.0007, 0.0012, 'USD')).toBe('$0.0007 today and $0.0012 total');
+    expect(formatCostSummary(0.0007, undefined, 'USD')).toBe('$0.0007 today');
   });
 
   it('fmtCount abbreviates with k/M, presentation only', () => {

@@ -697,6 +697,7 @@ const CLEARABLE_ON_EMPTY: readonly (keyof ModelConfig)[] = [
   'defaultMode',
   'defaultParams',
   'systemMessageReplacementsFile',
+  'provider',
 ] as const;
 
 /**

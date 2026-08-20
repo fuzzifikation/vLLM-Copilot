@@ -537,6 +537,25 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
     }
   });
 
+  it("4a2: patch-mode '' clears the OpenRouter provider back to Auto (regression)", async () => {
+    existingConfig = [
+      {
+        id: 'test-model', vllmModelId: 'test-model', serverUrl: 'https://openrouter.ai/api',
+        serverType: 'openrouter', provider: 'gmicloud/fp8',
+      },
+    ];
+
+    // Selecting "Auto" in the Provider dropdown sends '' — the store must map
+    // '' → delete so the key is REMOVED (undefined/omitted = Auto), not
+    // persisted as `provider: ""`.
+    await patchModelConfig(identity({ serverUrl: 'https://openrouter.ai/api' }), { provider: '' });
+
+    const stored = storedModels();
+    expect(stored).toHaveLength(1);
+    expect('provider' in stored[0]).toBe(false);
+    expect((stored[0] as any).provider).toBeUndefined();
+  });
+
   it('4b: a legitimate 0 is NOT cleared (streamInactivityTimeout 0 = infinite)', async () => {
     existingConfig = [
       { id: 'test-model', vllmModelId: 'test-model', serverUrl: 'http://localhost:8000', streamInactivityTimeout: 30000, autoContinueRetries: 1 },
