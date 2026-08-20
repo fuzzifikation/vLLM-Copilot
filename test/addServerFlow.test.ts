@@ -40,7 +40,7 @@ describe('pickModelFromServer', () => {
 
     expect(result).toBe('model-2');
     const items = quickPickSpy.mock.calls[0][0] as vscode.QuickPickItem[];
-    expect(items[0].description).toBe(8192 .toLocaleString() + ' ctx'); // locale-consistent with the code
+    expect(items[0].description).toBe('8,192 ctx'); // en-US grouping is deterministic
     expect(items[0].detail).toBe('');
     expect(items[1].detail).toBe('root: org/model-2');
     expect(quickPickSpy.mock.calls[0][1]).toEqual(

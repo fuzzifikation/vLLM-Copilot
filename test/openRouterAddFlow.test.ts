@@ -522,8 +522,8 @@ describe('buildOpenRouterSummary', () => {
     expect(summary).toContain('OpenRouter model: nvidia/nemotron-3.5-lightning:free');
     // toLocaleString is locale-dependent (test env may render 1.000.000) — assert
     // against the same formatting the summary uses, like the existing addServerFlow tests.
-    expect(summary).toContain(`Context window: ${(1000000).toLocaleString()} tokens`);
-    expect(summary).toContain(`Max output: ${(65536).toLocaleString()} tokens`);
+    expect(summary).toContain(`Context window: ${(1000000).toLocaleString('en-US')} tokens`);
+    expect(summary).toContain(`Max output: ${(65536).toLocaleString('en-US')} tokens`);
     expect(summary).toContain('Tool calling: yes');
     expect(summary).toContain('Modes: Think (High), No Think');
     expect(summary).toContain('Estimated rates');

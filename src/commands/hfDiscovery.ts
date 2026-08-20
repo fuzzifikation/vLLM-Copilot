@@ -97,12 +97,12 @@ export async function autoConfigureModel(
   // The resolver THROWS a backend-specific message (endpoint, field, fix) when the
   // model can't be served; propagating it prevents saving an unusable model.
   const limits = await resolveRuntimeLimits(serverType, serverUrl, requestHeaders ?? {}, modelId);
-  summary.push(`Context window (${serverType}): ${limits.contextWindow.toLocaleString()} tokens`);
+  summary.push(`Context window (${serverType}): ${limits.contextWindow.toLocaleString('en-US')} tokens`);
   suggestedMaxOutputTokens = Math.min(
     Math.floor(limits.contextWindow * OUTPUT_TOKEN_FACTOR),
     OUTPUT_TOKEN_CAP
   );
-  summary.push(`Suggested max output tokens: ${suggestedMaxOutputTokens.toLocaleString()}`);
+  summary.push(`Suggested max output tokens: ${suggestedMaxOutputTokens.toLocaleString('en-US')}`);
 
   // Use the base HF repo (root) for HF lookups — quantized variants (e.g. `qwen3.6-27b-fp8`)
   // don't exist on HF; only the base model (`Qwen/Qwen3.6-27B`) does.
@@ -359,7 +359,7 @@ export async function resolveModelConfigForAdd(
         modelConfig: mergePresetWithUserConfig(preset.config, userConfig),
         summary: [
           `Using preset ${preset.sourceFile}. Modes: ${modeNames}.`,
-          `Context window (${serverType}): ${limits.contextWindow.toLocaleString()} tokens`,
+          `Context window (${serverType}): ${limits.contextWindow.toLocaleString('en-US')} tokens`,
         ],
       };
     }

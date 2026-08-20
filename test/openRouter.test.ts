@@ -667,7 +667,7 @@ describe('autoConfigureOpenRouterModel', () => {
     const text = summary.join('\n');
     // Format via the same toLocaleString the code uses so the assertion is
     // locale-independent (the thousands separator varies across runtimes).
-    expect(text).toContain(`Context window (OpenRouter): ${(500000).toLocaleString()} tokens`);
+    expect(text).toContain(`Context window (OpenRouter): ${(500000).toLocaleString('en-US')} tokens`);
     expect(text).toContain('Modes: Think (Xhigh), Think (High), Think (Medium), Think (Low)');
     expect(text).toContain('Default mode: Think (High)');
     // No HuggingFace attribution in the OpenRouter summary.

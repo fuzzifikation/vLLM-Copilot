@@ -720,9 +720,9 @@ export async function autoConfigureOpenRouterModel(
   };
 
   const summary: string[] = [];
-  summary.push(`Context window (OpenRouter): ${info.runtimeLimits.contextWindow.toLocaleString()} tokens`);
+  summary.push(`Context window (OpenRouter): ${info.runtimeLimits.contextWindow.toLocaleString('en-US')} tokens`);
   if (info.runtimeLimits.maxOutputTokens !== undefined) {
-    summary.push(`Max output: ${info.runtimeLimits.maxOutputTokens.toLocaleString()} tokens`);
+    summary.push(`Max output: ${info.runtimeLimits.maxOutputTokens.toLocaleString('en-US')} tokens`);
   }
   summary.push(`Tool calling: ${info.capabilities.toolCalling ? 'yes' : 'no'}`);
   summary.push(`Image input: ${info.capabilities.imageInput ? 'yes' : 'no'}`);

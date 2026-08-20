@@ -122,7 +122,7 @@ export async function discoverModels(
 
   if (models.length > 0) {
     const summary = models.map(m => {
-      const ctx = ((m.maxInputTokens || 0) + (m.maxOutputTokens || 0)).toLocaleString();
+      const ctx = ((m.maxInputTokens || 0) + (m.maxOutputTokens || 0)).toLocaleString('en-US');
       return `${m.id} (${ctx} ctx)`;
     }).join(', ');
     output.appendLine(`[INFO] Loaded ${models.length} model(s): ${summary}`);

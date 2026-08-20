@@ -85,9 +85,9 @@ export function logTokenUsage(
 
   const out = [];
   out.push(`[TOKENS] ${modelId}`);
-  out.push(`  input: ${usage.prompt_tokens.toLocaleString()} (cached: ${cached.toLocaleString()}${cached > 0 && cacheHitPct ? ` = ${cacheHitPct}%` : ''}${inputTokPerSec ? `, ${inputTokPerSec} tok/s` : ''})`);
-  out.push(`  output: ${usage.completion_tokens.toLocaleString()}${specAcceptPct ? ` (spec: ${accepted}/${specTotal} = ${specAcceptPct}%)` : ''}${outputTokPerSec ? `, ${outputTokPerSec} tok/s` : ''})`);
-  out.push(`  total: ${usage.total_tokens.toLocaleString()}`);
+  out.push(`  input: ${usage.prompt_tokens.toLocaleString('en-US')} (cached: ${cached.toLocaleString('en-US')}${cached > 0 && cacheHitPct ? ` = ${cacheHitPct}%` : ''}${inputTokPerSec ? `, ${inputTokPerSec} tok/s` : ''})`);
+  out.push(`  output: ${usage.completion_tokens.toLocaleString('en-US')}${specAcceptPct ? ` (spec: ${accepted}/${specTotal} = ${specAcceptPct}%)` : ''}${outputTokPerSec ? `, ${outputTokPerSec} tok/s` : ''})`);
+  out.push(`  total: ${usage.total_tokens.toLocaleString('en-US')}`);
   if (usage.cost !== undefined && usage.cost !== null) {
     // One money formatter, one convention (matches the dashboard's fine cost).
     out.push(`  cost: ${formatCostFine(usage.cost, 'USD')}${usage.usedByok ? ' (BYOK)' : ''}`);

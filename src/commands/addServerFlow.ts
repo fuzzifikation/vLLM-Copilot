@@ -59,7 +59,7 @@ export async function pickModelFromServer(
 ): Promise<string | undefined> {
   const items: vscode.QuickPickItem[] = models.map(m => ({
     label: m.id,
-    description: m.max_model_len ? `${m.max_model_len.toLocaleString()} ctx` : '',
+    description: m.max_model_len ? `${m.max_model_len.toLocaleString('en-US')} ctx` : '',
     detail: m.root ? `root: ${m.root}` : '',
   }));
   const selected = await vscode.window.showQuickPick(items, {
@@ -198,7 +198,7 @@ export async function pickOpenRouterModel(
     label: entry.id,
     description: entry.name ?? '',
     detail: [
-      entry.context_length ? `${entry.context_length.toLocaleString()} ctx` : '',
+      entry.context_length ? `${entry.context_length.toLocaleString('en-US')} ctx` : '',
       catalogPricing(entry),
     ].filter(Boolean).join(' · '),
   }));
@@ -250,9 +250,9 @@ export function buildOpenRouterSummary(info: OpenRouterModelInfo): string {
   const lines: string[] = [];
   lines.push(`OpenRouter model: ${info.wireModelId}`);
   if (info.canonicalSlug && info.canonicalSlug !== info.wireModelId) lines.push(`Canonical: ${info.canonicalSlug}`);
-  lines.push(`Context window: ${info.runtimeLimits.contextWindow.toLocaleString()} tokens`);
+  lines.push(`Context window: ${info.runtimeLimits.contextWindow.toLocaleString('en-US')} tokens`);
   if (info.runtimeLimits.maxOutputTokens !== undefined) {
-    lines.push(`Max output: ${info.runtimeLimits.maxOutputTokens.toLocaleString()} tokens`);
+    lines.push(`Max output: ${info.runtimeLimits.maxOutputTokens.toLocaleString('en-US')} tokens`);
   }
   lines.push(`Tool calling: ${info.capabilities.toolCalling ? 'yes' : 'no'}`);
   lines.push(`Image input: ${info.capabilities.imageInput ? 'yes' : 'no'}`);
@@ -362,8 +362,8 @@ export async function runOpenRouterAddFlow(
     return;
   }
   output.appendLine(
-    `[INFO] OpenRouter metadata: ${info.runtimeLimits.contextWindow.toLocaleString()} ctx, ` +
-    `max output ${info.runtimeLimits.maxOutputTokens?.toLocaleString() ?? '?'}, ` +
+    `[INFO] OpenRouter metadata: ${info.runtimeLimits.contextWindow.toLocaleString('en-US')} ctx, ` +
+    `max output ${info.runtimeLimits.maxOutputTokens?.toLocaleString('en-US') ?? '?'}, ` +
     `tools ${info.capabilities.toolCalling ? 'yes' : 'no'}`
   );
 
