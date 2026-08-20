@@ -377,6 +377,6 @@ The current dashboard is **server-centric** (one engine per server, one set of m
 | `GET /api/v1/key` | key | credits, usage, free-tier | account health row |
 | `GET /api/v1/activity` | key (mgmt?) | per-model daily aggregates | cost tracker |
 | `GET /api/v1/generation?id=` | key | full per-request diagnostics | follow-up diagnostics |
-| `GET /api/v1/models/{a}/{s}/endpoints` | ? | endpoints (providers) available for one model | provider picker |
+| `GET /api/v1/models/{a}/{s}/endpoints` | none | endpoints (providers) available for one model | provider dropdown in Model Settings (lazy fetch, keyed by wire id) |
 
 **OpenAPI spec:** `https://openrouter.ai/docs/openapi/openapi.yaml` (fetched 2026-08-19, ~1.3MB). Docs index: `https://openrouter.ai/docs/llms.txt`.
