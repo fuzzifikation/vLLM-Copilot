@@ -88,6 +88,25 @@ export function isOpenRouterUrl(serverUrl: string): boolean {
 /** Timeout for the catalog metadata GET (same budget as other metadata probes). */
 const METADATA_TIMEOUT_MS = 10000;
 
+/**
+ * Fallback output ceiling when a catalog model reports NO completion cap
+ * (`top_provider.max_completion_tokens` / `per_request_limits.completion_tokens`
+ * absent or invalid — null for essentially every catalog model): 10% of the
+ * context window, hard-capped.
+ *
+ * The old fallback was the FULL context window, which guaranteed
+ * output + input > context on the first real request — OpenRouter 400s with
+ * "...1048575 in the output" because output is reserved against the SAME window
+ * as the prompt. 10% keeps enough headroom for the prompt.
+ *
+ * Mirrors `OUTPUT_TOKEN_FACTOR` / `OUTPUT_TOKEN_CAP` in `commands/hfDiscovery.ts`
+ * (same convention). Kept local — NOT imported — because importing the commands
+ * module here would create a cycle (`hfDiscovery` → `runtimeLimits` → `openRouter`).
+ * If either factor changes, update both.
+ */
+const OUTPUT_TOKEN_FACTOR = 0.1;
+const OUTPUT_TOKEN_CAP = 81920;
+
 /** Top-level reserved paths on openrouter.ai that are NOT model pages. */
 const RESERVED_PATHS = new Set([
   'models', 'docs', 'settings', 'api', 'chat', 'library', 'about',
@@ -325,13 +344,17 @@ export function normalizeOpenRouterModel(
   const contextWindow = Math.min(...contextCandidates);
 
   // Output ceiling: smallest positive of the reported completion caps, clamped to
-  // the context window so output can never exceed what the model can hold.
-  const outputCandidates = [
+  // the context window so output can never exceed what the model can hold. When
+  // NO cap is reported (the common case — null for essentially every catalog
+  // model), fall back to 10% of the context window (hard-capped) instead of the
+  // FULL window, so output + input never exceeds the window the prompt shares.
+  const reportedOutputCaps = [
     data.top_provider?.max_completion_tokens,
     data.per_request_limits?.completion_tokens,
-    contextWindow,
   ].filter(isPositive);
-  const maxOutputTokens = Math.min(...outputCandidates);
+  const maxOutputTokens = reportedOutputCaps.length > 0
+    ? Math.min(...reportedOutputCaps, contextWindow)
+    : Math.min(Math.floor(contextWindow * OUTPUT_TOKEN_FACTOR), OUTPUT_TOKEN_CAP);
 
   // ── Capabilities ──
   const toolCalling = supports(data, 'tools');

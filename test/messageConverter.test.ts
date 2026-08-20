@@ -456,6 +456,37 @@ describe('formatError', () => {
     expect(out).toContain('This request requires more credits');
   });
 
+  it('surfaces ALL nested error messages, not just the stub (OpenRouter 429)', () => {
+    // OpenRouter's envelope: error.message is a terse stub while the real
+    // provider reason lives under error.metadata.raw. Both must reach the user —
+    // the message must not dead-end at "Provider returned error".
+    const err = new Error(
+      'HTTP 429: Too Many Requests — {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"poolside/laguna-s-2.1:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations"}}}'
+    );
+    const out = formatError(err);
+    expect(out).toBe(
+      'Server error [429]. Provider returned error — poolside/laguna-s-2.1:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations'
+    );
+  });
+
+  it('surfaces a string-form error envelope', () => {
+    // Some gateways return {"error":"..."} rather than {"error":{...}}.
+    const err = new Error('HTTP 400: Bad Request — {"error":"invalid model name"}');
+    expect(formatError(err)).toBe('Server error [400]. invalid model name');
+  });
+
+  it('recovers metadata.raw from a truncated body too', () => {
+    // If the envelope is cut mid-raw, the tolerant regex still surfaces both the
+    // stub message and the real reason instead of dead-ending on the stub.
+    const err = new Error(
+      'HTTP 429: Too Many Requests — {"error":{"message":"Provider returned error","metadata":{"raw":"temporarily rate-lim'
+    );
+    const out = formatError(err);
+    expect(out).toContain('Server error [429]');
+    expect(out).toContain('Provider returned error');
+    expect(out).toContain('temporarily rate-lim');
+  });
+
   it('states the code for a 5xx server error', () => {
     expect(formatError(new Error('HTTP 503: Service Unavailable'))).toBe('Server error [503]. Service Unavailable');
   });

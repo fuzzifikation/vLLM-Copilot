@@ -294,8 +294,9 @@ export async function runOpenRouterAddFlow(
 ): Promise<void> {
   const onSaved = () => provider.clearCache();
 
-  // 1. API key + optional headers. Required — chat bills per account (even free
-  //    routes). Mirrors the vLLM ordering: credentials before the model list.
+  // 1. API key (required). Custom headers are NOT prompted — OpenRouter needs no
+  //    extra headers for chat; expert headers (e.g. HTTP-Referer for dashboard
+  //    attribution) are added by editing the model config in settings.
   const requestHeaders = await promptForServerAuth({
     apiKeyTitle: 'Add OpenRouter Model — API Key',
     apiKeyPrompt: 'OpenRouter API key. Sent as "Authorization: Bearer <key>". Get one at https://openrouter.ai/keys. Chat requires it.',
@@ -304,6 +305,7 @@ export async function runOpenRouterAddFlow(
     headersTitle: 'Add OpenRouter Model — Custom Headers (optional)',
     headersPrompt: '(optional) Additional request headers (e.g. HTTP-Referer for the OpenRouter dashboard). JSON format or "Name": "Value". Leave empty for none.',
     headersPlaceholder: '{"HTTP-Referer": "https://github.com"}',
+    promptForHeaders: false,
   });
   if (requestHeaders === undefined) {
     output.appendLine('[WARN] OpenRouter add cancelled — no API key entered.');
@@ -319,6 +321,9 @@ export async function runOpenRouterAddFlow(
   //    that cannot be sized/saved.
   const parsed = parseOpenRouterBranchInput(urlInput);
   const prefill = 'error' in parsed ? undefined : parsed.requestedId;
+  // An explicit model-page reference (scheme'd OR scheme-less openrouter.ai URL)
+  // names the model directly; a bare /api base or a bare author/slug does not.
+  const isExplicitModelUrl = /^(?:https?:\/\/)?(?:www\.)?openrouter\.ai\/[^/]+\/[^/]+/i.test(urlInput.trim());
   let fullCatalog: OpenRouterModelData[];
   try {
     fullCatalog = await fetchOpenRouterCatalogFull();
@@ -329,7 +334,17 @@ export async function runOpenRouterAddFlow(
     vscode.window.showErrorMessage(`Couldn't load the OpenRouter model catalog. ${detail}`);
     return;
   }
-  const requestedId = await pickOpenRouterModel(projectCatalog(fullCatalog), prefill);
+  // A pasted full model-page URL names the model EXPLICITLY — skip the catalog
+  // typeahead and go straight to the confirm/save dialog, so the user actively
+  // confirms the model instead of it pre-selecting and auto-accepting on Enter.
+  // A bare /api base or a bare slug still routes through the picker (typeahead).
+  let requestedId: string | undefined;
+  if (isExplicitModelUrl && prefill) {
+    requestedId = prefill;
+    output.appendLine(`[INFO] OpenRouter model-page URL → resolving "${requestedId}" directly (picker skipped).`);
+  } else {
+    requestedId = await pickOpenRouterModel(projectCatalog(fullCatalog), prefill);
+  }
   if (!requestedId) {
     output.appendLine('[WARN] OpenRouter add cancelled — no model selected.');
     output.show(true);

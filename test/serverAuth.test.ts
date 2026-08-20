@@ -51,6 +51,17 @@ describe('promptForServerAuth', () => {
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
+  it('skips the headers box entirely when promptForHeaders is false (OpenRouter)', async () => {
+    // OpenRouter asks ONLY for the API key; custom headers are an expert concern
+    // left to settings editing — no second input box is shown.
+    inputBoxSpy.mockResolvedValueOnce('sk-or-v1-test');
+
+    const result = await promptForServerAuth({ ...opts, promptForHeaders: false });
+
+    expect(result).toEqual({ Authorization: 'Bearer sk-or-v1-test' });
+    expect(inputBoxSpy).toHaveBeenCalledTimes(1); // key only, no headers box
+  });
+
   it('combines the API key into Bearer auth and merges custom headers on top', async () => {
     inputBoxSpy
       .mockResolvedValueOnce('  secret-key  ') // trimmed

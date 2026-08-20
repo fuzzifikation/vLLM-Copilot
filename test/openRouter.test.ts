@@ -135,6 +135,24 @@ describe('normalizeOpenRouterModel', () => {
     expect(info.runtimeLimits).toEqual({ contextWindow: 4000, maxOutputTokens: 3000 });
   });
 
+  it('falls back to 10% of the context window (hard-capped) when no completion cap is reported', () => {
+    // No max_completion_tokens anywhere — the common catalog case.
+    const noCap = normalizeOpenRouterModel(
+      { ...base, top_provider: { context_length: 128000 } },
+      'x',
+    );
+    // floor(128000 × 0.1) = 12800 < cap 81920.
+    expect(noCap.runtimeLimits).toEqual({ contextWindow: 128000, maxOutputTokens: 12800 });
+
+    // A huge window must still respect the 81920 hard cap (never the full window).
+    const huge = normalizeOpenRouterModel(
+      { id: 'big/ctx', context_length: 2000000, top_provider: { context_length: 2000000 } },
+      'x',
+    );
+    // floor(2000000 × 0.1) = 200000 > cap 81920 → clamped to 81920.
+    expect(huge.runtimeLimits).toEqual({ contextWindow: 2000000, maxOutputTokens: 81920 });
+  });
+
   it('derives estimated per-1M USD rates from per-token pricing strings', () => {
     const info = normalizeOpenRouterModel(base, 'x');
     expect(info.cost).toEqual({
@@ -541,8 +559,9 @@ describe('autoConfigureOpenRouterModel', () => {
     });
     expect(modelConfig.defaultMode).toBe('Think (High)');
     expect(modelConfig.capabilities).toEqual({ toolCalling: true, imageInput: false });
-    // Authoritative ceiling (no API max_completion_tokens → clamps to context).
-    expect(modelConfig.maxOutputTokens).toBe(500000);
+    // No API completion cap → 10% of the context window (floor), hard-capped at 81920.
+    // floor(500000 × 0.1) = 50000 < 81920 → 50000.
+    expect(modelConfig.maxOutputTokens).toBe(50000);
     expect(modelConfig.cost).toEqual({ input: 3, output: 15, currency: 'USD' });
     const text = summary.join('\n');
     // Format via the same toLocaleString the code uses so the assertion is

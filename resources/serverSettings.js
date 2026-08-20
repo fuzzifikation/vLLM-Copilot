@@ -186,6 +186,16 @@
       h += '<option value="' + E(s.key) + '"' + (s.key === S.selServer ? ' selected' : '') + '>' + E(label) + '</option>';
     });
     h += '</select>';
+    // Backend type: every released config is vLLM. Secondary backends are opt-in.
+    // A select persists serverType; unset stays undefined (→ vLLM by policy).
+    // For unconfigured server models the select is pre-set from the backend
+    // auto-detected via /v1/models (max_model_len → vllm, owned_by "llamacpp" → llamacpp).
+    // serverType describes the SERVER, so it sits next to the Server selector —
+    // general → specific (serverType → Server → Model).
+    h += '<label>Server Type</label><select id="sTypeSel" data-f="serverType">' +
+      ['vllm', 'openrouter', 'llamacpp', 'lmstudio', 'ollama'].map(t =>
+        '<option value="' + t + '"' + (mc.serverType === t ? ' selected' : '') + '>' + t + '</option>').join('') +
+      '</select>';
     h += '<label>Model (vllmModelId)</label><select id="mSel">';
     // Option VALUE is the extension `id` (the key for personalities/settings);
     // the LABEL shows the real vllmModelId. When several presets share a wire id
@@ -216,17 +226,6 @@
     h += '<div class="field"><label>displayName</label>' +
       '<input type="text" data-f="displayName" value="' + E(String(mc.displayName || '')) + '">' +
       '<div class="field-hint">Name shown in model picker</div></div>';
-
-    // Backend type: every released config is vLLM. Secondary backends are opt-in.
-    // A select persists serverType; unset stays undefined (→ vLLM by policy).
-    // For unconfigured server models the select is pre-set from the backend
-    // auto-detected via /v1/models (max_model_len → vllm, owned_by "llamacpp" → llamacpp).
-    h += '<div class="field"><label>serverType</label>' +
-      '<select data-f="serverType">' +
-      ['vllm', 'openrouter', 'llamacpp', 'lmstudio', 'ollama'].map(t =>
-        '<option value="' + t + '"' + (mc.serverType === t ? ' selected' : '') + '>' + t + '</option>').join('') +
-      '</select>' +
-      '<div class="field-hint">Backend serving this model. Auto-detected from /v1/models for unconfigured models; default vllm.</div></div>';
 
     // Action buttons row — these address the model, not the personality.
     h += '<div class="action-btn-row">';
