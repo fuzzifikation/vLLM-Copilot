@@ -8,6 +8,7 @@ import * as path from 'path';
 import { getConfig, buildEndpoint, findModelConfigIndex, resolveServerConfig, toPublicModelConfig, serverFingerprint, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
 import { patchModelConfig, type ModelIdentity } from './configStore.js';
 import { detectServerTypeFromV1Models } from './runtimeLimits.js';
+import { fetchOpenRouterModelEndpoints, type OpenRouterModelEndpoint } from './openRouter.js';
 
 // Re-exported so the existing test import surface (serverSettingsView.test.ts)
 // keeps working after the helper moved to config.ts.
@@ -332,6 +333,28 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    // OpenRouter providers: lazily fetched when Model Settings opens. For every
+    // configured OpenRouter model, fetch the authoritative per-model provider
+    // list (`GET /api/v1/models/{id}/endpoints`) and key it by the wire id, so
+    // the webview can render a provider dropdown for the selected model. The
+    // tags come VERBATIM from the API — never derived. A failed fetch yields no
+    // entry (dropdown falls back to "Auto" only), never a fabricated list.
+    const providersByModel: Record<string, OpenRouterModelEndpoint[]> = {};
+    for (const sv of servers) {
+      for (const m of sv.models) {
+        if (m.serverType !== 'openrouter') continue;
+        const wireId = m.vllmModelId || m.id || '';
+        if (!wireId || providersByModel[wireId]) continue;
+        try {
+          providersByModel[wireId] = await fetchOpenRouterModelEndpoints(wireId);
+        } catch (err) {
+          this.outputChannel.appendLine(
+            `[WARN] Model Settings: OpenRouter provider list for "${wireId}" unavailable: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    }
+
     // The view may have been disposed during the awaits above (entry guard
     // passed, then the config/server/personality fetches ran). Posting to a
     // dead webview throws, so re-check before the single postMessage.
@@ -342,6 +365,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       selectedServerKey: firstServer?.key || '',
       selectedModelId: firstModel,
       knownParams: KNOWN_PARAMS,
+      providersByModel,
       personalities,
       activePersonalities,
       systemMessageCapture,

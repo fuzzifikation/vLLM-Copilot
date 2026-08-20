@@ -123,4 +123,53 @@ describe('buildRequest', () => {
     expect(result.mergedOptions.tools).toBeUndefined();
     expect(result.mergedOptions.tool_choice).toBeUndefined();
   });
+
+  it('injects provider.only with the exact tag for an OpenRouter model with a pinned provider', () => {
+    const result = buildRequest(
+      model,
+      [] as any,
+      opts(),
+      {
+        models: [{
+          id: 'm', vllmModelId: 'wire-model', serverUrl: 'https://openrouter.ai/api',
+          serverType: 'openrouter', provider: 'gmicloud/fp8',
+        }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+
+    // The tag is used VERBATIM — no derivation, no suffix appended to the id.
+    expect(result.mergedOptions.provider).toEqual({ only: ['gmicloud/fp8'] });
+    expect(result.vllmModelId).toBe('wire-model'); // wire id stays canonical
+  });
+
+  it('does not inject provider for an OpenRouter model without a pinned provider (Auto)', () => {
+    const result = buildRequest(
+      model,
+      [] as any,
+      opts(),
+      {
+        models: [{ id: 'm', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(result.mergedOptions.provider).toBeUndefined();
+  });
+
+  it('does not inject provider for non-OpenRouter backends even if provider is set', () => {
+    // provider is an OpenRouter-only field — it must never leak into a vLLM body.
+    const result = buildRequest(
+      model,
+      [] as any,
+      opts(),
+      {
+        models: [{ id: 'm', serverUrl: 'http://host:8000', provider: 'together' }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(result.mergedOptions.provider).toBeUndefined();
+  });
 });

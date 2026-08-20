@@ -12,6 +12,8 @@ function loadWebview(
   modelModes: Record<string, Record<string, unknown>>,
   serverModelIds: string[] = ['wire-model'],
   extraServers: any[] = [],
+  providersByModel: Record<string, any[]> = {},
+  serverType?: string,
 ) {
   const dom = new JSDOM(
     '<!doctype html><body>' +
@@ -33,6 +35,7 @@ function loadWebview(
       id: 'model-config',
       vllmModelId: 'wire-model',
       serverUrl: 'http://server:8000',
+      ...(serverType ? { serverType } : {}),
       defaultParams: { parallel_tool_calls: true },
       modelModes,
     }],
@@ -50,6 +53,7 @@ function loadWebview(
           options: ['true', 'false'],
         },
       },
+      providersByModel,
       personalities: [],
       activePersonalities: {},
       systemMessageCapture: false,
@@ -156,5 +160,60 @@ describe('Model Settings webview', () => {
       id: 'model-b',
       identityModelId: 'model-b',
     });
+  });
+
+  it('renders a provider dropdown for OpenRouter models from the API list (Auto + tags verbatim)', () => {
+    // An OpenRouter model with a fetched provider list keyed by wire id.
+    const { dom } = loadWebview(
+      {},
+      ['wire-model'],
+      [],
+      {
+        'wire-model': [
+          { tag: 'together', providerName: 'Together', quantization: 'unknown' },
+          { tag: 'gmicloud/fp8', providerName: 'GMICloud', quantization: 'fp8' },
+        ],
+      },
+      'openrouter',
+    );
+    const document = dom.window.document;
+    const provider = document.querySelector<HTMLSelectElement>('select[data-f="provider"]')!;
+    expect(provider).not.toBeNull();
+    // Auto (empty) first, then the API tags verbatim (no derivation).
+    expect([...provider.options].map(o => o.value)).toEqual(['', 'together', 'gmicloud/fp8']);
+    expect([...provider.options].map(o => o.textContent)).toEqual(['Auto', 'Together', 'GMICloud (fp8)']);
+  });
+
+  it('does NOT render a provider dropdown for non-OpenRouter models', () => {
+    const { dom } = loadWebview({});
+    const provider = dom.window.document.querySelector('select[data-f="provider"]');
+    expect(provider).toBeNull();
+  });
+
+  it('persists a selected provider tag on save', () => {
+    const { dom, posted } = loadWebview(
+      {},
+      ['wire-model'],
+      [],
+      { 'wire-model': [{ tag: 'gmicloud/fp8', providerName: 'GMICloud', quantization: 'fp8' }] },
+      'openrouter',
+    );
+    const document = dom.window.document;
+    const provider = document.querySelector<HTMLSelectElement>('select[data-f="provider"]')!;
+    provider.value = 'gmicloud/fp8';
+    provider.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    document.getElementById('saveBtn')!.click();
+
+    const save = [...posted].reverse().find((message: any) => message.type === 'save');
+    expect(save.config.provider).toBe('gmicloud/fp8');
+  });
+
+  it('renders only Auto when the provider list is unavailable (no fabricated options)', () => {
+    const { dom } = loadWebview({}, ['wire-model'], [], {}, 'openrouter');
+    const document = dom.window.document;
+    const provider = document.querySelector<HTMLSelectElement>('select[data-f="provider"]')!;
+    expect(provider).not.toBeNull();
+    expect([...provider.options].map(o => o.value)).toEqual(['']);
+    expect([...provider.options].map(o => o.textContent)).toEqual(['Auto']);
   });
 });

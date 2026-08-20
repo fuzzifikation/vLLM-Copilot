@@ -552,6 +552,92 @@ export async function fetchOpenRouterModel(requestedId: string): Promise<OpenRou
 }
 
 /**
+ * A single provider endpoint for a model, as reported by OpenRouter's
+ * `/api/v1/models/{id}/endpoints`. `tag` is the exact slug used verbatim in the
+ * request-body `provider.only`/`order` routing fields — never derived, never
+ * guessed, always taken from the API (this is the same value the model-page
+ * copy button yields). `provider_name` is the human-readable label.
+ */
+export interface OpenRouterModelEndpoint {
+  /** Exact provider slug for `provider.only` routing (e.g. "together", "gmicloud/fp8"). */
+  tag: string;
+  /** Human-readable provider name (e.g. "Together", "GMICloud"). */
+  providerName: string;
+  /** Reported quantization ("fp8", "fp4", "unknown", …) — informational. */
+  quantization?: string;
+  /** Per-provider per-token pricing (estimate; actual cost is usage.cost). */
+  pricing?: { prompt?: string; completion?: string; input_cache_read?: string };
+  /** Provider-reported completion cap for this model (null when unset). */
+  maxCompletionTokens?: number | null;
+  /** Server health: 0 = operational, -2 = degraded/unavailable (informational). */
+  status?: number;
+}
+
+/**
+ * Fetch the provider endpoints for an OpenRouter model from
+ * `GET /api/v1/models/{id}/endpoints` — the authoritative, per-model provider
+ * list. The requested id is used VERBATIM (variants like `:free` are their own
+ * entries and resolve to only their own providers), so there is no slug
+ * derivation and no guessing. Public and unauthenticated.
+ *
+ * Returns the endpoints with `tag`/`provider_name` (plus optional quantization,
+ * pricing, caps, status) preserved as reported. Throws on HTTP/network failure
+ * and on malformed payloads.
+ */
+export async function fetchOpenRouterModelEndpoints(
+  requestedId: string,
+): Promise<OpenRouterModelEndpoint[]> {
+  const url = `${OPENROUTER_API_BASE}/v1/models/${encodeURIComponent(requestedId)}/endpoints`;
+  try {
+    const response = await fetchWithRetry(
+      url,
+      { method: 'GET', signal: AbortSignal.timeout(METADATA_TIMEOUT_MS) },
+      {},
+    );
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${response.statusText} from ${url}`);
+    }
+    const payload = await response.json() as unknown;
+    const data = (payload as { data?: unknown })?.data;
+    if (!data || typeof data !== 'object' || !Array.isArray((data as { endpoints?: unknown }).endpoints)) {
+      throw new Error(
+        `Malformed OpenRouter endpoints from ${url}: expected { data: { endpoints: [...] } }, got an invalid payload.`
+      );
+    }
+    const raw = (data as { endpoints?: Array<Record<string, unknown>> }).endpoints ?? [];
+    // Preserve ONLY fields the extension consumes, and only when they are the
+    // types the API reports. No transformation of the routing slug.
+    const endpoints: OpenRouterModelEndpoint[] = [];
+    for (const entry of raw) {
+      if (!entry || typeof entry !== 'object') continue;
+      const tag = typeof entry.tag === 'string' && entry.tag ? entry.tag : undefined;
+      const providerName = typeof entry.provider_name === 'string' ? entry.provider_name : tag;
+      if (!tag) continue; // a provider without a routing slug can never be selected
+      const pricingRaw = entry.pricing;
+      const pricing = pricingRaw && typeof pricingRaw === 'object'
+        ? {
+            prompt: typeof (pricingRaw as Record<string, unknown>).prompt === 'string' ? (pricingRaw as Record<string, unknown>).prompt as string : undefined,
+            completion: typeof (pricingRaw as Record<string, unknown>).completion === 'string' ? (pricingRaw as Record<string, unknown>).completion as string : undefined,
+            input_cache_read: typeof (pricingRaw as Record<string, unknown>).input_cache_read === 'string' ? (pricingRaw as Record<string, unknown>).input_cache_read as string : undefined,
+          }
+        : undefined;
+      endpoints.push({
+        tag,
+        providerName: providerName ?? tag,
+        quantization: typeof entry.quantization === 'string' ? entry.quantization : undefined,
+        pricing,
+        maxCompletionTokens: typeof entry.max_completion_tokens === 'number' ? entry.max_completion_tokens : undefined,
+        status: typeof entry.status === 'number' ? entry.status : undefined,
+      });
+    }
+    return endpoints;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`OpenRouter model "${requestedId}" endpoints lookup failed: GET ${url} — ${detail}`);
+  }
+}
+
+/**
  * Resolve an OpenRouter model's runtime limits from an ALREADY-FETCHED catalog
  * (the metrics engine reuses its relay `/v1/models` probe as the catalog). Same
  * exact-id semantics as {@link fetchOpenRouterModel}, but no extra HTTP call.

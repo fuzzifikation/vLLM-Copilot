@@ -117,6 +117,16 @@ export function buildRequest(
   // tools/tool_choice above — these must always win.
   mergedOptions.max_tokens = model.maxOutputTokens;
 
+  // OpenRouter provider pinning: when the model is OpenRouter and the user has
+  // selected a provider (the exact `tag` from the endpoints API), force routing
+  // to that provider with `provider: { only: [tag] }`. The tag is used verbatim —
+  // never derived, never guessed. `undefined`/omitted = Auto (no `provider` key).
+  const providerTag = resolveServerType(override) === 'openrouter' ? override?.provider : undefined;
+  if (providerTag) {
+    mergedOptions.provider = { only: [providerTag] };
+    output.appendLine(`[INFO] Model "${model.id}" → OpenRouter provider pinned: "${providerTag}" (provider.only)`);
+  }
+
   // Log model mode diagnostic info to output channel for debugging
   output.appendLine(`[DEBUG] Model ${model.id}: modelConfiguration=${JSON.stringify(modelConfiguration)}, override.modelModes=${override?.modelModes ? Object.keys(override.modelModes).join(', ') : 'none'}, selectedMode=${selectedMode ?? 'none'}`);
 

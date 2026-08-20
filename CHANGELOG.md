@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **OpenRouter provider selection in Model Settings** — a Provider dropdown (after the Model select) lists the exact providers OpenRouter exposes for that model (`/api/v1/models/{id}/endpoints`), with **Auto** as the default. Picking one pins routing to that provider via the request-body `provider: { only: [tag] }` — the tag used verbatim, never derived. Available for OpenRouter models only; non-OpenRouter models and unconfigured providers are untouched.
+
 ### Fixed
 
 - **OpenRouter models with no reported output cap no longer break every request** — the output ceiling now falls back to 10% of the context window (hard-capped at 81920) instead of the full window, which made output + input exceed the context limit (OpenRouter 400 "…1048575 in the output") and return nothing. Mirrors the HF auto-configure factor.

@@ -7,6 +7,7 @@ import {
   fetchOpenRouterAccount,
   resolveOpenRouterRuntimeLimits,
   autoConfigureOpenRouterModel,
+  fetchOpenRouterModelEndpoints,
   PermanentContextError,
   OpenRouterModelNotFoundError,
   fetchOpenRouterCatalog,
@@ -495,6 +496,103 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
     mockCatalogFetch();
     const limits = await resolveOpenRouterRuntimeLimits('openai/gpt-4');
     expect(limits).toEqual({ contextWindow: 8192, maxOutputTokens: 4096 });
+  });
+});
+
+// ── fetchOpenRouterModelEndpoints ─────────────────────────────────────────
+
+describe('fetchOpenRouterModelEndpoints', () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const endpointsResponse = () => new Response(
+    JSON.stringify({
+      data: {
+        id: 'deepseek/deepseek-v4-pro-0813',
+        endpoints: [
+          { name: 'Together | deepseek/deepseek-v4-pro-20260813', provider_name: 'Together', tag: 'together', quantization: 'unknown', max_completion_tokens: null, status: 0, pricing: { prompt: '0.00000132', completion: '0.00000396', input_cache_read: '0.00000013' } },
+          { name: 'GMICloud | deepseek/deepseek-v4-pro-20260813', provider_name: 'GMICloud', tag: 'gmicloud/fp8', quantization: 'fp8', max_completion_tokens: null, status: 0, pricing: { prompt: '0.000001188', completion: '0.000003564', input_cache_read: '0.0000000396' } },
+        ],
+      },
+    }),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  );
+
+  it('fetches the provider list with the requested id verbatim and preserves tag/provider_name', async () => {
+    fetchSpy.mockResolvedValue(endpointsResponse());
+
+    const endpoints = await fetchOpenRouterModelEndpoints('deepseek/deepseek-v4-pro-0813');
+
+    // The URL uses the exact model id (encoded) — no derivation.
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://openrouter.ai/api/v1/models/deepseek%2Fdeepseek-v4-pro-0813/endpoints',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    // tag is the routing slug, preserved verbatim; provider_name is the label.
+    expect(endpoints).toEqual([
+      expect.objectContaining({ tag: 'together', providerName: 'Together' }),
+      expect.objectContaining({ tag: 'gmicloud/fp8', providerName: 'GMICloud', quantization: 'fp8' }),
+    ]);
+  });
+
+  it('drops an endpoint without a tag (cannot be routed) and keeps pricing/caps/status when present', async () => {
+    fetchSpy.mockResolvedValue(new Response(
+      JSON.stringify({
+        data: {
+          endpoints: [
+            { provider_name: 'NoSlug' }, // no tag → dropped
+            { provider_name: 'Real', tag: 'real', max_completion_tokens: 65536, status: -2, pricing: { prompt: '0.0000005', completion: '0.000002' } },
+          ],
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+
+    const endpoints = await fetchOpenRouterModelEndpoints('m');
+    expect(endpoints).toHaveLength(1);
+    expect(endpoints[0]).toEqual({
+      tag: 'real',
+      providerName: 'Real',
+      quantization: undefined,
+      pricing: { prompt: '0.0000005', completion: '0.000002', input_cache_read: undefined },
+      maxCompletionTokens: 65536,
+      status: -2,
+    });
+  });
+
+  it('passes a :free variant verbatim to resolve only that variant\'s providers', async () => {
+    fetchSpy.mockResolvedValue(new Response(
+      JSON.stringify({
+        data: { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', endpoints: [{ provider_name: 'Nvidia', tag: 'nvidia' }] },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+
+    const endpoints = await fetchOpenRouterModelEndpoints('nvidia/nemotron-3-ultra-550b-a55b:free');
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://openrouter.ai/api/v1/models/nvidia%2Fnemotron-3-ultra-550b-a55b%3Afree/endpoints',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(endpoints).toEqual([expect.objectContaining({ tag: 'nvidia', providerName: 'Nvidia' })]);
+  });
+
+  it('throws on a malformed payload (missing data.endpoints)', async () => {
+    fetchSpy.mockResolvedValue(new Response(
+      JSON.stringify({ data: { id: 'm' } }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    await expect(fetchOpenRouterModelEndpoints('m')).rejects.toThrow(/Malformed OpenRouter endpoints/);
+  });
+
+  it('wraps an HTTP failure with the endpoint URL', async () => {
+    fetchSpy.mockRejectedValue(new Error('Network error: ECONNREFUSED'));
+    await expect(fetchOpenRouterModelEndpoints('m')).rejects.toThrow(/v1\/models\/m\/endpoints/);
   });
 });
 

@@ -57,6 +57,7 @@
       const modelExists = !!sv && [...(sv.models || []).map(m => m.id || m.vllmModelId), ...(sv.serverModelIds || [])].includes(prevModel);
       S.selModel = modelExists ? prevModel : e.data.selectedModelId;
       S.knownParams = e.data.knownParams || {};
+      S.providersByModel = e.data.providersByModel || {};
       S.personalities = e.data.personalities || [];
       S.activePersonalities = e.data.activePersonalities || {};
       S.systemMessageCapture = e.data.systemMessageCapture === true;
@@ -220,7 +221,29 @@
       }
       h += '<option value="' + E(opt.value) + '"' + (opt.value === S.selModel ? ' selected' : '') + '>' + E(label) + '</option>';
     });
-    h += '</select></div>';
+    h += '</select>';
+
+    // OpenRouter provider pinning — only for OpenRouter models. Options come
+    // EXCLUSIVELY from the authoritative per-model provider list
+    // (`/api/v1/models/{id}/endpoints`, fetched when Model Settings opened and
+    // keyed by wire id in S.providersByModel). The option value is the exact API
+    // `tag` — never derived. "Auto" (empty) = let OpenRouter route. If the list
+    // is unavailable (fetch failed), only "Auto" shows; nothing is fabricated.
+    if (mc.serverType === 'openrouter') {
+      const wire = mc.vllmModelId || mc.id || '';
+      const endpoints = (S.providersByModel || {})[wire] || [];
+      h += '<label>Provider</label><select data-f="provider">';
+      h += '<option value=""' + (!mc.provider ? ' selected' : '') + '>Auto</option>';
+      endpoints.forEach(ep => {
+        const label = ep.providerName + (ep.quantization && ep.quantization !== 'unknown' ? ' (' + ep.quantization + ')' : '');
+        h += '<option value="' + E(ep.tag) + '"' + (mc.provider === ep.tag ? ' selected' : '') + '>' + E(label) + '</option>';
+      });
+      h += '</select>';
+      if (endpoints.length === 0) {
+        h += '<div class="field-hint">Provider list unavailable — only Auto. Check the connection and reopen Model Settings.</div>';
+      }
+    }
+    h += '</div>';
 
     // Display name sits right after the model selector — it's the user-facing label.
     h += '<div class="field"><label>displayName</label>' +
