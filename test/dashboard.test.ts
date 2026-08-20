@@ -406,11 +406,9 @@ describe('DashboardTreeProvider', () => {
       const providerRow = rows.find(r => (r as any).label === 'Provider');
       expect((providerRow as any).description).toBe('DeepSeek');
       // Pricing row: the PINNED provider's reported per-1M rates, not the config estimate.
-      // The per-1M formatter is locale-dependent (same as the picker), so format
-      // the expectation with the identical toLocaleString the source uses.
-      const rate = (n: number) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}/1M`;
+      // Formatting is locale-independent (en-US forced) — hardcode the expectation.
       const pricingRow = rows.find(r => (r as any).label === 'Pricing');
-      expect((pricingRow as any).description).toBe(`in ${rate(0.66)}  ·  out ${rate(1.98)}  ·  cached ${rate(0.022)}`);
+      expect((pricingRow as any).description).toBe('in $0.66/1M  ·  out $1.98/1M  ·  cached $0.022/1M');
       expect(String((pricingRow as any).tooltip)).toContain('reported by the pinned provider "deepseek"');
     });
   });

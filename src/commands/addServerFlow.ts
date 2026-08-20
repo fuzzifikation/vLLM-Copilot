@@ -14,6 +14,8 @@ import {
   normalizeOpenRouterFromCatalog,
   fetchOpenRouterCatalog as fetchOpenRouterCatalogFull,
   perMillion,
+  formatUsdRate,
+  formatPerMillionUsd,
   isOpenRouterUrl,
   type OpenRouterModelData,
   type OpenRouterModelInfo,
@@ -160,12 +162,9 @@ export function projectCatalog(full: OpenRouterModelData[]): OpenRouterCatalogEn
 
 /** Render a catalog entry's pricing as compact per-1M "in · out", or ''. */
 function catalogPricing(entry: OpenRouterCatalogEntry): string {
-  // perMillion (openRouter.ts) is the single per-token → per-1M conversion;
-  // this only formats the converted rate for display.
-  const fmt = (v?: string): string | null => {
-    const n = perMillion(v);
-    return n === undefined ? null : `$${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}/1M`;
-  };
+  // perMillion + formatPerMillionUsd (openRouter.ts) are the single shared
+  // per-token → per-1M conversion and en-US formatting; this only lays them out.
+  const fmt = (v?: string): string | null => formatPerMillionUsd(perMillion(v));
   const inStr = fmt(entry.pricing?.prompt);
   const outStr = fmt(entry.pricing?.completion);
   if (!inStr && !outStr) return '';
@@ -262,8 +261,7 @@ export function buildOpenRouterSummary(info: OpenRouterModelInfo): string {
     if (info.defaultMode) lines.push(`Default mode: ${info.defaultMode}`);
   }
   if (info.cost) {
-    const fmt = (v?: number) => (v === undefined ? '—' : `$${v.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
-    lines.push(`Estimated rates: in ${fmt(info.cost.input)} · out ${fmt(info.cost.output)} per 1M tokens`);
+    lines.push(`Estimated rates: in ${formatUsdRate(info.cost.input)} · out ${formatUsdRate(info.cost.output)} per 1M tokens`);
   }
   if (info.expirationDate) lines.push(`Expires: ${info.expirationDate}`);
   return lines.join('\n');

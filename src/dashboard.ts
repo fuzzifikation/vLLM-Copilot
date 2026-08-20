@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { getConfig, resolveServerConfig, normalizeServerUrl, findModelConfig, serverFingerprint, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
-import { perMillion, type OpenRouterAccount, type OpenRouterModelEndpoint } from './openRouter.js';
+import { perMillion, formatPerMillionUsd, type OpenRouterAccount, type OpenRouterModelEndpoint } from './openRouter.js';
 import {
   getLastRequest, getServerUsage, getServerCost, hasServerUsage, onUsageStoreDidChange,
   computeCost, findModelCost, formatCost, formatCostFine, formatCostSummary, fmtCount, emptyCounts,
@@ -22,12 +22,6 @@ function summaryLine(m: ServerMetrics): string {
   if (m.runningRequests != null) parts.push(`${m.runningRequests} running`);
   if (m.waitingRequests != null && m.waitingRequests > 0) parts.push(`${m.waitingRequests} waiting`);
   return parts.join('  ·  ') || 'idle';
-}
-
-/** Format a per-token rate string as per-1M USD ("$0.73/1M"), or null when unparseable. */
-function perMillionRate(rate?: string): string | null {
-  const n = perMillion(rate);
-  return n === undefined ? null : `$${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}/1M`;
 }
 
 /** A server node in the tree (collapsible, shows metrics as children) */
@@ -816,9 +810,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     let priceParts: string[] | undefined;
     let priceSource = '';
     if (pinned?.pricing) {
-      const inStr = perMillionRate(pinned.pricing.prompt);
-      const outStr = perMillionRate(pinned.pricing.completion);
-      const cacheStr = perMillionRate(pinned.pricing.input_cache_read);
+      const inStr = formatPerMillionUsd(perMillion(pinned.pricing.prompt));
+      const outStr = formatPerMillionUsd(perMillion(pinned.pricing.completion));
+      const cacheStr = formatPerMillionUsd(perMillion(pinned.pricing.input_cache_read));
       if (inStr || outStr) {
         priceParts = [`in ${inStr ?? '—'}`, `out ${outStr ?? '—'}`];
         if (cacheStr) priceParts.push(`cached ${cacheStr}`);
@@ -826,11 +820,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       }
     }
     if (!priceParts && entry?.cost) {
-      const fmtRate = (n?: number): string | null =>
-        n === undefined ? null : `$${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}/1M`;
-      const inStr = fmtRate(entry.cost.input);
-      const outStr = fmtRate(entry.cost.output);
-      const cacheStr = fmtRate(entry.cost.cachedInput);
+      const inStr = formatPerMillionUsd(entry.cost.input);
+      const outStr = formatPerMillionUsd(entry.cost.output);
+      const cacheStr = formatPerMillionUsd(entry.cost.cachedInput);
       if (inStr || outStr) {
         priceParts = [`in ${inStr ?? '—'}`, `out ${outStr ?? '—'}`];
         if (cacheStr) priceParts.push(`cached ${cacheStr}`);
