@@ -64,6 +64,13 @@ export interface ModelConfig {
    */
   serverType?: ServerType;
   /**
+   * OpenRouter-only: the exact provider slug (as returned by
+   * `GET /api/v1/models/{id}/endpoints`) to force routing to that provider via
+   * the request-body `provider: { only: [slug] }`. `undefined`/omitted = Auto
+   * (let OpenRouter route). Stored verbatim from the API — never derived.
+   */
+  provider?: string;
+  /**
    * HTTP headers sent with every request to this model's server (auth, routing).
    * Isolated: used only for this model's server, never shared with other servers.
    */

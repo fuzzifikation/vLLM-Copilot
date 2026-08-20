@@ -154,28 +154,26 @@ Since the model list is small (typically < 20 entries) and the server is local/c
 ## ✨ OpenRouter Provider Selection (in Model Settings)
 
 **Category:** Vitamin (OpenRouter UX)
-**Status:** Planned — not implemented. Decision recorded in [openrouter-plan.md](../openrouter-plan.md).
+**Status:** Implemented (2026-08-20). See `src/openRouter.ts` (`fetchOpenRouterModelEndpoints`), `src/serverSettingsView.ts` (lazy fetch on open), `resources/serverSettings.js` (Provider dropdown after the Model select), and `src/provider/requestBuilder.ts` (`provider: { only: [tag] }` injection).
 
-**What:** When an **OpenRouter** model is selected in Model Settings, show a **provider dropdown** below the model. It lists only the **providers available for that specific model** (not the whole catalog), with an **Auto** (default) option. Choosing a provider persists it on the model config and is applied at request time through OpenRouter's request-body `provider` object.
+**What:** When an **OpenRouter** model is selected in Model Settings, show a **provider dropdown** right after the Model select. It lists only the **providers available for that specific model** (from `GET /api/v1/models/{id}/endpoints`), with an **Auto** (default) option. Choosing a provider persists it on the model config and is applied at request time through OpenRouter's request-body `provider` object.
 
 **Key decisions (fixed, do not revisit without product direction):**
 - **No provider picker in the Add Server flow.** The Add flow keeps its model-only pick. Provider choice is a Model Settings refinement, not an onboarding concern.
 - **Per-model, not global.** The provider is stored per model (alongside `serverUrl`, `vllmModelId`, headers) and applies only to that model.
 - **"Auto" is the default.** `Auto` = let OpenRouter route. A manual choice forces routing to that provider.
 - **Scope to the selected model's providers.** The dropdown shows only the providers OpenRouter exposes for the currently selected model — never the full provider list.
+- **All slugs come from the API, verbatim.** The dropdown's option values are the exact `tag` values from `/endpoints` (e.g. `"together"`, `"gmicloud/fp8"`), sent to `provider.only` unchanged. No derivation, no guessing, no string synthesis.
 
-**Suggested implementation (contract-corrected 2026-08-20):**
-1. Source the per-model provider list from the model-endpoints API (`GET /api/v1/models/{author}/{slug}/endpoints`), NOT from a model-id suffix. The catalog entry does not carry the provider list.
-2. Add a `provider?: string` field to the OpenRouter model config (default `undefined` = Auto).
-3. Model Settings webview: when `serverType === 'openrouter'`, render the provider dropdown from the fetched provider list + Auto.
-4. At request time (`requestBuilder.ts`), when `provider` is set, send `provider: { only: [slug] }` (and `allow_fallbacks: false` when the user wants strict) in the chat body — do NOT append `:provider` to the wire model id. The model id stays the canonical identity, so metadata resolution and context windows are unaffected.
+**Implementation notes:**
+1. Provider list sourced from the model-endpoints API (`GET /api/v1/models/{author}/{slug}/endpoints`), fetched lazily when Model Settings opens (per configured OpenRouter model, keyed by wire id). The `:free` variant is passed verbatim and resolves to only its own providers.
+2. `provider?: string` on the OpenRouter model config (default `undefined` = Auto); the value is the exact `tag`.
+3. Model Settings webview: when `serverType === 'openrouter'`, render the provider dropdown from `providersByModel[wireId]` + Auto. Unavailable list → only Auto, nothing fabricated.
+4. At request time (`requestBuilder.ts`), when `provider` is set, send `provider: { only: [tag] }` in the chat body — the tag verbatim, `vllmModelId` stays canonical (no `:provider` suffix).
 
-**Open questions:**
-- Which OpenRouter API is authoritative for a model's available providers, and does it require auth?
-- Should a manual provider choice be validated against the current provider list on model settings save, or just passed through?
-- Does `provider.only` interact with the `:free` routing variant (e.g. free models must route through the free-tier provider)?
+**Open question (pricing, next):** the same `/endpoints` response carries per-provider `pricing` (per-token prompt/completion/input_cache_read + time-of-day `overrides` + `discount`), `max_completion_tokens`, and `status`/uptime — surfaced per-provider in the dropdown (price) and usable for per-provider cost estimation in the dashboard when a provider is pinned.
 
-**Effort:** Low-medium. One config field, one dropdown in the existing Model Settings webview, one `provider`-object injection in the request builder, and one provider-list endpoint.
+**Effort:** Done — one config field, one lazy fetch + webview dropdown, one `provider`-object injection in the request builder, and tests for each surface.
 
 ---
 

@@ -17,7 +17,7 @@ _None currently queued._ Deferred items live in **Deferred architecture** below.
 - **Sanitized export for opt-in local logs.** Raw local diagnostic logs are an accepted expert feature. Do not complicate normal logging unless an export workflow is added.
 - **A backend registry or broad provider abstraction.** The current backend switches are still understandable. Revisit only when another backend creates repeated behavior, not in anticipation of one.
 - **General UI or module rewrites around Model Settings/OpenRouter onboarding.** Prefer targeted behavior fixes. A rewrite now would increase release risk without improving user-visible correctness.
-- **OpenRouter provider selection itself.** Correct the specification now, but leave implementation until the authoritative provider-list endpoint and strict-vs-preferred routing semantics are decided.
+- ~~**OpenRouter provider selection itself.**~~ Implemented (2026-08-20) once the authoritative provider-list endpoint (`GET /api/v1/models/{id}/endpoints`) and the `provider.only` semantics were verified live against the API. All provider slugs come from that endpoint verbatim — no derivation.
 
 ### Better-codebase rule
 
