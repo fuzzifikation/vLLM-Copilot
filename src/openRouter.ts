@@ -308,6 +308,25 @@ export function perMillion(rate?: string | null): number | undefined {
   return round6(n * 1e6);
 }
 
+/**
+ * Locale-independent per-1M USD rate display. Forces `en-US` so a price ALWAYS
+ * uses `.` as the decimal separator (`$0.66`) regardless of the user's OS
+ * locale — a `$` amount rendered with a comma decimal (`$0,66`, de-DE) reads as
+ * a different number and is confusing next to a dollar sign. `undefined` → "—".
+ *
+ * Single shared formatter: the onboarding picker, the confirm dialog, and the
+ * dashboard pricing rows all render through this, so money never drifts across
+ * surfaces.
+ */
+export function formatUsdRate(value?: number): string {
+  return value === undefined ? '—' : `$${value.toLocaleString('en-US', { maximumFractionDigits: 4 })}`;
+}
+
+/** `formatUsdRate` + the "/1M" suffix — the per-1M pricing display (`$0.66/1M`), or null when unparseable. */
+export function formatPerMillionUsd(value?: number): string | null {
+  return value === undefined ? null : `${formatUsdRate(value)}/1M`;
+}
+
 /** True when the model advertises a capability in `supported_parameters`. */
 function supports(data: OpenRouterModelData, param: string): boolean {
   return data.supported_parameters?.includes(param) ?? false;
@@ -712,8 +731,7 @@ export async function autoConfigureOpenRouterModel(
     if (info.defaultMode) summary.push(`Default mode: ${info.defaultMode}`);
   }
   if (info.cost) {
-    const fmt = (v?: number) => (v === undefined ? '—' : `$${v.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
-    summary.push(`Estimated rates: in ${fmt(info.cost.input)} · out ${fmt(info.cost.output)} per 1M tokens`);
+    summary.push(`Estimated rates: in ${formatUsdRate(info.cost.input)} · out ${formatUsdRate(info.cost.output)} per 1M tokens`);
   }
   if (info.expirationDate) summary.push(`Expires: ${info.expirationDate}`);
   summary.push('');
