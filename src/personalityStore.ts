@@ -103,7 +103,8 @@ export async function discoverPersonalities(
     const ar = ai === -1 ? BUNDLED_PRESET_ORDER.length : ai;
     const br = bi === -1 ? BUNDLED_PRESET_ORDER.length : bi;
     if (ar !== br) return ar - br;
-    return a.name.localeCompare(b.name);
+    // Deterministic ordering — fixed locale so the sort never varies by machine.
+    return a.name.localeCompare(b.name, 'en');
   });
 }
 

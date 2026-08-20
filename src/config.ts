@@ -354,8 +354,11 @@ export function resolveServerConfig(
  * (webview DOM, logs). Use {@link serverGroupKey} for a non-reversible key.
  */
 export function serverFingerprint(url: string, headers: Record<string, string>): string {
-  const sorted = Object.entries(headers)
-    .sort(([a], [b]) => a.localeCompare(b));
+  // Sort header keys lexicographically — NEVER localeCompare: this feeds a
+  // server-IDENTITY fingerprint (dashboard grouping, engine registry, Deep-Dive
+  // identity). Two machines with different locales must derive the SAME key for
+  // the same server, or a model silently moves server groups between machines.
+  const sorted = Object.entries(headers).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   return JSON.stringify([url, sorted]);
 }
 
