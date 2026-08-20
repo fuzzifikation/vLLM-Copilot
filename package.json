@@ -221,6 +221,15 @@
                   "default": "vllm",
                   "markdownDescription": "Backend serving this model. **Default: `vllm`.** Missing/omitted always means `vllm`. Secondary backends (LM Studio, llama.cpp, Ollama, OpenRouter) must be added via the **Add vLLM Server & Model** command or set `serverType` explicitly."
                 },
+                "provider": {
+                  "type": "string",
+                  "markdownDescription": "⚡ **OpenRouter only** — the exact provider slug (as returned by `GET /api/v1/models/{id}/endpoints`) to force routing to that provider via `provider: { only: [slug] }`. Use the **Provider** dropdown in Model Settings — never hand-derive. Omitted/empty = Auto (let OpenRouter route)."
+                },
+                "routingMode": {
+                  "type": "string",
+                  "enum": ["standard", "nitro", "exacto"],
+                  "markdownDescription": "⚡ **OpenRouter only** — how OpenRouter sorts/chooses among eligible providers when routing is **Auto** (no `provider` pinned). `standard` (default) = price-weighted load balancing; `nitro` = throughput-first + priority tier; `exacto` = quality/tool-calling-first. Ignored when a provider is pinned. Set via the **Routing** dropdown in Model Settings."
+                },
                 "requestHeaders": {
                   "type": "object",
                   "default": {},

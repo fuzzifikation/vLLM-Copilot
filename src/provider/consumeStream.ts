@@ -31,7 +31,7 @@ export async function consumeStream(
   startTime: number,
   outcome: StreamOutcome,
   serverUrl: string,
-  vllmModelId: string,
+  wireModelId: string,
   output: vscode.OutputChannel,
   fileLogger?: FileLogger,
   contextWindow?: number,
@@ -128,11 +128,15 @@ export async function consumeStream(
     // `recordRequest` both stores the server's last request AND sums it into
     // the all-time/today counters, then fires the change event so the
     // dashboard re-renders immediately (no poll-interval lag).
+    // The id recorded is the CANONICAL wire id (`wireModelId` — base slug, no
+    // OpenRouter routing suffix), which is what the dashboard's usage/cost
+    // lookups key on. The suffixed wire id is only ever the on-the-wire model
+    // for the request; tracking it here would fragment the counters.
     const hasCacheDetails = !!pendingUsage.prompt_tokens_details;
     const hasMetrics = !!pendingMetrics;
     const lastRequestData: LastRequestData = {
       serverUrl,
-      modelId: vllmModelId,
+      modelId: wireModelId,
       timestamp: Date.now(),
       promptTokens: pendingUsage.prompt_tokens,
       completionTokens: pendingUsage.completion_tokens,

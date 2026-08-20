@@ -14,6 +14,8 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 |-------|:-------:|-------------|
 | `serverUrl` | — | **Required.** Server URL (OpenAI-compatible). Each model targets its own server. |
 | `serverType` | `vllm` | Backend protocol. `vllm` \| `lmstudio` \| `llamacpp` \| `ollama` \| `openrouter`. **Set automatically by Add Server**, and auto-detected in Model Settings for unconfigured models (from `/v1/models`, or a configured sibling's type). Missing always means `vllm`. Manual third-party entries must set this — the extension never probes at runtime. |
+| `provider` | — | ⚡ **OpenRouter only.** The exact provider slug (from `GET /api/v1/models/{id}/endpoints`) to force routing to that provider via `provider: { only: [slug] }`. Use the **Provider** dropdown in Model Settings — never hand-derive. Omitted/empty = Auto. |
+| `routingMode` | `standard` | ⚡ **OpenRouter only.** How OpenRouter sorts/chooses among eligible providers when routing is **Auto** (no `provider` pinned): `standard` (price-weighted load balancing, no suffix), `nitro` (throughput-first + priority tier → wire id `:nitro`), `exacto` (quality/tool-calling-first → wire id `:exacto`). Ignored when a provider is pinned. Set via the **Routing** dropdown in Model Settings. |
 | `requestHeaders` | `{}` | HTTP headers for this server (auth, routing). **Isolated** — never shared across servers. |
 | `id` | — | **Required.** Unique entry key. Add flow sets this to `"<model> on <host>"`. |
 | `vllmModelId` | same as `id` | Actual model ID on the vLLM server (for aliases). |

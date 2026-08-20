@@ -576,6 +576,15 @@ export function validateConfig(config: VllmConfig): string[] {
       );
     }
 
+    // routingMode must be one of the OpenRouter variants when present — anything
+    // else would be appended to the wire id verbatim as a bogus `:slug`.
+    if (model.routingMode !== undefined && !['standard', 'nitro', 'exacto'].includes(model.routingMode)) {
+      warnings.push(
+        `Model "${display}": routingMode "${model.routingMode}" is not a supported OpenRouter routing mode ` +
+        `(expected "standard", "nitro", or "exacto").`
+      );
+    }
+
     if (model.maxOutputTokens !== undefined && (!Number.isFinite(model.maxOutputTokens) || model.maxOutputTokens <= 0)) {
       warnings.push(`Model "${display}": maxOutputTokens is ${model.maxOutputTokens}; should be finite and > 0.`);
     }

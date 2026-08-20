@@ -29,7 +29,10 @@ export interface ServerConfig {
 
 /** Result of request assembly: everything the stream call needs. */
 export interface BuildRequestResult {
+  /** Wire id SENT in the request — may carry an OpenRouter routing suffix (`:nitro`/`:exacto`). */
   vllmModelId: string;
+  /** Canonical wire id (base slug, no suffix) — the key usage/cost tracking uses. */
+  wireModelId: string;
   openaiMessages: OpenAIChatMessage[];
   mergedOptions: Record<string, unknown>;
   serverConfig: ServerConfig;
@@ -141,15 +144,17 @@ export function buildRequest(
   // OpenRouter routing mode: when the model is OpenRouter, routing is Auto (no
   // pinned provider), and a non-standard routing mode is set, append the mode's
   // variant suffix (`:nitro` / `:exacto`) to the WIRE id. This is how OpenRouter
-  // requests the routing-mode sort. The base id stays canonical — `vllmModelId`
-  // is never mutated, so catalog/metadata resolution is unaffected; only the
-  // id sent in the chat request carries the suffix. A pinned provider disables
-  // the mode (sorting a single provider is meaningless), so no suffix.
-  let vllmModelId = resolveVllmModelId(override) || model.id;
+  // requests the routing-mode sort. The base id stays canonical — `wireModelId`
+  // is the base slug, and `vllmModelId` (returned for the request) is the only
+  // id that carries the suffix. Usage/cost tracking keys on `wireModelId` so a
+  // routing mode never fragments the dashboard's counters. A pinned provider
+  // disables the mode (sorting a single provider is meaningless), so no suffix.
+  const wireModelId = resolveVllmModelId(override) || model.id;
   const isOpenRouter = resolveServerType(override) === 'openrouter';
   const routingMode = override?.routingMode;
+  let vllmModelId = wireModelId;
   if (isOpenRouter && !providerTag && routingMode && routingMode !== 'standard') {
-    vllmModelId = `${vllmModelId}:${routingMode}`;
+    vllmModelId = `${wireModelId}:${routingMode}`;
     output.appendLine(`[INFO] Model "${model.id}" → OpenRouter routing mode "${routingMode}" (wire id ${vllmModelId})`);
   }
 
@@ -173,5 +178,5 @@ export function buildRequest(
     );
   }
 
-  return { vllmModelId, openaiMessages, mergedOptions, serverConfig };
+  return { vllmModelId, wireModelId, openaiMessages, mergedOptions, serverConfig };
 }

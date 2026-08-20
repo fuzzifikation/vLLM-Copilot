@@ -354,6 +354,37 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
       vi.useRealTimers();
     }
   });
+
+  it('records usage under the BASE wire id when an OpenRouter routing mode is active', async () => {
+    // Regression: the routing suffix (`:nitro`) is appended to the WIRE id sent
+    // in the request — but usage/cost tracking must key on the canonical base id,
+    // or the dashboard's per-model counters silently go dark for routed models.
+    const { provider, spy } = setupProvider(
+      [
+        [
+          ev({ content: 'hi', finishReason: null as any }),
+          ev({ finishReason: 'stop', usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } as any }),
+        ],
+      ],
+      0,
+      {
+        vllmModelId: 'deepseek/deepseek-v4-pro-0813',
+        serverUrl: 'https://openrouter.ai/api',
+        serverType: 'openrouter',
+        routingMode: 'nitro',
+      },
+    );
+    const progress = { report: vi.fn() };
+
+    await run(provider, progress);
+
+    // The request carried the suffixed wire id on the wire…
+    expect(spy.mock.calls[0][0]).toBe('deepseek/deepseek-v4-pro-0813:nitro');
+    // …but the recorded usage keys on the base slug the dashboard reads.
+    const last = getLastRequest('https://openrouter.ai/api');
+    expect(last?.modelId).toBe('deepseek/deepseek-v4-pro-0813');
+    expect(last?.promptTokens).toBe(10);
+  });
 });
 
 describe('remote-install guard', () => {
