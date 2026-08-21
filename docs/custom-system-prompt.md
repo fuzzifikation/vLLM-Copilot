@@ -79,7 +79,7 @@ From system message capture (`systemMessageCapture` setting), these message type
 
 | Type | First Line (fingerprint) | Size |
 |------|-------------------------|------|
-| **Main chat agent** | "You are an expert AI programming assistant, working with a user in the VS Code editor." | ~22KB |
+| **Main chat agent** | "You are an expert AI programming assistant, working with a user in the VS Code editor." | ~21KB |
 | **Progress - generate** | "You are an expert in writing short, catchy, and encouraging progress messages for a coding assistant." | ~1KB |
 | **Progress - edit** | Same as above (different scenario description) | ~1KB |
 | **Title generation** | "You are an expert in crafting ultra-compact titles for chatbot conversations." | ~1KB |
@@ -212,7 +212,7 @@ The capture and replacement steps are consolidated into one pipeline (`captureAn
    - Places the replaced text back at the **same array index**
 3. Non-system messages pass through unchanged
 
-**Position-preserving design:** We don't assume system messages are always at index 0. While current VS Code behavior puts all system messages at the start, neither VS Code nor OpenAI API guarantees this. We iterate the full array and replace each role 3 message in-place.
+**Position-preserving design:** We don't assume system messages are always at index 0. While current VS Code behavior puts all system messages at the start, neither VS Code nor OpenAI API guarantees this. We iterate the full array and replace each role-3 message. Replacements are applied to a clone so the original messages are never mutated.
 
 **Flow:**
 ```
@@ -300,19 +300,17 @@ Watched files (OpenAI-family agent prompt + shared base components, matching wha
 
 ## Implementation Status
 
-### ✅ Done (v0.17.0)
+### ✅ Done
 - `src/promptReplacer.ts` — load + apply replacements, exact substring match, `ApplyResult` with `matchedRuleNames`
 - `src/config.ts` — `systemMessageReplacementsFile` on `ModelConfig`
 - `package.json` — schema for `systemMessageReplacementsFile`
 - `prompt-replacements/prompt-replacements-raw.json` — Raw (Model Natural): strips SafetyRules + identity rules, no injected persona
 - `prompt-replacements/*.json`: personality presets (Raw (Model Natural), Supportive Mentor, Critical Senior Dev, Sarcastic Robot, Spartan)
-- `src/provider.ts` — `captureAndReplaceSystemMessages()` unified pipeline (capture + replace in one pass)
+- `src/provider/systemMessagePipeline.ts` — `SystemMessagePipeline.processSystemMessages()` unified pipeline (capture + replace in one pass)
 - `src/messageConverter.ts` — simplified, no replacement logic (pure conversion only)
-- In-place mutation of role-3 message content so `convertMessages()` sees processed text naturally
+- Replacements are applied to a **clone** of the system messages — VS Code's original messages are never mutated
 - Capture file at `.vllm/system-messages.json` with `receivedContent` / `deliveredContent` / `rulesApplied`
-
-### ⏳ Pending
-1. **Unit tests** — tests for `applyPromptReplacements` (promptReplacer.ts) and the consolidated pipeline
+- **Unit tests:** `test/promptReplacer.test.ts` (apply + parser), `test/providerSystemMessages.test.ts` + `test/providerCapture.test.ts` (pipeline end-to-end)
 
 ---
 

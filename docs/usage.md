@@ -1,7 +1,7 @@
 # Token & Cost Usage Tracker
 
 **Created:** 2026-08-11
-**Status:** ✅ Implemented, compiled, tests pass (615 passed / 0 failed)
+**Status:** ✅ Implemented, compiled, tests pass
 **Schema / user-facing config:** see [Configuration Reference → Token Usage & Cost](configuration-reference.md#token-usage--cost)
 
 ---
@@ -11,7 +11,7 @@
 A client-side tracker that shows **cumulative** token consumption and cost for every configured server, live in the dashboard. It captures each completed prompt exactly once and surfaces it in two places:
 
 - **Last Request** — the most recent prompt per server (per-prompt tokens, timing, and cost).
-- **Token Usage and Cost** — **model-first**: one collapsible node per model whose collapsed line carries the price (`$11.51 today and $31.13 in 3.1 days`), expanding to **Today / Overall** token-only rows (persisted across reloads).
+- **Token Usage and Cost** — **model-first**: one collapsible node per model whose collapsed line carries the price (`$11.51 today and $31.13 total`), expanding to **Today / Overall** token-only rows (persisted across reloads).
 
 ## What it is NOT
 
@@ -83,7 +83,7 @@ cost = (prompt − cached) / 1M × input
 
 ## Reset semantics
 
-`resetUsage('all' | { serverUrl })` clears `allTime` + `days` + `startedAt` for the scope, persists, and fires the change event. **The Last Request node is deliberately NOT cleared** — it remains the useful last prompt. Entry points: **right-click the Token Usage and Cost node → Reset Usage** (server scope), and the `vLLM-Copilot: Reset Usage` palette command (all / per-server QuickPick). "Reset" means *start counting from zero* — all history, not just today.
+`resetUsage('all' | { serverUrl })` clears `allTime` + `days` + `startedAt` (and the v3 actual-cost planes `allTimeCost`/`daysCost`) for the scope, persists, and fires the change event. **The Last Request node is deliberately NOT cleared** — it remains the useful last prompt. Entry points: **right-click the Token Usage and Cost node → Reset Usage** (server scope), and the `vLLM-Copilot: Reset Usage` palette command (all / per-server QuickPick). "Reset" means *start counting from zero* — all history, not just today.
 
 ## Live dashboard updates (the staleness fix)
 

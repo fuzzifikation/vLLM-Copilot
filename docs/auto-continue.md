@@ -1,7 +1,7 @@
 # Auto-Continue: Implementation Plan
 
 **Created:** 2026-06-24
-**Updated:** 2026-06-24 (implementation complete, v0.9.0)
+**Updated:** 2026-08-21 (matches current behavior; extension version 1.32.x)
 **Status:** ✅ Implemented, compiled, tests pass
 
 ---
@@ -77,13 +77,16 @@ This is a well-established pattern in the OpenAI Chat Completions API (and vLLM'
 Auto-continue fires when ALL of the following are true after `consumeStream` returns:
 
 ```
-(!hadContent || endsWithColon)      // no content at all, OR content ends with ':' (truncated mid-sentence)
+(!hadContent || (endsWithColon && serverType === 'vllm'))   // no content, OR ends with ':' on vLLM (truncated mid-sentence)
 && finishReason === 'stop'          // model explicitly chose to stop
+&& !hadToolCalls                    // a pure tool-call turn is complete — never retried
 && autoContinueRetries > 0          // per-model setting, default 1
 && currentAttempt < autoContinueRetries
 ```
 
-Note: `!hadToolCalls` is redundant — if the model produced tool calls, `finishReason` would be `tool_calls`, not `stop`. So `finishReason === 'stop'` already guarantees no tool calls in this response.
+Note: `!hadToolCalls` is **not** redundant. In the OpenAI/vLLM convention, `finish_reason: 'stop'` *after* a tool call means "done, here's my tool call" — a pure tool-call turn is a complete turn and must not be retried. The guard is deliberate.
+
+Colon-continuation retries are **vLLM-only**: secondary backends always retry in nudge mode. Empty-response nudges remain backend-agnostic.
 
 This covers both scenario 1 (reasoning with no answer) and scenario 2 (tool result received, model says nothing). It excludes `content_filter` (blocked), `length` (token limit — different fix), and `null`/missing finish reason (stream ended abnormally — connection issue).
 
@@ -107,18 +110,16 @@ A per-model integer in `vllm-copilot.models`: `autoContinueRetries`, default `1`
 
 ## Mechanism: Assistant Prefill
 
-The retry loop lives inside `provideLanguageModelChatResponse` as a `for` loop from `attempt = 0` to `attempt <= maxRetries`:
+The retry loop lives in `runChatResponse` in `src/provider/streamOrchestrator.ts` as a `for` loop from `attempt = 0` to `attempt <= maxRetries`:
 
 1. **First iteration (attempt 0):** Normal request — no special handling.
-2. **Subsequent iterations:** Before each retry, append `{role: 'assistant', content: ''}` to `openaiMessages`, call `resetOutcome()` to zero all `StreamOutcome` fields, and log the retry to the output channel.
-3. After each `consumeStream`, check trigger: `!hadContent && finishReason === 'stop' && attempt < maxRetries`. If true, loop continues. If false, break.
-4. After the loop exits (success or exhaustion), run `reportPostStreamDiagnostics` with `maxRetries` so it knows how many attempts were made.
-5. `resetOutcome()` is a private helper that resets all mutable fields on the shared `StreamOutcome` object.
+2. **Subsequent iterations:** Before each retry, append `{role: 'assistant', content: ''}` to `openaiMessages`, call `resetOutcome()` (a module function in `src/provider/outcome.ts`) to zero all `StreamOutcome` fields, and log the retry to the output channel.
+3. After each `consumeStream`, check trigger (see above). If true, loop continues. If false, break.
+4. After the loop exits (success or exhaustion), run `reportPostStreamDiagnostics` with `actualAttempts` (the count actually made) so it knows how many attempts happened.
 
 Key design decisions:
-- No changes to `consumeStream` — keeping it simple. No accumulated text tracking needed for the current use case (would only be needed for future `finish_reason: length` extension).
-- `reportPostStreamDiagnostics` receives `maxRetries` to format attempt counts in diagnostics.
-- Tool-result empty case always emits the `\n` hack regardless of retry count (the model is genuinely done; retries were just a nudge).
+- No changes to `consumeStream` — keeping it simple. No accumulated text tracking needed for the current use case.
+- `reportPostStreamDiagnostics` receives `actualAttempts` to format attempt counts in diagnostics.
 
 ---
 
@@ -138,19 +139,17 @@ Key design decisions:
   }
   ```
 
-### `src/provider.ts`
+### `src/provider/streamOrchestrator.ts`
 
-**`provideLanguageModelChatResponse`:**
+**`runChatResponse`:**
 - `openaiMessages` built once via `buildRequest`, then mutated in-place by retry loop.
 - `for (let attempt = 0; attempt <= maxRetries; attempt++)` wraps the stream call.
-- On retry: push prefill message, reset outcome, log attempt number.
+- On retry: push prefill message, reset outcome (module function `resetOutcome` in `src/provider/outcome.ts`), log attempt number.
 - Break on first non-empty response or when `attempt >= maxRetries`.
 
-**`resetOutcome`:** New private method that resets all `StreamOutcome` mutable fields to initial state.
-
-**`reportPostStreamDiagnostics`:** Now receives `maxRetries` parameter. Two paths:
-1. **Tool-result empty case:** Always emits `\n` hack (model is done). Log shows attempt count if retries occurred.
-2. **Genuine empty response:** Single diagnostic line. Attempt count folded into the message when `totalAttempts > 1`. ⚠️ warning in chat with contextual hint.
+**`reportPostStreamDiagnostics`** (in `src/provider/postStream.ts`): receives `actualAttempts`. Two paths:
+1. **Genuine empty response:** Single diagnostic line. Attempt count folded into the message when `totalAttempts > 1`. ⚠️ warning in chat with contextual hint.
+2. **Graceful connection termination:** Emits a `\n` so the response doesn't end mid-stream; an exhausted empty response surfaces the ⚠️ "model returned no output" diagnostic.
 
 ---
 
@@ -159,8 +158,8 @@ Key design decisions:
 The output channel should clearly indicate each retry:
 
 ```
-[INFO] qwen3-27b: empty response after reasoning — retrying with assistant prefill (attempt 2/3)
-[INFO] qwen3-27b: empty response after reasoning — retrying with assistant prefill (attempt 3/3)
+[INFO] qwen3-27b: empty response — retrying with assistant prefill (attempt 2/3)
+[INFO] qwen3-27b: response ended with colon (incomplete sentence) — retrying with assistant continuation (attempt 3/3)
 [WARN] qwen3-27b: empty response after 3 attempts — giving up. Check model configuration.
 ```
 
@@ -170,7 +169,6 @@ The `⚠️` warning message in chat only fires after all retries are exhausted.
 
 ## What Stays the Same
 
-- **`isEmptyStopAfterTool` detection** — The `\n` hack always fires for tool-result empty responses regardless of retry count. Auto-continue tries harder first, but if still empty, silently passes.
 - **Server error case** (no reasoning, not after tool, not length/filter) — no change, still shows the diagnostic warning immediately.
 - **`finish_reason: length` with partial content** — no change, still shows the truncation warning. Auto-continue for this case is deferred (would need token budget recalculation, different problem).
 - **`consumeStream`** — unchanged. No accumulated text tracking needed for current scope.
