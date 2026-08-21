@@ -511,6 +511,13 @@ describe('ServerMetricsEngine registry lifecycle', () => {
       'nvidia/nemotron-3.5-lightning:free': 1000000,
       'deepseek/deepseek-chat': 163840,
     });
+    // The effective output ceiling is resolved alongside context (10%-of-window
+    // fallback: Nemotron 1M → 81920 cap; DeepSeek 163840 → 16384). This feeds
+    // the dashboard's Attention icon when the configured budget exceeds it.
+    expect(aggregated?.outputByModel).toEqual({
+      'nvidia/nemotron-3.5-lightning:free': 81920,
+      'deepseek/deepseek-chat': 16384,
+    });
     expect(aggregated?.maxModelLen).toBe(1000000);
   });
 

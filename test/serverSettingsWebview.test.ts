@@ -188,6 +188,70 @@ describe('Model Settings webview', () => {
     expect([...provider.options].map(o => o.textContent)).toEqual(['Auto', 'Together', 'GMICloud (fp8)']);
   });
 
+  it('annotates each provider option with its reported context + output limits', () => {
+    // Providers reporting context_length / max_completion_tokens get a compact
+    // suffix in the option label and the exact numbers in the hover title.
+    // Display-only — nothing is persisted from these fields.
+    const { dom } = loadWebview({}, ['wire-model'], [], {
+      'wire-model': [
+        { tag: 'together', providerName: 'Together', contextLength: 131072, maxCompletionTokens: 2048 },
+        { tag: 'sambanova-turbo', providerName: 'SambaNova', contextLength: 32768, maxCompletionTokens: 7168 },
+        { tag: 'nocontext', providerName: 'NoCtx' }, // no limits → plain label
+      ],
+    }, 'openrouter');
+    const document = dom.window.document;
+    const provider = document.querySelector<HTMLSelectElement>('select[data-f="provider"]')!;
+    expect([...provider.options].map(o => o.value)).toEqual(['', 'together', 'sambanova-turbo', 'nocontext']);
+    // Compact limits suffix on the labeled providers, absent on the bare one.
+    expect([...provider.options].map(o => o.textContent)).toEqual([
+      'Auto',
+      'Together · Ctx (131k tot, 2k out)',
+      'SambaNova · Ctx (32.8k tot, 7.2k out)',
+      'NoCtx',
+    ]);
+    // Exact numbers ride in the option title for the hover.
+    expect(provider.options[1].title).toContain('131,072 context');
+    expect(provider.options[1].title).toContain('2,048 max output');
+    expect(provider.options[2].title).toContain('32,768 context');
+    expect(provider.options[2].title).toContain('7,168 max output');
+    expect(provider.options[3].title).toBe('');
+  });
+
+  it('annotates each provider option with per-1M pricing (compact label, exact hover)', () => {
+    // Per-token pricing strings → per-1M in the label (up to 4 decimals, trailing
+    // zeros trimmed, locale-independent); full precision in the hover title.
+    // Cache price shown only when present.
+    const { dom } = loadWebview({}, ['wire-model'], [], {
+      'wire-model': [
+        // Alibaba-style: full pricing incl. cache.
+        { tag: 'alibaba', providerName: 'Alibaba', contextLength: 1000000, maxCompletionTokens: 393216, pricing: { prompt: '0.0000012052', completion: '0.0000031655', input_cache_read: '0.0000001205' } },
+        // Together-style: no cache price → cache omitted.
+        { tag: 'together', providerName: 'Together', contextLength: 131072, maxCompletionTokens: 2048, pricing: { prompt: '0.00000066', completion: '0.00000198' } },
+        // Unknown price (-1) → that component omitted.
+        { tag: 'unknown', providerName: 'Unknown', pricing: { prompt: '-1', completion: '0.000002' } },
+        // No pricing at all → plain label.
+        { tag: 'nopricing', providerName: 'NoPricing' },
+      ],
+    }, 'openrouter');
+    const document = dom.window.document;
+    const provider = document.querySelector<HTMLSelectElement>('select[data-f="provider"]')!;
+    expect([...provider.options].map(o => o.value)).toEqual(['', 'alibaba', 'together', 'unknown', 'nopricing']);
+    // Compact label: Ctx + Cost/M, present fields only.
+    expect([...provider.options].map(o => o.textContent)).toEqual([
+      'Auto',
+      'Alibaba · Ctx (1M tot, 393k out) · Cost/M (in $1.2052, out $3.1655, cache $0.1205)',
+      'Together · Ctx (131k tot, 2k out) · Cost/M (in $0.66, out $1.98)',
+      'Unknown · Cost/M (out $2)',
+      'NoPricing',
+    ]);
+    // Exact per-1M prices ride in the hover title.
+    expect(provider.options[1].title).toContain('prompt $1.2052/M');
+    expect(provider.options[1].title).toContain('completion $3.1655/M');
+    expect(provider.options[1].title).toContain('cache $0.1205/M');
+    expect(provider.options[3].title).toContain('completion $2/M');
+    expect(provider.options[4].title).toBe('');
+  });
+
   it('does NOT render a provider dropdown for non-OpenRouter models', () => {
     const { dom } = loadWebview({});
     const provider = dom.window.document.querySelector('select[data-f="provider"]');

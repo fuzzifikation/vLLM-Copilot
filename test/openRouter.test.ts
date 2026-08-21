@@ -569,8 +569,8 @@ describe('fetchOpenRouterModelEndpoints', () => {
     );
     // tag is the routing slug, preserved verbatim; provider_name is the label.
     expect(endpoints).toEqual([
-      expect.objectContaining({ tag: 'together', providerName: 'Together', status: 0, uptimeLast1d: 99.97 }),
-      expect.objectContaining({ tag: 'gmicloud/fp8', providerName: 'GMICloud', quantization: 'fp8', status: 0, uptimeLast1d: 99.8 }),
+      expect.objectContaining({ tag: 'together', providerName: 'Together', status: 0, uptimeLast1d: 99.97, contextLength: undefined }),
+      expect.objectContaining({ tag: 'gmicloud/fp8', providerName: 'GMICloud', quantization: 'fp8', status: 0, uptimeLast1d: 99.8, contextLength: undefined }),
     ]);
   });
 
@@ -595,8 +595,36 @@ describe('fetchOpenRouterModelEndpoints', () => {
       quantization: undefined,
       pricing: { prompt: '0.0000005', completion: '0.000002', input_cache_read: undefined },
       maxCompletionTokens: 65536,
+      contextLength: undefined,
       status: -2,
     });
+  });
+
+  it('captures the provider-reported context_length alongside max_completion_tokens', async () => {
+    fetchSpy.mockResolvedValue(new Response(
+      JSON.stringify({
+        data: {
+          endpoints: [
+            { provider_name: 'SambaNova', tag: 'sambanova-turbo', max_completion_tokens: 7168, context_length: 32768 },
+            { provider_name: 'NoCtx', tag: 'noctx', max_completion_tokens: null }, // no context_length → undefined
+          ],
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+
+    const endpoints = await fetchOpenRouterModelEndpoints('deepseek/deepseek-v3.2');
+    expect(endpoints).toEqual([
+      {
+        tag: 'sambanova-turbo',
+        providerName: 'SambaNova',
+        quantization: undefined,
+        pricing: undefined,
+        maxCompletionTokens: 7168,
+        contextLength: 32768,
+      },
+      expect.objectContaining({ tag: 'noctx', contextLength: undefined }),
+    ]);
   });
 
   it('passes a :free variant verbatim to resolve only that variant\'s providers', async () => {

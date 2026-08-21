@@ -4,7 +4,7 @@
  */
 
 import * as vscode from 'vscode';
-import { getConfig, resolveServerConfig, normalizeServerUrl, findModelConfig, serverFingerprint, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
+import { getConfig, resolveServerConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, serverFingerprint, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from './openRouter.js';
 import {
@@ -139,6 +139,20 @@ class OpenRouterAccountTreeItem extends vscode.TreeItem {
   }
 }
 
+/**
+ * Why the model's effective output is below the configured budget. One entry per
+ * binding constraint, so the tooltip can tell the truth about each — a catalog
+ * clamp is silently shorter output, a pinned-provider cap is "requests may fail".
+ */
+interface OutputClampCause {
+  /** Constraint kind — for honest wording. */
+  kind: 'catalog' | 'provider';
+  /** The ceiling this constraint imposes. */
+  ceiling: number;
+  /** Provider name (only when kind === 'provider'). */
+  providerName?: string;
+}
+
 /** OpenRouter relay: one configured model with its own model-level rows. */
 class OpenRouterModelTreeItem extends vscode.TreeItem {
   constructor(
@@ -149,14 +163,46 @@ class OpenRouterModelTreeItem extends vscode.TreeItem {
     providerLabel: string | undefined,
     /** Identity fingerprint — the model belongs to exactly one credential identity. */
     public readonly fp: string,
+    /** The configured output budget (for the tooltip when clamped). */
+    configuredOutput?: number,
+    /** The effective (clamped) output ceiling after ALL binding constraints. */
+    effectiveOutput?: number,
+    /** The constraint(s) that pushed the effective output below the configured budget. */
+    clampCauses: OutputClampCause[] = [],
   ) {
     super(modelLabel, vscode.TreeItemCollapsibleState.Collapsed);
     // Collapsed one-liner: "<Model> run by <Provider>" — the routing identity
     // tells who actually serves this model. Nothing when no provider is pinned.
     if (providerLabel) this.description = `run by ${providerLabel}`;
-    this.iconPath = new vscode.ThemeIcon('symbol-class');
+    const clamped = clampCauses.length > 0;
+    this.iconPath = clamped
+      ? new vscode.ThemeIcon('alert', new vscode.ThemeColor('charts.yellow'))
+      : new vscode.ThemeIcon('symbol-class');
     this.id = `openRouterModel:${serverGroupKey(fp)}:${modelId}`;
-    this.tooltip = new vscode.MarkdownString(`${modelLabel} — click for model-level detail (provider, pricing, context, capabilities, usage).`);
+    // `clamped` requires at least one numeric binding cause, and every cause sets
+    // `effectiveOutput` (catalog → the ceiling; provider → min with it), so both
+    // numbers are always present when clamped. Defensive: if that invariant ever
+    // breaks, fall back to the normal tooltip rather than showing a half-truth.
+    this.tooltip = clamped && configuredOutput !== undefined && effectiveOutput !== undefined
+      ? new vscode.MarkdownString(this.buildClampTooltip(modelLabel, configuredOutput, effectiveOutput, clampCauses))
+      : new vscode.MarkdownString(`${modelLabel} — click for model-level detail (provider, pricing, context, capabilities, usage).`);
+  }
+
+  /** Honest tooltip: what binds, and whether that's a silent clamp or a hard failure. */
+  private buildClampTooltip(
+    modelLabel: string,
+    configuredOutput: number,
+    effectiveOutput: number,
+    causes: OutputClampCause[],
+  ): string {
+    const lines = causes.map((c) => {
+      const exact = c.ceiling.toLocaleString('en-US');
+      if (c.kind === 'catalog') {
+        return `- **${exact}** (the model's output ceiling) — output is silently clamped; you'll get shorter replies.`;
+      }
+      return `- **${exact}** (pinned provider ${c.providerName ?? 'cap'}) — requests over this cap may **fail**. Unpin or lower the setting.`;
+    });
+    return `${modelLabel} — output budget clamped.\n\nConfigured maxOutputTokens **${configuredOutput.toLocaleString('en-US')}** → effective **${effectiveOutput.toLocaleString('en-US')}**.\n\nBinding constraints:\n${lines.join('\n')}`;
   }
 }
 
@@ -795,7 +841,31 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
           ? pinned.providerName + (pinned.quantization && pinned.quantization !== 'unknown' ? ` (${pinned.quantization})` : '')
           : pinnedProvider; // list not loaded — the tag itself, never invented
       }
-      items.push(new OpenRouterModelTreeItem(serverUrl, modelId, label, providerLabel, fp));
+      // Output-budget attention — SYMMETRIC across all binding constraints. The
+      // effective output is the min of EVERY ceiling that applies: the general
+      // catalog ceiling (from the engine) and the pinned provider's own cap (from
+      // `/endpoints`). Whoever clamps below the configured budget shows the
+      // Attention icon + honest tooltip. Display-only — settings never rewritten.
+      const configuredOutput = resolveModelSettings(model).maxOutputTokens;
+      const catalogCeiling = this.relayEffectiveOutput(fp, modelId);
+      const clampCauses: OutputClampCause[] = [];
+      let effectiveOutput = catalogCeiling;
+      if (catalogCeiling !== undefined && catalogCeiling < configuredOutput) {
+        clampCauses.push({ kind: 'catalog', ceiling: catalogCeiling });
+      }
+      if (pinnedProvider) {
+        const endpoints = this.relayProviders(fp, modelId);
+        const pinned = endpoints?.find(ep => ep.tag === pinnedProvider);
+        const providerCap = pinned?.maxCompletionTokens;
+        if (typeof providerCap === 'number' && providerCap > 0 && providerCap < configuredOutput) {
+          clampCauses.push({ kind: 'provider', ceiling: providerCap, providerName: pinned?.providerName });
+          // The provider cap is a real constraint on the request — it binds below
+          // the catalog ceiling when smaller (effective output = min of both).
+          if (effectiveOutput === undefined || providerCap < effectiveOutput) effectiveOutput = providerCap;
+        }
+      }
+      const clamped = clampCauses.length > 0;
+      items.push(new OpenRouterModelTreeItem(serverUrl, modelId, label, providerLabel, fp, configuredOutput, effectiveOutput, clampCauses));
     }
     return items;
   }
@@ -834,11 +904,29 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       const value = uptime !== undefined
         ? `${label}  ·  ${uptime.toFixed(2)}% uptime`
         : label;
+      // The pinned provider's own limits (context window + output cap) — the
+      // real envelope this provider serves, which can differ from the general
+      // catalog envelope (display-only; never persisted, never clamped). Only
+      // when the provider list is loaded.
+      const providerLimits: string[] = [];
+      if (pinned?.contextLength && pinned.contextLength > 0) providerLimits.push(`${fmtCount(pinned.contextLength)} ctx`);
+      if (pinned?.maxCompletionTokens && pinned.maxCompletionTokens > 0) providerLimits.push(`${fmtCount(pinned.maxCompletionTokens)} out`);
+      const limitsSuffix = providerLimits.length > 0 ? `  ·  ${providerLimits.join('  ·  ')}` : '';
+      // Exact numbers for the tooltip — the compact description abbreviates, the
+      // hover is precise (same discipline as the Model Settings provider dropdown).
+      const exactLimits: string[] = [];
+      if (pinned?.contextLength && pinned.contextLength > 0) exactLimits.push(`${pinned.contextLength.toLocaleString('en-US')} context`);
+      if (pinned?.maxCompletionTokens && pinned.maxCompletionTokens > 0) exactLimits.push(`${pinned.maxCompletionTokens.toLocaleString('en-US')} max output`);
+      const limitsTooltip = exactLimits.length > 0
+        ? `\n\nPinned provider limits (reported by OpenRouter): ${exactLimits.join(', ')}. ` +
+          `A pinned provider with a smaller window or output cap than the general model envelope serves only that — ` +
+          `requests that exceed it are filtered or fail. Unpin the provider to route normally.`
+        : '';
       items.push(new MetricTreeItem(
         'Provider',
-        value,
+        value + limitsSuffix,
         statusIcon ?? 'cloud',
-        'Routing pinned to this provider via `provider: { only: [tag] }` (set in Model Settings). Status + 1-day uptime reported by OpenRouter.',
+        'Routing pinned to this provider via `provider: { only: [tag] }` (set in Model Settings). Status + 1-day uptime reported by OpenRouter.' + limitsTooltip,
         statusColor,
       ));
     }
@@ -1184,6 +1272,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     return this.subscriptions
       .find(s => s.fp === fp)
       ?.metrics.providersByModel?.[modelId];
+  }
+
+  /** The cached effective output ceiling for a relay model, if resolved. */
+  private relayEffectiveOutput(fp: string, modelId: string): number | undefined {
+    return this.subscriptions
+      .find(s => s.fp === fp)
+      ?.metrics.outputByModel?.[modelId];
   }
 
   /**

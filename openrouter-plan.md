@@ -1,28 +1,45 @@
 # OpenRouter First-Class Backend Plan
 
-**Status (2026-08-20):** Onboarding, cost data plane, model-collection dashboard, provider pinning, and routing modes (Standard/Nitro/Exacto) are all SHIPPED. Provider-level token evaluation research is done (live API verification) — see [Provider-Level Token Evaluation](#provider-level-token-evaluation-2026-08-20-verified-live-against-the-api). Phase 3 (activity ledger) stays **DEFERRED** (undocumented endpoint + management-key scope). The plan's core goals are complete; this document is the running record.
+**Status (2026-08-21):** Onboarding, cost data plane, model-collection dashboard, provider pinning, and routing modes (Standard/Nitro/Exacto) are all SHIPPED **and pushed** (`main` @ `c70e4ab`, clean tree). Provider-level token evaluation research is done (live API verification) — see [Provider-Level Token Evaluation](#provider-level-token-evaluation-2026-08-20-verified-live-against-the-api). The **responsibility/display decision** for per-provider limits is LANDED (2026-08-21, see below) — the extension displays live and never persists, and the user owns the provider choice. Phase 3 (activity ledger) stays **DEFERRED** (undocumented endpoint + management-key scope). The plan's core goals are complete; this document is the running record.
 
-**Where we are now → NEXT STEP (not yet implemented):** clamp the output budget to the **pinned provider's** reported `max_completion_tokens` at pin time. This is the one genuine token gap left (details below). Everything else is shipped.
+**Where we are now → NEXT STEP (not yet implemented):** surface **per-provider** limits (`context_length` / `max_completion_tokens`) live and read-only — pin dropdown, dashboard, and an actionable `constraint_filtered` error — **never persisted, never clamped** (the old "clamp at pin time" idea is rejected — the user owns the provider choice). **Implemented 2026-08-21:** the pin dropdown and dashboard now show per-provider limits, and the dashboard flags a clamped output budget with an Attention icon (symmetric across catalog + pinned-provider caps). **The `constraint_filtered` error is COVERED by the generic OpenRouter error path** (server code + formatted message) — no further item remains (see [implementation checklist](#next-step-implementation-checklist)).
 
 ---
 
 ## Current Status & Next Steps (read this first)
 
-### Shipped (all verified, committed; some not yet pushed)
+### Shipped (all verified, committed, and pushed)
 
 | Area | State | Commits |
 |---|---|---|
 | Onboarding + exact-model metadata | ✔ shipped (v1.32.0/v1.32.2) | — |
 | Cost data plane (`usage.cost`, BYOK) | ✔ shipped (v1.32.2) | — |
-| Model-collection dashboard (account + per-model nodes) | ✔ shipped (v1.32.2) | 17a7d70 (unpushed) |
+| Model-collection dashboard (account + per-model nodes) | ✔ shipped (v1.32.2) | 17a7d70 |
 | Provider pinning (`provider.only`) | ✔ shipped | a3e2269, 26d5b03 |
 | Provider list + pricing no-stall fixes | ✔ shipped | 6e92d48 |
-| **Routing modes (Standard/Nitro/Exacto)** | ✔ shipped | 6754048, 27ce297, f283bbe, d3d6157 (unpushed) |
-| Usage tracking keys on BASE wire id (not the routing-suffixed id) | ✔ shipped (real bug fix) | f283bbe (unpushed) |
+| **Routing modes (Standard/Nitro/Exacto)** | ✔ shipped | 6754048, 27ce297, f283bbe, d3d6157 |
+| Usage tracking keys on BASE wire id (not the routing-suffixed id) | ✔ shipped (real bug fix) | f283bbe |
 
 ### Next step (identified gap, NOT yet implemented)
 
-**Pinned-provider output clamp.** Auto routing is safe (OpenRouter self-filters providers by context/`max_tokens` at request time — verified). But `provider.only: [tag]` removes the fallback pool: if the pinned provider's `max_completion_tokens` < our `max_tokens`, the request fails hard. Concrete: default `maxOutputTokens` 4096 vs **Together's 2,048 cap** on `meta-llama/llama-3.3-70b-instruct` → dead request. Fix: when a provider is pinned, clamp the stored output budget to that provider's reported `max_completion_tokens` at pin time (the `/endpoints` data is already fetched in Model Settings). No request-time HTTP, no per-endpoint memory map. Open question before implementing: store the clamped ceiling as the model's `maxOutputTokens` (simple, but a later provider switch must re-clamp), or keep a separate `providerOutputCap` field keyed to the pin (cleaner, more config surface). See [Provider-Level Token Evaluation](#provider-level-token-evaluation-2026-08-20-verified-live-against-the-api).
+**Per-provider limits: lazy display, no persistence, user-owned choice.** Per-provider `context_length` / `max_completion_tokens` (from `/api/v1/models/{id}/endpoints`) will be surfaced **live and read-only** — in the pin dropdown, on the dashboard, and in an actionable `constraint_filtered` error — **never persisted to settings**. See [Provider-Level Token Evaluation](#provider-level-token-evaluation-2026-08-20-verified-live-against-the-api) and [Per-Provider Limits — Responsibility & Display Decision](#per-provider-limits--responsibility--display-decision-2026-08-21). The 80/90 use case (Auto routing) is already safe and needs nothing.
+
+**Output-budget guard: clamp + dashboard icon (minimal).** The general/catalog output ceiling already clamps the user's `maxOutputTokens` silently in `deriveTokenBudget()` — and Copilot already advertises the clamped value. The only change is a **dashboard Attention icon** on a model when the clamp reduced the configured budget. **No popup, no session tracking, no selection tracking** (see [Output-budget guard](#output-budget-guard-clamp--dashboard-icon-general-level)). When the user changes settings in Model Settings, Copilot is refreshed automatically via the existing `onDidChangeConfiguration → clearCache() → re-discovery` chain — the clamped value is recomputed at every discovery.
+
+### Next-step implementation checklist
+
+The next step above decomposes into six concrete changes. Effort is **relative and non-cumulative**; they can ship independently and in any order.
+
+| # | Change | Where | Effort | Status |
+|---|---|---|---|---|
+| 1 | Add `context_length` to `OpenRouterModelEndpoint` (currently captures only `maxCompletionTokens`) | `src/openRouter.ts` | S | ✔ **DONE (2026-08-21)** |
+| 2 | Lazy per-session fetch + in-memory cache of `/api/v1/models/{id}/endpoints` | engine (`vllmMetrics.ts`) + webview (`serverSettingsView.ts`) | M | ✔ **already existed** — both the metrics engine and Model Settings already fetch once per session and cache in memory with retry backoff (garbage on reload). No new code needed. |
+| 3 | Pin dropdown (Model Settings) shows each provider's `context_length` + `max_completion_tokens` at selection time | `resources/serverSettings.js` | M | ✔ **DONE (2026-08-21)** — each option shows `Ctx (tot, out)` + per-1M pricing (in/out/cache) compact in the label, exact numbers + full-price precision in the hover title |
+| 4 | Dashboard per-model node shows the **selected** provider's limits (or general info for Auto) | `src/dashboard.ts` | M | ✔ **DONE (2026-08-21)** — the Provider row now appends the pinned provider's context + output cap (compact) with exact numbers in the tooltip |
+| 5 | Actionable `constraint_filtered`/400 error | error path (`messageConverter.ts` / `formatError` / `collectErrorMessages`) | — | ✔ **COVERED BY THE GENERIC ERROR PATH — CLOSED (2026-08-21)**. The single OpenRouter error code path already extracts the server HTTP code and walks the whole error envelope (`message` / `raw` / `detail` / `reason` / `code_reason`, any depth) into a formatted message. `constraint_filtered` and every other OR error surfaces as "Server error [code]. <server's real message>" — not raw JSON. The proposed provider-name *enrichment* is dead scope: a redundant special-case on top of an honest generic path. |
+| 6 | Attention icon + explanatory tooltip when effective < configured (thread `configured` vs `effective` to the dashboard) | `src/dashboard.ts` + `src/vllmMetrics.ts` | S | ✔ **DONE (2026-08-21)** — engine exposes per-model `outputByModel` (resolved with context); the model node shows a yellow `$(alert)` + tooltip when the effective output < configured. **Symmetric across all constraints:** effective = min(catalog ceiling, pinned provider cap); the tooltip distinguishes a silent catalog clamp from a pinned-provider cap that may fail |
+
+> **Item 5 — RESOLVED (2026-08-21), no build needed.** The generic OpenRouter error path is sufficient and already shipped: `formatError()` → `extractServerErrorInfo()` surfaces the HTTP code, and `collectErrorMessages()` gathers every message-like field (`message` / `raw` / `detail` / `reason` / …) from OpenRouter's nested envelope into one formatted, deduped message. A `constraint_filtered` failure already shows the code + the server's real words. Adding provider-name enrichment would special-case one error type on top of a path that already tells the truth — rejected as over-engineering. Prediction surfaces (dropdown, symmetric Attention icon, Provider row) handle *before*; the single generic error path handles *after*.
 
 ### Deferred / out of scope (no change)
 
@@ -72,11 +89,76 @@ So for **Auto** routing, the catalog-level `context_length`/`max_completion_toke
 
 `openrouter/auto` (and `openrouter/auto-beta`) is a **meta-model**: live-verified `GET /api/v1/models/openrouter/auto/endpoints` → `"endpoints":[]`, and the catalog entry has **no `context_length`**. Our strict no-context-no-model policy already **refuses to configure it** (`resolveOpenRouterRuntimeLimits` throws). It cannot be added, so it cannot silently route to a 10%-context model.
 
-### Conclusion 3 — THE genuine gap: pinned provider removes the fallback pool
+### Conclusion 3 — the ONE place provider-level token data constrains us
 
-Pinning `provider.only: [tag]` makes OpenRouter try **only** that provider — no fallback to a bigger-cap provider. If the pinned provider's `max_completion_tokens` < our `max_tokens`, the request fails hard (the 400 family this plan has been eliminating). This is the one place provider-level token data actually constrains us.
+Pinning `provider.only: [tag]` removes the fallback pool. If the pinned provider's `max_completion_tokens` < our `max_tokens`, the request fails hard; if its `context_length` < our window, long prompts get `constraint_filtered` (excluded, not 400'd). That exclusion currently surfaces as a dead request with no explanation.
 
-**Proposed fix (see Next Step above):** clamp the output budget to the pinned provider's `max_completion_tokens` at pin time.
+**Decided (2026-08-21) — no clamp, no persistence, display + user-owned choice, single generic error path.** The extension surfaces per-provider limits live (pin dropdown, dashboard) and the generic OpenRouter error path already surfaces every failure as the server code + formatted message — `constraint_filtered` included. It will **never gate, clamp, or persist** them, and adds **no per-error-type enrichment** (a special-case on top of an honest generic path would be over-engineering). Pinning a provider is an explicit user choice; the user owns the consequence. Detailed rationale: [Per-Provider Limits — Responsibility & Display Decision](#per-provider-limits--responsibility--display-decision-2026-08-21).
+
+---
+
+## Per-Provider Limits — Responsibility & Display Decision (2026-08-21)
+
+### The core rule: display live, never persist
+
+Per-provider limits change **daily** — pinning SambaNova on `deepseek-v3.2` drops the window from 163K to 32K, and either number can change tomorrow. The only way to lose to drift is to freeze the number in `settings.json`; the moment a per-provider `context_length`/`max_completion_tokens` lands in config, it's a stored lie with an expiry date we can't honor. So the token budget stays keyed to the **catalog context** (the general information) forever. Per-provider limits live **only** as live, read-only display:
+
+- **Pin dropdown (Model Settings)** — each provider row shows its `context_length` and `max_completion_tokens` at selection time, so the user picks with their eyes open.
+- **Dashboard** — the model node shows the **selected** provider's limits (or the general info for Auto).
+- **Failure moment** — the generic OpenRouter error path surfaces the server code + formatted message (`constraint_filtered` included); no dead raw-JSON wall.
+
+Nothing is ever stored, gated, or clamped. No contradiction is possible because nothing is frozen.
+
+### Fetch strategy: lazy per-session, not per-poll
+
+Provider-level data comes from `/api/v1/models/{id}/endpoints` — the catalog alone cannot provide it. Fetches are **lazy, once per session per model**, triggered when the user:
+
+- **a)** opens the Provider/Auto-routing UI for that model, or
+- **b)** uses (chats with) that model.
+
+The result is cached in memory for the session and **garbage on reload** — so a stale value can never survive into a later day, and a daily context change is picked up the next time the data is needed. Cost is trivial: even ~100 prompts a session is ~100 small GETs. The 80/90 Auto-routed models (no pin) pay **zero** — only pinned models need the endpoint fetch. (A poll-time refresh can be revisited only if a live-changing value is ever shown on a dashboard that's already polling.)
+
+### Who owns what
+
+| Concern | Owner | Why |
+|---|---|---|
+| Provider can't fit the prompt (Auto routing) | **OpenRouter** | Verified — self-filters via `constraint_filtered`/`excluded_by`. Nothing to do. This is the 80/90 case. |
+| Pinned provider's window/output is smaller than catalog | **User**, armed by the extension | Pinning is a deliberate choice. The extension's job is to make the consequence **visible** — the Attention icon + tooltip fires when the pinned cap binds — not to prevent it. |
+| Context changes daily | **The extension, by refusing to persist it** | Display live, never store. Nothing to go stale. |
+| "Is this pinned provider usable for me?" | **The user** | Only the user knows their prompt sizes. We don't, and we don't pretend to. |
+
+### Scoping to the 80/90 use case (deliberately NOT doing)
+
+We do **not** cater to every choice OpenRouter offers, and we do **not** gate on arbitrary floors:
+
+- **No clamped `maxOutputTokens` at pin time** — clamps are either a stored lie or a stored third-party value; a JSON-configured pin wouldn't be covered anyway. Rejected (the old "next step").
+- **No `providerOutputCap`/`providerContextWindow` config fields** — that is persistence in disguise; same drift problem, more config surface. Rejected.
+- **No hard input-floor warnings (e.g. "under 80k is unusable")** — that number is a workflow judgment, not a universal law. A 32k provider is plenty for short Q&A on a small repo. A non-blocking warning at the extreme (≈ less than 40k input left after the output budget) can help the user see the number, but it is a **display** aid, not a gate.
+
+### The extension's half of the bargain
+
+"Let the user figure it out" is only acceptable if the failure is **explicable**. The generic OpenRouter error path makes every failure explicable: it surfaces the server HTTP code + the server's real, formatted message (from the nested error envelope — `message` / `raw` / `detail` / `reason` / `code_reason`, any depth). A pinned small-window provider does not vanish into raw JSON — the user sees the code and OpenRouter's own words about why. No per-error-type enrichment is added; the single generic path is the whole bargain.
+
+Surfacing the truth at pin time + live on the dashboard (dropdown, Provider row, symmetric Attention icon) + at the failure moment (generic error path) is the extension's half. The provider choice itself is the user's. **Display live. Never persist. User owns the choice. One generic error path.**
+
+### Output-budget guard: clamp + dashboard icon (symmetric across all constraints)
+
+The user's `maxOutputTokens` setting is the **requested** budget — the guard and limit. The **general/catalog** output ceiling (OpenRouter's `top_provider.max_completion_tokens` / `per_request_limits.completion_tokens`, captured as `reportedMaxOutputTokens`) already clamps it **silently** in `deriveTokenBudget()` (output = min(configured, ceiling), with a 1-token floor and input headroom reserved). Copilot **already advertises the clamped value** — `buildModelInfo()` sets `maxOutputTokens: budget.maxOutputTokens` — so the clamp is functionally correct today; this feature is purely an *informational cue*.
+
+**Decision (2026-08-21, symmetric):** the Attention icon fires whenever ANY binding constraint pushes the effective output below the configured budget — the catalog ceiling **or** the pinned provider's cap — and the tooltip tells the truth about each. No special-casing the pin.
+
+- **Clamp stays, invisible code change zero** — the requested budget is reduced to the model's reported ceiling at budget-derivation time. `settings.json` is **never rewritten**; the clamp re-derives against the current ceiling on every discovery, so it cannot go stale (same drift rule as the context window).
+- **Effective output = min of EVERY constraint that applies**: the catalog ceiling (from the engine) and the pinned provider's own `max_completion_tokens` (from `/endpoints`, when pinned and loaded).
+- **Display: dashboard Attention icon.** When that effective output is below the configured `maxOutputTokens`, show an Attention icon (`$(alert)`) on that model's dashboard node, with a **tooltip that explains, not just shows a number**:
+  - **Catalog ceiling binds** → *silently clamped* — "Configured 8192 → 4096 (the model's output ceiling). You'll get shorter replies."
+  - **Pinned provider cap binds** → *may fail* — "Configured 8192, but pinned provider SambaNova caps at 7,168 — requests over this may **fail**. Unpin or lower the setting."
+  - **Both bind** → effective = min of both; the tooltip lists each constraint with its own wording.
+  **Stateless, always-true, no popup, no session tracking, no "selected model" tracking** (Copilot does not broadcast selection, and tracking "used this session" is exactly the state the graveyard is made of). The dashboard already shows every model; the icon appears where the user is already looking.
+- **Copilot refresh on settings change — already handled.** Model Settings save → `settings.json` → `onDidChangeConfiguration` → `provider.clearCache()` → `onDidChangeLanguageModelChatInformation` fires → VS Code re-runs discovery → a fresh budget (with the current clamp) reaches Copilot. Do NOT add a second refresh mechanism — the existing chain is the path.
+- **Why not deny (camp 1)?** Thousands of output tokens are rare; a denial forces a settings edit to use a model that's otherwise fully functional — a wall for a case that almost never bites. A clamp is not corruption, it's a shorter reply. Denying is for when the alternative silently corrupts; a trimmed output isn't that.
+- **Why not a popup?** Popups need dedup/dismiss/session state — the maintenance graveyard. The icon is passive and always accurate. The 1% case deserves a 1% solution.
+
+**Boundary — display-only either way.** The icon is informational in ALL cases: the catalog clamp is silent (Copilot already advertises the clamped value), and the pinned-provider cap is NOT clamped at all (a request over it may 400 / `constraint_filtered`). The extension never rewrites `settings.json` and never silently overrides a pinned provider's limit — it shows the truth (dropdown at pin time, Provider row live, icon + tooltip) and lets the user own the consequence. Same icon, honest text, one rule: **the icon fires whenever your setting isn't what you're getting.**
 
 ---
 
@@ -362,4 +444,4 @@ OpenRouter routes each request to a provider (Anthropic, OpenAI, a host, etc.). 
 
 **Routing modes (2026-08-20, commits 6754048 → d3d6157):** Standard/Nitro/Exacto are model-id **suffixes** (`:nitro`/`:exacto`) applied to the wire id at request time when routing is Auto — NOT provider names (provider names are never model suffixes; `:nitro`/`:exacto`/`:floor` are the only documented shortcuts). See [Routing Modes](#routing-modes-standard--nitro--exacto-shipped-2026-08-20) at the top.
 
-**Token-gap follow-up (2026-08-20, NOT yet implemented):** provider-level token evaluation (see [Provider-Level Token Evaluation](#provider-level-token-evaluation-2026-08-20-verified-live-against-the-api)) confirmed the pinned provider's `max_completion_tokens` can be below our `max_tokens` — with the fallback pool removed by `provider.only`, that's a hard failure. The next step is to clamp the output budget to the pinned provider's reported cap at pin time.
+**Per-provider limits — display-only, decided (2026-08-21):** provider-level token evaluation (see [Provider-Level Token Evaluation](#provider-level-token-evaluation-2026-08-20-verified-live-against-the-api)) confirmed the pinned provider's `max_completion_tokens` / `context_length` can be below our budget/window. With the fallback pool removed by `provider.only`, that's a hard failure or a `constraint_filtered` exclusion. **Decided: no clamp, no persistence, no per-error-type enrichment** — the extension surfaces per-provider limits live (pin dropdown, dashboard) and the single generic OpenRouter error path surfaces any failure as the server code + formatted message (`constraint_filtered` included). The user owns the provider choice. See [Per-Provider Limits — Responsibility & Display Decision](#per-provider-limits--responsibility--display-decision-2026-08-21) and the [implementation checklist](#next-step-implementation-checklist).

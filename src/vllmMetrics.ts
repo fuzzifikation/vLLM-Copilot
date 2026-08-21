@@ -77,6 +77,13 @@ export interface ServerMetrics {
   error?: string;
   /** Per-model context window (non-vLLM only, resolved lazily + cached). modelId → window. */
   contextByModel?: Record<string, number>;
+  /**
+   * Per-model effective output ceiling (non-vLLM only, resolved lazily + cached
+   * with the context window). modelId → reported ceiling. Display-only — the
+   * dashboard uses it to flag when the effective output is below the configured
+   * `maxOutputTokens` (Attention icon); it is never persisted or clamped further.
+   */
+  outputByModel?: Record<string, number>;
   /** OpenRouter account/key health from `GET /api/v1/key` (relay node). */
   account?: OpenRouterAccount;
   /** OpenRouter account budget from `GET /api/v1/credits` — total credits & usage. */
@@ -353,6 +360,14 @@ export class ServerMetricsEngine {
    * engine rechecks it next tick instead of caching a permanent miss.
    */
   private resolvedContextByModel = new Map<string, number | null | undefined>();
+  /**
+   * Cached per-model effective output ceiling (resolved together with context
+   * from the same limits lookup). Same lifecycle/caching discipline as
+   * `resolvedContextByModel`. `undefined` = not attempted; `null` = permanent
+   * failure (never retried); a number = the reported ceiling (or the safe
+   * fallback when the backend reports none — see the resolver).
+   */
+  private resolvedOutputByModel = new Map<string, number | null | undefined>();
   /** Earliest ms timestamp at which a transient context-resolve failure may retry, per model. */
   private contextRetryAtByModel = new Map<string, number>();
   /** Cached per-model provider lists (OpenRouter `/endpoints`). modelId → providers. */
@@ -439,6 +454,9 @@ export class ServerMetricsEngine {
     for (const key of [...this.resolvedContextByModel.keys()]) {
       if (!active.has(key)) this.resolvedContextByModel.delete(key);
     }
+    for (const key of [...this.resolvedOutputByModel.keys()]) {
+      if (!active.has(key)) this.resolvedOutputByModel.delete(key);
+    }
     for (const key of [...this.contextRetryAtByModel.keys()]) {
       if (!active.has(key)) this.contextRetryAtByModel.delete(key);
     }
@@ -499,9 +517,10 @@ export class ServerMetricsEngine {
       // row/tooltip; per-model windows ride in `contextByModel`.
       if (this.serverType !== 'vllm') {
         const contextByModel: Record<string, number> = {};
+        const outputByModel: Record<string, number> = {};
         // OpenRouter optimization: the relay's `/v1/models` probe IS the model
         // catalog (every variant is its own full entry). Reuse that SAME
-        // response to resolve all models' windows in one pass — no per-model
+        // response to resolve all models' limits in one pass — no per-model
         // catalog re-download (the catalog is ~500KB for ~415 models).
         const openRouterCatalog = this.serverType === 'openrouter'
           ? raw.models as OpenRouterModelData[]
@@ -513,9 +532,26 @@ export class ServerMetricsEngine {
             const retryAt = this.contextRetryAtByModel.get(modelId) ?? 0;
             if (!aggregated.online || Date.now() < retryAt) continue;
             try {
-              resolved = openRouterCatalog
-                ? resolveOpenRouterLimitsFromCatalog(openRouterCatalog, modelId).contextWindow
-                : (await resolveRuntimeLimits(this.serverType, this.serverUrl, this.requestHeaders, modelId)).contextWindow;
+              // Resolve BOTH limits in one call. OpenRouter resolves from the
+              // shared catalog (context + output ceiling); the other backends
+              // resolve context only (no output ceiling). The effective output
+              // is captured here so the dashboard can flag when it is below the
+              // configured budget — single authority for runtime limits, no
+              // re-derivation in the view layer.
+              const limits = openRouterCatalog
+                ? resolveOpenRouterLimitsFromCatalog(openRouterCatalog, modelId)
+                : await resolveRuntimeLimits(this.serverType, this.serverUrl, this.requestHeaders, modelId);
+              resolved = limits.contextWindow;
+              // Cache the output ceiling with the same discipline as context:
+              // `undefined` = not attempted (skip); a number = the effective
+              // ceiling; a resolver that returns no ceiling leaves output absent.
+              // The resolver already guarantees a positive finite value or
+              // undefined, so the guard mirrors the context path below.
+              if (limits.maxOutputTokens !== undefined && limits.maxOutputTokens > 0) {
+                this.resolvedOutputByModel.set(modelId, limits.maxOutputTokens);
+              } else {
+                this.resolvedOutputByModel.set(modelId, null);
+              }
               // Defend the cache against a resolver that returns a non-number
               // without throwing: storing `undefined` would look like "not
               // attempted" and re-fire every tick, skipping the backoff.
@@ -534,6 +570,7 @@ export class ServerMetricsEngine {
               }
               if (isPermanentContextError(err)) {
                 this.resolvedContextByModel.set(modelId, null); // entry reports no window — unresolvable, stop retrying
+                this.resolvedOutputByModel.set(modelId, null);
               } else {
                 this.contextRetryAtByModel.set(modelId, Date.now() + CONTEXT_RESOLVE_RETRY_MS); // transient — retry later
               }
@@ -543,8 +580,11 @@ export class ServerMetricsEngine {
           if (resolved == null) continue; // cached null (permanent) or unresolvable
           contextByModel[modelId] = resolved;
           if (aggregated.maxModelLen === null) aggregated.maxModelLen = resolved;
+          const resolvedOutput = this.resolvedOutputByModel.get(modelId);
+          if (typeof resolvedOutput === 'number' && resolvedOutput > 0) outputByModel[modelId] = resolvedOutput;
         }
         if (Object.keys(contextByModel).length > 0) aggregated.contextByModel = contextByModel;
+        if (Object.keys(outputByModel).length > 0) aggregated.outputByModel = outputByModel;
       }
 
       // OpenRouter relay: per-model provider pricing from
