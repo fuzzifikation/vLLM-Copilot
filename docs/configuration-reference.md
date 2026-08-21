@@ -424,7 +424,7 @@ Relative paths resolve against the **workspace root**; absolute paths (like the 
 
 | If… | Run this |
 |---|---|
-| You want to know whether your configured servers are reachable and which models loaded | **Test & Refresh Models** — pings `GET /v1/models` per configured server, lists models, surfaces full error causes for failed servers, and warns if VS Code's network gating settings (`http.proxySupport`, `http.fetchAdditionalSupport`, `http.systemCertificates`) are non-default. On failure it offers to escalate to **Diagnose Connection**. |
+| You want to know whether your configured servers are reachable and which models loaded | **Test & Refresh Models** — pings `GET /v1/models` per configured server, lists models, surfaces full error causes for failed servers, and warns if VS Code's network gating settings (`http.proxySupport`, `http.fetchAdditionalSupport`, `http.systemCertificates`) are non-default. TLS failures get a conditional certificate-trust suggestion appended. On failure it offers to escalate to **Diagnose Connection**. |
 | A model or server won't connect and you need to find out **why** (TLS, proxy, DNS, cert chain) | **Diagnose Connection** — runs a deep multi-test report against one URL. See below for what it gathers. |
 
 **What Diagnose Connection gathers (goes to its own Output channel — copy-paste to share):**
@@ -437,11 +437,11 @@ Relative paths resolve against the **workspace root**; absolute paths (like the 
 - **System-native fetch** for comparison: PowerShell `Invoke-WebRequest` (SChannel) on Windows, `curl` (Secure Transport / OpenSSL) elsewhere
 - **Certificate chain inspection** (only on TLS errors, Windows: SChannel chain via PowerShell, others: `openssl s_client`)
 - **Proxy detection:** WinHTTP config (Windows) + Windows IE/registry proxy settings (Group Policy can set these silently)
-- **VS Code settings dump:** `http.proxy`, `http.proxySupport`, `http.fetchAdditionalSupport`, `http.systemCertificates`, `http.noProxy`, `http.proxyStrictSSL`, etc.
-- **Env vars:** `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`
+- **VS Code settings dump:** `http.proxy`, `http.proxySupport`, `http.fetchAdditionalSupport`, `http.systemCertificates`, `http.systemCertificatesNode`, `http.noProxy`, `http.proxyStrictSSL`, etc.
+- **Env vars:** `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED` (proxy URLs are credential-redacted in the report)
 - **Conclusion:** a one-line classification — *reachable* (TLS valid), *auth failure* (401/403), *proxy auth* (407), *server error* (5xx), *TLS trust gap* (system native worked, Node didn't), *DNS/TCP failure*, *proxy/config issue*
 
-> **Why both a Node fetch and a system-native fetch?** If Node fetch fails with a TLS error but PowerShell/curl succeeds, that isolates the failure to VS Code's cert loading — typically a missing corporate intermediate. The full error cause is in the report (e.g. `SELF_SIGNED_CERT_IN_CHAIN`, `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`).
+> **Why both a Node fetch and a system-native fetch?** If Node fetch fails with a TLS error but PowerShell/curl succeeds, that points to a cert trust gap — e.g. a missing corporate intermediate — but it is not proof of one: the two paths can also use different proxy routing or trust stores. The full error cause is in the report (e.g. `SELF_SIGNED_CERT_IN_CHAIN`, `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`).
 
 ### Common issues
 
@@ -449,8 +449,8 @@ Relative paths resolve against the **workspace root**; absolute paths (like the 
 |---------|----------|
 | Can't connect | Run **Test & Refresh Models**. If it fails, run **Diagnose Connection** on the failing URL. Confirm `vllm serve` is running and the firewall allows the port. |
 | Requests fail on a corporate network | Set VS Code's `http.proxy` setting (e.g. `http://proxy.corp:8080`). The extension uses VS Code's patched `globalThis.fetch` (installed by the extension host at startup), which respects `http.proxy`, `http.noProxy`, and the `HTTP(S)_PROXY` environment variables per-request. Loopback hosts are always bypassed. The patched fetch loads the OS certificate store (`http.systemCertificates`, on by default), so TLS-inspecting proxies and internally-issued server certs work without extra setup. The patch is gated by `http.proxySupport` (default `override`) and `http.fetchAdditionalSupport` (default `true`) — both must stay enabled. |
-| `fetch failed` / certificate errors behind a proxy | If **Diagnose Connection** shows a TLS trust gap (system native succeeds, Node fetch fails), point `NODE_EXTRA_CA_CERTS` at a PEM containing the corporate root **and** intermediate CAs. Note: `http.proxyStrictSSL: false` does **not** disable TLS verification for fetch (undici always verifies) — use `NODE_EXTRA_CA_CERTS` instead. |
-| `UNABLE_TO_VERIFY_LEAF_SIGNATURE` / `SELF_SIGNED_CERT_IN_CHAIN` on a corporate server whose certificate chain is incomplete | This is a **server-side problem** — the server is not sending the intermediate CA in the TLS handshake. SChannel (Windows) and browsers mask it by fetching the intermediate from the OS CA store, but VS Code's patched `globalThis.fetch` (undici/OpenSSL) requires the full chain from the server. See [Known limitations](#known-limitations) below. |
+| `fetch failed` / certificate errors behind a reverse proxy | The certificate may be expired, self-signed, or trusted differently by your OS than by VS Code. If it is valid and trusted by your OS, try `"http.systemCertificatesNode": true` in your user settings and reload the window (`Developer: Reload Window`), or run **Diagnose Connection** to confirm. Note: `http.proxyStrictSSL: false` does **not** disable TLS verification for fetch (undici always verifies). |
+| `UNABLE_TO_VERIFY_LEAF_SIGNATURE` / `SELF_SIGNED_CERT_IN_CHAIN` on a corporate reverse proxy | The proxy may not be sending the intermediate CA, or the OS and Node trust stores differ. If your certificate is valid and trusted by the OS, try VS Code's own `"http.systemCertificatesNode": true` setting, or run **Diagnose Connection**. See [Known limitations](#known-limitations) below. |
 | 401 Unauthorized | The model's `requestHeaders` are wrong — edit the model entry or re-run **Add vLLM Server & Model** |
 | No models in picker | Run **Test & Refresh Models**. Verify each model has a `serverUrl` and that `GET /v1/models` returns entries |
 | Copilot spins forever | Check Output channel (`View → Output → vLLM-Copilot`) for errors |
@@ -459,29 +459,19 @@ Relative paths resolve against the **workspace root**; absolute paths (like the 
 
 ### Known limitations
 
-#### Third-party extensions cannot bypass TLS CA verification on servers with incomplete certificate chains
+#### Certificate errors behind a reverse proxy
 
-If a server sends only its leaf certificate without the intermediate CA — a common misconfiguration on corporate servers — VS Code's patched `globalThis.fetch` (undici/OpenSSL, used by all third-party extensions including this one) will reject the TLS handshake with `UNABLE_TO_VERIFY_LEAF_SIGNATURE` or `SELF_SIGNED_CERT_IN_CHAIN`, even when the OS, browsers, and VS Code's first-party BYOK Custom Endpoint connect successfully.
+A reverse proxy in front of vLLM may send only its leaf certificate without the intermediate CA, which can make VS Code's patched `globalThis.fetch` reject the TLS handshake (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `SELF_SIGNED_CERT_IN_CHAIN`, …). The same errors can also come from an expired or self-signed certificate, or from the OS trust store and Node's loaded certificates differing — the two transports can use different proxy routing too.
 
-This is a **structural disparity in VS Code**, not a bug in this extension:
+**A conditional setting:**
 
-- **First-party BYOK / Copilot** route through `ElectronFetcher → electron.net.fetch → Chromium net module` (SChannel on Windows), which retrieves missing intermediates from the OS certificate store.
-- **Third-party extensions** are restricted to VS Code's patched `globalThis.fetch` (undici + Node's OpenSSL), which requires the server to send the complete chain.
+```jsonc
+"http.systemCertificatesNode": true
+```
 
-None of the usual client-side workarounds work for the patched fetch:
+Set it in your **user settings** (`Preferences: Open User Settings (JSON)`), then reload the window (`Developer: Reload Window`). It's experimental and defaults to `false`. It changes which trust store Node loads, so it only helps when the certificate is actually valid and already trusted by your OS — it cannot repair an expired certificate. Run **Diagnose Connection** to confirm what's actually wrong.
 
-- `NODE_EXTRA_CA_CERTS`, `NODE_USE_SYSTEM_CA=1`, `NODE_OPTIONS=--use-system-ca`
-- `tls.setDefaultCACertificates()` (Node v24.5.0+)
-- `http.systemCertificates` setting
-- `NODE_TLS_REJECT_UNAUTHORIZED=0`
-
-**Resolution options:**
-
-1. **Preferred — fix the server.** Configure the server to send the complete certificate chain (leaf + intermediate). This is a one-line change in Nginx/Apache/IIS and resolves the problem for every client (Node, curl, browsers, BYOK, this extension).
-2. **Fallback — use BYOK (Custom Endpoint) until the server is fixed.** BYOK works because it uses Chromium's network stack (SChannel), which tolerates missing intermediates.
-3. **Tracked upstream — [microsoft/vscode#325600](https://github.com/microsoft/vscode/issues/325600).** We've filed an issue requesting either a public API for third-party extensions to configure TLS CAs, or routing `globalThis.fetch` through the same transport BYOK uses.
-
-Run **Diagnose Connection** to confirm this is the cause — it compares SChannel vs Node fetch and reports a "TLS trust gap" when system native succeeds but Node fetch fails.
+This extension surfaces this automatically: when an error looks like a certificate problem, chat requests, **Test & Refresh Models**, and the **Add Server** dialog suggest running **Diagnose Connection**, and mention the setting above as a conditional step.
 
 ---
 
@@ -490,7 +480,7 @@ Run **Diagnose Connection** to confirm this is the cause — it compares SChanne
 | Command | Description |
 |---------|-------------|
 | **Add vLLM Server & Model** | Guided flow: enter a server URL + optional API key/headers, discover its models, then apply a bundled preset (if one fits) or auto-configure from HuggingFace, and save |
-| **Test & Refresh Models** | Verify every configured server is reachable, list models. If any connection fails, shows the full error cause and offers to run a deep diagnostic. Also checks VS Code's network gating settings (`http.proxySupport`, `http.fetchAdditionalSupport`, `http.systemCertificates`) and warns if any are non-default |
+| **Test & Refresh Models** | Verify every configured server is reachable, list models. If any connection fails, shows the full error cause and offers to run a deep diagnostic. TLS failures get a conditional certificate-trust suggestion (which may include `http.systemCertificatesNode`). Also checks VS Code's network gating settings (`http.proxySupport`, `http.fetchAdditionalSupport`, `http.systemCertificates`) and warns if any are non-default |
 | **Diagnose Connection** | Deep network diagnostic: compares PowerShell (SChannel) vs Node `fetch` (OpenSSL), checks DNS/TCP, dumps VS Code settings + env vars, builds SChannel cert chain (Windows). Report goes to a dedicated Output channel for copy-pasting |
 | **Open Log File** | Open today's debug log |
 | **Configure Utility Model** | Switch the utility model used for MCP servers and Copilot agent mode (`mainAgent`, `copilot`, or `none`) |

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ServerSettingsViewProvider, resolveDetectedServerType, serverGroupKey } from '../src/serverSettingsView.js';
 import { serverFingerprint } from '../src/commands.js';
 import { ModelConfig } from '../src/config.js';
+import { resetOpenRouterProviderListCache } from '../src/openRouter.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 describe('ServerSettingsViewProvider', () => {
@@ -11,6 +12,7 @@ describe('ServerSettingsViewProvider', () => {
   let mockConfig: ModelConfig[];
 
   beforeEach(() => {
+    resetOpenRouterProviderListCache();
     mockConfig = [];
     mockOutputChannel = {
       appendLine: vi.fn(),

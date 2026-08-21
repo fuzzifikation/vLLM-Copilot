@@ -21,7 +21,7 @@ import { resolveRuntimeLimits } from './runtimeLimits.js';
 import {
   fetchOpenRouterAccount,
   fetchOpenRouterCredits,
-  fetchOpenRouterModelEndpoints,
+  getOpenRouterModelEndpointsCached,
   resolveOpenRouterLimitsFromCatalog,
   PermanentContextError,
   OpenRouterModelNotFoundError,
@@ -370,10 +370,6 @@ export class ServerMetricsEngine {
   private resolvedOutputByModel = new Map<string, number | null | undefined>();
   /** Earliest ms timestamp at which a transient context-resolve failure may retry, per model. */
   private contextRetryAtByModel = new Map<string, number>();
-  /** Cached per-model provider lists (OpenRouter `/endpoints`). modelId → providers. */
-  private providersByModelCache = new Map<string, OpenRouterModelEndpoint[]>();
-  /** Earliest ms at which a failed provider fetch may retry, per model. */
-  private providersRetryAtByModel = new Map<string, number>();
   /** Array of callbacks so subscribers don't need to coordinate. */
   private callbacks: Array<(aggregated: ServerMetrics, raw: ServerRawData) => void> = [];
 
@@ -459,12 +455,6 @@ export class ServerMetricsEngine {
     }
     for (const key of [...this.contextRetryAtByModel.keys()]) {
       if (!active.has(key)) this.contextRetryAtByModel.delete(key);
-    }
-    for (const key of [...this.providersByModelCache.keys()]) {
-      if (!active.has(key)) this.providersByModelCache.delete(key);
-    }
-    for (const key of [...this.providersRetryAtByModel.keys()]) {
-      if (!active.has(key)) this.providersRetryAtByModel.delete(key);
     }
   }
 
@@ -589,42 +579,18 @@ export class ServerMetricsEngine {
 
       // OpenRouter relay: per-model provider pricing from
       // `GET /api/v1/models/{id}/endpoints` (public + unauthenticated — the same
-      // call Model Settings uses for the provider dropdown). Fetched ONCE per
-      // engine lifetime, like per-model context: pricing is static enough that a
-      // slightly stale rate beats hammering N endpoints every poll. A failure
-      // retries after the same bounded backoff as context resolution; a missing
-      // or empty list yields no row — the dashboard hides pricing rather than
-      // fabricating it. Only models with cached lists are exposed, matched by id.
-      // The fetches race a 2s bound (same discipline as the account probe) so a
-      // hung /endpoints can NEVER stall the metrics cycle behind its 10s timeout —
-      // pricing is display-only; a late/slow result is not worth blocking the
-      // dashboard, which otherwise refreshes on every poll.
+      // call Model Settings uses for the provider dropdown). Provider lists come
+      // from the SHARED per-session cache (`getOpenRouterModelEndpointsCached`)
+      // so the dashboard and Model Settings can never drift, and the cache owns
+      // the display bound (2s abort on the real fetch — nothing runs orphaned),
+      // in-flight dedup, TTL, and failure backoff. A missing or empty list
+      // yields no row — the dashboard hides pricing rather than fabricating it.
       if (this.serverType === 'openrouter' && aggregated.online && this.modelIds.length > 0) {
-        const pending = this.modelIds.filter((id) => {
-          if (this.providersByModelCache.has(id)) return false;
-          return (this.providersRetryAtByModel.get(id) ?? 0) <= Date.now();
-        });
-        if (pending.length > 0) {
-          const settled = await Promise.race([
-            Promise.allSettled(pending.map((id) => fetchOpenRouterModelEndpoints(id))),
-            new Promise<PromiseSettledResult<OpenRouterModelEndpoint[]>[]>(
-              (resolve) => setTimeout(() => resolve(pending.map(() => ({ status: 'rejected' as const, reason: new Error('timed out') }))), 2000),
-            ),
-          ]);
-          for (let i = 0; i < pending.length; i++) {
-            const id = pending[i];
-            const s = settled[i];
-            if (s.status === 'fulfilled') {
-              if (s.value.length > 0) this.providersByModelCache.set(id, s.value);
-            } else {
-              this.providersRetryAtByModel.set(id, Date.now() + CONTEXT_RESOLVE_RETRY_MS);
-            }
-          }
-        }
+        const settled = await Promise.allSettled(this.modelIds.map((id) => getOpenRouterModelEndpointsCached(id)));
         const providersByModel: Record<string, OpenRouterModelEndpoint[]> = {};
-        for (const id of this.modelIds) {
-          const cached = this.providersByModelCache.get(id);
-          if (cached && cached.length > 0) providersByModel[id] = cached;
+        for (let i = 0; i < this.modelIds.length; i++) {
+          const s = settled[i];
+          if (s.status === 'fulfilled' && s.value.length > 0) providersByModel[this.modelIds[i]] = s.value;
         }
         if (Object.keys(providersByModel).length > 0) aggregated.providersByModel = providersByModel;
       }

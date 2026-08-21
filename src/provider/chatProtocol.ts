@@ -1,3 +1,4 @@
+import { serverErrorMessage } from '../errorEnvelope.js';
 import type { ServerType } from '../config.js';
 import type { OpenAIChatMessage, VllmChatOptions } from '../types.js';
 
@@ -59,10 +60,11 @@ export async function checkResponseContentType(response: Response): Promise<void
     const cloned = response.clone();
     const data: any = await cloned.json().catch(() => null);
     if (data?.error) {
-      const message = typeof data.error === 'object' && data.error !== null
-        ? data.error.message || JSON.stringify(data.error).slice(0, 500)
-        : String(data.error);
-      throw new Error(`Server error (mid-stream): ${message}`);
+      // Walk the whole envelope so OpenRouter's real reason under
+      // `error.metadata.raw` surfaces instead of the terse `message` stub.
+      const message = serverErrorMessage(data.error)
+        ?? (typeof data.error === 'object' ? JSON.stringify(data.error) : String(data.error));
+      throw new Error(`Server error (mid-stream): ${String(message).slice(0, 500)}`);
     }
     throw new Error(`Server returned unexpected JSON response (expected SSE stream)`);
   }

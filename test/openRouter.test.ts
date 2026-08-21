@@ -9,6 +9,8 @@ import {
   resolveOpenRouterRuntimeLimits,
   autoConfigureOpenRouterModel,
   fetchOpenRouterModelEndpoints,
+  getOpenRouterModelEndpointsCached,
+  resetOpenRouterProviderListCache,
   PermanentContextError,
   OpenRouterModelNotFoundError,
   fetchOpenRouterCatalog,
@@ -656,6 +658,88 @@ describe('fetchOpenRouterModelEndpoints', () => {
   it('wraps an HTTP failure with the endpoint URL', async () => {
     fetchSpy.mockRejectedValue(new Error('Network error: ECONNREFUSED'));
     await expect(fetchOpenRouterModelEndpoints('m')).rejects.toThrow(/v1\/models\/m\/endpoints/);
+  });
+});
+
+// ── getOpenRouterModelEndpointsCached (shared per-session cache) ─────────
+
+describe('getOpenRouterModelEndpointsCached', () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    resetOpenRouterProviderListCache();
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
+  });
+  afterEach(() => {
+    resetOpenRouterProviderListCache();
+    vi.restoreAllMocks();
+  });
+
+  const endpointsResponse = () => new Response(
+    JSON.stringify({ data: { id: 'deepseek/deepseek-chat', endpoints: [{ tag: 'deepseek', provider_name: 'DeepSeek', status: 0 }] } }),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  );
+
+  it('fetches once and serves subsequent calls from cache', async () => {
+    fetchSpy.mockResolvedValue(endpointsResponse());
+    const first = await getOpenRouterModelEndpointsCached('deepseek/deepseek-chat');
+    const second = await getOpenRouterModelEndpointsCached('deepseek/deepseek-chat');
+    expect(first).toEqual([expect.objectContaining({ tag: 'deepseek', providerName: 'DeepSeek' })]);
+    expect(second).toBe(first); // same cached array
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one fetch between concurrent callers (in-flight dedup)', async () => {
+    fetchSpy.mockResolvedValue(endpointsResponse());
+    const [a, b] = await Promise.all([
+      getOpenRouterModelEndpointsCached('deepseek/deepseek-chat'),
+      getOpenRouterModelEndpointsCached('deepseek/deepseek-chat'),
+    ]);
+    expect(a).toEqual(b);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces the fetch error once, then serves an empty list during backoff', async () => {
+    // fetchWithRetry retries transient network errors, so the rejection must be
+    // persistent — a one-shot rejection would fall through to the real network.
+    fetchSpy.mockRejectedValue(new Error('Network error: ECONNREFUSED'));
+    await expect(getOpenRouterModelEndpointsCached('deepseek/deepseek-chat')).rejects.toThrow(/endpoints lookup failed/);
+    const callsAfterFailure = fetchSpy.mock.calls.length;
+    // Within the backoff window the cache declines to re-fetch and returns [] —
+    // callers treat that as "no providers" (the dropdown falls back to Auto).
+    await expect(getOpenRouterModelEndpointsCached('deepseek/deepseek-chat')).resolves.toEqual([]);
+    expect(fetchSpy.mock.calls.length).toBe(callsAfterFailure); // no re-fetch during backoff
+  });
+
+  it('serves stale cached data when a refresh fails (instead of discarding it)', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchSpy.mockResolvedValue(endpointsResponse());
+      await getOpenRouterModelEndpointsCached('deepseek/deepseek-chat'); // seed the cache
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(5 * 60_000 + 1); // the entry is now stale (past TTL)
+      // AbortError so fetchWithRetry treats it as cancellation (no retry sleep
+      // that would hang under fake timers).
+      fetchSpy.mockRejectedValue(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
+      const result = await getOpenRouterModelEndpointsCached('deepseek/deepseek-chat');
+      expect(result).toEqual([expect.objectContaining({ tag: 'deepseek', providerName: 'DeepSeek' })]);
+      expect(fetchSpy).toHaveBeenCalledTimes(2); // refresh attempted, failed → stale served
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not cache an empty provider list (a later call re-fetches)', async () => {
+    // Fresh Response per call — a Response body can only be read once.
+    fetchSpy.mockImplementation(async () => new Response(
+      JSON.stringify({ data: { id: 'm', endpoints: [] } }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    const first = await getOpenRouterModelEndpointsCached('m');
+    const second = await getOpenRouterModelEndpointsCached('m');
+    expect(first).toEqual([]);
+    expect(second).toEqual([]);
+    expect(fetchSpy).toHaveBeenCalledTimes(2); // empty lists are not cached
   });
 });
 

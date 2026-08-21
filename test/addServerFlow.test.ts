@@ -286,6 +286,36 @@ describe('registerAddServerModelCommand', () => {
     expect(provider.clearCache).toHaveBeenCalled();
   });
 
+  it('appends the http.systemCertificatesNode fix to the failure modal on a TLS error', async () => {
+    inputBoxSpy
+      .mockResolvedValueOnce('https://host:8000') // server URL
+      .mockResolvedValueOnce('')                  // API key
+      .mockResolvedValueOnce('');                 // headers
+    // A reverse-proxy TLS failure (missing intermediate) — must surface the fix.
+    fetchFn.mockRejectedValueOnce(new Error('unable to verify the first certificate'));
+    warningSpy.mockResolvedValueOnce('Discard' as any);
+
+    registerAddServerModelCommand({} as any, provider, output);
+    await (vscode as any).commands._run('vllm-copilot.addServerModel');
+
+    expect(warningSpy).toHaveBeenCalledWith(
+      expect.stringContaining('http.systemCertificatesNode'),
+      expect.anything(),
+      'Discard',
+      'Run Diagnostic',
+      'Keep Anyway',
+    );
+    // The raw TLS cause is still present alongside the fix.
+    expect(warningSpy).toHaveBeenCalledWith(
+      expect.stringContaining('unable to verify the first certificate'),
+      expect.anything(),
+      'Discard',
+      'Run Diagnostic',
+      'Keep Anyway',
+    );
+    expect(provider.clearCache).toHaveBeenCalled();
+  });
+
   it('Replace Config retains the existing entry id instead of appending a duplicate', async () => {
     // Existing entry with a custom (preset-derived) id on the same server.
     vscode.workspace._mockConfig = {

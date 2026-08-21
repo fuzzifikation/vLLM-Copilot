@@ -195,6 +195,18 @@ describe('processSSEChunk', () => {
     expect(event.error).toBe('This model maximum context length is 4096 tokens');
   });
 
+  it('recovers the real reason from an OpenRouter error.metadata.raw envelope', () => {
+    const data = makeChunk({
+      error: {
+        message: 'Provider returned error',
+        metadata: { raw: 'This model is temporarily unavailable from the selected provider.' },
+      },
+    });
+    const event = processSSEChunk(data, pending)!;
+    expect(event).not.toBeNull();
+    expect(event.error).toContain('This model is temporarily unavailable');
+  });
+
   it('surfaces a string-form server error chunk', () => {
     const data = makeChunk({ error: 'internal server error' });
     const event = processSSEChunk(data, pending)!;

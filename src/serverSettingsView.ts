@@ -8,7 +8,7 @@ import * as path from 'path';
 import { getConfig, buildEndpoint, findModelConfigIndex, resolveServerConfig, toPublicModelConfig, serverFingerprint, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
 import { patchModelConfig, type ModelIdentity } from './configStore.js';
 import { detectServerTypeFromV1Models } from './runtimeLimits.js';
-import { fetchOpenRouterModelEndpoints, type OpenRouterModelEndpoint } from './openRouter.js';
+import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from './openRouter.js';
 
 // Re-exported so the existing test import surface (serverSettingsView.test.ts)
 // keeps working after the helper moved to config.ts.
@@ -333,16 +333,16 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    // OpenRouter providers: lazily fetched when Model Settings opens. For every
-    // configured OpenRouter model, fetch the authoritative per-model provider
-    // list (`GET /api/v1/models/{id}/endpoints`) and key it by the wire id, so
-    // the webview can render a provider dropdown for the selected model. The
-    // tags come VERBATIM from the API — never derived. A failed fetch yields no
-    // entry (dropdown falls back to "Auto" only), never a fabricated list.
-    // The fetches run in PARALLEL and race a 2s bound (same discipline as the
-    // dashboard's account probe and the 5s /v1/models probe): provider lists are
-    // display-only, and a hung /endpoints must never stall Model Settings from
-    // opening behind its 10s timeout.
+    // OpenRouter providers: read lazily from the SHARED per-session cache
+    // (`getOpenRouterModelEndpointsCached`) — the same cache the dashboard
+    // engine uses, so the dropdown and the dashboard can never drift. The cache
+    // owns the display bound (2s abort on the real fetch — nothing runs
+    // orphaned), in-flight dedup, TTL, and failure backoff, so Model Settings
+    // no longer duplicates that policy on every refresh. The authoritative
+    // per-model provider list (`GET /api/v1/models/{id}/endpoints`) is keyed by
+    // the wire id for the webview dropdown. The tags come VERBATIM from the
+    // API — never derived. A failed fetch yields no entry (dropdown falls back
+    // to "Auto" only), never a fabricated list.
     const openRouterWireIds: string[] = [];
     for (const sv of servers) {
       for (const m of sv.models) {
@@ -353,12 +353,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     }
     const providersByModel: Record<string, OpenRouterModelEndpoint[]> = {};
     if (openRouterWireIds.length > 0) {
-      const settled = await Promise.race([
-        Promise.allSettled(openRouterWireIds.map((wireId) => fetchOpenRouterModelEndpoints(wireId))),
-        new Promise<PromiseSettledResult<OpenRouterModelEndpoint[]>[]>(
-          (resolve) => setTimeout(() => resolve(openRouterWireIds.map(() => ({ status: 'rejected' as const, reason: new Error('timed out') }))), 2000),
-        ),
-      ]);
+      const settled = await Promise.allSettled(openRouterWireIds.map((wireId) => getOpenRouterModelEndpointsCached(wireId)));
       for (let i = 0; i < openRouterWireIds.length; i++) {
         const s = settled[i];
         if (s.status !== 'fulfilled') {

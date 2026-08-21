@@ -128,6 +128,13 @@ describe('recordRequest — last request + accumulation', () => {
     expect(getServerCost(url).allTime).toEqual({});
   });
 
+  it('ignores a negative actual cost (invalid server data must not subtract)', () => {
+    recordRequest(req({ actualCost: -0.5 }));
+    recordRequest(req({ promptTokens: 5, actualCost: -1 }));
+    expect(getServerCost(url).allTime).toEqual({});
+    expect(getServerCost(url).today).toEqual({});
+  });
+
   it('records a zero actual cost as a real value (a free request is still actual)', () => {
     // `cost === 0` from OpenRouter is a legitimate free-request spend and must
     // count as "actual" (so the dashboard shows a real $0.00, not a suppressed

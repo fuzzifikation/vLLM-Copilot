@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## v1.32.2 — OpenRouter provider selection, dashboard details & review hardening
 
 ### Added
 
+- **Certificate errors surface a suggestion** — when an error looks like a certificate problem (chat, **Test & Refresh Models**, **Add Server**), the extension suggests running **Diagnose Connection** and mentions VS Code's `http.systemCertificatesNode: true` setting as a conditional step (only helpful when the certificate is valid and already trusted by your OS). The dead-end `http.proxy`/`http.proxyStrictSSL` advice is gone.
 - **OpenRouter provider selection** — Model Settings has a Provider dropdown per OpenRouter model (Auto, or pin a specific provider from the model's list).
 - **OpenRouter routing mode** — Model Settings has a Routing dropdown per OpenRouter model (Standard / Nitro / Exacto), active when routing is Auto.
 - **Dashboard: OpenRouter model details** — each model node shows its provider (with status + uptime), per-1M pricing, and total context; the Account node shows Invested Total / Available and usage over time.
@@ -12,27 +13,26 @@
 
 ### Fixed
 
+- **Server errors state the HTTP code and the server's real message** — e.g. `Server error [402]. This request requires more credits, or fewer max_tokens…` — instead of a generic "vLLM server problem" or raw JSON. No backend-specific wording, and the message is no longer cut off.
+- **Per-model credentials are respected as server identity** — models sharing a URL with different auth are separate logical servers: Model Settings probes each identity with its own headers, the Dashboard shows each as its own node, and Deep-Dive uses the exact tree-item credentials (never the first model's). Auto-Configure keeps the selected identity when adding an unconfigured server model.
 - **OpenRouter models with a full-window output cap no longer fail every request** — the output budget is capped to leave input headroom.
 - **OpenRouter models without a reported output cap no longer return nothing** — output falls back to 10% of the context window instead of the full window (which 400'd).
 - **OpenRouter Provider dropdown no longer stuck on "only Auto"** — the provider list lookup was 404-ing; it loads now.
 - **Selecting "Auto" in the Provider dropdown actually clears the pinned provider** instead of storing an empty value.
+- **OpenRouter's real error reason is no longer discarded** — mid-stream and non-streaming error bodies are searched for `error.metadata.raw` (and other nested message fields), so users see the actual provider reason instead of only a terse `Provider returned error`.
+- **Negative actual costs are rejected** — invalid server data no longer subtracts from the all-time/today cost totals.
+- **Diagnose Connection no longer prints proxy credentials** — proxy/server URLs are credential-redacted in the shareable report, and `NODE_TLS_REJECT_UNAUTHORIZED` is now actually collected.
+- **TLS diagnostics no longer overclaim** — a transport mismatch is reported as a possible trust-store difference, not a proven incomplete chain, and the `http.systemCertificatesNode` suggestion is conditional.
+- **Invalid `http.proxySupport` value removed from advice** — suggests the valid `override` / `fallback` values instead of the nonexistent `override-default`.
+- **OpenRouter provider lists use one shared cache** — the dashboard and Model Settings read the same per-session provider list (no duplicated fetches, no orphaned 10s requests behind a 2s race), and a failed refresh keeps serving the last-known provider data instead of discarding it.
 
 ### Changed
 
+- **Dead TLS workarounds removed** — the Windows `NODE_EXTRA_CA_CERTS` intermediate-export auto-fix, the "ask your server admin to fix the chain" advice, and the `http.proxy`/`http.proxyStrictSSL` suggestions are gone. Certificate errors now suggest **Diagnose Connection** and mention `http.systemCertificatesNode: true` conditionally.
 - **Prices and token counts render consistently in every locale** (US decimal/grouping) instead of locale-dependent `$0,66` / `1.000.000`.
 - **OpenRouter Add flow simplified** — asks only for the API key; pasting a model-page URL skips the picker.
 - **Dashboard cost shows today and/or total** as reported, instead of an invented per-day window rate.
 - **Model Settings layout** — `serverType` sits next to the server (general → specific), instead of buried below the model's fields.
-
-## v1.32.2 — Per-model identity & actionable server errors
-
-### Fixed
-
-- **Server errors state the HTTP code and the server's real message** — e.g. `Server error [402]. This request requires more credits, or fewer max_tokens…` — instead of a generic "vLLM server problem" or raw JSON. No backend-specific wording, and the message is no longer cut off.
-- **Per-model credentials are respected as server identity** — models sharing a URL with different auth are separate logical servers: Model Settings probes each identity with its own headers, the Dashboard shows each as its own node, and Deep-Dive uses the exact tree-item credentials (never the first model's). Auto-Configure keeps the selected identity when adding an unconfigured server model.
-
-### Changed
-
 - **OpenRouter catalog metadata is public** — the `/v1/models` lookup is unauthenticated, so per-model headers are no longer threaded through it.
 - **OpenRouter per-token → per-1M pricing conversion consolidated** — one shared helper (`perMillion`) feeds both the normalized model's `cost` and the onboarding picker display (no behavior change).
 - **`VllmClient` responsibilities split without changing its provider API** — runtime metadata resolution, wire validation/body adaptation, and streaming transport now have focused owners; `VllmClient` remains the configuration-cache façade.

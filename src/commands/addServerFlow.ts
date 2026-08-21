@@ -3,7 +3,7 @@ import type { ModelConfig, ServerType } from '../config.js';
 import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, toPublicModelConfig } from '../config.js';
 import { replaceModelConfig, type IdentifiedModelConfig } from '../configStore.js';
 import type { VllmModel } from '../types.js';
-import { describeError } from '../messageConverter.js';
+import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../messageConverter.js';
 import { detectServerType } from '../runtimeLimits.js';
 import { ensureByokUtilityDefault } from './byok.js';
 import { promptForServerAuth } from './serverAuth.js';
@@ -443,8 +443,11 @@ async function handleServerFailure(
   output: vscode.OutputChannel,
   onSaved: () => void,
 ): Promise<boolean> {
+  // A certificate-ish failure gets the short suggestion: network test +
+  // maybe the setting. One bucket, no deeper classification.
+  const tlsDetail = isTlsCertificateError(detail) ? `${detail}\n\n${TLS_CERT_SUGGESTION}` : detail;
   const action = await vscode.window.showWarningMessage(
-    `Cannot connect to ${serverUrl}: ${detail}`,
+    `Cannot connect to ${serverUrl}: ${tlsDetail}`,
     { modal: true },
     'Discard',
     'Run Diagnostic',

@@ -289,8 +289,10 @@ export function recordRequest(data: LastRequestData): void {
 
   // Actual reported cost (OpenRouter usage.cost) accumulates separately from the
   // derived estimates — never summed together. Only recorded when the server
-  // actually reports it; vLLM/local requests contribute nothing.
-  if (data.actualCost !== undefined && Number.isFinite(data.actualCost)) {
+  // actually reports it; vLLM/local requests contribute nothing. A negative
+  // value is invalid server data and would silently subtract from totals, so it
+  // is rejected too.
+  if (data.actualCost !== undefined && Number.isFinite(data.actualCost) && data.actualCost >= 0) {
     accumulateCost(allTimeCost, data.serverUrl, data.modelId, data.actualCost);
     if (!daysCost[todayKey]) daysCost[todayKey] = {};
     accumulateCost(daysCost[todayKey], data.serverUrl, data.modelId, data.actualCost);
