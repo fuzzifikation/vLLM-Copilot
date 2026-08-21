@@ -7,22 +7,20 @@
 # vLLM-Copilot
 [![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot) [![vLLM](https://img.shields.io/badge/vLLM-Primary-01C286)](https://github.com/vllm-project/vllm) [![OpenRouter Supported](https://img.shields.io/badge/OpenRouter-Supported-00B3A6?logo=openrouter&logoColor=white)](https://openrouter.ai) [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
 
-**Run your vLLM inference servers inside GitHub Copilot — built for teams and production.**
-**Self-hosted, multi-server, multi-user.** Full vLLM request control, live observability, and per-model auth — plus OpenRouter (400+ cloud models, no local infrastructure), llama.cpp, LM Studio, and Ollama.
+**Your vLLM serverved models inside GitHub Copilot. Built for teams and production.**
+GitHub Copilot provides the familiar chat, tools, and model picker; You provide the model. No data ever gets sent to Copilot!
+**Multi-server, multi-user.** Full vLLM request control, live observability, strict data residency. Also works with OpenRouter (400+ cloud models, no local infrastructure, many free options), llama.cpp, LM Studio, and Ollama.
 </div>
 
 
-For teams running AI on their own local or self-hosted vLLM servers for many users — this gives you the professional Copilot integration:
+For teams running AI on their own vLLM servers for many users, this gives you the professional Copilot integration: 
 
-- **Run Copilot against your own inference layer**: your vLLM models appear in the Copilot model picker with chat, tools, vision, subagent capabilities and context-window stats, fully supported. Models stay on your network — prompts never leave your infrastructure.
-- **Production vLLM observability**: a live dashboard of queue status, KV-cache usage, TTFT, throughput, per-request token details, and a cumulative token & cost tracker (per model, Today / Overall). Diagnose serving performance without leaving VS Code.
-- **Multi-server, multi-user by design**: each server and model carries its own endpoint, auth, sampling, and token budget — so different teams, environments, or credentials stay isolated and independently managed.
-- **Full request control**: configurable model modes give you *any* vLLM parameter — thinking effort, sampling, structured output, token budgets — per model, switched from the Copilot picker.
-- **OpenRouter — the no-infrastructure option**: add any of **~415 cloud models** in a few clicks for teams without GPU capacity, with real context window, capabilities, pricing, and **actual spend** (`usage.cost`) tracked on the dashboard. See [Using OpenRouter](#using-openrouter).
-- **Other backends supported**: llama.cpp, LM Studio, and Ollama alongside vLLM, each with a per-model `serverType` and the core features — chat, streaming, tools, personalities, usage tracking. The extension never invents metadata — every backend's context window is read from its own documented endpoint, and a model that can't honestly report one is not served.
-- **Personality presets**: strip Microsoft's 21KB of system-prompt boilerplate, or give a model a character. Per model, no JSON editing.
-- **Switchable model modes**: named parameter presets per model — thinking effort, sampling, structured output, *any* vLLM parameter — switched from the Copilot model picker and edited in the sidebar UI.
-
+- **Data handling**: **No third party. No subscription. No affiliation. No central service. No telemetry.** Prompts, code, and company data go only to each model's configured inference server. They are not sent to GitHub Copilot or GitHub or anywhere else! 
+- **Production vLLM observability**: a live dashboard of server availability, queue status, KV-cache usage, TTFT, throughput, per-request token details, and a cumulative token & cost tracker. Your admins and users will know what is going on!
+- **Multi-server, multi-user by design**: each server and model carries its own endpoint, auth, sampling, and token budget. Different teams, environments, or credentials stay isolated and independently managed. But all models are available in the model picker of familiar Copilot!
+- **Full request control**: model modes give you any vLLM parameter, such as thinking effort, sampling, structured output, and token budgets. Switch them per model from the Copilot picker.
+- **OpenRouter**: add any of **~415 cloud models** in a few clicks. Useful for teams without GPU capacity. Real context window, capabilities, pricing, and **actual spend** (`usage.cost`) show on the dashboard. See [Using OpenRouter](#using-openrouter).
+- **Other backends supported**: llama.cpp, LM Studio, and Ollama alongside vLLM, each with core features like chat, streaming, tools, personalities, and usage tracking.
 
 <div align="center">
 For full view expand the details-arrow:
@@ -33,7 +31,7 @@ For full view expand the details-arrow:
 
 </details>
 
-*Every vLLM-Copilot feature at a glance. Click to zoom.*
+<em>Every vLLM-Copilot feature at a glance. Click to zoom.</em>
 
 </div>
 
@@ -44,36 +42,45 @@ If you want to support this work: [![Sponsor via PayPal](https://img.shields.io/
 ## Contents
 
 - [Quick Start](#quick-start)
-- [Requirements](#requirements)
 - [What makes this different from BYOK?](#what-makes-this-different-from-byok)
-- [Supported servers](#supported-servers) · [Using OpenRouter](#using-openrouter)
 - [Enterprise & team deployment](#enterprise--team-deployment)
 - [Features](#features)
+- [Servers & backends](#servers--backends)
 - [Commands](#commands)
-- [Configuration Reference](#configuration-reference)
 - [Development](#development)
 - [Support](#support)
 
-## Requirements
-
-- **GitHub Copilot Chat** — this extension feeds models to Copilot; it doesn't bundle its own chat UI.
-- A **running model server** (vLLM, llama.cpp, LM Studio, Ollama) **or an OpenRouter API key** (for ~415 cloud models with no local infrastructure).
-- A recent **VS Code**. This extension uses a **proposed API** (`chatProvider`), which disables auto-updates by default — enable `extensions.autoUpdate` to get updates automatically.
-
 ## Quick Start
 
-> **🚀 No local server? Use OpenRouter.** Add an `openrouter.ai` URL, enter your key, and pick from ~415 cloud models — no GPU, no setup. The extension resolves each model's real context window, capabilities, and pricing, and the dashboard shows your **actual cost** per request. Full walkthrough: [Using OpenRouter](#using-openrouter).
+**Requirements:** GitHub Copilot Chat (you need a GitHub account, but no subscription), plus either a running model server (vLLM, llama.cpp, LM Studio, Ollama) or an OpenRouter API key.
 
-1. **Install** from the VS Code Marketplace
-2. **Open the vLLM panel:** click the **vLLM** icon in the activity bar (left sidebar) — the **Dashboard** opens.
-3. **Add a server & model:** in the Dashboard, click **Add or Reconfigure Server/Model** at the bottom of the tree → enter your server URL → pick a model → done. The extension auto-configures everything (model family, thinking modes, context window) from bundled presets or HuggingFace.
-4. **Edit settings:** open the **Model Settings** view (below the Dashboard) to adjust displayName, params, model modes, and more. No `settings.json` editing required.
-5. **Change the personality (optional):** in **Model Settings**, pick a model and choose a personality from the dropdown in its **General** section (or `Ctrl+Shift+P` → **Set Model Personality**). Pick **Default (no personality)** later to clear it.
+> **Add a vLLM server** (or llama.cpp, ollama, lm-studio)
+
+<table>
+<tr><td>
+
+1. **Install** this extension from the VS Code Marketplace.
+2. **Open the vLLM panel:** click the **V** icon in the activity bar (left sidebar). The **Dashboard** opens.
+3. **Add your vLLM server & model:** *(same for llama.cpp, lm-studio, ollama)* in the Dashboard, click **Add or Reconfigure Server/Model** at the bottom of the tree → enter your server URL → *(optional) enter vLLM API key and HTTP request headers from IT* → pick a model → done. The extension auto-configures the model (family, capabilities, context window) from the server and bundled presets or HuggingFace.
+4. **Edit settings** *(optional)*: open the **Model Settings** view (below the Dashboard) to adjust displayName, params, model modes, and more. No `settings.json` editing required.
+5. **Change the personality** *(optional)*: in **Model Settings**, pick a model and choose a personality from the dropdown in its **General** section (or `Ctrl+Shift+P` → **Set Model Personality**). Pick **Default (no personality)** later to clear it.
 6. **Chat:** Open Copilot Chat, pick your model from the dropdown. Switch modes from the same picker.
 
-> **Remote (SSH/WSL/Containers):** This extension runs on the remote host (`extensionKind: workspace`). Install it **while connected to the remote window** and VS Code places it on the remote extension host automatically. If you installed it locally first, the remote won't pick it up on its own — install it on the remote explicitly (Extensions view → *Install in SSH: … / WSL: … / Dev Container: …*).
+</td></tr>
+</table>
 
-> **Multi-server, multi-model:** add any number of servers (vLLM, llama.cpp, LM Studio, Ollama, OpenRouter) and use their models interchangeably on the fly — each server and model keeps its own endpoint, auth, and settings. Point multiple model entries at one server if it swaps models around; the extension doesn't care. Changes take effect immediately; no reload needed.
+> **Add OpenRouter Model** (full provider support, cost tracking and auto selection)
+
+<table>
+<tr><td>
+
+- In **Step 3**, enter `https://openrouter.ai` as the server URL, or paste the full web path to the model, e.g. `https://openrouter.ai/poolside/laguna-s-2.1:free` (this pre-fills the model picker). Then enter your OpenRouter API key from [openrouter.ai/keys](https://openrouter.ai/keys) when prompted.
+</td></tr>
+</table>
+
+> **Remote (SSH/WSL/Containers):** This extension runs on the remote host (`extensionKind: workspace`). Install it **while connected to the remote window** and VS Code places it on the remote extension host automatically. If you installed it locally first, the remote won't pick it up on its own. Install it on the remote explicitly (Extensions view → *Install in SSH: … / WSL: … / Dev Container: …*).
+
+
 
 ---
 
@@ -105,11 +112,146 @@ coding, and creative work, including their sampling and vLLM-specific request se
 | Chat session cleanup across workspaces | ❌ | ✅ |
 | Token usage & throughput stats per request | ❌ | ✅ |
 
-### vLLM-specific request controls
+## Enterprise & team deployment
 
-These controls are sent as vLLM request-body parameters. Configure them in
-`defaultParams` for a model-wide default, or in `modelModes` to make them switchable from
-the model picker. They are not exposed by the BYOK Custom Endpoint.
+vLLM-Copilot gives companies (and individuals) controlled access to GitHub Copilot through their own inference infrastructure. Operations get live serving metrics, per-model usage and cost tracking. A highly robust output correction of the model ensures automatic recovery from incomplete or malformed output.
+
+**No subscription. No third party receives work content beyond the configured inference server. No affiliation. No central service. No telemetry.** GitHub Copilot supplies the familiar chat, tools, model picker, and other interaction features. Prompts, code, and company data go only to the configured inference server, never to GitHub Copilot or GitHub. Other extension traffic carries no work content; it is limited to model metadata, configuration, metrics, and service status.
+
+- **Multi-server at scale**: add any number of vLLM servers and use their models interchangeably. Each server and model keeps its own endpoint, auth, sampling, and token budget, giving you isolation across teams, environments, or credentials.
+- **Per-model credentials**: every model entry carries its own `requestHeaders` / auth, so different scopes and keys are managed independently rather than sharing one global key.
+- **Cost tracking per model**: cumulative token and USD spend (Today / Overall), with OpenRouter models preferring their **actual reported cost** (`usage.cost`).
+- **Reliability for daily use**: models misbehave, and this extension repairs it (see [Robustness](#robustness) below), alongside bounded `Retry-After` handling, TLS/proxy/cert diagnostics, and chat session cleanup.
+
+### Server Dashboard
+Open it with the **V** icon in the activity bar (left sidebar).
+
+<table>
+<tr>
+<td valign="top" width="62%">
+
+The live observability that makes it worthwhile for teams. A native sidebar (no webviews, no extra ports) shows live metrics per server, showing only the rows each backend actually reports:
+
+- **Queue status**: running and waiting request counts (or *idle*) at a glance
+- **Expandable metrics**: context window, vLLM version, KV cache usage & hit rate, TTFT, output and prefill speed (tok/s)
+- **MTP / speculative decoding**: acceptance rate, draft depth, proposal count (when active)
+- **Last Request Details**: per-server node with the most recent request's tokens (input, output, cached, reasoning), timing (TTFT, queue time, generation time), and throughput. Updated immediately after every prompt, not on the poll interval. The Output channel shows the same exact counts after every request: input/output, cached tokens (prefix cache hit %), cache creation tokens, output throughput (tok/s), and speculative-decoding stats.
+- **Token Usage and Cost**: a model-first tree, one entry per model carrying the price on the collapsed line (`$11.51 today and $31.13 total`), expanding to **Today** and **Overall** token rows. Sub-cent costs keep fine precision; **OpenRouter models use their actual reported cost** (`usage.cost`), never summed with rates. **Reset Usage** is a right-click action. See [usage.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/usage.md) for the design.
+- Right-click a **vLLM** server for the **Deep-Dive** webview.
+
+</td>
+<td valign="top" width="38%">
+
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/ServerDashboard-with-Last-Request.png" width="100%" alt="Server dashboard sidebar showing live metrics and last request details">
+
+<em>Live server metrics with Last Request details: token counts with context/budget percentages, TTFT (reported vs. measured), generation throughput, and queue time.</em>
+
+</td>
+</tr>
+</table>
+
+### Robustness
+
+Models misbehave. Instead of letting a bad response reach your team, the extension repairs the stream so they see working output. This is the difference between a demo and a daily driver.
+
+- **Auto-continue on empty or truncated responses.** Some models (notably Qwen) occasionally return zero tokens or stop mid-sentence. The extension retries with an assistant prefill, so you never see a blank or cut-off answer. Configurable per model (`autoContinueRetries`, default 1).
+- **Tool-call repair.** When a model truncates a tool call mid-JSON (`finish_reason: 'length'`), the extension recovers the partial call with `jsonrepair` + `best-effort-json-parser`. These are the same libraries Copilot's BYOK uses, so the call is not dropped to empty `{}`.
+- **Bounded retries.** Transient server errors are retried once, honoring `Retry-After` (capped at 10 s), and never after partial output has already been streamed.
+- **Connection diagnostics.** Corporate proxy? TLS-inspecting gateway? Missing intermediate certs? **Test & Refresh Models** verifies servers are reachable, lists loaded models, and corrects ID mismatches. **Diagnose Connection** runs a deep report comparing SChannel vs. OpenSSL, DNS/TCP reachability, cert-chain inspection, proxy detection, and a settings dump, with a one-line failure classification.
+
+---
+
+## Features
+
+### Model Settings
+Open it with the **V** icon in the activity bar (left sidebar); it sits below the Dashboard.
+<table>
+<tr>
+<td valign="top" width="62%">
+
+A visual editor for per-model configuration, no `settings.json` required:
+
+- Server & model selectors, including unconfigured models
+- **Auto-Configure** re-runs preset/HuggingFace discovery (modes, capabilities, token budgets, defaults)
+- Sectioned layout: General, Token Budget, Capabilities, Request Params, Transport, **Model Modes**, System Prompt
+- **Parameter picker** with known params and type hints; enum and boolean params render as dropdowns
+- **Remove Model**, **Revert**, and auto-refresh on config changes
+
+</td>
+<td valign="top" width="38%">
+
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/Server-Settings.png" width="100%" alt="Model Settings webview for editing per-model configuration">
+
+<em>Edit model configuration in a visual editor. No `settings.json` required.</em>
+
+</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td valign="top" width="62%">
+
+**Model modes** are named parameter presets you switch between from the Copilot model picker, like profiles for different tasks: deep reasoning, precise coding, creative work. Each mode merges its parameters into the vLLM request on top of the model defaults.
+
+- **Thinking toggles**: `enable_thinking: true/false` (from bundled presets)
+- **Sampling presets**: temperature/top_p combinations for creative vs. precise output
+- **Structured output**: JSON schema enforcement for data extraction
+- **Anything vLLM supports**: bad words, repetition detection, token budgets
+
+**Add vLLM Server & Model** auto-generates modes from bundled presets (or OpenRouter reasoning metadata). An example config and the full syntax are in the [Manual → Model modes](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md#model-modes).
+</td>
+<td valign="top" width="38%">
+
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/model-mode.png" width="100%" alt="Model mode picker showing different configurations">
+
+<em>Switch between model modes directly from the Copilot model picker: Think, No Think, Precise, etc.</em>
+
+</td>
+</tr>
+</table>
+
+**Hidden System Instructions (capture & replace)**. Copilot injects ~21KB of hidden safety and identity rules into every request. Capture them, then replace them:
+
+1. Set `vllm-copilot.systemMessageCapture: true`
+2. Unique system messages are written to `.vllm/system-messages.json`
+3. Write a JSON file of find/replace rules
+4. Point `systemMessageReplacementsFile` at it on the model entry
+
+Replacements are exact substring matches, applied sequentially to every system message before it reaches vLLM.
+
+**Workspace custom instructions**. `.github/copilot-instructions.md`, `AGENTS.md`, and `CLAUDE.md` are merged into the system message, the same way VS Code handles workspace-level custom instructions.
+
+### Personalities & System Prompts
+
+This uses the System-Instructions-Replacement of above with pre-made instructions. Two ways to control what the model sees as its system prompt.
+
+**Personality presets** replace Copilot's ~21KB of system-prompt boilerplate with something useful. Pick one per model (Model Settings → General, or **Set Model Personality**); **Default** restores the original. The choice follows you across workspaces.
+
+| Preset | What it does |
+|--------|--------------|
+| **Default (no personality)** | No replacements; Copilot's original system prompt |
+| **Raw (Model Natural)** | Strips Microsoft's safety, identity, and behavioral boilerplate. No persona injected. |
+| **Supportive Mentor** | Patient mentor who builds better engineers. High standards, honest feedback, explains the why. |
+| **Critical Senior Dev** | Cold architectural judgment. Evaluates code and trade-offs with zero sentiment. |
+| **Sarcastic Robot** | Brilliant, condescending, politically incorrect. Fixes your code anyway. |
+| **Spartan** | Minimalist replies: short, little to read, to the point. Saves tokens. |
+
+Bundled presets are extension-owned and re-synced on every apply; custom behavior belongs in your own replacement file (below) or a user-created personality.
+
+
+
+### Chat Session Cleanup
+
+Copilot accumulates session data across workspaces. **Clean Copilot Sessions** lets you pick which workspaces to wipe when sessions grow stale. Access via `Ctrl+Shift+P` → **Clean Copilot Sessions** (under Utilities).
+
+---
+
+## Servers & backends
+
+### vLLM request controls
+
+Beyond the basics, vLLM request-body parameters give you full request control. Configure them in `defaultParams` (model-wide) or `modelModes` (switchable from the picker). They are not exposed by the BYOK Custom Endpoint.
 
 | vLLM capability | What it enables |
 |---|---|
@@ -126,7 +268,7 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 | `include_stop_str_in_output` | Keep the matched stop string in the output |
 | `allowed_token_ids` | Restrict generation to a selected set of token IDs |
 
-## Supported servers
+### Supported servers
 
 **vLLM is the primary target and gets the full feature set.** llama.cpp, LM Studio, Ollama, and OpenRouter are supported alongside it with the core features.
 
@@ -138,243 +280,33 @@ the model picker. They are not exposed by the BYOK Custom Endpoint.
 | **Ollama** | ✅ Core | Same as llama.cpp; `tool_choice` values are dropped (the parameter isn't supported by Ollama's API), tool calling itself works |
 | **OpenRouter** | ✅ Managed remote | Fixed endpoint `https://openrouter.ai/api`; host-only detection; model picked from the ~415-model catalog |
 
-### Using OpenRouter
-
-OpenRouter is a **managed remote** — there's no server to run and nothing to install. You add one fixed endpoint, then pick from **~415 cloud models**. You pay per-use; many models have **free** routes. The Add flow detects any `openrouter.ai` URL and routes you into the OpenRouter branch (server → key → model pick, like every backend).
-
-#### What server URL do I enter?
-
-**The normal website URL works — just paste `https://openrouter.ai`.** Don't overthink the path; the extension recognizes and normalizes all of these to the same fixed endpoint `https://openrouter.ai/api`:
-
-| You paste | What happens |
-|---|---|
-| `https://openrouter.ai` | The website URL (what you see in your browser tab). Works as-is. |
-| `https://openrouter.ai/api` | The API base — also fine. |
-| A model page like `https://openrouter.ai/nvidia/nemotron-3.5-lightning:free` | Works, **and pre-fills the model picker** with that model. |
-
-So if you already have OpenRouter open in a browser tab, **grab the URL straight from the address bar — the web URL works as-is.**
-
-1. **Server URL:** paste `https://openrouter.ai` (or any model page from the table above).
-2. **API key:** enter your key from [openrouter.ai/keys](https://openrouter.ai/keys). It is stored in the model's `requestHeaders` as `Authorization: Bearer <key>` and never leaves trusted extension code.
-3. **Pick the model:** choose from the ~415-model catalog (filter-as-you-type). The extension resolves each model's metadata from OpenRouter's **public model catalog** (`/api/v1/models`) by matching the id exactly — real context window, output ceiling, tool calling, pricing, and reasoning modes. No guessing.
-
-The `:free` suffix on a model ID is a **routing variant** and its own catalog entry — it is preserved for both chat and metadata resolution, so a `:free` pick can never silently resolve to the paid model. Free routes are rate-limited — if a request feels dead, it's the free tier, not the extension. Your OpenRouter **credits** show on the dashboard as an account row per server.
-
-Manual config works the same way — each entry is self-contained:
-
-```json
-{
-  "serverType": "openrouter",
-  "serverUrl": "https://openrouter.ai/api",
-  "vllmModelId": "nvidia/nemotron-3.5-lightning:free",
-  "displayName": "Nemotron 3.5 Lightning (free)",
-  "requestHeaders": {
-    "Authorization": "Bearer sk-or-v1-YOUR_KEY"
-  }
-}
-```
-
-**Power users — attribution headers (optional):** OpenRouter's public [rankings](https://openrouter.ai/rankings) attribute traffic to a site/app via two headers. The extension never sends them automatically, but you can add them to the model's `requestHeaders` (the Add flow also prompts for optional custom headers):
-
-```json
-"requestHeaders": {
-  "Authorization": "Bearer sk-or-v1-YOUR_KEY",
-  "HTTP-Referer": "https://your-app.example.com",
-  "X-OpenRouter-Title": "Your App Name"
-}
-```
-
-This is purely for attribution/rankings — chat works fine without them. Most users can ignore this.
+The backend is auto-detected on Add Server and in Model Settings; set it explicitly per model via `serverType`.
 
 **Every backend gets:** native Copilot integration (chat, tools, vision, streaming), model modes, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue on empty responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
 
-**vLLM-only:** vLLM-specific request parameters (structured outputs, `chat_template_kwargs`, token budgets, …), per-request server metrics (TTFT/TPOT, KV cache, speculative decoding), and the Deep-Dive webview. Other backends show client-measured throughput instead; the dashboard shows only the rows each backend actually reports (no dash placeholders) and resolves the model's context window per backend.
+**vLLM-only:** vLLM-specific request parameters, per-request server metrics (TTFT/TPOT, KV cache, speculative decoding), and the Deep-Dive webview. Other backends show client-measured throughput instead; the dashboard shows only the rows each backend actually reports and resolves the model's context window per backend.
 
-The backend is auto-detected on Add Server and Model Settings; it can also be set explicitly per model via `serverType`.
+### Using OpenRouter
 
----
+OpenRouter is a managed remote: no server to run, nothing to install. Add one fixed endpoint and pick from ~415 cloud models. Setup is covered in [Quick Start](#quick-start) above. A `:free` suffix is a routing variant and always stays on the free model. Full guide, manual config, and attribution headers: [OpenRouter guide](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/openrouter.md).
 
-## Enterprise & team deployment
+### Server Deep-Dive (vLLM)
 
-vLLM-Copilot is built for running Copilot against your own inference layer for many users. For the person who owns the servers:
+<table>
+<tr>
+<td valign="top" width="62%">
 
-- **Self-hosted, private**: prompts are sent to your vLLM servers — your code and prompts stay on your network, never routed through a third party.
-- **Multi-server at scale**: add any number of vLLM servers and use their models interchangeably. Each server and model keeps its own endpoint, auth, sampling, and token budget — isolation across teams, environments, or credentials.
-- **Per-model credentials**: every model entry carries its own `requestHeaders` / auth, so different scopes and keys are managed independently rather than sharing one global key.
-- **Observability for operations**: queue depth, KV-cache usage, TTFT/TPOT, throughput, and speculative-decoding stats in the sidebar; a full **Deep-Dive** panel with histograms for vLLM servers. See the health of your serving layer without a separate monitoring tool.
-- **Cost tracking per model**: cumulative token and USD spend (Today / Overall), with OpenRouter models preferring their **actual reported cost** (`usage.cost`).
-- **Reliability for daily use**: auto-continue on truncated/empty responses, bounded `Retry-After` handling, TLS/proxy/cert diagnostics, and one-click session cleanup.
+Right-click a **vLLM** server node → **vLLM Deep-Dive** opens a per-server webview with the full metric set: histogram breakdowns (TTFT/TPOT/token counts) as hoverable bars and the raw metric dump. vLLM-only, since non-vLLM backends don't expose `/metrics`.
+</td>
+<td valign="top" width="38%">
 
-This is a self-hosted tool, not a hosted SaaS — there is no central service, no telemetry of your prompts, and no account to create.
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/Server-Stats-Webview.png" width="100%" alt="Server Deep-Dive webview showing full live metrics with histograms">
 
----
+<em>Full per-server metrics with live polling, histogram breakdowns, and raw metric dump.</em>
 
-## Features
-
-### Model Modes: switchable configurations per model
-
-Model modes let you define **named configurations** for a model and switch between them from the Copilot model picker, like having "profiles" for different tasks. Think of them as presets: one for deep reasoning, one for precise code, one for creative brainstorming.
-
-Each mode is a set of parameters merged into the vLLM request. Common use cases:
-
-- **Thinking toggles**: `enable_thinking: true/false` (the extension auto-detects these from HuggingFace)
-- **Sampling presets**: different `temperature`/`top_p` combinations for creative vs. precise output
-- **Structured output**: JSON schema enforcement for data extraction
-- **Anything vLLM supports**: bad words, repetition detection, token budgets
-
-```json
-"modelModes": {
-  "Think": {
-    "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true },
-    "temperature": 1.0, "top_p": 0.95
-  },
-  "No Think": {
-    "chat_template_kwargs": { "enable_thinking": false },
-    "temperature": 0.7, "top_p": 0.8
-  },
-  "Precise": { "temperature": 0.1, "top_p": 0.1, "top_k": 20 }
-}
-```
-
-> The **Add vLLM Server & Model** command auto-generates modes from bundled presets or HuggingFace data. For existing entries, see the [Configuration Reference](docs/configuration-reference.md).
-
-<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/model-mode.png" width="500" alt="Model mode picker showing different configurations">
-
-*Switch between model modes directly from the Copilot model picker: Think, No Think, Precise, etc.*
-
-### Personality Presets
-
-Personalities replace Copilot's 21KB system prompt boilerplate with something
-actually useful. Pick one per model; no JSON editing:
-
-1. **Set it:** open the **vLLM Model Settings** sidebar, pick a model, choose a personality from the dropdown in the model's **General** section (or `Ctrl+Shift+P` → **Set Model Personality**)
-2. **Clear it:** pick **Default (no personality)** to remove replacements and restore Copilot's original system prompt. The active choice is marked and shown.
-
-The selected personality is copied to the extension's global storage, so it follows
-you across workspaces and survives extension upgrades.
-
-| Preset | What it does |
-|--------|--------------|
-| **Default (no personality)** | No replacements; Copilot's original system prompt |
-| **Raw (Model Natural)** | Strips Microsoft's safety, identity, and behavioral boilerplate. No persona injected; the model behaves as it was trained. |
-| **Supportive Mentor** | Patient mentor who builds better engineers. High standards, honest feedback, explains the why, celebrates progress. Invested in you, not just your code. |
-| **Critical Senior Dev** | Cold architectural judgment. Evaluates code, technical debt, and trade-offs with zero sentiment. The code, not the coder. |
-| **Sarcastic Robot** | Brilliant, condescending, politically incorrect. Finds human code amusingly primitive, but fixes it anyway. |
-| **Spartan** | Minimalist responses: short, little to read, to the point. Saves tokens. The economy is in how it talks, not what it builds; code stays complete. |
-
-Want to customize? **Bundled presets are extension-owned and re-synced on every apply.**
-Editing the global copy of a bundled preset gets clobbered the next time you re-apply it.
-Custom behavior belongs in your own replacement file via `systemMessageReplacementsFile`
-(see [Hidden System Instructions](#hidden-system-instructions-capture--replace)) or a
-user-created personality in global storage.
-
-### Hidden System Instructions (Capture & Replace)
-
-Copilot injects hidden instructions into every request (~21KB of safety rules, identity instructions). This extension lets you capture and surgically modify them:
-
-1. **Enable capture**: set `vllm-copilot.systemMessageCapture: true` in settings
-2. **Inspect**: unique system messages are written to `.vllm/system-messages.json`
-3. **Create replacements**: write a JSON file of find/replace rules
-4. **Apply**: set `systemMessageReplacementsFile` on your model entry
-
-Replacements are exact substring matches, applied sequentially to every system message before it reaches vLLM. Matched rules are logged in the capture file.
-
-### Server Dashboard
-
-A native Tree View sidebar shows live metrics for each configured server. No webviews, no extra ports. Every backend is first-class: the dashboard probes only what each backend exposes (vLLM gets the full endpoint set; others get `/v1/models` + a per-backend context resolve), shows only the rows the backend actually reports (no dash placeholders), and resolves each model's context window per backend. Throughput is measured client-side for non-vLLM servers.
-
-- **At-a-glance queue status:** Each server shows running and waiting request counts (or *idle*)
-- **Expandable metrics:** context window, vLLM version, KV cache usage & hit rate, TTFT, output & prefill speed (tok/s) — each shown only when the backend reports it
-- **Right-click:** Update Auth on any server; **vLLM Deep-Dive** on vLLM servers only
-- **MTP / speculative decoding:** Acceptance rate, draft depth, proposal count (when active)
-- **Last Request Details:** Per-server node showing the most recent request's token counts (input, output, cached, reasoning), timing metrics (TTFT, queue time, generation time), and throughput — updated **immediately** after every prompt, not on the poll interval. Requires vLLM `--enable-prompt-tokens-details` and `--enable-per-request-metrics` server flags for full detail. Displays hints when flags aren't set.
-- **Token Usage and Cost tracker:** Under each server, a **model-first** tree — one collapsible entry per model (labeled by `displayName`) carrying the price (`$11.51 today and $31.13 in 3.1 days`), expanding to **Today** and **Overall** token-only rows (`800k in · 200k cached · 500k out`); input is split so cache is never double-counted. Set per-model `cost` rates (per 1M tokens, USD / AI Credits / any currency) to see spend. Sub-cent costs keep **fine precision** (a $0.0007 request shows `$0.0007`, never `$0.00`); **OpenRouter models prefer their actual reported cost** (`usage.cost`) when the server provides it, falling back to the configured rates otherwise — the two are never summed. **Reset Usage** is a right-click action on the node. See [Configuration Reference → Token Usage & Cost](docs/configuration-reference.md#token-usage--cost) and [usage.md](docs/usage.md) for the design.
-- **Configurable polling:** Click **Refresh Interval** at the top of the tree to change; enter `15s`, `30s`, `1m`, etc.
-
-Access via **View → vLLM-Copilot → Dashboard** or the sidebar section header.
-
-<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/ServerDashboard-with-Last-Request.png" width="500" alt="Server dashboard sidebar showing live metrics and last request details">
-
-*Live server metrics with Last Request details: token counts with context/budget percentages, TTFT (reported vs. measured), generation throughput, and queue time.*
-
-### Model Settings
-
-<table><tr><td>
-
-A sibling webview to the dashboard lets you edit per-model configuration without touching `settings.json`.
-
-- **Server & model selectors**: pick a server and model from dropdowns; unconfigured models can be selected and saved instantly
-- **Auto-Configure button**: re-runs preset/HuggingFace discovery for the selected model, updating modelModes, capabilities, token budgets, and defaults. Works on unconfigured models too: it borrows the server's auth from a sibling model and creates a full new settings entry
-- **Remove Model button**: deletes only the selected model's settings entry (with a confirm dialog); never touches other models on the same server
-- **Sectioned layout (general → specific):** General, Token Budget, Capabilities, Request Params (baseline), Transport, Model Modes (overrides), System Prompt
-- **Parameter picker**: "Add Parameter" offers a dropdown of known params (temperature, top_p, top_k, min_p, seed, reasoning_effort, parallel_tool_calls, skip_special_tokens, etc.) with friendly labels and type hints
-- **Enum dropdowns**: `reasoning_effort` renders as a dropdown (none, minimal, low, medium, high, xhigh, max); boolean params show as true/false dropdowns
-- **Revert button**: discard unsaved changes and reset to the last saved state
-- **Re-opens automatically** on config changes; no manual refresh needed
-
-Access via **View → vLLM-Copilot → Model Settings** or the sidebar section header.
-
-<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/Server-Settings.png" width="500" alt="Model Settings webview for editing per-model configuration">
-
-*Edit model configuration in a visual editor. No `settings.json` required.*
-
-</td></tr></table>
-
-### Server Deep-Dive
-
-A per-server details webview that opens in the editor area with live vLLM server statistics — the full set, including histogram breakdowns and the raw metric dump. **vLLM-only:** non-vLLM backends don't expose `/metrics`, so the Deep-Dive command is hidden on their server nodes.
-
-- **Open from the Dashboard**: right-click a **vLLM** server node → **vLLM Deep-Dive**
-- **Live polling**: refreshes at the same `vllm-copilot.dashboard.pollIntervalMs` interval as the sidebar
-- **Histograms with tooltips**: TTFT/TPOT/token-count distributions rendered as hoverable bars
-- **Full raw metric dump**: the same parser that feeds the dashboard sidebar, shown in full
-- **One panel per server**: opening the same server again focuses the existing panel instead of duplicating
-
-<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/Server-Stats-Webview.png" width="500" alt="Server Deep-Dive webview showing full live metrics with histograms">
-
-*Full per-server metrics with live polling, histogram breakdowns, and raw metric dump.*
-
-### Auto-Continue on Empty Responses
-
-Some models (notably Qwen) occasionally return zero tokens or truncated output. The extension automatically retries with an assistant prefill, so you never see a blank or cut-off response. Configurable per-model (`autoContinueRetries`, default: 1).
-
-### Token Usage & Performance Stats
-
-After every request, the Output channel shows exact token counts from vLLM:
-- Input/output tokens, cached tokens (prefix cache hit %), cache creation tokens
-- Output throughput (tokens/sec), time-to-first-token
-- Speculative decoding stats (accepted/rejected predictions)
-
-Additionally, the Dashboard sidebar shows **Last Request Details** per server with the same token and timing data in a persistent, at-a-glance view.
-
-### Connection Diagnostics
-
-Corporate proxy? TLS-inspecting gateway? Missing intermediate certs?
-
-- **Test & Refresh Models**: verify all configured servers are reachable, lists loaded models, corrects model ID mismatches, checks VS Code network gating settings
-- **Diagnose Connection**: deep diagnostic comparing SChannel (PowerShell) vs. OpenSSL (Node fetch), DNS/TCP reachability, cert chain inspection, proxy detection, VS Code settings dump. One-line classification of the failure.
-
-### Tool Calling & Truncated Response Recovery
-
-When vLLM truncates a tool call mid-JSON (`finish_reason: 'length'`), the extension uses
-`jsonrepair` + `best-effort-json-parser` (the same library Copilot's BYOK uses) to recover
-partial content instead of silently dropping it to empty `{}`.
-
-### Workspace Custom Instructions
-
-The extension merges `.github/copilot-instructions.md`, `AGENTS.md`, and `CLAUDE.md` into
-the system message, the same way VS Code handles workspace-level custom instructions.
-
-### One-Click Migration from Older Versions
-
-Upgrading from an older version? The extension auto-migrates legacy global server/sampling
-settings into per-model entries on first launch. One-time, idempotent, no data loss.
-
-### Chat Session Cleanup
-
-Copilot accumulates session data across workspaces over time. The **Clean Copilot Sessions**
-command lets you pick which workspaces to wipe, useful when sessions grow stale or you want
-a fresh start. Access via `Ctrl+Shift+P` → **Clean Copilot Sessions** (under Utilities).
+</td>
+</tr>
+</table>
 
 ---
 
@@ -399,37 +331,6 @@ a fresh start. Access via `Ctrl+Shift+P` → **Clean Copilot Sessions** (under U
 |---------|--------------|
 | **Diagnose Connection** | Deep TLS/proxy/DNS/cert diagnostic report |
 | **Clean Copilot Sessions** | Wipe stale Copilot sessions across workspaces |
-
----
-
-## Configuration Reference
-
-See [Configuration Reference](docs/configuration-reference.md) for the complete guide including:
-
-- Model entry fields (all fields, defaults, descriptions)
-- Parameters for `defaultParams` and `modelModes` (full param table)
-- Full JSON syntax reference (every supported field)
-- Multiple servers with isolated auth
-- System message replacements (detailed guide)
-- Personality presets (all 5 presets with descriptions)
-- Diagnostics settings
-- Troubleshooting (commands table, TLS, corporate networks, Diagnose Connection)
-- Known limitations
-
-### Quick minimal config
-
-```json
-"vllm-copilot.models": [
-  {
-    "id": "Qwen/Qwen3.6-27B-FP8 on localhost:8000",
-    "vllmModelId": "Qwen/Qwen3.6-27B-FP8",
-    "serverUrl": "http://localhost:8000"
-  }
-]
-```
-
-> Run **Add vLLM Server & Model** to generate this automatically. It auto-detects `family`,
-> `max_model_len`, capabilities, and applies bundled presets.
 
 ---
 
@@ -459,6 +360,12 @@ If vLLM-Copilot saves you time, money, or your sanity, consider fueling the caff
 - **GitHub Sponsors**: [github.com/sponsors/fuzzifikation](https://github.com/sponsors/fuzzifikation)
 
 Every donation is appreciated, even a coffee. It keeps local AI development free and open source.
+
+---
+
+## More details
+
+This page covers the essentials. Every setting, parameter, and backend detail is in the [vLLM-Copilot Manual](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md).
 
 ---
 

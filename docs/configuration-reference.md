@@ -2,7 +2,7 @@
 
 > **Quick start:** Run **Add vLLM Server & Model** from the Command Palette to auto-generate model entries. Use this reference when you need to customize advanced settings.
 
-All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are three top-level settings: `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), and `vllm-copilot.enableFileLogging` (request/response logs). Everything else lives on each model entry.
+All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are five top-level settings: `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), `vllm-copilot.enableFileLogging` (request/response logs), `vllm-copilot.logBodyLimit` (log truncation), and `vllm-copilot.dashboard.pollIntervalMs` (metrics polling). Everything else lives on each model entry.
 
 **Each model entry is self-contained** — it carries its own `serverUrl`, `requestHeaders`, token budgets, capabilities, and params.
 
@@ -61,7 +61,7 @@ Any vLLM chat body field except `model`, `messages`, `stream`, `stream_options`.
 
 | Param | Description |
 |-------|-------------|
-| `temperature` | Sampling temperature (0–2). Built-in default `0.7`. `0` = greedy |
+| `temperature` | Sampling temperature (0–2). Built-in default `1.0`. `0` = greedy |
 | `top_p` | Nucleus sampling threshold (0–1). Built-in default `1.0` |
 | `top_k` | Top-k sampling (int). −1 = disabled *(vLLM-only)* |
 | `min_p` | Minimum probability threshold (0–1) *(vLLM-only)* |
@@ -91,7 +91,7 @@ Any vLLM chat body field except `model`, `messages`, `stream`, `stream_options`.
 
 ## Dashboard
 
-The **vLLM Dashboard** sidebar shows live metrics for each configured vLLM server. Access via **View → vLLM-Copilot → Dashboard** (or the sidebar section header).
+The **vLLM Dashboard** sidebar shows live metrics for each configured vLLM server. Open it with the **V** icon in the activity bar (left sidebar). Command alternative: **View → vLLM-Copilot → Dashboard**.
 
 ### Server Metrics (per server, collapsible)
 
@@ -144,12 +144,12 @@ Under each server, a collapsible **Token Usage and Cost** node shows **cumulativ
 
 | Row | Description |
 |---|---|
-| **Model node** | One collapsible entry per model; its description carries the price: `$11.51 today and $31.13 in 3.1 days` (today's cost + all-time cost over the recording window). |
+| **Model node** | One collapsible entry per model; its description carries the price: `$11.51 today and $31.13 total` (today's cost + all-time cost). |
 | **Today** | Today's tokens: `800k in · 200k cached · 500k out` (price is on the model line above). |
 | **Overall** | All-time tokens plus `· started 5d ago` (when recording began). |
 | **Reset Usage** | Right-click the **Token Usage and Cost** node → clear all usage for this server (all-time, daily, started-at). The Last Request node is kept. |
 
-The price sits on the **model line** (its collapsed summary: `$11.51 today and $31.13 in 3.1 days`); the **Today / Overall** rows are token-only — `800k in · 200k cached · 500k out`, where `in` **excludes** cache and `in + cached = total input` (cached = cache-*read* input tokens). Costs use **fine precision** — sub-cent amounts keep up to 6 decimals (`$0.0007`) rather than collapsing to `$0.00`; AI Credits keep 2 decimals. **OpenRouter models prefer their actual reported cost (`usage.cost`) when present**, falling back to the configured per-1M rates; the two are never summed. Token counts round to whole thousands. **There is no server-level cost sum** — models on one server may use different currencies, so each model's price uses its own currency. Sum costs across models manually. Currency decoration uses a small static map — `$` (USD), `€` (EUR), `£` (GBP), `¥` (JPY/CNY), `credits` (AI Credits) — and any other currency falls back to its raw code (`EUR 12.35`); no currency library is bundled.
+The price sits on the **model line** (its collapsed summary: `$11.51 today and $31.13 total`); the **Today / Overall** rows are token-only — `800k in · 200k cached · 500k out`, where `in` **excludes** cache and `in + cached = total input` (cached = cache-*read* input tokens). Costs use **fine precision** — sub-cent amounts keep up to 6 decimals (`$0.0007`) rather than collapsing to `$0.00`; AI Credits keep 2 decimals. **OpenRouter models prefer their actual reported cost (`usage.cost`) when present**, falling back to the configured per-1M rates; the two are never summed. Token counts round to whole thousands. **There is no server-level cost sum** — models on one server may use different currencies, so each model's price uses its own currency. Sum costs across models manually. Currency decoration uses a small static map — `$` (USD), `€` (EUR), `£` (GBP), `¥` (JPY/CNY), `credits` (AI Credits) — and any other currency falls back to its raw code (`EUR 12.35`); no currency library is bundled.
 
 **Entry points (right-click the Token Usage and Cost node):** **Set Cost…** configures the per-1M rates through guided prompts (model → input/output/cached-input → currency) and writes the `cost` block for you; **Reset Usage** clears the server's counters. The dashboard re-renders immediately after either.
 
@@ -180,8 +180,6 @@ The price sits on the **model line** (its collapsed summary: `$11.51 today and $
 **Reset via command palette** — `vLLM-Copilot: Reset Usage` lets you pick *All servers* or a single server.
 
 ---
-
-## Typical Example
 
 ## Typical Example
 
@@ -242,7 +240,7 @@ A working chat model — minimum viable config. No modes, no custom params, just
     "systemMessageReplacementsFile": ".vllm/prompt-replacements.json",
 
     // ── defaultParams: always-on, model-scope ────────────
-    // Layered under selected mode. Built-in defaults: temperature=0.7, top_p=1.0.
+    // Layered under selected mode. Built-in defaults: temperature=1.0, top_p=1.0.
     "defaultParams": {
       // — Standard sampling (OpenAI-compatible) —
       "temperature": 0.7,                // 0–2. 0 = greedy
@@ -414,7 +412,8 @@ Relative paths resolve against the **workspace root**; absolute paths (like the 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `systemMessageCapture` | `false` | Capture unique Copilot system messages to `.vllm/system-messages.json` |
-| `enableFileLogging` | `false` | Write detailed request/response logs (API keys are redacted) |
+| `enableFileLogging` | `false` | Write detailed request/response logs (headers and bodies **as-is, unredacted**) to a daily file. Use **Open Log File** to view |
+| `logBodyLimit` | `4000` | Maximum characters of request/response bodies to log per entry. `0` = no truncation |
 
 ---
 

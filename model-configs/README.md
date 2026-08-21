@@ -16,4 +16,4 @@ Ready-to-use model configurations shipped with the extension. **Add vLLM Server 
 
 To use a preset manually, copy the JSON object from the corresponding file into your `vllm-copilot.models` array (no reload needed).
 
-For the full configuration schema and copy-paste snippets for `bad_words`, `structured_outputs`, `repetition_detection`, `chat_template_kwargs`, and sampling presets, see the README's [Configuration Reference](../README.md#configuration-reference).
+For the full configuration schema and copy-paste snippets for `bad_words`, `structured_outputs`, `repetition_detection`, `chat_template_kwargs`, and sampling presets, see the [vLLM-Copilot Manual](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md) and the [Configuration Reference](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/configuration-reference.md).

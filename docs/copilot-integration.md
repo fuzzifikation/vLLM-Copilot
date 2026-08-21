@@ -63,12 +63,12 @@ All prompts import these shared components (single source of truth):
 
 | Type | First Line (fingerprint) | Size | Source |
 |------|-------------------------|------|--------|
-| Main chat agent | "You are an expert AI programming assistant, working with a user in the VS Code editor." | ~22KB | [agentPrompt.tsx](https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/extension/prompts/node/agent/agentPrompt.tsx) |
+| Main chat agent | "You are an expert AI programming assistant, working with a user in the VS Code editor." | ~21KB | [agentPrompt.tsx](https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/extension/prompts/node/agent/agentPrompt.tsx) |
 | Progress messages | "You are an expert in writing short, catchy, and encouraging progress messages..." | ~1KB | [progressMessagesPrompt.tsx](https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/extension/inlineChat2/node/progressMessagesPrompt.tsx) |
 | Title generation | "You are an expert in crafting ultra-compact titles..." | ~1KB | [title.tsx](https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/extension/prompts/node/panel/title.tsx) |
 | Git branch | "You are an expert in crafting pithy branch names..." | ~1KB | [gitBranch.tsx](https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/extension/prompts/node/panel/gitBranch.tsx) |
 
-See [custom-system-prompt.md](./custom-system-prompt.md) for full design doc and all 35+ message types found in source.
+See [custom-system-prompt.md](./custom-system-prompt.md) for the full design doc and the message types found in source.
 
 ## Historical Thinking Preservation
 
@@ -84,7 +84,7 @@ The extension correctly reports thinking chunks via `progress.report(new Thinkin
 
 **Do NOT add extension-side state or replay cache.** That violates the stateless-adapter boundary and creates sync problems around tool calls, retries, and session restoration.
 
-See [test-preserve-thinking.md](./test-preserve-thinking.md) for the full test procedure and diagnostic evidence.
+Historical thinking-preservation evidence is recorded in `docs/`; the upstream-behavior snapshot (2026-07-20) should be re-validated against current VS Code rather than treated as current.
 
 ## Relevant Copilot settings (user-configurable)
 
@@ -340,7 +340,7 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
 
 **Our implementation:**
 - Users define `modelModes` in `vllm-copilot.models` — custom parameter presets for each model
-- **Auto-Configure** (invoked from the **Add vLLM Server & Model** command) auto-detects thinking-related modes from HuggingFace's chat template (`enable_thinking` / `preserve_thinking`) as a convenience, but `modelModes` is **not limited to thinking**
+- **Auto-Configure** (invoked from the **Add vLLM Server & Model** command) detects `family`, capabilities, and `defaultParams`. It does **not** synthesize `modelModes` from HuggingFace chat templates — thinking modes require model-specific knowledge that isn't discoverable from Jinja conditionals. Modes come from bundled presets (`model-configs/`) or, for OpenRouter models, from the `reasoning` metadata.
 - We return `configurationSchema` with a `reasoningEffort` property whose enum values are the user's `modelModes` keys, `group: "navigation"`
 - **Important:** The `reasoningEffort` property name is what Copilot expects in the schema, but the *values* and *parameters* are completely user-defined. This is a general-purpose parameter preset mechanism — not limited to thinking/reasoning. Any inference parameter (temperature, top_p, chat_template_kwargs, etc.) can be configured per mode.
 - Even models with zero thinking capability benefit from model modes — e.g., "Creative" (high temperature, low top_p) vs "Precise" (low temperature, high top_p), or "Fast" vs "Thorough"
@@ -363,19 +363,9 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
 
 **Problem:** First prompt after VS Code restart took ~20 seconds. Subsequent prompts were instant.
 
-**Root cause (historical — pre-migration):** VS Code calls `provideTokenCount` **100+ times** before sending a request — once per message and once per available tool schema. With an empty token count cache, every call executed `await getConfig()`, which (under the legacy global-server layout) did `await context.secrets.get('vllm-copilot.apiKey')` — async disk I/O to VS Code's credential storage. This resulted in 100+ sequential disk reads. The current per-model `getConfig()` (in `src/config.ts`) no longer touches `context.secrets` — that read lives only in `src/migration.ts` for the one-time legacy migration.
+**Root cause (historical — pre-migration):** VS Code calls `provideTokenCount` **100+ times** before sending a request — once per message and once per available tool schema. Under the legacy global-server layout, every call executed `await getConfig()`, which did `await context.secrets.get('vllm-copilot.apiKey')` — async disk I/O to VS Code's credential storage, resulting in 100+ sequential disk reads. The current per-model `getConfig()` in `src/config.ts` no longer touches `context.secrets`.
 
-**The fix:** Cache `estimateCharsPerToken` on the first call. Subsequent calls skip the async `getConfig()` entirely:
-
-```typescript
-// Warm up tokenizer config on first call (async — only done once).
-if (this.cachedEstimateCharsPerToken === null) {
-  const cfg = await getConfig(this.context);
-  this.cachedEstimateCharsPerToken = cfg.estimateCharsPerToken;
-}
-```
-
-Cache is invalidated in `clearCache()` so settings changes are respected.
+**The fix (current behavior):** `provideTokenCount` reads the model config through the client's config cache (`getConfigCached()`) on every call; the char/3.5 estimate is cheap and does no secrets or network I/O.
 
 **Why this was hard to debug:** The slowdown only appeared on cold VS Code startup. F5 debugging showed instant responses because the extension host was already warm. The disk I/O bottleneck was invisible without tracing `getConfig()` calls.
 
@@ -452,7 +442,7 @@ This lets users watch context growth across turns when `preserve_thinking` is ac
 **The fix:** Report a minimal text part (`'\n'`) so VS Code registers the response as "produced":
 
 ```typescript
-// In isEmptyStopAfterTool and isGracefulTermination paths:
+// In the graceful-termination path (postStream.ts):
 if (!hadContent && !hadToolCalls) {
   progress.report(new vscode.LanguageModelTextPart('\n'));
 }

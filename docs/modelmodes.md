@@ -128,11 +128,11 @@ vllm serve Qwen/Qwen3.6-27B \
 
 ```json
 {
-  "id": "Qwen/Qwen3.6-27B",
-  "vllmModelId": "Qwen/Qwen3.6-27B",
+  "vllmModelId": "Qwen3.6-27B",
   "displayName": "Qwen3.6-27B",
   "family": "qwen3_5",
   "maxOutputTokens": 32768,
+  "defaultMode": "Think (General)",
   "capabilities": {
     "toolCalling": true,
     "imageInput": true
@@ -150,7 +150,7 @@ vllm serve Qwen/Qwen3.6-27B \
       "presence_penalty": 0.0,
       "repetition_penalty": 1.0
     },
-    "Think (Precise)": {
+    "Think (Coding)": {
       "chat_template_kwargs": {
         "enable_thinking": true,
         "preserve_thinking": true

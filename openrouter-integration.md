@@ -216,12 +216,11 @@ All OpenRouter failures surface through the **same generic error path** as every
 
 - The server **HTTP code** is shown (`Server error [400]. …`).
 - The server's **real message** is extracted from the nested error envelope — `message`, `raw`, `detail`, `reason`, `error`, `description`, `code_reason` at any depth — gathered, deduped, and formatted. **Not raw JSON.**
-- OpenRouter's `constraint_filtered` (provider excluded, e.g. `excluded_by: ["context_length"]`) and every other error type surfaces through this one path.
-- `error.metadata.error_type` is preserved for pre-stream and mid-stream errors; unknown future values remain displayable.
+- Any error type (including OpenRouter's `constraint_filtered`/`excluded_by`) surfaces through this one path, provided its text lands under one of the recognized keys above.
 
 **No per-error-type enrichment** is added — e.g. a special-cased "name the pinned provider" message on `constraint_filtered` is deliberately **not** built. The prediction surfaces (dropdown, Provider row, Attention icon) handle the *before*; the single generic error path handles the *after*. Adding a special case on top of an honest generic path would be redundant.
 
-The pre-stream transport retries 429/503 once with a bounded `Retry-After` (≤10s, cancellation-aware, never after partial output); 401/402/permanent 4xx are never retried. Free-tier rate limits surface via the account's `is_free_tier` + `limit_remaining` state.
+The pre-stream transport retries transient 5xx responses once with a bounded `Retry-After` honored when present (≤10s, cancellation-aware, never after partial output); 401/402/permanent 4xx are never retried. Free-tier rate limits surface via the account's `is_free_tier` + `limit_remaining` state.
 
 ---
 
