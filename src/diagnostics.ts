@@ -24,7 +24,7 @@
 import * as vscode from 'vscode';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { describeError } from './messageConverter.js';
+import { describeError, TLS_CERT_SUGGESTION } from './messageConverter.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -46,20 +46,6 @@ export interface CertChainResult {
   errors?: string;
   statuses?: string[];
   elements?: Array<{ subject?: string; issuer?: string; thumbprint?: string }>;
-  error?: string;
-}
-
-/** Result of an auto-fix attempt for a TLS trust gap on Windows. */
-export interface TlsFixResult {
-  /** Whether a missing intermediate was found and exported. */
-  exported: boolean;
-  /** Path to the exported PEM file, if any. */
-  pemPath?: string;
-  /** The Subject of the intermediate that was exported. */
-  intermediateSubject?: string;
-  /** The env var to set (always NODE_EXTRA_CA_CERTS on Node). */
-  envVar?: string;
-  /** Error message if the export failed. */
   error?: string;
 }
 
@@ -118,8 +104,6 @@ export interface DiagnosticReport {
   proxyInfo?: ProxyInfo;
   /** Internet Explorer proxy settings (Windows registry). */
   ieProxyInfo?: IeProxyInfo;
-  /** Auto-fix attempt for Windows TLS trust gap (export missing intermediate). */
-  tlsFix?: TlsFixResult;
   /** Neutral one-line conclusion / recommendation. */
   conclusion: string;
 }
@@ -150,25 +134,42 @@ function getExtensionVersion(): string {
 /** Collect VS Code network settings that gate the patched fetch. */
 function collectSettings(): Record<string, unknown> {
   const config = vscode.workspace.getConfiguration('http');
+  const proxy = config.get('proxy');
   return {
-    'http.proxy': config.get('proxy'),
+    'http.proxy': typeof proxy === 'string' ? redactUrlCredentials(proxy) : proxy,
     'http.noProxy': config.get('noProxy'),
     'http.proxySupport': config.get('proxySupport', 'override'),
     'http.fetchAdditionalSupport': config.get('fetchAdditionalSupport', true),
     'http.systemCertificates': config.get('systemCertificates', true),
+    'http.systemCertificatesNode': config.get('systemCertificatesNode', false),
     'http.proxyStrictSSL': config.get('proxyStrictSSL', true),
   };
 }
 
-/** Collect relevant env vars. */
+/**
+ * Redact `user:password@` credentials from a proxy/server URL for display.
+ * Proxy URLs commonly carry credentials (`http://user:pass@host:8080`), and
+ * the diagnostic report is explicitly meant to be copied and shared.
+ */
+function redactUrlCredentials(value: string): string {
+  return value.replace(/(\/\/)([^/\s@]+)@/g, '$1<redacted>@');
+}
+
+/** Redact credentials from an env-var value, if present. */
+function redactEnv(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : redactUrlCredentials(value);
+}
+
+/** Collect relevant env vars. Proxy values are URL-redacted for the shareable report. */
 function collectEnv(): Record<string, string | undefined> {
   return {
-    HTTP_PROXY: process.env.HTTP_PROXY,
-    HTTPS_PROXY: process.env.HTTPS_PROXY,
-    http_proxy: process.env.http_proxy,
-    https_proxy: process.env.https_proxy,
+    HTTP_PROXY: redactEnv(process.env.HTTP_PROXY),
+    HTTPS_PROXY: redactEnv(process.env.HTTPS_PROXY),
+    http_proxy: redactEnv(process.env.http_proxy),
+    https_proxy: redactEnv(process.env.https_proxy),
     NO_PROXY: process.env.NO_PROXY,
     no_proxy: process.env.no_proxy,
+    NODE_TLS_REJECT_UNAUTHORIZED: process.env.NODE_TLS_REJECT_UNAUTHORIZED,
     NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS,
     NODE_OPTIONS: process.env.NODE_OPTIONS,
   };
@@ -404,9 +405,9 @@ async function detectWinHttpProxy(): Promise<ProxyInfo> {
     const bypassMatch = raw.match(/Bypass List:\s*(.+)/i);
     return {
       source: 'winhttp',
-      server: serverMatch?.[1]?.trim(),
+      server: serverMatch?.[1]?.trim() ? redactUrlCredentials(serverMatch[1].trim()) : undefined,
       bypass: bypassMatch?.[1]?.trim(),
-      raw,
+      raw: redactUrlCredentials(raw),
     };
   } catch (err) {
     return {
@@ -462,7 +463,7 @@ $userChoice = (Get-ItemProperty -Path $regPath -ErrorAction Stop).UserChoice
     return {
       source: 'registry',
       enabled: !!result.enabled,
-      server: result.server || undefined,
+      server: typeof result.server === 'string' && result.server ? redactUrlCredentials(result.server) : undefined,
       bypass: result.bypass || undefined,
       userChoice: result.userChoice,
     };
@@ -629,75 +630,6 @@ async function runChainInspection(url: string): Promise<CertChainResult | undefi
   }
 }
 
-/**
- * Windows-only: attempt to auto-fix a TLS trust gap by exporting the missing
- * intermediate certificate from the Windows CA store to a PEM file.
- *
- * The chain inspection (`chain.elements`) gives us the chain as SChannel sees
- * it. The element whose issuer != itself and that isn't the leaf is the
- * intermediate. We search Cert:\LocalMachine\CA and Cert:\CurrentUser\CA for
- * a cert whose Subject matches that intermediate's Subject, export it as PEM,
- * and return the PEM path. The caller will advise setting NODE_EXTRA_CA_CERTS.
- */
-async function tryExportMissingIntermediate(
-  chain: CertChainResult | undefined,
-): Promise<TlsFixResult | undefined> {
-  if (process.platform !== 'win32') return undefined;
-  if (!chain?.elements || chain.elements.length < 2) return undefined;
-
-  // The intermediate is the element at index 1 (leaf=0, inter=1, root=last).
-  // If only leaf+root (2 elements), there's no intermediate to export — the
-  // server sent it and SChannel built it. If 3+ elements, element [1] is it.
-  const intermediate = chain.elements[1];
-  if (!intermediate?.subject) return undefined;
-
-  // Don't export if the intermediate IS the root (self-signed, 2-element chain).
-  if (chain.elements.length === 2) return undefined;
-
-  const subject = intermediate.subject;
-  // Escape single quotes for PowerShell.
-  const psSubject = subject.replace(/'/g, "''");
-
-  const script = String.raw`
-$ErrorActionPreference = 'Stop'
-$subj = '${psSubject}'
-$cert = Get-ChildItem Cert:\LocalMachine\CA, Cert:\CurrentUser\CA -ErrorAction SilentlyContinue |
-  Where-Object { $_.Subject -eq $subj } |
-  Select-Object -First 1
-if ($cert -eq $null) {
-  [PSCustomObject]@{ found = $false } | ConvertTo-Json -Compress
-  exit
-}
-$pem = Join-Path $env:USERPROFILE 'vllm-copilot-intermediate.pem'
-$lines = [Convert]::ToBase64String($cert.RawData, 'InsertLineBreaks')
-$pemContent = "-----BEGIN CERTIFICATE-----" + [char]13 + [char]10 + $lines + [char]13 + [char]10 + "-----END CERTIFICATE-----"
-$pemContent | Set-Content $pem -Encoding ascii
-[PSCustomObject]@{ found = $true; pem = $pem; subject = $cert.Subject } | ConvertTo-Json -Compress
-`;
-  try {
-    const { stdout } = await execFileAsync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-      { timeout: 10000, windowsHide: true },
-    );
-    const result = JSON.parse(stdout.trim());
-    if (!result.found) {
-      return { exported: false, error: `Intermediate "${subject}" not found in Windows CA store` };
-    }
-    return {
-      exported: true,
-      pemPath: result.pem,
-      intermediateSubject: result.subject,
-      envVar: 'NODE_EXTRA_CA_CERTS',
-    };
-  } catch (err) {
-    return {
-      exported: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
-
 /** Human-readable label for the platform-native fetch test. */
 function systemFetchLabel(): string {
   switch (process.platform) {
@@ -792,7 +724,6 @@ export async function runDiagnostics(
   // the server is reachable. For HTTPS, TLS is valid by definition. For HTTP,
   // there is no TLS.
   let conclusion: string;
-  let reportTlsFix: TlsFixResult | undefined;
 
   const nodeTlsError = tlsError(nodeFetch);
   // "System TLS succeeded" = system fetch got ANY HTTP response (even 401/500).
@@ -824,29 +755,19 @@ export async function runDiagnostics(
     // Settings use dot-notation keys (e.g., 'http.systemCertificates').
     const sysCertsDisabled = settings['http.systemCertificates'] === false;
     const proxySupportOff = settings['http.proxySupport'] === 'off';
-    // Try to auto-fix a Windows TLS trust gap by exporting the missing
-    // intermediate from the Windows CA store to a PEM file.
-    let tlsFix: TlsFixResult | undefined;
-    if ((systemTlsSucceeded || directTlsSucceeded) && !sysCertsDisabled && !proxySupportOff) {
-      tlsFix = await tryExportMissingIntermediate(chain);
-    }
     if (proxySupportOff) {
-      conclusion = `TLS certificate verification failed in VS Code's fetch — http.proxySupport is set to 'off', which disables proxy usage. If you're behind a corporate proxy, set it to 'override' or 'override-default'.`;
+      conclusion = `TLS certificate verification failed in VS Code's fetch — http.proxySupport is set to 'off', which disables proxy usage. If you're behind a corporate proxy, set it to 'override' (or 'fallback').`;
     } else if (sysCertsDisabled) {
       conclusion = `TLS certificate verification failed in VS Code's fetch — http.systemCertificates is set to false, which disables loading OS certificates. Set it to true and restart VS Code.`;
     } else if (systemTlsSucceeded || directTlsSucceeded) {
-      // System succeeded but Node didn't — the server is not sending the full
-      // certificate chain. Node's OpenSSL requires the complete chain, while
-      // SChannel can retrieve missing intermediates from the OS trust store.
-      const intermediate = tlsFix?.intermediateSubject || chain?.elements?.[1]?.subject?.split(',')[0]?.replace('CN=', '');
-      if (intermediate) {
-        conclusion = `TLS certificate verification failed — the server is not sending the intermediate certificate ("${intermediate}"). This certificate exists in the OS trust store, so SChannel succeeds, but Node's OpenSSL requires the full chain. The server administrator should configure the server to send the complete certificate chain.`;
-      } else {
-        conclusion = `TLS certificate verification failed in Node but succeeded in the system native test — the server's certificate chain is incomplete. The server administrator should configure the server to send the complete certificate chain.`;
-      }
-      reportTlsFix = tlsFix;
+      // System succeeded but Node didn't. This is CONSISTENT with a cert trust
+      // gap — Node's OpenSSL needs the complete chain, while SChannel/curl can
+      // load missing intermediates from the OS store — but not proof of one:
+      // the two paths can also use different proxy routing or trust stores.
+      // State it as a possibility, not a fact.
+      conclusion = `TLS certificate verification failed in VS Code's fetch but succeeded in the system native test — the server may not be sending the complete certificate chain, or the OS and Node trust stores differ. ${TLS_CERT_SUGGESTION}`;
     } else {
-      conclusion = 'TLS certificate verification failed in all transports — the server\'s certificate chain is incomplete or untrusted. The server administrator should configure the server to send the complete certificate chain.';
+      conclusion = `TLS certificate verification failed in all transports — the server's certificate chain is incomplete, expired, or untrusted by the OS/Node trust stores. ${TLS_CERT_SUGGESTION}`;
     }
   } else if (!dns?.resolved) {
     conclusion = 'DNS resolution failed — the host cannot be resolved. Check the serverUrl or network/DNS configuration.';
@@ -867,7 +788,7 @@ export async function runDiagnostics(
     nodeVersion: process.version,
     vscodeVersion: vscode.version,
     platform: process.platform,
-    targetUrl: url,
+    targetUrl: redactUrlCredentials(url),
     settings,
     env: collectEnv(),
     dns,
@@ -878,7 +799,6 @@ export async function runDiagnostics(
     chain,
     proxyInfo,
     ieProxyInfo,
-    tlsFix: reportTlsFix,
     conclusion,
   };
 }
@@ -909,17 +829,17 @@ export function formatReport(r: DiagnosticReport): string {
   lines.push(`  Node:       ${r.nodeVersion}`);
   lines.push(`  VS Code:    ${r.vscodeVersion}`);
   lines.push(`  Platform:   ${r.platform}`);
-  lines.push(`  Target:     ${r.targetUrl}`);
+  lines.push(`  Target:     ${redactUrlCredentials(r.targetUrl)}`);
   lines.push('---');
   lines.push('');
   lines.push('— VS Code network settings —');
   for (const [k, v] of Object.entries(r.settings)) {
-    lines.push(`  ${k} = ${v === undefined ? '(unset)' : JSON.stringify(v)}`);
+    lines.push(`  ${k} = ${v === undefined ? '(unset)' : typeof v === 'string' ? JSON.stringify(redactUrlCredentials(v)) : JSON.stringify(v)}`);
   }
   lines.push('');
   lines.push('— Environment —');
   for (const [k, v] of Object.entries(r.env)) {
-    lines.push(`  ${k} = ${v === undefined ? '(unset)' : v}`);
+    lines.push(`  ${k} = ${v === undefined ? '(unset)' : redactUrlCredentials(v)}`);
   }
   lines.push('');
   // Only show DNS/TCP sections when something failed — they're noise when all fetches succeed.
@@ -948,7 +868,7 @@ export function formatReport(r: DiagnosticReport): string {
       lines.push(`  Error: ${r.proxyInfo.error}`);
     } else if (r.proxyInfo.server) {
       lines.push(`  Source: ${r.proxyInfo.source}`);
-      lines.push(`  Proxy:  ${r.proxyInfo.server}`);
+      lines.push(`  Proxy:  ${redactUrlCredentials(r.proxyInfo.server)}`);
       if (r.proxyInfo.bypass) {
         lines.push(`  Bypass: ${r.proxyInfo.bypass}`);
       }
@@ -964,7 +884,7 @@ export function formatReport(r: DiagnosticReport): string {
       lines.push(`  Error: ${r.ieProxyInfo.error}`);
     } else if (r.ieProxyInfo.enabled) {
       lines.push(`  Enabled: yes`);
-      lines.push(`  Proxy:  ${r.ieProxyInfo.server}`);
+      lines.push(`  Proxy:  ${r.ieProxyInfo.server ? redactUrlCredentials(r.ieProxyInfo.server) : '(none)'}`);
       if (r.ieProxyInfo.bypass) {
         lines.push(`  Bypass: ${r.ieProxyInfo.bypass}`);
       }
@@ -996,11 +916,17 @@ export function formatReport(r: DiagnosticReport): string {
     lines.push('');
     lines.push('— Transport comparison —');
     lines.push(`  VS Code's patched fetch failed with a TLS error but ${okPath} succeeded.`);
-    lines.push('  This indicates the server is not sending the complete certificate chain.');
-    lines.push('  Node\'s OpenSSL requires the full chain, while SChannel can retrieve');
-    lines.push('  missing intermediates from the OS trust store.');
+    lines.push('  This may mean the server is not sending the complete certificate chain,');
+    lines.push('  or that the OS trust store and Node\'s loaded certificates differ;');
+    lines.push('  the two transport paths can also use different proxy routing.');
     if (r.chain) {
       lines.push('  See the certificate chain section for details.');
+    }
+    // The conclusion (printed last) already embeds the full suggestion whenever
+    // this block fires — `tlsError` is the same gate in both places, so don't
+    // repeat it here. Guard for hand-built reports whose conclusion lacks it.
+    if (!r.conclusion.includes('http.systemCertificatesNode')) {
+      lines.push(`  ${TLS_CERT_SUGGESTION}`);
     }
     lines.push('');
   }
@@ -1021,29 +947,6 @@ export function formatReport(r: DiagnosticReport): string {
           if (el.issuer) lines.push(`        issuer: ${el.issuer}`);
         });
       }
-    }
-    lines.push('');
-  }
-  // Auto-fix suggestion for Windows TLS trust gap
-  if (r.tlsFix) {
-    lines.push('— Suggested fix —');
-    if (r.tlsFix.exported) {
-      const intermediate = r.tlsFix.intermediateSubject;
-      if (intermediate) {
-        lines.push(`  Missing intermediate: ${intermediate}`);
-        lines.push('');
-        lines.push('  This certificate is in the OS trust store, so SChannel can verify.');
-        lines.push('  The server should be configured to send the full certificate chain.');
-        lines.push('  Contact the server administrator and provide this diagnostic.');
-      }
-      if (r.tlsFix.pemPath) {
-        lines.push('');
-        lines.push(`  Intermediate exported to: ${r.tlsFix.pemPath}`);
-        lines.push('  (For diagnostic reference only.)');
-      }
-    } else if (r.tlsFix.error) {
-      lines.push(`  Could not auto-fix: ${r.tlsFix.error}`);
-      lines.push('  The server should be configured to send the full certificate chain.');
     }
     lines.push('');
   }

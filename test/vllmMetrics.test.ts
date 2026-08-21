@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   MetricsParser,
   parseRawMetrics,
@@ -16,6 +16,12 @@ import {
   type RawMetricEntry,
   type ServerRawData,
 } from '../src/vllmMetrics.js';
+import { resetOpenRouterProviderListCache } from '../src/openRouter.js';
+
+// The provider-list cache is module-level state shared with the dashboard and
+// Model Settings — reset it before every test so the stubbed fetch is the only
+// source of truth.
+beforeEach(() => { resetOpenRouterProviderListCache(); });
 
 // ─── parseLabels ────────────────────────────────────────────────────
 

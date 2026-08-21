@@ -630,6 +630,7 @@ export interface OpenRouterModelEndpoint {
  */
 export async function fetchOpenRouterModelEndpoints(
   requestedId: string,
+  timeoutMs: number = METADATA_TIMEOUT_MS,
 ): Promise<OpenRouterModelEndpoint[]> {
   // The id is `author/slug` — the `/` is a PATH SEPARATOR and must stay literal:
   // OpenRouter routes on the real slash, and an encoded `%2F` (what a naive
@@ -642,7 +643,7 @@ export async function fetchOpenRouterModelEndpoints(
   try {
     const response = await fetchWithRetry(
       url,
-      { method: 'GET', signal: AbortSignal.timeout(METADATA_TIMEOUT_MS) },
+      { method: 'GET', signal: AbortSignal.timeout(timeoutMs) },
       {},
     );
     if (!response.ok) {
@@ -688,6 +689,79 @@ export async function fetchOpenRouterModelEndpoints(
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(`OpenRouter model "${requestedId}" endpoints lookup failed: GET ${url} — ${detail}`);
   }
+}
+
+// ─── Shared per-session provider-list cache ─────────────────────────────
+// The dashboard engine and Model Settings both render provider lists from
+// `GET /v1/models/{id}/endpoints`. One shared cache (keyed by wire id) removes
+// the old duplicated policy — two independent 2s `Promise.race` wrappers whose
+// underlying 10s fetches kept running after the race gave up. The display bound
+// is now an `AbortSignal.timeout` on the real fetch, so nothing runs orphaned;
+// in-flight calls for the same id share one request; failures back off instead
+// of hammering; and both views see the SAME data (no dashboard/settings drift).
+
+/** Cached provider list + fetch timestamp (wire id → entry). */
+interface ProviderListEntry {
+  providers: OpenRouterModelEndpoint[];
+  fetchedAt: number;
+}
+
+const providerListCache = new Map<string, ProviderListEntry>();
+/** In-flight dedup: concurrent callers for one id share a single fetch. */
+const providerListInflight = new Map<string, Promise<OpenRouterModelEndpoint[]>>();
+/** Failed ids are not retried until this timestamp. */
+const providerListRetryAt = new Map<string, number>();
+
+/** Provider lists are display-only; 5 minutes is fresh enough without hammering. */
+const PROVIDER_LIST_CACHE_TTL_MS = 5 * 60_000;
+/** Display bound — abort the real fetch past this (never block a refresh behind it). */
+const PROVIDER_LIST_FETCH_TIMEOUT_MS = 2000;
+/** Failure backoff before an id may be fetched again. */
+const PROVIDER_LIST_RETRY_MS = 60_000;
+
+/**
+ * Get a model's provider list through the shared per-session cache. Returns the
+ * cached list on a fresh hit; the stale list while a failure is in its backoff
+ * window; and otherwise fetches once (concurrent callers share the request).
+ * The fetch is aborted after the 2s display bound. On a fetch failure with a
+ * stale cached value, the stale list is returned (stale data beats nothing); it
+ * throws only when there is no cached value to fall back on.
+ */
+export async function getOpenRouterModelEndpointsCached(
+  wireId: string,
+): Promise<OpenRouterModelEndpoint[]> {
+  const cached = providerListCache.get(wireId);
+  if (cached && Date.now() - cached.fetchedAt < PROVIDER_LIST_CACHE_TTL_MS) return cached.providers;
+  const retryAt = providerListRetryAt.get(wireId) ?? 0;
+  if (Date.now() < retryAt) return cached ? cached.providers : [];
+
+  const inflight = providerListInflight.get(wireId);
+  if (inflight) return inflight;
+
+  const promise = fetchOpenRouterModelEndpoints(wireId, PROVIDER_LIST_FETCH_TIMEOUT_MS)
+    .then((providers) => {
+      if (providers.length > 0) providerListCache.set(wireId, { providers, fetchedAt: Date.now() });
+      return providers;
+    })
+    .catch((err) => {
+      providerListRetryAt.set(wireId, Date.now() + PROVIDER_LIST_RETRY_MS);
+      // Stale data beats nothing: if a cached list exists (now past its TTL),
+      // keep serving it — the backoff above makes subsequent calls return it
+      // directly instead of re-fetching. Only throw when there is no fallback.
+      const stale = providerListCache.get(wireId);
+      if (stale) return stale.providers;
+      throw err;
+    })
+    .finally(() => providerListInflight.delete(wireId));
+  providerListInflight.set(wireId, promise);
+  return promise;
+}
+
+/** Test hook: clear the shared provider-list cache (call between tests). */
+export function resetOpenRouterProviderListCache(): void {
+  providerListCache.clear();
+  providerListInflight.clear();
+  providerListRetryAt.clear();
 }
 
 /**

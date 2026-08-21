@@ -10,6 +10,7 @@ import {
   formatError,
   serializeError,
   describeError,
+  isTlsCertificateError,
   isGracefulTermination,
   isImagePart,
   imagePartToDataUri,
@@ -542,6 +543,37 @@ describe('formatError', () => {
     expect(formatError(errWithCode)).toContain('proxy');
     // The wrapped message from streamReader (loses the .code, keeps the text):
     expect(formatError(new Error('Connection closed prematurely by the network or a reverse proxy'))).toContain('prematurely');
+  });
+
+  it('maps TLS certificate errors to the http.systemCertificatesNode fix', () => {
+    // Both the uppercase OpenSSL/undici codes AND the lowercase Node messages
+    // must land on the one true fix — the old proxy/proxyStrictSSL advice is gone.
+    for (const msg of [
+      'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+      'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+      'self-signed certificate in certificate chain',
+      'unable to verify the first certificate',
+      'unable to get local issuer certificate',
+    ]) {
+      const out = formatError(new Error(msg));
+      expect(out).toContain('TLS certificate verification failed');
+      expect(out).toContain('http.systemCertificatesNode');
+      expect(out).not.toContain('http.proxyStrictSSL');
+      expect(out).not.toContain('http.proxy');
+    }
+  });
+
+  it('treats any certificate error as one bucket that suggests the fix', () => {
+    // ONE bucket: anything that smells like a certificate error gets the short
+    // suggestion. Expired certs are not special-cased.
+    expect(isTlsCertificateError('CERT_HAS_EXPIRED')).toBe(true);
+    expect(isTlsCertificateError('certificate has expired')).toBe(true);
+    for (const msg of ['CERT_HAS_EXPIRED', 'certificate has expired']) {
+      const out = formatError(new Error(msg));
+      expect(out).toContain('TLS certificate verification failed');
+      expect(out).toContain('http.systemCertificatesNode');
+      expect(out).toContain('Diagnose Connection');
+    }
   });
 
   it('maps abort to an aborted message', () => {

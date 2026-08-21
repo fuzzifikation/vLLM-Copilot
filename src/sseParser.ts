@@ -1,11 +1,12 @@
 /**
  * Pure SSE stream parsing utilities.
- * No dependencies — fully unit-testable.
+ * Only depends on the pure error-envelope helper — fully unit-testable.
  *
  * These functions handle the stateful (but pure) transformation of raw SSE data lines
  * into structured StreamEvents, including incremental tool call accumulation.
  */
 
+import { serverErrorMessage } from './errorEnvelope.js';
 import type { StreamEvent, FinalizedToolCall, WireChunk, WireUsage } from './types.js';
 
 export type PendingToolCall = { id: string; name: string; args: string };
@@ -39,10 +40,11 @@ export function processSSEChunk(
   // vLLM emits this when it aborts a request mid-stream (context too long, bad params,
   // OOM, etc.). Without this branch the chunk has no `choices`/`usage` and would be
   // dropped as null, leaving the user with an empty response and no reason.
+  // OpenRouter nests the real provider reason under `error.metadata.raw` with a
+  // terse `message` stub — walk the whole envelope so the real reason surfaces.
   if (parsed.error) {
-    event.error = typeof parsed.error === 'object' && parsed.error !== null
-      ? (parsed.error.message || JSON.stringify(parsed.error))
-      : String(parsed.error);
+    event.error = serverErrorMessage(parsed.error)
+      ?? (typeof parsed.error === 'object' ? JSON.stringify(parsed.error) : String(parsed.error));
     return event;
   }
 

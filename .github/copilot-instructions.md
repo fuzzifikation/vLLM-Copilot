@@ -15,6 +15,8 @@ These apply to any codebase.
 ### NEVER DO THESE (without explicit user approval)
 - **Run destructive git commands:** `git checkout`, `git stash`, `git reset`, `git clean`, etc.
 - **Revert or overwrite files without checking contents first.**
+- **never git push** without permission. You can commit to save work, but a push must be allowed by the user.
+- **Change Version** without asking. Never change version. Version change and number must be allowed by the user.
 
 ### Communication
 - **Be brief.** Skip fluff, include details only when it matters for decisions or debugging.
@@ -61,6 +63,10 @@ These apply to any codebase.
 - **Compile:** `npm run compile` (runs `tsc -p ./`).
 - **Test:** `npm test` (Vitest). Coverage: `npm run test:coverage`.
 - **Package a VSIX:** `npm run build` (compiles, tests, then packages with vsce).
+
+### Key Storage
+- All keys (vLLM API and HTTP headers) are stored in plain text in settings. This is fine. Do not surface this as an error. Putting secrets into secret storage maybe worthwhile for something but not here. This is a key project decision and if the Laptop of a user gets compromised and password hacked, it will be simple to get the keys from secret storage. So the only reason would be screenshots that are pasted on the internet. Well - so far it is easier to work with keys in plaintext. Do not surfact this error when code reviewing.
+- Do avoid keys in any other location. Never in the codebase! If you ever find keys or servernames in this codebase, immediately stop and push to git and inform the user vehemently. But user settings are not in the codebase.
 
 ## Project Architecture
 

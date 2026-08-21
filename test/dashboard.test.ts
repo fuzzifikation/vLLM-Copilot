@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { DashboardTreeProvider } from '../src/dashboard.js';
 import { recordRequest, resetUsageStoreForTests } from '../src/usageStore.js';
 import { normalizeServerUrl } from '../src/config.js';
+import { resetOpenRouterProviderListCache } from '../src/openRouter.js';
 
 /**
  * Dashboard tree-provider tests.
@@ -103,6 +104,7 @@ describe('DashboardTreeProvider', () => {
   beforeEach(() => {
     (vscode as any).workspace._mockConfig = {};
     resetUsageStoreForTests();
+    resetOpenRouterProviderListCache();
     provider = makeProvider();
   });
 

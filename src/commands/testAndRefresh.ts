@@ -14,7 +14,7 @@ import type { VllmModel } from '../types.js';
 // Re-exported so the root `commands.ts` facade (and tests importing it) keep a
 // single stable import surface for the server-identity helper.
 export { serverFingerprint } from '../config.js';
-import { describeError } from '../messageConverter.js';
+import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../messageConverter.js';
 import { resolveRuntimeLimits } from '../runtimeLimits.js';
 import { runDiagnostics, formatReport } from '../diagnostics.js';
 
@@ -269,6 +269,7 @@ export function registerTestAndRefreshModelsCommand(
           };
         }
       } catch (err) {
+        const message = describeError(err);
         return {
           serverUrl: group.serverUrl,
           status: 'error',
@@ -278,7 +279,11 @@ export function registerTestAndRefreshModelsCommand(
             config: m,
             vllmModelId: resolveVllmModelId(m) || m.id || '(unnamed)',
           })),
-          errorMessage: describeError(err),
+          // A certificate-ish failure gets the short suggestion: network test +
+          // maybe the setting. One bucket, no deeper classification.
+          errorMessage: isTlsCertificateError(message)
+            ? `${message}\n\n${TLS_CERT_SUGGESTION}`
+            : message,
         };
       }
     });

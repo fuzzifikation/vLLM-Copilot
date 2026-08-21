@@ -9,6 +9,7 @@
 import * as vscode from 'vscode';
 import { jsonrepair } from 'jsonrepair';
 import { parse as parsePartialJson, disableErrorLogging } from 'best-effort-json-parser';
+import { collectErrorMessages } from './errorEnvelope.js';
 import type {
   FinalizedToolCall,
   OpenAIChatMessage,
@@ -438,45 +439,6 @@ function extractServerErrorMessage(text: string): string | undefined {
 }
 
 /**
- * Gather every plausible human-readable message from an OpenAI-compatible error
- * envelope. The top-level `error.message` is canonical and kept first;
- * OpenRouter nests the real provider reason under `error.metadata.raw`, and
- * other backends bury detail in `message`/`detail`/`reason` fields arbitrarily
- * deep. String-form envelopes (`{"error":"…"}`) are handled too. Result is
- * deduped with order preserved.
- */
-function collectErrorMessages(error: unknown): string[] {
-  const out: string[] = [];
-  if (typeof error === 'string') {
-    if (error.trim()) out.push(error.trim());
-    return out;
-  }
-  if (error === null || typeof error !== 'object') return out;
-
-  const obj = error as Record<string, unknown>;
-  if (typeof obj.message === 'string' && obj.message.trim()) {
-    out.push(obj.message.trim());
-  }
-
-  const walk = (value: unknown): void => {
-    if (value === null || typeof value !== 'object') return;
-    if (Array.isArray(value)) {
-      for (const item of value) walk(item);
-      return;
-    }
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      if (typeof child === 'string' && /^(message|raw|detail|reason|error|description|code_reason)$/i.test(key)) {
-        if (child.trim()) out.push(child.trim());
-      } else if (child !== null && typeof child === 'object') {
-        walk(child);
-      }
-    }
-  };
-  walk(obj);
-  return [...new Set(out)];
-}
-
-/**
  * Format an error for user-facing display. Maps common network/server failures
  * to actionable messages.
  * Handles both Error objects and plain string throws (fetch abort returns a string!).
@@ -551,6 +513,39 @@ export function formatError(err: unknown): string {
 }
 
 /**
+ * Short suggestion for anything that looks like a certificate issue: propose the
+ * network diagnostic, and only mention VS Code's `http.systemCertificatesNode`
+ * setting as a conditional step — it changes which trust store Node loads, so it
+ * only helps when the certificate is actually valid and already trusted by the
+ * OS store (it cannot repair an expired certificate). No technical essay.
+ */
+export const TLS_CERT_SUGGESTION =
+  `This may be a certificate issue — the server's certificate could be expired, self-signed, or trusted differently by your OS than by VS Code. Run "Diagnose Connection" to confirm. If the certificate is valid and trusted by your OS, you can also try setting "http.systemCertificatesNode": true in your user settings and reload the window (Developer: Reload Window).`;
+
+/** Error fragments that indicate a TLS certificate verification failure. */
+const TLS_ERROR_PATTERNS = [
+  // OpenSSL / undici error codes (uppercase)
+  'UNABLE_TO_GET_ISSUER_CERT',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'SELF_SIGNED_CERT',
+  'CERT_HAS_EXPIRED',
+  'CERTIFICATE_VERIFY_FAILED',
+  'ERR_CERT',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  // Common human-readable undici/Node messages (lowercase)
+  'unable to verify the first certificate',
+  'unable to get local issuer certificate',
+  'self-signed certificate',
+  'self signed certificate',
+  'certificate has expired',
+];
+
+/** True when an error message indicates a TLS certificate verification failure. */
+export function isTlsCertificateError(msg: string): boolean {
+  return TLS_ERROR_PATTERNS.some((p) => msg.includes(p));
+}
+
+/**
  * Classify a single error message against known patterns.
  * Returns an actionable user message if matched, or the original message if not.
  */
@@ -566,16 +561,10 @@ function _classifyMessage(msg: string): string {
   if (msg === 'User cancelled' || msg === 'Request cancelled by user') {
     return `Request was cancelled.`;
   }
-  // TLS certificate errors (corporate MITM proxies, self-signed certs)
-  if (
-    msg.includes('UNABLE_TO_GET_ISSUER_CERT') ||
-    msg.includes('SELF_SIGNED_CERT') ||
-    msg.includes('CERT_HAS_EXPIRED') ||
-    msg.includes('CERTIFICATE_VERIFY_FAILED') ||
-    msg.includes('ERR_CERT') ||
-    msg.includes('DEPTH_ZERO_SELF_SIGNED_CERT')
-  ) {
-    return `TLS certificate verification failed. This often happens behind a corporate proxy with MITM inspection. Check your server's certificate, or check VS Code's http.proxy and http.proxyStrictSSL settings.`;
+  // Certificate-ish error — one bucket, one short suggestion (network test +
+  // maybe the setting). No deeper classification; simplicity over cleverness.
+  if (isTlsCertificateError(msg)) {
+    return `TLS certificate verification failed. ${TLS_CERT_SUGGESTION}`;
   }
   // Proxy authentication errors
   if (msg.includes('407') || msg.includes('Proxy Auth') || msg.includes('PROXY_AUTH_REQUIRED')) {
