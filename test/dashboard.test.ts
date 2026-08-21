@@ -332,6 +332,52 @@ describe('DashboardTreeProvider', () => {
     });
   });
 
+  it('shows an Attention icon on a relay model whose output budget is clamped', async () => {
+    // The DeepSeek catalog entry has context_length 163840 → the effective
+    // output ceiling is 10% = 16384. Configuring a 200000 budget means the
+    // budget is clamped to the ceiling → the node must carry the Attention icon
+    // with an explanatory tooltip. The Nemotron (1M ctx → 81920 ceiling) with a
+    // modest 4096 budget is NOT clamped → no icon.
+    (vscode as any).workspace._mockConfig = {
+      models: [
+        {
+          id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-chat', serverType: 'openrouter', displayName: 'DeepSeek',
+          requestHeaders: { Authorization: 'Bearer dashboard-secret' },
+          maxOutputTokens: 200000,
+        },
+        {
+          id: 'm2', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', serverType: 'openrouter', displayName: 'Nemotron',
+          requestHeaders: { Authorization: 'Bearer dashboard-secret' },
+          maxOutputTokens: 4096,
+        },
+      ],
+    };
+    vi.stubGlobal('fetch', openRouterFetch);
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 'openrouter.ai');
+      const metrics = await provider.getChildren(serverNode as any);
+
+      const deepseek = metrics.find(m => (m as any).label === 'DeepSeek') as any;
+      const nemotron = metrics.find(m => (m as any).label === 'Nemotron') as any;
+
+      // Clamped model → Alert icon (yellow), explanatory tooltip.
+      expect(deepseek.iconPath?.id).toBe('alert');
+      expect(String(deepseek.iconPath?.color?.id)).toBe('charts.yellow');
+      const dsTooltip = String(deepseek.tooltip?.value ?? '');
+      expect(dsTooltip).toContain('clamped');
+      expect(dsTooltip).toContain('200,000');      // configured
+      expect(dsTooltip).toContain('16,384');       // effective (10% of 163840)
+
+      // Unclamped model → normal icon, no attention.
+      expect(nemotron.iconPath?.id).toBe('symbol-class');
+      expect(String(nemotron.tooltip?.value ?? '')).not.toContain('clamped');
+    });
+  });
+
   it('hides OpenRouter account + model nodes when no relay models are configured', async () => {
     // A non-OpenRouter server must not show relay nodes.
     (vscode as any).workspace._mockConfig = {
@@ -433,6 +479,105 @@ describe('DashboardTreeProvider', () => {
       const pricingRow = rows.find(r => (r as any).label === 'Pricing (1M)');
       expect((pricingRow as any).description).toBe('in $0.66  ·  out $1.98  ·  cached $0.022');
       expect(String((pricingRow as any).tooltip)).toContain('reported by the pinned provider "deepseek"');
+    });
+  });
+
+  it('shows the pinned provider limits (context + output) on an OpenRouter model node', async () => {
+    // The pinned provider's endpoint reports a smaller window/output than the
+    // general catalog envelope — the row must show the PINNED provider's limits
+    // (display-only; never persisted, never clamped) so the user sees what the
+    // pinned provider actually serves.
+    const limitedFetch = vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return jsonResponse({ data: [{ id: 'deepseek/deepseek-v3.2', context_length: 163840 }] });
+      }
+      if (u.includes('/endpoints')) {
+        return jsonResponse({ data: { id: 'deepseek/deepseek-v3.2', endpoints: [
+          { tag: 'sambanova-turbo', provider_name: 'SambaNova', context_length: 32768, max_completion_tokens: 7168, status: 0, uptime_last_1d: 99.5 },
+        ] } });
+      }
+      if (u.endsWith('/v1/key')) return jsonResponse({ data: {} });
+      return new Response(null, { status: 404 });
+    });
+    (vscode as any).workspace._mockConfig = {
+      models: [
+        {
+          id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-v3.2', serverType: 'openrouter', displayName: 'DeepSeek',
+          maxOutputTokens: 8192,
+          provider: 'sambanova-turbo',
+        },
+      ],
+    };
+    vi.stubGlobal('fetch', limitedFetch);
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 'openrouter.ai');
+      const metrics = await provider.getChildren(serverNode as any);
+      const model = metrics.find(m => (m as any).label === 'DeepSeek');
+
+      const rows = await provider.getChildren(model as any);
+      const providerRow = rows.find(r => (r as any).label === 'Provider');
+      // Pinned provider label + uptime + its OWN limits (context 32.8k, output 7.2k).
+      expect((providerRow as any).description).toBe('SambaNova  ·  99.50% uptime  ·  33k ctx  ·  7k out');
+      expect(String((providerRow as any).tooltip)).toContain('Pinned provider limits');
+      expect(String((providerRow as any).tooltip)).toContain('32,768 context');
+      expect(String((providerRow as any).tooltip)).toContain('7,168 max output');
+    });
+  });
+
+  it('shows an Attention icon when a PINNED provider cap is below the configured budget', async () => {
+    // The catalog ceiling is generous (deepseek-v3.2 → 16384 effective), so the
+    // general clamp does NOT bind. But the pinned provider (SambaNova) reports a
+    // 7168 cap — BELOW the configured 8192. Symmetric rule: the provider cap is a
+    // real constraint, so the node must show the Attention icon and name the
+    // provider in the tooltip (as a "may fail" — NOT a silent clamp).
+    const pinnedFetch = vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return jsonResponse({ data: [{ id: 'deepseek/deepseek-v3.2', context_length: 163840 }] });
+      }
+      if (u.includes('/endpoints')) {
+        return jsonResponse({ data: { id: 'deepseek/deepseek-v3.2', endpoints: [
+          { tag: 'sambanova-turbo', provider_name: 'SambaNova', max_completion_tokens: 7168, context_length: 32768 },
+        ] } });
+      }
+      if (u.endsWith('/v1/key')) return jsonResponse({ data: {} });
+      return new Response(null, { status: 404 });
+    });
+    (vscode as any).workspace._mockConfig = {
+      models: [
+        {
+          id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-v3.2', serverType: 'openrouter', displayName: 'DeepSeek',
+          requestHeaders: { Authorization: 'Bearer dashboard-secret' },
+          maxOutputTokens: 8192,
+          provider: 'sambanova-turbo', // pinned
+        },
+      ],
+    };
+    vi.stubGlobal('fetch', pinnedFetch);
+
+    provider.setVisible(true);
+
+    await vi.waitFor(async () => {
+      const children = await provider.getChildren();
+      const serverNode = children.find(c => (c as any).label === 'openrouter.ai');
+      const metrics = await provider.getChildren(serverNode as any);
+      const model = metrics.find(m => (m as any).label === 'DeepSeek') as any;
+
+      // Provider cap binds below the catalog ceiling → Attention icon.
+      expect(model.iconPath?.id).toBe('alert');
+      expect(String(model.iconPath?.color?.id)).toBe('charts.yellow');
+      const tooltip = String(model.tooltip?.value ?? '');
+      expect(tooltip).toContain('clamped');
+      expect(tooltip).toContain('8,192');       // configured
+      expect(tooltip).toContain('7,168');       // effective (pinned provider cap)
+      // Honest wording: this is a provider cap → "may fail", names SambaNova.
+      expect(tooltip).toContain('SambaNova');
+      expect(tooltip).toContain('may **fail**');
     });
   });
 

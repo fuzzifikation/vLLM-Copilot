@@ -598,8 +598,19 @@ export interface OpenRouterModelEndpoint {
   quantization?: string;
   /** Per-provider per-token pricing (estimate; actual cost is usage.cost). */
   pricing?: { prompt?: string; completion?: string; input_cache_read?: string };
-  /** Provider-reported completion cap for this model (null when unset). */
+  /**
+   * Provider-reported completion cap for this model (null when unset).
+   * Display-only — never persists into `maxOutputTokens`, never clamps.
+   */
   maxCompletionTokens?: number | null;
+  /**
+   * Provider-reported context window for this model (null when unset).
+   * Differs from the catalog-level `context_length` (live-verified: SambaNova
+   * serves 32,768 on a model whose catalog window is 163,840). Display-only —
+   * the token budget stays keyed to the catalog context; the user owns the
+   * choice when a pinned provider's window is smaller.
+   */
+  contextLength?: number | null;
   /** Server health: 0 = operational, -2 = degraded/unavailable (informational). */
   status?: number;
   /** Reported uptime over the last day, as a percentage 0-100 (e.g. 99.97). */
@@ -667,6 +678,7 @@ export async function fetchOpenRouterModelEndpoints(
         quantization: typeof entry.quantization === 'string' ? entry.quantization : undefined,
         pricing,
         maxCompletionTokens: typeof entry.max_completion_tokens === 'number' ? entry.max_completion_tokens : undefined,
+        contextLength: typeof entry.context_length === 'number' ? entry.context_length : undefined,
         status: typeof entry.status === 'number' ? entry.status : undefined,
         uptimeLast1d: typeof entry.uptime_last_1d === 'number' ? entry.uptime_last_1d : undefined,
       });

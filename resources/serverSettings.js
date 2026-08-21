@@ -96,6 +96,80 @@
 
   function E(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+  // Compact token-count label for provider rows: 32768 → "32.8k", 131072 →
+  // "131k", 1000000 → "1M". Whole units when ≥ 100 (no noisy decimals), one
+  // decimal below, a trailing ".0" is never shown, and a near-1M value rolls
+  // to "1M" (999500+ → "1M", same as the dashboard's fmtCount). null/0 → null.
+  // Kept tiny — these are informational annotations on a dropdown option, not
+  // precise accounting.
+  function fmtTok(n) {
+    if (typeof n !== 'number' || !isFinite(n) || n <= 0) return null;
+    const fmt = (v) => (v >= 100 ? String(Math.round(v)) : String(Math.round(v * 10) / 10));
+    if (n >= 1e6) return fmt(n / 1e6) + 'M';
+    if (n >= 1e3) {
+      const k = n / 1e3;
+      if (k >= 1000) return fmt(k / 1000) + 'M'; // 999,500+ → "1M"
+      return fmt(k) + 'k';
+    }
+    return String(n);
+  }
+  // The provider's limits as a compact suffix for the dropdown option, e.g.
+  // " · Ctx (131k tot, 2k out)". Both parts are present only when the API
+  // reported them — never invented. The exact numbers ride in the hover title.
+  function providerLimitsLabel(ep) {
+    const ctx = fmtTok(ep.contextLength);
+    const out = fmtTok(ep.maxCompletionTokens);
+    const parts = [];
+    if (ctx) parts.push(ctx + ' tot');
+    if (out) parts.push(out + ' out');
+    return parts.length > 0 ? ' · Ctx (' + parts.join(', ') + ')' : '';
+  }
+
+  // Per-token USD string → per-1M USD, or null when absent/malformed/negative
+  // (OpenRouter reports "-1" for unknown dynamic-router prices). Same conversion
+  // as the dashboard's perMillion — mirrored here because the webview can't
+  // import the TS helper.
+  function perM(v) {
+    if (typeof v !== 'string' || v.trim() === '') return null;
+    const n = Number(v);
+    if (!isFinite(n) || n < 0) return null;
+    return n * 1e6;
+  }
+  // Compact per-1M USD: up to 4 decimals, trailing zeros trimmed ("1.2052",
+  // "0.66", "3.17"). Locale-independent (always "." decimal, no grouping) —
+  // same discipline as the dashboard's money display.
+  function fmtUsd(v) {
+    if (v === null || !isFinite(v)) return null;
+    return '$' + (Math.round(v * 1e4) / 1e4).toString();
+  }
+  // " · Cost/M (in $0.66, out $1.98[, cache $0.12])" — only present fields are
+  // shown; a provider without cache pricing simply omits it. Exact values ride
+  // in the hover title (same pattern as the context/output limits).
+  function providerPricingLabel(ep) {
+    const p = (ep && ep.pricing) || {};
+    const parts = [];
+    const inRate = fmtUsd(perM(p.prompt));
+    const outRate = fmtUsd(perM(p.completion));
+    const cacheRate = fmtUsd(perM(p.input_cache_read));
+    if (inRate) parts.push('in ' + inRate);
+    if (outRate) parts.push('out ' + outRate);
+    if (cacheRate) parts.push('cache ' + cacheRate);
+    return parts.length > 0 ? ' · Cost/M (' + parts.join(', ') + ')' : '';
+  }
+  // Full-precision per-1M prices for the hover title, e.g. "prompt $1.2052/M,
+  // completion $3.1655/M, cache $0.1205/M".
+  function providerPricingTitle(ep) {
+    const p = (ep && ep.pricing) || {};
+    const parts = [];
+    const inRate = perM(p.prompt);
+    const outRate = perM(p.completion);
+    const cacheRate = perM(p.input_cache_read);
+    if (inRate !== null) parts.push('prompt $' + (Math.round(inRate * 1e6) / 1e6) + '/M');
+    if (outRate !== null) parts.push('completion $' + (Math.round(outRate * 1e6) / 1e6) + '/M');
+    if (cacheRate !== null) parts.push('cache $' + (Math.round(cacheRate * 1e6) / 1e6) + '/M');
+    return parts.join(', ');
+  }
+
   // Selection is keyed by server-group identity (a URL may host several header
   // identities). Messages that target a server need the real display URL.
   function selServerUrl() {
@@ -248,7 +322,19 @@
       h += '<option value=""' + (!mc.provider ? ' selected' : '') + '>Auto</option>';
       endpoints.forEach(ep => {
         const label = ep.providerName + (ep.quantization && ep.quantization !== 'unknown' ? ' (' + ep.quantization + ')' : '');
-        h += '<option value="' + E(ep.tag) + '"' + (mc.provider === ep.tag ? ' selected' : '') + '>' + E(label) + '</option>';
+        // Annotate each provider with its reported context window + output
+        // ceiling + per-1M pricing (compact in the label, exact in the hover
+        // title) so the user can pick a provider with their eyes open —
+        // display-only, never saved.
+        const limits = providerLimitsLabel(ep);
+        const pricing = providerPricingLabel(ep);
+        const titleParts = [];
+        if (typeof ep.contextLength === 'number' && ep.contextLength > 0) titleParts.push(ep.contextLength.toLocaleString('en-US') + ' context');
+        if (typeof ep.maxCompletionTokens === 'number' && ep.maxCompletionTokens > 0) titleParts.push(ep.maxCompletionTokens.toLocaleString('en-US') + ' max output');
+        const pricingTitle = providerPricingTitle(ep);
+        if (pricingTitle) titleParts.push(pricingTitle);
+        const title = titleParts.length > 0 ? ' title="' + E(ep.providerName + ' — ' + titleParts.join(', ')) + '"' : '';
+        h += '<option value="' + E(ep.tag) + '"' + (mc.provider === ep.tag ? ' selected' : '') + title + '>' + E(label + limits + pricing) + '</option>';
       });
       h += '</select>';
       if (endpoints.length === 0) {

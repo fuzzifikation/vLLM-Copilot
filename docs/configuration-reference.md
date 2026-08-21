@@ -47,7 +47,7 @@ The context window comes from the **backend's own documented endpoint** (never g
 | `lmstudio` | `GET /api/v1/models` | matching loaded instance `config.context_length`, else `max_context_length` |
 | `llamacpp` | `GET /props?model=<encoded id>` | `default_generation_settings.n_ctx` |
 | `ollama` | `GET /api/ps` | matching `models[].context_length` (model must be loaded) |
-| `openrouter` | `GET https://openrouter.ai/api/v1/model/{author}/{slug}` | `context_length` → `top_provider.context_length` (smallest positive wins); output ceiling from `top_provider.max_completion_tokens` |
+| `openrouter` | `GET https://openrouter.ai/api/v1/models` (the **catalog**) | match the requested id **verbatim** (variants are separate entries); `context_length` → `top_provider.context_length` (smallest positive wins); output ceiling from `top_provider.max_completion_tokens` / `per_request_limits.completion_tokens`, falling back to 10% of the window (capped). The exact-model endpoint is deliberately NOT used — it resolves variants inconsistently. |
 
 `maxInputTokens` is computed from that window (`window − maxOutputTokens`) and can only clamp it further. A server that reports no valid window for the model is skipped with an error — there is no fallback budget.
 

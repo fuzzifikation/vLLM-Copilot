@@ -7,6 +7,8 @@
 - **OpenRouter provider selection** — Model Settings has a Provider dropdown per OpenRouter model (Auto, or pin a specific provider from the model's list).
 - **OpenRouter routing mode** — Model Settings has a Routing dropdown per OpenRouter model (Standard / Nitro / Exacto), active when routing is Auto.
 - **Dashboard: OpenRouter model details** — each model node shows its provider (with status + uptime), per-1M pricing, and total context; the Account node shows Invested Total / Available and usage over time.
+- **Per-provider limits + pricing in the Provider dropdown** — each option shows the provider's context window, output cap, and per-1M cost (exact numbers on hover); the dashboard Provider row shows the pinned provider's own limits.
+- **Attention icon on a clamped output budget** — when any binding constraint (catalog ceiling or pinned provider cap) pushes effective output below the configured `maxOutputTokens`, the model node shows a yellow alert with an explanatory tooltip.
 
 ### Fixed
 
