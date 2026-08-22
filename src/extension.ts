@@ -23,6 +23,7 @@ import { initUsageStore } from './usageStore.js';
 import { DashboardTreeProvider } from './dashboard.js';
 import { ServerSettingsViewProvider } from './serverSettingsView.js';
 import { openDeepDive } from './deepDiveView.js';
+import { registerConfigSchemaTool } from './configSchemaTool.js';
 
 const VENDOR_ID = 'vllm-copilot';
 let provider: VllmChatModelProvider | undefined;
@@ -157,6 +158,14 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(activeProvider);
     context.subscriptions.push(
       vscode.lm.registerLanguageModelChatProvider(VENDOR_ID, activeProvider)
+    );
+
+    // Expose the model-entry schema to Copilot Chat as an on-demand LM tool so
+    // the user's AI can build valid vllm-copilot.models entries (server, params,
+    // modelModes) instead of guessing. Served from the bundled schema file —
+    // no workspace scaffolding required.
+    context.subscriptions.push(
+      registerConfigSchemaTool(context.extensionUri, outputChannel)
     );
 
     // Register all user-facing commands. Each returns a Disposable (see commands.ts

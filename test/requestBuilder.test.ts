@@ -78,6 +78,101 @@ describe('buildRequest', () => {
     expect(result.mergedOptions.temperature).toBe(0.5);
   });
 
+  it('honors the selected mode max_tokens within the advertised budget', () => {
+    // Coherent state: metadata re-registered to the mode's budget (advertised 250).
+    const advModel = (mo: number, mi: number) => ({ id: 'm', maxOutputTokens: mo, maxInputTokens: mi }) as any;
+    const result = buildRequest(
+      advModel(250, 200), [] as any,
+      opts({ modelConfiguration: { reasoningEffort: 'deep' } }),
+      {
+        models: [{
+          id: 'm', serverUrl: 'http://host:8000',
+          modelModes: { deep: { max_tokens: 250, temperature: 0.1 } },
+        }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(result.mergedOptions.max_tokens).toBe(250);
+    expect(result.mergedOptions.temperature).toBe(0.1);
+  });
+
+  it('clamps a mode max_tokens to the advertised budget (ceiling-safe, Option A)', () => {
+    // Mode wants 99999 but Copilot was told 250 (re-registration not yet landed,
+    // or a server ceiling). The wire must never exceed what was advertised.
+    const advModel = (mo: number, mi: number) => ({ id: 'm', maxOutputTokens: mo, maxInputTokens: mi }) as any;
+    const result = buildRequest(
+      advModel(250, 200), [] as any,
+      opts({ modelConfiguration: { reasoningEffort: 'deep' } }),
+      {
+        models: [{
+          id: 'm', serverUrl: 'http://host:8000',
+          modelModes: { deep: { max_tokens: 99999 } },
+        }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(result.mergedOptions.max_tokens).toBe(250);
+  });
+
+  it('honors a smaller configured max_tokens immediately (down-switch instant)', () => {
+    // Down-switch: configured 200 < advertised 250 → honored right away, no lag.
+    const advModel = (mo: number, mi: number) => ({ id: 'm', maxOutputTokens: mo, maxInputTokens: mi }) as any;
+    const result = buildRequest(
+      advModel(250, 200), [] as any,
+      opts({ modelConfiguration: { reasoningEffort: 'deep' } }),
+      {
+        models: [{
+          id: 'm', serverUrl: 'http://host:8000',
+          modelModes: { deep: { max_tokens: 200 } },
+        }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(result.mergedOptions.max_tokens).toBe(200);
+  });
+
+  it('clamps to the context window as a defense when the advertised budget is incoherent', () => {
+    // A 0 input allowance makes window = advertised, so window-1 must cap it.
+    // Only reachable with an incoherent model object — deriveTokenBudget never
+    // produces this — kept as defense-in-depth.
+    const advModel = (mo: number, mi: number) => ({ id: 'm', maxOutputTokens: mo, maxInputTokens: mi }) as any;
+    const result = buildRequest(
+      advModel(100, 0), [] as any,
+      opts({ modelConfiguration: { reasoningEffort: 'deep' } }),
+      {
+        models: [{
+          id: 'm', serverUrl: 'http://host:8000',
+          modelModes: { deep: { max_tokens: 99999 } },
+        }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(result.mergedOptions.max_tokens).toBe(99);
+  });
+
+  it('ignores Copilot modelOptions.max_tokens even when a mode is selected', () => {
+    const result = buildRequest(
+      model,
+      [] as any,
+      opts({ modelConfiguration: { reasoningEffort: 'deep' }, modelOptions: { max_tokens: 999 } }),
+      {
+        models: [{
+          id: 'm', serverUrl: 'http://host:8000',
+          modelModes: { deep: { temperature: 0.1 } },
+        }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    // Mode has no max_tokens → model ceiling (100) wins, not Copilot's 999.
+    expect(result.mergedOptions.max_tokens).toBe(100);
+    expect(result.mergedOptions.temperature).toBe(0.1);
+  });
+
   it('layers defaultParams then the selected model mode (highest wins)', () => {
     const result = buildRequest(
       model,

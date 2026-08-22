@@ -2,6 +2,8 @@
 
 > **Quick start:** Run **Add vLLM Server & Model** from the Command Palette to auto-generate model entries. Use this reference when you need to customize advanced settings.
 
+> **Copilot can write this for you:** the extension registers an on-demand **Language Model Tool** (`vllm-copilot_model_schema`) that hands Copilot Chat the model-entry JSON schema plus the parameter resolution rules. Just ask in chat — e.g. *"configure my Qwen3.6 model with Think / No Think modes"* — and Copilot will generate a valid `vllm-copilot.models` entry. The tool serves the bundled `schemas/vllm-copilot-models.schema.json`; no workspace files are created. If your AI doesn't pick it up automatically, force-attach it by typing `#vllmModelSchema` in the chat input.
+
 All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are five top-level settings: `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), `vllm-copilot.enableFileLogging` (request/response logs), `vllm-copilot.logBodyLimit` (log truncation), and `vllm-copilot.dashboard.pollIntervalMs` (metrics polling). Everything else lives on each model entry.
 
 **Each model entry is self-contained** — it carries its own `serverUrl`, `requestHeaders`, token budgets, capabilities, and params.
@@ -22,9 +24,9 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 | `displayName` | same as `id` | Human-readable name in the model picker. |
 | `family` | auto-detected | Model family (e.g. `qwen3_5`, `llama`). From HuggingFace or extracted from model ID. |
 | `maxOutputTokens` | `4096` | Max tokens per response. Server enforces its own hard limit. |
-| `maxInputTokens` | computed | Auto-computed as `max_model_len - maxOutputTokens`. Set only to reduce further. |
+| `maxInputTokens` | computed | Auto-computed as the server context window minus the **effective output budget** (resolved `max_tokens`: selected `modelModes` entry > `defaultParams.max_tokens` > `maxOutputTokens`). Set only to reduce further. |
 | `estimateCharsPerToken` | `3.5` | Chars-per-token for local token estimation. |
-| `defaultParams` | `temp: 1.0, top_p: 1.0` | Model-scope generation params. Layered under `modelModes`. |
+| `defaultParams` | — | Model-scope generation params. Unset params are omitted — the server's default applies. Layered under `modelModes`. |
 | `modelModes` | — | Switchable named presets (Think/No Think, etc.). Bundled presets auto-applied by **Add vLLM Server & Model**; for existing entries, hand-edit and copy from [`model-configs/`](../model-configs/). |
 | `defaultMode` | first mode | Which mode is active before the user picks one. |
 | `capabilities.toolCalling` | `true` | Model supports tool/function calling. |
@@ -35,7 +37,7 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 | `systemMessageReplacementsFile` | — | Path to a JSON file of `{ ruleName, find, replace }` pairs applied to every system message. See [System Message Replacements](#system-message-replacements) below. |
 | `cost` | — | Optional per-model cost rates for the dashboard **Token Usage** tracker (per 1,000,000 tokens). See [Token Usage & Cost](#token-usage--cost) below. |
 
-**Resolution chain (highest wins):** built-in defaults → model `defaultParams` → the selected `modelModes` entry.
+**Resolution chain (highest wins):** server defaults (unset params are omitted from the request) → model `defaultParams` → the selected `modelModes` entry.
 
 ### Backend-specific context resolution
 
@@ -49,7 +51,7 @@ The context window comes from the **backend's own documented endpoint** (never g
 | `ollama` | `GET /api/ps` | matching `models[].context_length` (model must be loaded) |
 | `openrouter` | `GET https://openrouter.ai/api/v1/models` (the **catalog**) | match the requested id **verbatim** (variants are separate entries); `context_length` → `top_provider.context_length` (smallest positive wins); output ceiling from `top_provider.max_completion_tokens` / `per_request_limits.completion_tokens`, falling back to 10% of the window (capped). The exact-model endpoint is deliberately NOT used — it resolves variants inconsistently. |
 
-`maxInputTokens` is computed from that window (`window − maxOutputTokens`) and can only clamp it further. A server that reports no valid window for the model is skipped with an error — there is no fallback budget.
+`maxInputTokens` is computed from that window (window minus the effective output budget — the resolved `max_tokens`) and can only clamp it further. A server that reports no valid window for the model is skipped with an error — there is no fallback budget.
 
 ---
 
@@ -57,12 +59,13 @@ The context window comes from the **backend's own documented endpoint** (never g
 
 Any vLLM chat body field except `model`, `messages`, `stream`, `stream_options`. *(vLLM-only)* marks params OpenAI does not accept.
 
-> **Note:** `max_tokens` is **not** in the table — the extension always sets it from `maxOutputTokens`, so listing it in your params has no effect. Set `maxOutputTokens` on the model entry instead.
+> **Note:** `max_tokens` sets the **output budget** for its scope. In a `modelModes` entry it gives that mode its own response ceiling; in `defaultParams` it sets the model-scope budget. It overrides `maxOutputTokens` for the request and is clamped to the model's context window and the server-reported output ceiling. Prefer per-mode via `modelModes`.
 
 | Param | Description |
 |-------|-------------|
-| `temperature` | Sampling temperature (0–2). Built-in default `1.0`. `0` = greedy |
-| `top_p` | Nucleus sampling threshold (0–1). Built-in default `1.0` |
+| `temperature` | Sampling temperature (0–2). Omitted when unset — the server's default applies. `0` = greedy |
+| `top_p` | Nucleus sampling threshold (0–1). Omitted when unset — the server's default applies |
+| `max_tokens` | Output budget for this scope. Overrides `maxOutputTokens` (clamped to the context window and the server-reported output ceiling). Set per-mode via `modelModes` to give a mode its own response ceiling |
 | `top_k` | Top-k sampling (int). −1 = disabled *(vLLM-only)* |
 | `min_p` | Minimum probability threshold (0–1) *(vLLM-only)* |
 | `presence_penalty` | Topic-repetition discouragement (−2 to 2) |
@@ -83,6 +86,7 @@ Any vLLM chat body field except `model`, `messages`, `stream`, `stream_options`.
 | `repetition_detection` | N-gram repetition early-stop: `{ max_pattern_size, min_count, min_pattern_size }` *(vLLM-only)* |
 | `structured_outputs` | Token-level constraints: `json`, `regex`, `choice`, or `grammar` (mutually exclusive) *(vLLM-only, ≥ v0.12.0)* |
 | `chat_template_kwargs` | vLLM chat template params (e.g. `{ "enable_thinking": true }`) *(vLLM-only)* |
+| `reasoning_effort` | Reasoning effort (e.g. `high`, `max`, `none`, `xhigh`). On vLLM this auto-maps to `chat_template_kwargs.enable_thinking` (`high`/`max` → true, `none` → false) |
 | `allowed_token_ids` | Restrict generation to these token IDs *(vLLM-only; niche)* |
 
 > **Not enabled by default:** `repetition_detection` is **off** unless you add it to a model's `defaultParams` or a mode. The n-gram detector (`max_pattern_size: 5, min_pattern_size: 2, min_count: 3`) triggers on structured output like XML tables, JSON arrays, and code loops — not just actual repetition — so it is opt-in. If you want it, add it per-model: `"repetition_detection": { "max_pattern_size": 5, "min_pattern_size": 2, "min_count": 3 }`.
@@ -183,7 +187,7 @@ The price sits on the **model line** (its collapsed summary: `$11.51 today and $
 
 ## Typical Example
 
-A working chat model — minimum viable config. No modes, no custom params, just authorizes a model on a server. Everything else uses built-in defaults (`temperature: 1.0`, `top_p: 1.0`, `maxOutputTokens: 4096`):
+A working chat model — minimum viable config. No modes, no custom params, just authorizes a model on a server. Everything else uses defaults (`maxOutputTokens: 4096`; sampling params are omitted so the server's defaults apply):
 
 ```json
 "vllm-copilot.models": [
@@ -222,7 +226,7 @@ A working chat model — minimum viable config. No modes, no custom params, just
     // ── Token budgets ─────────────────────────────────────
     // `max_model_len` (context window) is auto-discovered from /v1/models — do NOT set it here.
     "maxOutputTokens": 8192,                           // max tokens per response (default 4096)
-    "maxInputTokens": 28672,                           // optional; clamp below (max_model_len − maxOutputTokens)
+    "maxInputTokens": 28672,                           // optional; clamp below (window − effective output budget)
     "estimateCharsPerToken": 3.5,                      // for local token estimation (default 3.5)
 
     // ── Capabilities ──────────────────────────────────────
@@ -240,7 +244,7 @@ A working chat model — minimum viable config. No modes, no custom params, just
     "systemMessageReplacementsFile": ".vllm/prompt-replacements.json",
 
     // ── defaultParams: always-on, model-scope ────────────
-    // Layered under selected mode. Built-in defaults: temperature=1.0, top_p=1.0.
+    // Layered under selected mode. Unset sampling params are omitted — the server default applies.
     "defaultParams": {
       // — Standard sampling (OpenAI-compatible) —
       "temperature": 0.7,                // 0–2. 0 = greedy

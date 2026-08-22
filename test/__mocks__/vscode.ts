@@ -38,6 +38,12 @@ export class LanguageModelToolCallPart {
 export class LanguageModelToolResultPart {
   constructor(public callId: string, public content: readonly unknown[]) {}
 }
+export class LanguageModelToolResult {
+  constructor(public content: Array<unknown>) {}
+}
+export class CancellationError extends Error {
+  constructor() { super('Cancelled'); this.name = 'Cancelled'; }
+}
 export class LanguageModelDataPart {
   constructor(public data: Uint8Array, public mimeType: string) {}
 }
@@ -76,6 +82,13 @@ export interface LanguageModelChatTool {
   name: string;
   description?: string;
   inputSchema?: unknown;
+}
+export interface LanguageModelToolInvocationOptions<T> {
+  input: T;
+  toolInvocationToken: unknown;
+}
+export interface LanguageModelTool<T> {
+  invoke(options: LanguageModelToolInvocationOptions<T>, token: CancellationToken): ProviderResult<LanguageModelToolResult>;
 }
 export interface ProvideLanguageModelChatResponseOptions {
   tools?: readonly LanguageModelChatTool[];
@@ -475,6 +488,19 @@ export interface WebviewViewResolveContext { [key: string]: unknown; }
 export interface WebviewViewProvider {
   resolveWebviewView(webviewView: WebviewView, context: WebviewViewResolveContext, token: CancellationToken): Thenable<void> | void;
 }
+
+// ── lm namespace (Language Model tools) ────────────────────────────────────
+// Minimal stub: captures tool registrations so tests can inspect/invoke them.
+export const lm: {
+  registerTool(name: string, tool: unknown): Disposable;
+  _mockRegisteredTools: Array<{ name: string; tool: unknown }>;
+} = {
+  registerTool: (name, tool) => {
+    lm._mockRegisteredTools.push({ name, tool });
+    return { dispose: () => {} };
+  },
+  _mockRegisteredTools: [],
+};
 
 // ── Misc namespace members ─────────────────────────────────────────────────
 export const version = 'test';

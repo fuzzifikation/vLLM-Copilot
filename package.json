@@ -85,6 +85,31 @@
         "displayName": "vLLM-Copilot"
       }
     ],
+    "languageModelTools": [
+      {
+        "name": "vllm-copilot_model_schema",
+        "displayName": "vLLM-Copilot Model Config Schema",
+        "toolReferenceName": "vllmModelSchema",
+        "canBeReferencedInPrompt": true,
+        "userDescription": "Fetch the vLLM-Copilot model configuration schema and guide, for creating or editing vllm-copilot.models entries and model modes.",
+        "modelDescription": "Returns the JSON schema and configuration guide for a vllm-copilot.models model entry (serverUrl, requestHeaders, params, modelModes, defaultMode, etc.), including the parameter resolution chain and valid vLLM request parameters. Use this whenever the user asks you to create, configure, or modify a vLLM-Copilot model or its modes in VS Code settings. May also be triggered explicitly when the user references it in chat via #vllmModelSchema.",
+        "icon": "$(json)",
+        "tags": [
+          "vllm-copilot",
+          "configuration"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "section": {
+              "type": "string",
+              "enum": ["all", "schema", "guide"],
+              "description": "What to return: all (default), only the JSON schema, or only the prose guide."
+            }
+          }
+        }
+      }
+    ],
     "commands": [
       {
         "command": "vllm-copilot.addServerModel",
@@ -261,7 +286,7 @@
                 },
                 "maxInputTokens": {
                   "type": "number",
-                  "markdownDescription": "**Computed automatically** from the vLLM server's `max_model_len` minus `maxOutputTokens`. You can set a lower value here to reserve extra headroom, but it is clamped so input + output never exceeds the total context window. Most users should leave this unset."
+                  "markdownDescription": "**Computed automatically** from the vLLM server's context window minus the **effective output budget** (the resolved `max_tokens`: a selected `modelModes` entry, else `defaultParams.max_tokens`, else `maxOutputTokens`). You can set a lower value here to reserve extra headroom, but it is clamped so input + output never exceeds the total context window. Most users should leave this unset."
                 },
                 "estimateCharsPerToken": {
                   "type": "number",
@@ -270,7 +295,7 @@
                 },
                 "defaultParams": {
                   "type": "object",
-                  "markdownDescription": "**Model-scope request params** (raw vLLM request-body keys, snake_case). Merged on top of built-in defaults (`temperature: 0.7`, `top_p: 1.0`) and overridden by the selected `modelModes` entry.\n\nExample: `{ \"temperature\": 1, \"top_p\": 0.95, \"presence_penalty\": 0, \"repetition_detection\": { \"max_pattern_size\": 4, \"min_count\": 3 } }`"
+                  "markdownDescription": "**Model-scope request params** (raw vLLM request-body keys, snake_case). Merged into the request body and overridden by the selected `modelModes` entry. Params not set here (or in a mode) are **omitted**, so the server's own defaults apply — nothing is forced.\n\nExample: `{ \"temperature\": 1, \"top_p\": 0.95, \"presence_penalty\": 0, \"repetition_detection\": { \"max_pattern_size\": 4, \"min_count\": 3 } }`"
                 },
                 "modelModes": {
                   "type": "object",

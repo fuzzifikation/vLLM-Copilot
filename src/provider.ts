@@ -14,6 +14,13 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
   private modelCacheGeneration = 0;
   private modelContextWindows = new Map<string, number>();
 
+  /**
+   * Last selected model mode per picker id ('' = none). Used to re-register
+   * model metadata with the selected mode's `max_tokens` output budget so
+   * Copilot's context-window bar reflects the active mode (Option A).
+   */
+  private lastSelectedMode = new Map<string, string>();
+
   /** Instance-owned system-message pipeline (replacements + capture). */
   private readonly systemMessages: SystemMessagePipeline;
 
@@ -45,7 +52,31 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     this.modelCacheGeneration++;
     this.cachedModels = null;
     this.modelContextWindows.clear();
+    this.lastSelectedMode.clear();
     this.client.invalidateConfigCache();
+    this._onDidChangeLanguageModelChatInformation.fire();
+  }
+
+  /**
+   * Track a model's selected mode and, when it changes, re-publish model
+   * metadata so Copilot re-resolves and its context-window bar reflects the
+   * mode's `max_tokens` output budget. Deduped per model: switching between
+   * modes re-registers once per change; the first no-mode request is the
+   * baseline and triggers nothing.
+   */
+  private trackModeSelection(modelId: string, selectedMode: string | undefined): void {
+    const key = selectedMode ?? '';
+    const prior = this.lastSelectedMode.get(modelId);
+    if (prior === key) return;
+    this.lastSelectedMode.set(modelId, key);
+    // Baseline (no mode ever selected): metadata already matches — nothing to re-register.
+    if (prior === undefined && key === '') return;
+    // Increment the generation so any in-flight discovery captured BEFORE this
+    // change cannot restore stale metadata when it completes (same
+    // generation-invalidating pattern as clearCache). Then invalidate + fire so
+    // Copilot re-resolves with the mode's budget.
+    this.modelCacheGeneration++;
+    this.cachedModels = null;
     this._onDidChangeLanguageModelChatInformation.fire();
   }
 
@@ -88,6 +119,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         this.client,
         this.output,
         (modelId, contextWindow) => contextWindows.set(modelId, contextWindow),
+        this.lastSelectedMode,
       );
       if (generation === this.modelCacheGeneration) {
         this.cachedModels = models;
@@ -137,6 +169,16 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       ));
       return;
     }
+
+    // Track the selected model mode so re-registered metadata (and Copilot's
+    // context-window bar) reflects the mode's output budget (Option A: max_tokens
+    // per mode). Read before delegating — the request builder uses the same
+    // `modelConfiguration` field to select the mode's request params.
+    const modelConfiguration = (options as any).modelConfiguration as Record<string, unknown> | undefined;
+    const selectedMode = typeof modelConfiguration?.reasoningEffort === 'string'
+      ? modelConfiguration.reasoningEffort
+      : undefined;
+    this.trackModeSelection(model.id, selectedMode);
 
     await runChatResponse(
       {

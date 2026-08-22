@@ -164,4 +164,53 @@ describe('clearCache (invalidation + change event)', () => {
     expect(silent.map(model => model.id)).toEqual(['new']);
     expect(client.getConfigCached).toHaveBeenCalledTimes(2);
   });
+
+  it('does not cache a discovery result invalidated by a MODE SWITCH while in flight (finding 2)', async () => {
+    // The mode-switch path (trackModeSelection) must invalidate an in-flight
+    // discovery exactly like clearCache does — otherwise stale metadata (old
+    // output budget) could be restored after the switch. This pins the
+    // generation-increment in trackModeSelection specifically.
+    const modelWithModes = {
+      models: [{ id: 'm1', serverUrl: server, family: 'test-family', modelModes: { Think: { max_tokens: 8000 }, Fast: {} } }],
+      enableFileLogging: false,
+    } as VllmConfig;
+
+    let resolveOldContext!: (value: { contextWindow: number }) => void;
+    const oldContext = new Promise<{ contextWindow: number }>(resolve => {
+      resolveOldContext = resolve;
+    });
+
+    const client = fakeClient({
+      getConfigCached: vi.fn(async () => modelWithModes),
+      getModelContextWindow: vi.fn()
+        .mockImplementationOnce(() => oldContext)   // first (in-flight) discovery blocks
+        .mockResolvedValue({ contextWindow: 8192 }), // re-discovery resolves
+      chatCompletionStream: async function* () {},    // request completes without error
+    });
+    const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+
+    // Start discovery #1 (mode not yet selected → baseline, no re-registration).
+    const pending = provider.provideLanguageModelChatInformation({ silent: false }, makeToken());
+    await vi.waitFor(() => expect(client.getModelContextWindow).toHaveBeenCalledTimes(1));
+
+    // Mode switch: fires the re-registration path (increments generation, clears cache).
+    await provider.provideLanguageModelChatResponse(
+      { id: 'm1', maxOutputTokens: 4096, maxInputTokens: 4096 } as any,
+      [{ content: [] }] as any,
+      { modelConfiguration: { reasoningEffort: 'Think' } } as any,
+      { report: vi.fn() } as any,
+      makeToken(),
+    );
+
+    // Resolve the STALE in-flight discovery — it must NOT be cached.
+    resolveOldContext({ contextWindow: 8192 });
+    const stale = await pending;
+    // The generation was bumped by the mode switch, so the in-flight result is
+    // discarded; the provider loops and re-discovers with the mode's budget.
+    expect(stale.map(model => model.id)).toEqual(['m1']);
+    expect(stale[0].maxOutputTokens).toBe(8000); // re-discovery used the selected mode budget
+    // A subsequent silent call serves the FRESH metadata, not the stale pre-switch one.
+    const silent = await provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+    expect(silent[0].maxOutputTokens).toBe(8000);
+  });
 });

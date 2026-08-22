@@ -44,14 +44,14 @@ The only global settings are diagnostics and logging (`vllm-copilot.systemMessag
 For any request, parameters merge from lowest to highest priority:
 
 ```
-built-in defaults → model defaultParams → the selected modelModes entry
+server defaults (unset params omitted) → model defaultParams → the selected modelModes entry
 ```
 
 So a model can define a baseline in `defaultParams` and switch between named presets (modes) on top of it from the model picker.
 
 ### 3. The context window is never guessed
 
-Each backend's context window is read from its own documented endpoint (see the [backend table in the Configuration Reference](configuration-reference.md#backend-specific-context-resolution)). `maxInputTokens` is computed as `window − maxOutputTokens`, and can only be clamped further. A model whose backend reports no valid window is refused rather than served with a made-up budget.
+Each backend's context window is read from its own documented endpoint (see the [backend table in the Configuration Reference](configuration-reference.md#backend-specific-context-resolution)). `maxInputTokens` is computed as the window minus the **effective output budget** (the resolved `max_tokens`: a selected `modelModes` entry, else `defaultParams.max_tokens`, else `maxOutputTokens`), and can only be clamped further. A model whose backend reports no valid window is refused rather than served with a made-up budget.
 
 ---
 
@@ -128,7 +128,7 @@ The **Add vLLM Server & Model** command generates this automatically. A minimal 
 
 ### vLLM-specific request controls
 
-These are sent as vLLM request-body parameters (configured in `defaultParams` or `modelModes`) and are not exposed by the BYOK Custom Endpoint: `structured_outputs`, `bad_words`, `repetition_detection`, `chat_template_kwargs`, `thinking_token_budget`, `stop_token_ids`, `ignore_eos`, `min_tokens`, `truncate_prompt_tokens`, `skip_special_tokens`, `include_stop_str_in_output`, `allowed_token_ids`. Each is described in the [README](../README.md#vllm-request-controls) and the [Configuration Reference](configuration-reference.md).
+These are sent as vLLM request-body parameters (configured in `defaultParams` or `modelModes`) and are not exposed by the BYOK Custom Endpoint: `top_k`, `min_p`, `repetition_penalty`, `length_penalty`, `spaces_between_special_tokens`, `structured_outputs`, `bad_words`, `repetition_detection`, `chat_template_kwargs`, `thinking_token_budget`, `stop_token_ids`, `ignore_eos`, `min_tokens`, `truncate_prompt_tokens`, `skip_special_tokens`, `include_stop_str_in_output`, `allowed_token_ids`. Each is described in the [README](../README.md#vllm-request-controls) and the [Configuration Reference](configuration-reference.md).
 
 ---
 

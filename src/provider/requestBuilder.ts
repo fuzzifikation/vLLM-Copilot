@@ -7,6 +7,7 @@ import {
   resolveModelSettings,
   resolveRequestParams,
   resolveServerType,
+  resolveMaxTokensForRequest,
   type VllmConfig,
   type ServerType,
 } from '../config.js';
@@ -114,11 +115,21 @@ export function buildRequest(
       : {}),
   };
 
-  // Re-assert max_tokens after layering so a stray `max_tokens` in defaultParams
-  // or a mode entry cannot override the safety-critical output budget derived
-  // from the server's context window (deriveTokenBudget). Same pattern as
-  // tools/tool_choice above — these must always win.
-  mergedOptions.max_tokens = model.maxOutputTokens;
+  // Re-assert max_tokens after layering so the output budget is ALWAYS owned by
+  // the model config: a user-configured max_tokens in defaultParams or the
+  // selected mode is honored but clamped to the ADVERTISED model.maxOutputTokens
+  // (which already embeds the context-window reservation + the server-reported
+  // output ceiling via deriveTokenBudget). The wire therefore never exceeds what
+  // Copilot was told — ceiling-safe, and Option A: an up-switch to a larger mode
+  // budget takes effect on the NEXT request once metadata re-registers, while
+  // down-switches are instant. Copilot's runtime modelOptions.max_tokens is
+  // ignored — the budget is owned by the model config.
+  mergedOptions.max_tokens = resolveMaxTokensForRequest(
+    override,
+    selectedMode,
+    model.maxOutputTokens,
+    (model.maxInputTokens || 0) + (model.maxOutputTokens || 0),
+  );
 
   // OpenRouter provider pinning: when the model is OpenRouter and the user has
   // selected a provider (the exact `tag` from the endpoints API), force routing
