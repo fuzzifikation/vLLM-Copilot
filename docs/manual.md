@@ -263,7 +263,7 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 | [Token & Cost Usage Tracker](usage.md) | Usage/cost data model, persistence, retention, reset behavior. |
 | [Using OpenRouter](openrouter.md) | OpenRouter setup, URL table, manual config, attribution headers. |
 | [Custom System Prompt / Personality Presets](custom-system-prompt.md) | System-prompt capture & replace pipeline. |
-| [Auto-Continue](auto-continue.md) | Empty/truncated response retry design. |
+| [Auto-Continue](auto-continue.md) | Empty/truncated response retry — how it works, config, and known limitations. |
 | [Copilot integration](copilot-integration.md) | How the extension plugs into Copilot, sessions, tool calls. |
 
 **Maintainer-only docs:** [OpenRouter architecture](../openrouter-integration.md) · [Third-party compatibility plan](thirdparty-compatibility-plan.md) · [SGLang compat plan](sglang-compat-plan.md) · [Feature ideas](feature-ideas.md) · [Code review](code-review.md).
