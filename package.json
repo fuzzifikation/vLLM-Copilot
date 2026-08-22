@@ -1,7 +1,7 @@
 {
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
-  "description": "vLLM integration to GitHub Copilot for professional (and self-hosted) servers (supports full featureset of vLLM and Copilot). Live observability: queue status, KV-cache, throughput, etc and full UI (dashboard). Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
+  "description": "vLLM integration to GitHub Copilot for professional (and self-hosted) servers (supports full featureset of vLLM and Copilot). No subscription, no data sent to third parties. Live observability: queue status, KV-cache, throughput, etc and full UI (dashboard). Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
   "version": "1.32.3",
   "type": "module",
   "license": "MIT",
