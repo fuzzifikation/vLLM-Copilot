@@ -1,161 +1,67 @@
-# Auto-Continue: Implementation Plan
+# Auto-Continue
 
-**Created:** 2026-06-24
-**Updated:** 2026-08-21 (matches current behavior; extension version 1.32.x)
-**Status:** ✅ Implemented, compiled, tests pass
+Auto-continue recovers from **empty or truncated model responses** automatically. When a model thinks but produces no answer — or stops mid-sentence on a trailing colon — the extension retries the request up to `autoContinueRetries` times using assistant prefill / vLLM continuation, so you get a real response instead of a blank one. Shipped and on by default (`autoContinueRetries` defaults to `1`).
 
 ---
 
-## Ecosystem Research: Does This Exist Anywhere?
+## What it fixes
 
-Searched across vLLM, OpenAI, LangChain, Microsoft AutoGen, and the broader ecosystem. Key findings:
+Some models — most notably Qwen-family reasoning models — occasionally return an incomplete response:
 
-### vLLM (server side)
-**Nothing exists.** vLLM is an inference engine — it generates tokens until `finish_reason` triggers. It has no concept of "the response is incomplete, retry." The decision to retry belongs to the client. vLLM does have one related note in its Responses API serving code:
+1. **Thinking → stop:** the model produces reasoning tokens, then `finish_reason: stop` with zero text content. It thought, but never answered.
+2. **Tool result → thinking → stop:** after Copilot executes tool calls and sends results back in a new turn, the model again produces only reasoning and no text response.
 
-```python
-# Skip empty string input when previous_input_messages supplies
-# the full conversation history --- an empty trailing user message
-# confuses the model into thinking nothing was sent.
-```
+Without auto-continue these would surface as a ⚠️ "model produced only reasoning tokens" warning (or a silent `\n` to dodge VS Code's "no response returned" popup). With it, the extension retries transparently and you get your answer.
 
-This is the opposite problem — vLLM warns against empty user messages confusing the model. Our approach (empty assistant prefill) is a different pattern and not addressed by vLLM.
-
-### OpenAI (API / docs)
-**Assistant prefill is documented and supported.** Ending the `messages` array with a partial `assistant` message causes the model to continue from that prefix. This is the well-known mechanism we're leveraging. However, OpenAI has no documented pattern for *automatically* retrying empty responses — their platform rarely produces empty responses in the first place (the problem is local/self-hosted models).
-
-### LangChain
-**Nothing.** No auto-retry on empty responses. LangChain has generic retry decorators for transient errors (network, rate limits) but no logic for detecting or recovering from semantically incomplete model outputs (thinking with no answer).
-
-### Microsoft AutoGen
-**Nothing.** AutoGen handles multi-agent conversation orchestration and tool loops, but has no mechanism for detecting empty responses or auto-continuing within a single agent turn.
-
-### Conclusion
-**This pattern does not exist in the ecosystem.** The combination of (1) detecting an empty response after reasoning and (2) auto-retrying with assistant prefill is novel. The building blocks exist separately (assistant prefill in OpenAI API, reasoning parsers in vLLM), but no one has wired them together for this use case. This makes sense — the problem is specific to local self-hosted reasoning models where the thinking/output split can misfire.
+A third "empty" case — the model produces nothing at all (no reasoning, no content, no tool calls) — indicates a server/configuration problem, not an incomplete response. Auto-continue does **not** apply there.
 
 ---
 
-## Problem
+## How it works
 
-The extension frequently receives empty responses from the model in two distinct but related scenarios:
+### Trigger conditions
 
-1. **Thinking → stop:** The model produces reasoning/thinking tokens, then `finish_reason: stop`, and zero text content. The model thought but did not answer.
-
-2. **Tool result → thinking → stop:** After Copilot executes tool calls and sends results back in a new turn, the model again produces only reasoning and no text response.
-
-These are unambiguously incomplete. The current handling is:
-
-- Scenario 1: Shows a `⚠️` warning message to the user ("model produced only reasoning tokens — try again").
-- Scenario 2: Emits a `\n` to avoid the VS Code "no response returned" error popup. Silent, invisible to the user.
-
-Both are workarounds. Neither helps the user get an actual response.
-
-A third "empty" case exists — model produces nothing at all (no reasoning, no content, no tool calls) — but this indicates a server/configuration issue, not an incomplete response. Auto-continue does not apply there.
-
----
-
-## Proposed Solution
-
-When an empty response is detected in scenarios 1 or 2, automatically retry the request up to `autoContinueRetries` times using **assistant prefill**: append the partial assistant turn (empty content) to the message history and re-send to vLLM. The model is then in its own response turn and should generate content.
-
-This all happens within a single `provideLanguageModelChatResponse` call, invisible to Copilot. The `progress` reporter is shared across both attempts, so Copilot sees one continuous stream.
-
-This is a well-established pattern in the OpenAI Chat Completions API (and vLLM's implementation): ending the `messages` array with a partial `assistant` message causes the model to continue completing it, rather than starting fresh.
-
----
-
-## Retry Count
-
-- Default is `1`. Most transient empty responses resolve on the first retry.
-- User can increase if their model is particularly prone to empty responses, or set to `0` to disable entirely.
-- Each retry adds a full round-trip: resending the entire message history plus vLLM thinking time. On slow models this is expensive.
-
----
-
-## Trigger Conditions
-
-Auto-continue fires when ALL of the following are true after `consumeStream` returns:
+Auto-continue fires when **all** of the following hold after the stream completes:
 
 ```
 (!hadContent || (endsWithColon && serverType === 'vllm'))   // no content, OR ends with ':' on vLLM (truncated mid-sentence)
 && finishReason === 'stop'          // model explicitly chose to stop
 && !hadToolCalls                    // a pure tool-call turn is complete — never retried
-&& autoContinueRetries > 0          // per-model setting, default 1
-&& currentAttempt < autoContinueRetries
+&& attempt < maxRetries             // still have budget (maxRetries = autoContinueRetries)
 ```
 
-Note: `!hadToolCalls` is **not** redundant. In the OpenAI/vLLM convention, `finish_reason: 'stop'` *after* a tool call means "done, here's my tool call" — a pure tool-call turn is a complete turn and must not be retried. The guard is deliberate.
+The `!hadToolCalls` guard is deliberate, not redundant: in the OpenAI/vLLM convention, `finish_reason: 'stop'` *after* a tool call means "done, here's my tool call" — a pure tool-call turn is a complete turn and must not be retried.
 
-Colon-continuation retries are **vLLM-only**: secondary backends always retry in nudge mode. Empty-response nudges remain backend-agnostic.
+Excluded by design: `content_filter` (blocked content), `finish_reason: 'length'` (token limit — different fix, still shows the truncation warning), and a null/missing finish reason (abnormal stream end — connection issue).
 
-This covers both scenario 1 (reasoning with no answer) and scenario 2 (tool result received, model says nothing). It excludes `content_filter` (blocked), `length` (token limit — different fix), and `null`/missing finish reason (stream ended abnormally — connection issue).
+### Two retry shapes
 
-Two distinct triggers, each with its own request shape:
+1. **Empty response** (no content): retried with an **empty assistant prefill** (`{role: 'assistant', content: ''}`) under the default chat-template flags — a harmless "nudge" since nothing was streamed yet. Works on every backend.
+2. **Truncated mid-sentence** (content ends with `:`): genuinely **continues** the already-streamed text. The full buffered content becomes the assistant prefill and the request goes out in vLLM **continuation mode** (`continue_final_message: true`, `add_generation_prompt: false`), so the model resumes the open assistant message and returns only NEW tokens. Without it, vLLM would close the prefill as a finished turn and regenerate — duplicating what Copilot already saw.
 
-1. **Empty response** (no content): retry with an empty `assistant` prefill under the default chat-template flags. vLLM starts a fresh assistant turn — a harmless "nudge" since nothing was streamed yet.
-
-2. **Truncated mid-sentence** (content ends with `:`): genuinely CONTINUE the text already streamed. Uses vLLM's continuation mode (`continue_final_message: true`, `add_generation_prompt: false`) so the model resumes the open assistant message and returns only NEW tokens. Without it, vLLM closes the prefill as a finished turn and regenerates — duplicating what Copilot already saw.
-
----
-
-## Setting
-
-A per-model integer in `vllm-copilot.models`: `autoContinueRetries`, default `1`.
-
-- `0` = disabled. Behavior reverts exactly to current: warning message or `\n` hack.
-- `n` = up to n retry attempts using assistant prefill before giving up.
-- Resolved via `resolveModelSettings()` which reads the per-model value against `DEFAULT_MODEL_SETTINGS.autoContinueRetries`.
+Colon-continuation retries are **vLLM-only**: `continue_final_message` is what lets the server resume an open assistant turn. Secondary backends (llama.cpp, LM Studio, Ollama, OpenRouter) always retry empty-style — a colon retry there would drop the already-streamed text, nudge with an empty message, and produce a disjoint fresh answer (or a reject). Empty-response nudges are backend-agnostic.
 
 ---
 
-## Mechanism: Assistant Prefill
+## Configuration
 
-The retry loop lives in `runChatResponse` in `src/provider/streamOrchestrator.ts` as a `for` loop from `attempt = 0` to `attempt <= maxRetries`:
+A per-model integer in `vllm-copilot.models`:
 
-1. **First iteration (attempt 0):** Normal request — no special handling.
-2. **Subsequent iterations:** Before each retry, append `{role: 'assistant', content: ''}` to `openaiMessages`, call `resetOutcome()` (a module function in `src/provider/outcome.ts`) to zero all `StreamOutcome` fields, and log the retry to the output channel.
-3. After each `consumeStream`, check trigger (see above). If true, loop continues. If false, break.
-4. After the loop exits (success or exhaustion), run `reportPostStreamDiagnostics` with `actualAttempts` (the count actually made) so it knows how many attempts happened.
+```json
+"autoContinueRetries": 1
+```
 
-Key design decisions:
-- No changes to `consumeStream` — keeping it simple. No accumulated text tracking needed for the current use case.
-- `reportPostStreamDiagnostics` receives `actualAttempts` to format attempt counts in diagnostics.
+- `0` = disabled (behavior reverts to the ⚠️ warning / `\n` fallback).
+- `n` = up to `n` retry attempts using assistant prefill/continuation before giving up.
+- Default `1` — most transient empty responses resolve on the first retry.
 
----
-
-## Implementation
-
-### `src/config.ts`
-- Added `autoContinueRetries: number` to `ModelConfig` interface (per-model).
-- Resolved via `resolveModelSettings()` against `DEFAULT_MODEL_SETTINGS.autoContinueRetries` (default `1`).
-
-### `package.json`
-- Configuration is now per-model within `vllm-copilot.models`:
-  ```json
-  "autoContinueRetries": {
-    "type": "number",
-    "default": 1,
-    "markdownDescription": "How many times to automatically retry when the model returns an empty or truncated response..."
-  }
-  ```
-
-### `src/provider/streamOrchestrator.ts`
-
-**`runChatResponse`:**
-- `openaiMessages` built once via `buildRequest`, then mutated in-place by retry loop.
-- `for (let attempt = 0; attempt <= maxRetries; attempt++)` wraps the stream call.
-- On retry: push prefill message, reset outcome (module function `resetOutcome` in `src/provider/outcome.ts`), log attempt number.
-- Break on first non-empty response or when `attempt >= maxRetries`.
-
-**`reportPostStreamDiagnostics`** (in `src/provider/postStream.ts`): receives `actualAttempts`. Two paths:
-1. **Genuine empty response:** Single diagnostic line. Attempt count folded into the message when `totalAttempts > 1`. ⚠️ warning in chat with contextual hint.
-2. **Graceful connection termination:** Emits a `\n` so the response doesn't end mid-stream; an exhausted empty response surfaces the ⚠️ "model returned no output" diagnostic.
+Each retry is a full round-trip: the entire message history is re-sent plus the model's thinking time. On slow models this is expensive, so raise it only if your model is especially prone to empty responses. Negative or fractional values are rejected by config validation (must be a finite integer ≥ 0).
 
 ---
 
-## Logging
+## What you see
 
-The output channel should clearly indicate each retry:
+Retries are transparent. If any attempt produces content, you see only that content — no indication a retry happened. The ⚠️ warning appears only after **all** retries are exhausted. The output channel shows the retry log:
 
 ```
 [INFO] qwen3-27b: empty response — retrying with assistant prefill (attempt 2/3)
@@ -163,20 +69,25 @@ The output channel should clearly indicate each retry:
 [WARN] qwen3-27b: empty response after 3 attempts — giving up. Check model configuration.
 ```
 
-The `⚠️` warning message in chat only fires after all retries are exhausted. If any retry produces content, the user sees only the content — no indication a retry occurred (it is transparent).
+Post-stream diagnostics receive the actual attempt count, so the failure message tells you how many attempts were made.
 
 ---
 
-## What Stays the Same
+## Implementation
 
-- **Server error case** (no reasoning, not after tool, not length/filter) — no change, still shows the diagnostic warning immediately.
-- **`finish_reason: length` with partial content** — no change, still shows the truncation warning. Auto-continue for this case is deferred (would need token budget recalculation, different problem).
-- **`consumeStream`** — unchanged. No accumulated text tracking needed for current scope.
+- **Retry loop:** `runChatResponse` in `src/provider/streamOrchestrator.ts` — a `for` loop from `attempt = 0` to `attempt <= maxRetries`. Iteration 0 is the normal request; each subsequent iteration appends the (growing) assistant prefill to `openaiMessages`, calls `resetOutcome()` (in `src/provider/outcome.ts`) to zero all `StreamOutcome` fields, and logs the retry.
+- **Continuation flags:** vLLM-only; injected into the request body in `streamOrchestrator.ts` (`continue_final_message: true`, `add_generation_prompt: false`) and stripped for non-vLLM backends in `src/provider/chatProtocol.ts`.
+- **Config:** `autoContinueRetries` on `ModelConfig` (`src/config.ts`), resolved by `resolveModelSettings()` against `DEFAULT_MODEL_SETTINGS.autoContinueRetries` (default `1`), floored and validated (finite integer ≥ 0). Schema declared per-model in `package.json`.
+- **Diagnostics:** `reportPostStreamDiagnostics` in `src/provider/postStream.ts` receives `actualAttempts` to fold attempt counts into user-facing hints.
+- **Tests:** `test/providerAutoContinue.test.ts` (empty-prefill nudge, colon continuation, non-vLLM colon no-op, no-retry-on-length, budget exhaustion).
 
 ---
 
-## What This Does Not Solve
+## Known limitations
 
-- **Stop mid-sentence:** `finish_reason: stop` with some content that "looks" incomplete. Not detectable without heuristics. Requires a manual user-triggered "Continue" command (separate feature).
-- **Persistent reasoning loops:** If a model consistently thinks and produces nothing, retries won't fix it. The root cause is model configuration (thinking token budget too low, wrong reasoning parser, model mode mismatch). Auto-continue buys a few more chances; after exhausting retries, the diagnostic message should guide the user.
-- **Tool-call continuation within a turn:** If the model stops after making tool calls, Copilot executes the tools and calls us again in a new turn. That is handled by the existing flow, not by auto-continue.
+- **Stop mid-sentence with plausible content:** `finish_reason: stop` with content that merely *looks* incomplete isn't detectable without heuristics; a manual "Continue" command is a separate, unimplemented feature.
+- **Persistent reasoning loops:** if a model consistently thinks and produces nothing, retries won't fix it — the root cause is model configuration (thinking token budget too low, wrong reasoning parser, mode mismatch). Auto-continue buys a few more chances; after exhaustion, the diagnostic message guides you.
+- **Tool-call continuation within a turn:** a model stopping after tool calls is a *complete* turn. Copilot executes the tools and starts a new turn, which the existing flow handles — not auto-continue.
+- **`finish_reason: length` with partial content:** still shows the truncation warning; auto-continue deliberately does not cover this (would need token-budget recalculation).
+
+**Related:** [Manual → Reliability & tooling](manual.md) · [README](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/README.md).
