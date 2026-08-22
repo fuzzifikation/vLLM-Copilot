@@ -149,15 +149,20 @@ export interface VllmConfig {
 /**
  * Built-in base request params. Layered under model `defaultParams` and mode params.
  *
+ * Deliberately EMPTY — a DELIBERATE behavior change (previously forced
+ * temperature 1.0 / top_p 1.0 on every request). When a sampling parameter is
+ * not configured anywhere, it is omitted so each backend's OWN default applies:
+ * vLLM reads the model's generation_config.json, and OpenRouter / LM Studio /
+ * llama.cpp / Ollama use their native defaults. A model whose generation config
+ * sets non-default sampling will now behave differently than the old forced
+ * 1.0/1.0. This is intentional — do not restore hard-coded values here.
+ *
  * NOTE: repetition_detection was removed from defaults because the n-gram detector
  * (min_pattern_size: 2, min_count: 3) triggers on structured output like XML tables,
  * JSON arrays, and code loops — not just actual repetition loops.
  * Users who want it can enable it per-model via defaultParams in their config.
  */
-export const DEFAULT_REQUEST_PARAMS: Record<string, unknown> = {
-  temperature: 1.0,
-  top_p: 1.0,
-};
+export const DEFAULT_REQUEST_PARAMS: Record<string, unknown> = {};
 
 /** Built-in defaults for per-model token/transport settings. */
 export const DEFAULT_MODEL_SETTINGS = {
@@ -203,6 +208,53 @@ export function resolveRequestParams(
     Object.assign(merged, override.modelModes[selectedMode]);
   }
   return merged;
+}
+
+/**
+ * Resolve the user-configured output budget (`max_tokens`), if any.
+ *
+ * Layering: `modelModes[selectedMode].max_tokens` > `defaultParams.max_tokens`.
+ * Returns `undefined` when neither is a finite number so callers fall back to
+ * the model-wide budget. This is the SINGLE source of truth for which
+ * `max_tokens` the user configured — the wire (resolveMaxTokensForRequest) and
+ * the advertised metadata (discovery) must both use it so the Copilot
+ * context-window bar never disagrees with the request.
+ */
+export function resolveConfiguredMaxTokens(
+  override: ModelConfig | undefined,
+  selectedMode: string | undefined,
+): number | undefined {
+  const modeTokens = selectedMode ? override?.modelModes?.[selectedMode]?.max_tokens : undefined;
+  const defaultTokens = override?.defaultParams?.max_tokens;
+  const tokens = typeof modeTokens === 'number' ? modeTokens : typeof defaultTokens === 'number' ? defaultTokens : undefined;
+  return typeof tokens === 'number' && Number.isFinite(tokens) ? Math.max(1, Math.floor(tokens)) : undefined;
+}
+
+/**
+ * Resolve the effective `max_tokens` for a request.
+ *
+ * The budget NEVER exceeds the model's advertised `modelMaxOutputTokens` — the
+ * value already clamped by `deriveTokenBudget` to the context window and the
+ * server-reported output ceiling (e.g. OpenRouter per-request limits). This
+ * makes the wire ceiling-safe and implements Option A: after switching to a mode
+ * with a larger `max_tokens`, the first request is capped by the still-advertised
+ * (smaller) budget until metadata re-registers; down-switches (configured <
+ * advertised) are honored immediately. A mode switching to a smaller budget is
+ * therefore never delayed, and the wire can never exceed what Copilot was told.
+ *
+ * Copilot's runtime `modelOptions.max_tokens` is deliberately NOT consulted —
+ * the output budget is owned by the model config; the caller re-asserts this
+ * value after layering so Copilot's UI value never reaches the wire.
+ */
+export function resolveMaxTokensForRequest(
+  override: ModelConfig | undefined,
+  selectedMode: string | undefined,
+  modelMaxOutputTokens: number,
+  modelContextWindow: number,
+): number {
+  const requested = Math.min(resolveConfiguredMaxTokens(override, selectedMode) ?? modelMaxOutputTokens, modelMaxOutputTokens);
+  const window = modelContextWindow > 0 ? modelContextWindow : modelMaxOutputTokens;
+  return Math.min(requested, Math.max(1, window - 1));
 }
 
 /** Resolve typed per-model token/transport settings against the built-in defaults. */

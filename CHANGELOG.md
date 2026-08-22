@@ -1,392 +1,225 @@
 # Changelog
 
-## v1.32.2 — OpenRouter provider selection, dashboard details & review hardening
+## v1.32.3 — Ask Copilot to configure your models; per-mode response limits
 
 ### Added
 
-- **Certificate errors surface a suggestion** — when an error looks like a certificate problem (chat, **Test & Refresh Models**, **Add Server**), the extension suggests running **Diagnose Connection** and mentions VS Code's `http.systemCertificatesNode: true` setting as a conditional step (only helpful when the certificate is valid and already trusted by your OS). The dead-end `http.proxy`/`http.proxyStrictSSL` advice is gone.
-- **OpenRouter provider selection** — Model Settings has a Provider dropdown per OpenRouter model (Auto, or pin a specific provider from the model's list).
-- **OpenRouter routing mode** — Model Settings has a Routing dropdown per OpenRouter model (Standard / Nitro / Exacto), active when routing is Auto.
-- **Dashboard: OpenRouter model details** — each model node shows its provider (with status + uptime), per-1M pricing, and total context; the Account node shows Invested Total / Available and usage over time.
-- **Per-provider limits + pricing in the Provider dropdown** — each option shows the provider's context window, output cap, and per-1M cost (exact numbers on hover); the dashboard Provider row shows the pinned provider's own limits.
-- **Attention icon on a clamped output budget** — when any binding constraint (catalog ceiling or pinned provider cap) pushes effective output below the configured `maxOutputTokens`, the model node shows a yellow alert with an explanatory tooltip.
-
-### Fixed
-
-- **Server errors state the HTTP code and the server's real message** — e.g. `Server error [402]. This request requires more credits, or fewer max_tokens…` — instead of a generic "vLLM server problem" or raw JSON. No backend-specific wording, and the message is no longer cut off.
-- **Per-model credentials are respected as server identity** — models sharing a URL with different auth are separate logical servers: Model Settings probes each identity with its own headers, the Dashboard shows each as its own node, and Deep-Dive uses the exact tree-item credentials (never the first model's). Auto-Configure keeps the selected identity when adding an unconfigured server model.
-- **OpenRouter models with a full-window output cap no longer fail every request** — the output budget is capped to leave input headroom.
-- **OpenRouter models without a reported output cap no longer return nothing** — output falls back to 10% of the context window instead of the full window (which 400'd).
-- **OpenRouter Provider dropdown no longer stuck on "only Auto"** — the provider list lookup was 404-ing; it loads now.
-- **Selecting "Auto" in the Provider dropdown actually clears the pinned provider** instead of storing an empty value.
-- **OpenRouter's real error reason is no longer discarded** — mid-stream and non-streaming error bodies are searched for `error.metadata.raw` (and other nested message fields), so users see the actual provider reason instead of only a terse `Provider returned error`.
-- **Negative actual costs are rejected** — invalid server data no longer subtracts from the all-time/today cost totals.
-- **Diagnose Connection no longer prints proxy credentials** — proxy/server URLs are credential-redacted in the shareable report, and `NODE_TLS_REJECT_UNAUTHORIZED` is now actually collected.
-- **TLS diagnostics no longer overclaim** — a transport mismatch is reported as a possible trust-store difference, not a proven incomplete chain, and the `http.systemCertificatesNode` suggestion is conditional.
-- **Invalid `http.proxySupport` value removed from advice** — suggests the valid `override` / `fallback` values instead of the nonexistent `override-default`.
-- **OpenRouter provider lists use one shared cache** — the dashboard and Model Settings read the same per-session provider list (no duplicated fetches, no orphaned 10s requests behind a 2s race), and a failed refresh keeps serving the last-known provider data instead of discarding it.
+- **Ask Copilot to configure your model** — in chat, just say *"configure my Qwen3.6 with Think / No Think modes"* and Copilot writes a valid model entry for you. If it doesn't pick up the schema on its own, type `#vllmModelSchema` to attach it. No files are created.
+- **Per-mode response limits** — each model mode can set its own output ceiling (e.g. `"Think": { "max_tokens": 32768 }`). The extension sends it and updates Copilot's context bar when you switch modes.
+- **New Manual & OpenRouter guides** — and a restructured README that no longer repeats itself or stale facts.
 
 ### Changed
 
-- **Dead TLS workarounds removed** — the Windows `NODE_EXTRA_CA_CERTS` intermediate-export auto-fix, the "ask your server admin to fix the chain" advice, and the `http.proxy`/`http.proxyStrictSSL` suggestions are gone. Certificate errors now suggest **Diagnose Connection** and mention `http.systemCertificatesNode: true` conditionally.
-- **Prices and token counts render consistently in every locale** (US decimal/grouping) instead of locale-dependent `$0,66` / `1.000.000`.
-- **OpenRouter Add flow simplified** — asks only for the API key; pasting a model-page URL skips the picker.
-- **Dashboard cost shows today and/or total** as reported, instead of an invented per-day window rate.
-- **Model Settings layout** — `serverType` sits next to the server (general → specific), instead of buried below the model's fields.
-- **OpenRouter catalog metadata is public** — the `/v1/models` lookup is unauthenticated, so per-model headers are no longer threaded through it.
-- **OpenRouter per-token → per-1M pricing conversion consolidated** — one shared helper (`perMillion`) feeds both the normalized model's `cost` and the onboarding picker display (no behavior change).
-- **`VllmClient` responsibilities split without changing its provider API** — runtime metadata resolution, wire validation/body adaptation, and streaming transport now have focused owners; `VllmClient` remains the configuration-cache façade.
+- **Server-native sampling by default** — hard-coded `temperature`/`top_p` are no longer forced on every request. Unset sampling params are left to your backend (vLLM uses the model's `generation_config.json`).
+
+### Fixed
+
+- **Outdated docs** — README, configuration reference, and manual now match how the extension actually behaves.
+
+## v1.32.2 — OpenRouter provider selection & dashboard details
+
+### Added
+
+- **Pin an OpenRouter provider per model** — pick Auto or a specific provider from the model's list; a routing mode (Standard / Nitro / Exacto) applies when Auto.
+- **Richer OpenRouter dashboard** — each model shows its provider (status + uptime), per-1M pricing, and total context; the Account node shows invested/available credits and usage over time.
+- **Provider limits at a glance** — the Provider dropdown shows each option's context window, output cap, and per-1M cost; a warning icon flags when a cap shrinks your output budget.
+
+### Fixed
+
+- **Clearer server errors** — you now see the HTTP code and the server's real message (e.g. `Server error [402] … fewer max_tokens`) instead of a generic failure.
+- **Per-model credentials respected** — models sharing a URL with different auth behave as separate servers everywhere (Model Settings, Dashboard, Deep-Dive).
+- **OpenRouter output caps** — models capped at the full window no longer fail every request; models without a reported cap fall back to a sensible 10% of the window instead of returning nothing.
+- **Provider dropdown works** — no more stuck-on-Auto; choosing Auto actually clears a pinned provider.
+- **Real error reasons shown** — OpenRouter's underlying provider message is surfaced instead of a generic `Provider returned error`.
+- **Cost tracking hardened** — negative/invalid values no longer distort your totals.
+- **Diagnostics don't leak credentials** — proxy/server URLs are redacted in the shareable report.
+
+### Changed
+
+- **Consistent numbers everywhere** — prices and token counts render with US formatting regardless of locale.
+- **Faster OpenRouter setup** — just paste the API key; a model-page URL skips the picker.
+- **Simpler TLS advice** — dead workarounds removed; certificate errors point you to **Diagnose Connection**.
 
 ## v1.32.0 — OpenRouter backend & configurable first-response timeout
 
 ### Added
 
-- **OpenRouter** — add any of ~415 cloud models in a few clicks (server URL → API key → model pick). Real context window, output ceiling, tool calling, pricing, and reasoning modes are resolved automatically; the dashboard tracks your actual spend.
-- **Reasoning modes reflect what each model supports** — one Think mode per effort level, plus No Think where available.
-- **Per-model `initialResponseTimeoutMs`** — how long the server may take to start responding before the request is aborted. Default 10 minutes; `0` = wait indefinitely.
-- **Dashboard is first-class for every backend** — no more `(degraded)`; only rows a backend actually reports are shown, and each model's context window comes from its own endpoint (with retry on transient failures).
-- **Deep-Dive is vLLM-only** — hidden on non-vLLM servers.
+- **OpenRouter** — add any of ~415 cloud models in a few clicks. Context window, output ceiling, tool calling, pricing, and reasoning modes are resolved automatically; the dashboard tracks your actual spend.
+- **Reasoning modes reflect the model** — one Think mode per effort level, plus No Think where supported.
+- **Per-model first-response timeout** — how long the server may take to start answering before the request aborts (default 10 min; `0` = wait forever).
+- **Dashboard works for every backend** — no more `(degraded)`; each backend shows only the rows it can actually report.
+- **Deep-Dive is vLLM-only** — hidden on other backends.
 
 ### Fixed
 
-- **First-response timeout error is actionable** — explains the server didn't respond in time and points to the per-model timeout setting, instead of a raw technical error.
+- **Actionable timeout error** — explains the server didn't respond in time and points to the timeout setting.
 
-## v1.31.0 — Pooled output/prefill speed & hardened metrics parsing
+## v1.31.0 — Honest speed numbers & sturdier metrics
 
 ### Added
 
-- **Dashboard Speed row** — pooled output & prefill throughput replacing the ITL-derived `Throughput` row. `Output` = Σ `request_generation_tokens` / Σ `request_decode_time_seconds`; `Prefill` = Σ `request_prompt_tokens` / Σ `request_prefill_time_seconds` (tok/s). The pooled ratios count every emitted token, so MTP/spec-decoded output rates are honest (ITL recorded one sample per engine step and undercounted); decode-time denominator excludes prefill. Falls back to TPOT inversion when the source metrics are absent.
+- **Dashboard Speed row** — pooled output & prefill throughput (tok/s), counting every token including speculative decoding. More honest than the old per-step estimate.
 
 ### Fixed
 
-- **Deep-dive histogram parsing** — `parseRawMetrics` misclassified every histogram family's `_sum` as a gauge and `_count` as a counter (string-suffix heuristics). The `# TYPE` line is now authoritative; `_sum`/`_count`/`_bucket` samples resolve to the histogram family correctly.
+- **Deep-dive histogram parsing** — metrics families are classified correctly, so the numbers you see are real.
 
-### Changed
-
-- **OpenRouter prep (no behavior change):** the shared context resolver was widened — `resolveContextWindow(): Promise<number>` became `resolveRuntimeLimits(): Promise<RuntimeModelLimits>` (`{ contextWindow; maxOutputTokens? }`, `src/types.ts`). All four existing backends return `{ contextWindow }` with no output ceiling. `deriveTokenBudget()` gained an optional `reportedMaxOutputTokens` clamp (0/negative degrades to 1 token; `NaN` ignored); `buildModelInfo()` threads it through. Existing backends pass `undefined`, so budgets are bit-identical. Call sites consume `limits.contextWindow`.
-
-## v1.30.0 — Third-party backends, measured throughput & hardened auto-config
+## v1.30.0 — Third-party backends, measured throughput & safer auto-config
 
 ### Added
 
-- **Third-party backends** — llama.cpp, LM Studio, Ollama as first-class per-model `serverType` (`vllm` | `lmstudio` | `llamacpp` | `ollama`). Context window resolved from each backend's own endpoint; no fabrication — a backend that can't report a window is not served (actionable error).
-- **Add Server / Server Settings auto-detect `serverType`** and persist it.
-- **Measured throughput** — `Generation (measured)` row for non-vLLM backends and vLLM servers without per-request metrics.
-- **Dashboard degradation notice** — non-vLLM servers labeled `(degraded)`, with vLLM-only rows called out.
+- **Third-party backends** — llama.cpp, LM Studio, and Ollama as first-class per-model types. Context windows come from each backend's own endpoint; one that can't report a window isn't served (with an actionable error).
+- **Auto-detected backend** — Add Server / Model Settings figure out the `serverType` for you.
+- **Measured throughput** — a real "Generation (measured)" row for backends without per-request metrics.
 
 ### Fixed
 
-- **Chat requests no longer hang indefinitely on a silent server** — an initial POST with no response is aborted after 60s (AbortError, not retried).
-- **Cancelled or timed-out requests are no longer retried** — a fetch whose signal is already aborted (user cancel, `AbortSignal.timeout`) exits immediately instead of sleeping 1.5s and doubling the timeout.
+- **No more infinite hangs** — a server that accepts the connection but never responds is aborted after 60s.
+- **Cancelled/timeout requests aren't retried** — no pointless 1.5s sleep + doubled timeout.
 
 ### Changed
 
-- **Preset matching is a case-insensitive substring match** (longest wins, org-free ids).
-- **Exact wire-id matching** — removed `normalizeModelId`/`modelMatchKey`; `vllmModelId` must be a served model id. `resolveContextWindow`/T&R match `m.id` exactly; `resolveOverrideForModel` keeps only exact + composite tiers. Mismatched configs fail loudly instead of being forgiven.
-- **Test & Refresh** — servers whose matched models lack a resolvable context window render ⚠, not ✓.
-- **Auto-configure & Add Server** — resolver errors wrapped in an error boundary.
-- **Hy3 preset**: `topP` → `top_p`.
+- **Smarter preset matching** — case-insensitive substring match (longest wins), so `NVFP4` variants land on the right preset.
+- **Exact model matching** — a model id that isn't served fails loudly instead of being silently forgiven.
+- **Test & Refresh flags unresolvable models** with ⚠ instead of a false ✓.
 
 ## v1.22.1 — Docs & internal notes
 
-- Added pre-release model-config for Qwen3.8-27B (doing what I can to have the best possible setup right when it drops). I will improve the setup once all data are available.
-- Removed stale vendored `chatProvider` proposal declaration; corrected `configurationSchema`/`modelConfiguration` docs (proposal-gated, not undocumented) and the `LanguageModelThinkingPart` note.
-- Models flagged `isBYOK: true` — VS Code now routes them as user-credential-served (BYOK), enabling MCP/agent-mode utility flows.
+- New pre-release Qwen3.8-27B model config.
+- Models are flagged so VS Code routes them as user-credential-served (BYOK), enabling MCP/agent-mode utility flows.
 
-## v1.22.0 — Token & Cost Usage Tracker
+## v1.22.0 — Token & cost usage tracker
 
-- **Token & cost tracker** — per-server, model-first usage node with today/all-time cost, persisted Today/Overall (90-day retention). Costs round to 2 decimals; tokens to whole thousands.
-- **Set Cost… / Reset Usage** actions.
-- Live dashboard updates after every prompt.
-- Removed in-memory Session plane; `lastRequestStore.ts` merged into `usageStore.ts`.
+- **Track token usage & cost per server** — model-first node with today/all-time totals; updates live after every prompt.
+- **Set Cost… / Reset Usage** actions; 90-day history retention.
 
-## v1.21.0 — Provider & command decomposition + bug fixes
+## v1.21.0 — Cleaner commands & bug fixes
 
 ### Fixed
 
 - No duplicate `settings.json` entries; Test & Refresh reports silent failures.
-- Diagnostics: no more unhandled rejections, spurious "no output" on cancel, or misattributed proxy/TLS errors; `openssl` command-injection fixed.
-- Deep-Dive: no duplicate panels, orphaned pollers, or stale first view. Dashboard stops polling a hidden sidebar.
+- Diagnostics: no unhandled rejections, no spurious "no output" on cancel, no misattributed proxy/TLS errors.
+- Deep-Dive: no duplicate panels or orphaned pollers; the dashboard stops polling a hidden sidebar.
 - File logs pruned to the 20 most recent.
-- Auto-configure: no false tool-calling claims; preserves token budgets and personality; no zero-window models.
+- Auto-configure: no false tool-calling claims; preserves token budgets and personality.
 
 ### Changed
 
-- Provider decomposed into `src/provider/*` and `src/commands/*` — behavior-preserving.
-- Server Settings: sticky Save/Revert bar, unsaved-changes indicator, any scalar field clearable.
-
-### Internal
-
-- Added a typecheck build gate; removed obsolete code.
+- **Server Settings** — sticky Save/Revert bar, unsaved-changes indicator, any field clearable.
 
 ## v1.20.8 — Test & Refresh consolidation
 
-- Test & Refresh shows one consolidated popup instead of one toast per server.
-- Shared workspace-root path-resolution helper.
+- One consolidated popup instead of one toast per server.
 
 ## v1.20.7 — Supportive Mentor rename
 
-- "Tough Love" renamed to "Supportive Mentor"; stale docs snapshots removed.
+- "Tough Love" is now "Supportive Mentor".
 
 ## v1.20.6 — Personality overhaul
 
-- New **Raw (Model Natural)** personality (no persona injected).
-- Bundled personalities are re-synced on apply; user-created ones are never clobbered.
-- Curated personality dropdown order.
-- Sarcastic Robot is de-Bendered (no copyrighted character references).
-- README overhaul.
+- New **Raw (Model Natural)** personality — no persona injected.
+- Bundled personalities re-sync on apply; your own are never overwritten.
+- Curated picker order; Sarcastic Robot cleaned up.
 
 ## v1.20.5 — Personality hardening & picker fixes
 
-- Same model on multiple servers now shows as separate picker entries. ⚠️ Re-select the model once; `settings.json` is not rewritten.
-- Empty-field clear semantics unified (empty always means clear).
-- Webview save failures no longer escape as unhandled rejections.
-- Discovery warns on duplicate explicit `id`s.
+- Same model on multiple servers shows as separate picker entries. ⚠️ Re-select the model once.
+- Webview save failures no longer surface as unhandled errors.
 
 ## v1.20.4 — Global personalities
 
-- Personalities are global (follow you across workspaces, survive upgrades).
-- Personality picker in Server Settings.
-- `THIRD-PARTY-NOTICES.txt` generated.
+- Personalities follow you across workspaces and survive upgrades; picker in Server Settings.
 
 ## v1.20.3 — Clear personality
 
-- **"Default (no personality)"** clears a model's replacements.
-- Active personality marked in the picker.
-- Portable (forward-slash) config paths.
+- **"Default (no personality)"** clears a model's replacements; active personality marked in the picker.
 
 ## v1.20.2 — Server Settings UX
 
-- Auto-Configure works on unconfigured models.
-- **Remove Server** → **Remove Model** (per-model only).
+- Auto-Configure works on unconfigured models; **Remove Model** is now per-model.
 
 ## v1.20.1 — DeepSeek-V4-Flash-0731 preset
 
-- New model preset with model-card sampling parameters.
+- New preset with model-card sampling parameters.
 
 ## v1.20.0 — Engine unification & bug-squash
 
-- **Unified metrics engine** shared by dashboard and deep-dive — single poll cycle, reference-counted, stops on last subscriber.
-- Dashboard no longer re-reads config every poll.
-- Add Server: three-way failure dialog (Discard / Run Diagnostic / Keep Anyway).
-- Test & Refresh grouped by server; no-match flow offers Pick Model / Auto-Configure.
-- Server Settings: Auto-Configure and Remove Server buttons; dashboard context menu trimmed.
-- Smart URL normalization (`host:8000` → http, bare host → https, strips `/v1`).
+- **Unified metrics engine** — dashboard and deep-dive share one poll cycle; stops when nobody's watching.
+- Add Server: clear three-way dialog (Discard / Run Diagnostic / Keep Anyway).
+- Smart URL handling (`host:8000` → http, bare host → https, strips `/v1`).
 - Removed 293 lines of dead migration code.
-- Various fixes: auth-header propagation on re-use, engine zombies, timeout aborts, personality cache poisoning.
 
-## v1.19.96 — Removed `id` from bundled presets
+## v1.19.x — Steady polish
 
-- Preset matching uses `vllmModelId` only — `id` is reserved for the user's settings identifier.
-
-## v1.19.95 — Model matching + auto-continue fix
-
-- Auto-continue no longer retries after a pure tool-call turn.
-- Cross-org + quantization-agnostic model matching (NVFP4 → base preset).
-- Dashboard: no phantom entries; context-window percentage denominator fixed.
-
-## v1.19.94 — Lowered VS Code floor to 1.122
-
-- `engines.vscode` → `^1.122.0` (`node:sqlite` unflagged since Node 22.13); known-bugs audit.
-
-## v1.19.92 — Test & Refresh parked models
-
-- Matching on `m.id`, not `root`; no more nagging about intentionally parked models.
-
-## v1.19.91 — NVFP4 suffix matching
-
-- `-NVFP4` recognized as a quantization suffix.
-
-## v1.19.90 — Poolside Laguna-S-2.1
-
-- New preset (Think / No Think); default temperature aligned with vLLM's 1.0.
-
-## v1.19.86 — cached_tokens fix
-
-- `cached_tokens` read from the correct nested usage path (was always 0).
-
-## v1.19.8 — Remote connection UX
-
-- Clear warning + "Install on remote" when the extension isn't installed on Remote-SSH / WSL / devcontainer.
-
-## v1.19.5 — Last Request Details
-
-- Last Request node in the dashboard (tokens, timing, throughput; requires server flags); `createdCacheTokens` shown; 6 more vLLM params in the picker.
-
-## v1.19.4 — Repo housekeeping
-
-- CONTRIBUTING, issue/PR templates, README badges, repo topics, packaging fix.
-
-## v1.19.3 — Dead-code cleanup
-
-- `[WARN]` when model family falls back to a heuristic; webview listener leak fixed; unified wire type.
-
-## v1.19.2 — Bug fixes
-
-- Server Settings no longer silently discards `vllmModelId` edits; status bar removed (dashboard covers it).
-
-## v1.19.1 — Server Settings webview
-
-- Per-model settings webview (no manual `settings.json` edits); model discovery; parameter picker; defaultMode picker; `validate-webview-js` script.
-
-## v1.19.0 — Native Tree View Dashboard
-
-- Native VS Code tree-view dashboard replacing the webview sidebar: polling, MTP metrics, context window, throughput, clickable refresh interval.
+- **v1.19.96** — preset matching uses the model id only; `id` is yours.
+- **v1.19.95** — auto-continue no longer retries after a pure tool-call turn; cross-org + quantization-agnostic matching; dashboard context-window percentage fixed.
+- **v1.19.94** — VS Code floor lowered to 1.122.
+- **v1.19.92** — no more nagging about intentionally parked models.
+- **v1.19.91** — `-NVFP4` recognized as a quantization suffix.
+- **v1.19.90** — Poolside Laguna-S-2.1 preset (Think / No Think).
+- **v1.19.86** — `cached_tokens` now read from the correct place (was always 0).
+- **v1.19.8** — clear warning + "Install on remote" for Remote-SSH / WSL / devcontainer.
+- **v1.19.5** — Last Request details in the dashboard (tokens, timing, throughput; requires server flags).
+- **v1.19.4** — repo housekeeping (templates, badges, packaging fix).
+- **v1.19.3** — warning when a model family falls back to a heuristic; webview listener leak fixed.
+- **v1.19.2** — Server Settings no longer discards `vllmModelId` edits; status bar removed (dashboard covers it).
+- **v1.19.1** — per-model settings webview (no manual `settings.json` editing); parameter picker.
+- **v1.19.0** — native tree-view dashboard (polling, MTP metrics, context window, throughput).
 
 ## v0.18.0 — Historical reasoning
 
-- Forwards historical `LanguageModelThinkingPart` content as assistant reasoning.
+- Forwards historical reasoning content as assistant reasoning.
 
 ## v0.17.2 — Personality presets & auto-config hardening
 
-- 5 bundled personality presets; **Set Model Personality** command; HF `generation_config` wired into `defaultParams`; auto-config no longer invents sampling params; capture/replace race + lock fixes.
+- 5 bundled personality presets; **Set Model Personality** command; auto-config no longer invents sampling params.
 
 ## v0.17.0 — System message capture + replacement
 
-- `systemMessageCapture` + `systemMessageReplacementsFile` (find/replace); unified capture-replace pipeline; prompt architecture documented.
+- Capture system messages and replace text automatically (find/replace pairs).
 
-## v0.15.2 — Test & Refresh correction + command pruning
+## v0.15.x — Chat & packaging fixes
 
-- Test & Refresh offers to correct a mismatched `vllmModelId`; shared picker; removed Auto-Configure and AI Configure commands; Utilities palette category.
+- **v0.15.2** — Test & Refresh offers to correct a mismatched model id.
+- **v0.15.1** — Clean Copilot Sessions uses Node's built-in SQLite — no Python runtime needed.
+- **v0.15.0** — SSE parsing hardened; fixed a packaging bug that silently stopped registration.
 
-## v0.15.1 — sessionManager: Python → node:sqlite
+## v0.14.x — Diagnostics & network
 
-- Clean Copilot Sessions now uses Node's built-in `node:sqlite` — no Python runtime.
+- **v0.14.14** — **Diagnose Connection** command; full error causes surfaced in Test & Refresh / Add Server.
+- **v0.14.13** — Test & Refresh checks VS Code network-gating settings.
+- **v0.14.12** — truncated tool-call arguments are recovered, not lost.
+- **v0.14.11** — all extension-side proxy/TLS overrides removed — delegates to VS Code's patched `fetch` (fixes corporate-TLS breakage).
+- **v0.14.8** — BYOK utility model support + **Configure Utility Model** command.
 
-## v0.15.0 — eventsource-parser + packaging fix
+## v0.13.x — Simpler setup
 
-- SSE parsing moved to `eventsource-parser`; fixed a VSIX packaging bug (extension silently not registering); `content: null` tool-call fix.
+- **v0.13.2** — Model Settings Reference command (later removed; docs moved to README).
+- **v0.13.1** — proxy support (superseded later by VS Code's patched fetch); composite model IDs.
+- **v0.13.0** — unified per-model setup, API-key onboarding, bundled presets, no more global-server config.
 
-## v0.14.14 — Diagnose Connection
+## v0.12.x — Per-model everything
 
-- Deep network-diagnostic command; full error-cause surfacing in Test & Refresh / Add Server.
+- **v0.12.2** — moved server, credentials, sampling, token, and transport settings onto each model. **Breaking (auto-migrated).**
+- **v0.12.1** — token budgeting, tool-choice preservation, and config-validation fixes.
+- **v0.12.0** — token-level structured outputs (JSON, regex, choices, grammars).
 
-## v0.14.13 — Network diagnostics
+## v0.11.x — Per-model servers
 
-- Test & Refresh checks VS Code network-gating settings; `http.proxyStrictSSL` docs corrected; removed `@vscode/dts`.
+- **v0.11.0** — per-model server URLs, request headers, and API-key overrides.
 
-## v0.14.12 — Truncated tool-call recovery
+## v0.10.x — Smarter continuation
 
-- `best-effort-json-parser` recovers partial tool-call arguments cut by `finish_reason: length`.
+- **v0.10.0** — auto-continuation for colon-truncated responses; workspace custom instructions.
 
-## v0.14.11 — Proxy/TLS code removed
+## v0.9.x — Auto-continue & error handling
 
-- All extension-side proxy/TLS overrides removed — the extension now delegates to VS Code's patched `fetch` (fixes corporate-TLS breakage).
+- **v0.9.1** — improved Windows session cleaning.
+- **v0.9.0** — configurable auto-continuation for empty responses.
+- **v0.8.10** — network-failure handling and inactivity timeouts; stream timeout defaults to off.
 
-## v0.14.10 / v0.14.9 — TLS attempts (both reverted)
+## v0.8.9 — Tooling & repo hygiene
 
-- Reverted superseded TLS trust-store changes; added a BYOK guard.
-
-## v0.14.8 (2026-07-10) — BYOK utility model support
-
-- Configured `chat.byokUtilityModelDefault` for BYOK utility tasks without overriding user choices.
-- Added the Configure Utility Model command.
-
-## v0.14.7 (2026-07-10) — Corporate TLS trust & error visibility
-
-- Added OS certificate-store support for TLS. _Superseded in v0.14.11._
-- Improved network error reporting.
-
-## v0.14.0 (2026-07-09) — Simplified discovery
-
-- Simplified discovery around configured per-model servers and server-provided context windows.
-- Removed `maxModelTokens` and alias deduplication.
-- Improved model connection handling and applied configuration changes without reloads.
-
-## v0.13.2 (2026-07-08) — Model Settings Reference
-
-- Added a Model Settings Reference command. _Later removed; documentation moved to the README and configuration docs._
-
-## v0.13.1 (2026-07-08) — Proxy support, composite model ids, and UX fixes
-
-- Added proxy support. _Superseded in v0.14.11 by VS Code's patched `fetch`._
-- Added composite model IDs and Bearer-only API-key setup.
-- Preserved connection settings during auto-configure and fixed its dialogs.
-- Updated onboarding documentation and package metadata.
-
-## v0.13.0 (2026-07-08) — Per-model cleanup & API key onboarding
-
-- Unified model setup and added per-model connection updates and API-key onboarding.
-- Removed remaining global-server configuration dependencies.
-- Improved aliases, preset matching, request parameter layering, and the GLM-5.2 preset.
-- Bundled presets in the VSIX and removed unused thinking capability metadata.
-
-## v0.12.2 (2026-07-08) — Per-model everything
-
-**Breaking (auto-migrated):** moved server, credentials, sampling, token, and transport settings to individual models.
-
-- Added per-model servers, credentials, parameters, token settings, and onboarding.
-- Removed global server and sampling settings; only `enableFileLogging` remains global.
-
-## v0.12.1 (2026-07-07) — Thorough code review
-
-- Fixed token budgeting, tool-choice preservation, configuration validation, and header handling.
-- Improved auto-configure feedback, type safety, and test cleanup.
-
-## v0.12.0 (2026-07-07) — Structured Outputs (Phase 2)
-
-- Added token-level structured outputs for JSON, regex, choices, and grammars.
-
-### README reorganization
-
-- Reorganized vLLM-specific documentation.
-
-## v0.11.0 (2026-07-06) — Per-model server & headers
-
-- Added per-model server URLs, request headers, and API-key overrides.
-
-### Behavior change
-
-- Changed header precedence to auth, model/custom headers, then caller headers.
-
-## v0.10.0 (2026-06-29) — Smarter continuation & workspace instructions
-
-- Added auto-continuation for colon-truncated responses and workspace custom instructions.
-
-### Bugs fixed
-
-- Fixed an instruction-cache file watcher leak.
-
-## 0.9.1
-
-- Improved Windows session-cleaning compatibility.
-
-Notable changes to vLLM-Copilot, newest first.
-
----
-
-## v0.9.0 (2026-06-24) — Auto-continue on empty responses
-
-- Added configurable auto-continuation for empty responses.
-
-## v0.8.10 (2026-06-24) — Error handling & timeout fixes
-
-- Improved network failure handling and inactivity timeouts.
-- Removed `requestTimeout`; `streamInactivityTimeout` now defaults to disabled.
-
-## v0.8.9 (2026-06-20) — Tooling & repo hygiene
-
-- Maintenance: removed unused tooling, build scripts, stale configuration, and obsolete documentation.
-
-### Bugs fixed
-
-- Prevented request options from overwriting protected chat fields.
-- Improved error-body truncation and auto-configure fetch handling.
-
----
-
-## 2026-06-20
-
-### Bugs fixed
-
-- Fixed configuration caching, disposal, cancellation, token counting, and connection error reporting.
-- Improved activation and file-logger error handling.
-
----
-
-## 2026-06-19
-
-### Bugs fixed
-
-- Improved auto-configure resilience, cancellation, and connection-reset handling.
-- Prevented empty responses after graceful stream termination.
+- Removed unused tooling, build scripts, and stale configuration.
+- Prevented request options from overwriting protected chat fields; better error-body truncation and auto-configure handling.
+- Fixed configuration caching, disposal, cancellation, token counting, and connection error reporting; sturdier activation and file-logger error handling.

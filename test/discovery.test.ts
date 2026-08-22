@@ -94,6 +94,116 @@ describe('discoverModels', () => {
     expect(lines(output)).toContain('Loaded 1 model(s)');
   });
 
+  it('applies the selected mode max_tokens to the advertised output budget', async () => {
+    const output = makeOutput();
+    const selectedModeByModel = new Map<string, string>([['m1', 'Think Max']]);
+    const models = await discoverModels(
+      [{
+        id: 'm1', serverUrl: server, family: 'test-family',
+        modelModes: { 'Think Max': { max_tokens: 2000 } },
+      }],
+      makeClient({ getModelContextWindow: async () => ({ contextWindow: 8192 }) }),
+      output,
+      undefined,
+      selectedModeByModel,
+    );
+    expect(models).toHaveLength(1);
+    // Mode max_tokens=2000 → output budget 2000, input = 8192 − 2000 = 6192.
+    expect(models[0].maxOutputTokens).toBe(2000);
+    expect(models[0].maxInputTokens).toBe(6192);
+  });
+
+  it('applies the mode max_tokens even when the model/preset sets maxOutputTokens (finding 1)', async () => {
+    const output = makeOutput();
+    const selectedModeByModel = new Map<string, string>([['m1', 'Think Max']]);
+    // Regression: a preset/model-level maxOutputTokens used to win inside
+    // deriveTokenBudget, silently discarding the selected mode's max_tokens —
+    // so Copilot never received updated limits for preset-configured models.
+    const models = await discoverModels(
+      [{
+        id: 'm1', serverUrl: server, family: 'test-family',
+        maxOutputTokens: 32768, // preset-style model-level budget
+        modelModes: { 'Think Max': { max_tokens: 2000 } },
+      }],
+      makeClient({ getModelContextWindow: async () => ({ contextWindow: 8192 }) }),
+      output,
+      undefined,
+      selectedModeByModel,
+    );
+    expect(models).toHaveLength(1);
+    // The mode budget must win over the preset's 32768.
+    expect(models[0].maxOutputTokens).toBe(2000);
+    expect(models[0].maxInputTokens).toBe(6192);
+  });
+
+  it('clamps a mode max_tokens to the context window when advertising', async () => {
+    const output = makeOutput();
+    const selectedModeByModel = new Map<string, string>([['m1', 'Big']]);
+    const models = await discoverModels(
+      [{
+        id: 'm1', serverUrl: server, family: 'test-family',
+        modelModes: { Big: { max_tokens: 50000 } },
+      }],
+      makeClient({ getModelContextWindow: async () => ({ contextWindow: 8192 }) }),
+      output,
+      undefined,
+      selectedModeByModel,
+    );
+    expect(models).toHaveLength(1);
+    // Clamped to window − 1.
+    expect(models[0].maxOutputTokens).toBe(8191);
+  });
+
+  it('keeps the model-wide budget when no mode is selected', async () => {
+    const output = makeOutput();
+    const models = await discoverModels(
+      [{ id: 'm1', serverUrl: server, family: 'test-family', modelModes: { 'Think Max': { max_tokens: 2000 } } }],
+      makeClient({ getModelContextWindow: async () => ({ contextWindow: 8192 }) }),
+      output,
+    );
+    expect(models).toHaveLength(1);
+    // No selected mode → model-wide default budget (4096) → input 4096.
+    expect(models[0].maxOutputTokens).toBe(4096);
+    expect(models[0].maxInputTokens).toBe(4096);
+  });
+
+  it('reflects defaultParams.max_tokens in the advertised budget (matches the wire)', async () => {
+    const output = makeOutput();
+    // Regression: discovery used to honor only modelModes.max_tokens, so a
+    // defaultParams.max_tokens produced a bar that disagreed with the wire.
+    const models = await discoverModels(
+      [{
+        id: 'm1', serverUrl: server, family: 'test-family',
+        defaultParams: { max_tokens: 2000 },
+      }],
+      makeClient({ getModelContextWindow: async () => ({ contextWindow: 8192 }) }),
+      output,
+    );
+    expect(models).toHaveLength(1);
+    expect(models[0].maxOutputTokens).toBe(2000);
+    expect(models[0].maxInputTokens).toBe(6192);
+  });
+
+  it('defaultParams.max_tokens is overridden by a selected mode max_tokens in metadata', async () => {
+    const output = makeOutput();
+    const selectedModeByModel = new Map<string, string>([['m1', 'Big']]);
+    const models = await discoverModels(
+      [{
+        id: 'm1', serverUrl: server, family: 'test-family',
+        defaultParams: { max_tokens: 2000 },
+        modelModes: { Big: { max_tokens: 5000 } },
+      }],
+      makeClient({ getModelContextWindow: async () => ({ contextWindow: 8192 }) }),
+      output,
+      undefined,
+      selectedModeByModel,
+    );
+    expect(models).toHaveLength(1);
+    // Mode wins over defaultParams.
+    expect(models[0].maxOutputTokens).toBe(5000);
+    expect(models[0].maxInputTokens).toBe(3192);
+  });
+
   it('queries models in parallel; a missing window skips that model (no fabrication)', async () => {
     const output = makeOutput();
     const client = makeClient({

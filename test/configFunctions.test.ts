@@ -1,7 +1,60 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { buildAuthHeaders, validateConfig, resolveServerType, resolveModelSettings, buildModelId, resolveWorkspaceRelativePath, toPublicModelConfig, type VllmConfig } from '../src/config.js';
+import { buildAuthHeaders, validateConfig, resolveServerType, resolveModelSettings, resolveMaxTokensForRequest, buildModelId, resolveWorkspaceRelativePath, toPublicModelConfig, type VllmConfig } from '../src/config.js';
+
+// ── resolveMaxTokensForRequest ──────────────────────────────────────────
+
+describe('resolveMaxTokensForRequest', () => {
+  it('falls back to the model ceiling when nothing is configured', () => {
+    expect(resolveMaxTokensForRequest(undefined, undefined, 4096, 32768)).toBe(4096);
+  });
+
+  it('honors the selected mode max_tokens over defaultParams (coherent advertised)', () => {
+    const override = {
+      id: 'm', serverUrl: 'http://host:8000',
+      defaultParams: { max_tokens: 1000 },
+      modelModes: { Think: { max_tokens: 8000 }, Fast: {} },
+    };
+    // Advertised = 8000 (metadata re-registered to the mode's budget).
+    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32768)).toBe(8000);
+    // A mode without max_tokens falls back to defaultParams (below advertised).
+    expect(resolveMaxTokensForRequest(override, 'Fast', 8000, 32768)).toBe(1000);
+  });
+
+  it('clamps a configured max_tokens to the advertised budget (never exceeds it)', () => {
+    // Finding 2 / Option A: Copilot was told 8000 (advertised, already ceiling +
+    // window clamped). A mode wanting 32000 must not send more than advertised —
+    // the wire can never exceed what Copilot was told.
+    const override = {
+      id: 'm', serverUrl: 'http://host:8000',
+      modelModes: { Big: { max_tokens: 32000 } },
+    };
+    expect(resolveMaxTokensForRequest(override, 'Big', 8000, 32768)).toBe(8000);
+  });
+
+  it('clamps to the context window as defense when the advertised budget is incoherent', () => {
+    const override = {
+      id: 'm', serverUrl: 'http://host:8000',
+      modelModes: { Big: { max_tokens: 100000 } },
+    };
+    // Advertised (99999) exceeds window-1 — only reachable with an incoherent
+    // model object; deriveTokenBudget never produces this. Window 32768 → 32767.
+    expect(resolveMaxTokensForRequest(override, 'Big', 99999, 32768)).toBe(32767);
+  });
+
+  it('floors fractional/negative values and ignores non-numeric max_tokens', () => {
+    const badMode = { id: 'm', serverUrl: 'http://host:8000', modelModes: { X: { max_tokens: 'lots' as any } } };
+    expect(resolveMaxTokensForRequest(badMode, 'X', 4096, 32768)).toBe(4096);
+    const frac = { id: 'm', serverUrl: 'http://host:8000', modelModes: { X: { max_tokens: 12.9 } } };
+    expect(resolveMaxTokensForRequest(frac, 'X', 4096, 32768)).toBe(12);
+  });
+
+  it('never returns a budget below 1', () => {
+    const override = { id: 'm', serverUrl: 'http://host:8000', modelModes: { X: { max_tokens: -5 } } };
+    expect(resolveMaxTokensForRequest(override, 'X', 4096, 32768)).toBe(1);
+  });
+});
 
 // ── resolveServerType ───────────────────────────────────────────────────
 

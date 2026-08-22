@@ -1,0 +1,185 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/fuzzifikation/vLLM-Copilot/blob/main/schemas/vllm-copilot-models.schema.json",
+  "title": "vLLM-Copilot Model Entry",
+  "description": "One entry of the `vllm-copilot.models` array in VS Code settings. Each entry is SELF-CONTAINED: it carries its own serverUrl, requestHeaders, params, budgets, and modes. There is NO global server. This schema mirrors `ModelConfig` in src/config.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["serverUrl", "id"],
+  "properties": {
+    "serverUrl": {
+      "type": "string",
+      "minLength": 1,
+      "description": "REQUIRED. OpenAI-compatible base URL of the server hosting this model (e.g. http://localhost:8000/v1). There is no global server — every model targets its own. Must be non-empty."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "REQUIRED. Unique entry key. The Add flow uses \"<model> on <host>\". Used as the wire model id when vllmModelId is unset. Must be non-empty."
+    },
+    "serverType": {
+      "type": "string",
+      "enum": ["vllm", "lmstudio", "llamacpp", "ollama", "openrouter"],
+      "description": "Backend protocol. Default: vllm. Missing/omitted always means vllm. Set explicitly for non-vLLM backends."
+    },
+    "vllmModelId": {
+      "type": "string",
+      "description": "Actual model id on the server (e.g. Qwen/Qwen3.6-27B). Allows several entries with different id values to point at the same server model. Defaults to id."
+    },
+    "displayName": {
+      "type": "string",
+      "description": "Human-readable name shown in the model picker. Defaults to the id."
+    },
+    "family": {
+      "type": "string",
+      "description": "Model family identifier (e.g. qwen3_5, deepseek_v4, llama). Auto-detected from HuggingFace config.model_type; optional."
+    },
+    "provider": {
+      "type": "string",
+      "description": "OpenRouter only. Exact provider slug to pin routing via provider: { only: [slug] }. Omit/empty = Auto."
+    },
+    "routingMode": {
+      "type": "string",
+      "enum": ["standard", "nitro", "exacto"],
+      "description": "OpenRouter only. How OpenRouter sorts/chooses providers when routing is Auto. Ignored when a provider is pinned."
+    },
+    "requestHeaders": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "HTTP headers sent with every request to THIS model's server only (auth, routing). e.g. { \"Authorization\": \"Bearer <key>\" }."
+    },
+    "maxOutputTokens": {
+      "type": "number",
+      "default": 4096,
+      "description": "Maximum tokens the model may generate per response. Server enforces its own hard limit; this only affects the extension's budget."
+    },
+    "maxInputTokens": {
+      "type": "number",
+      "description": "Auto-computed as the server context window minus the EFFECTIVE output budget (the resolved max_tokens: modelModes[selected].max_tokens > defaultParams.max_tokens > maxOutputTokens). Only set to reduce further — never higher."
+    },
+    "estimateCharsPerToken": {
+      "type": "number",
+      "default": 3.5,
+      "description": "Average chars-per-token for local token estimation."
+    },
+    "defaultParams": {
+      "allOf": [{ "$ref": "#/$defs/requestParams" }],
+      "description": "Model-scope request params (raw vLLM request-body keys, snake_case). Layered under modelModes (a selected mode overrides these). The known vLLM parameter vocabulary is enumerated in the referenced definition; UNKNOWN KEYS ARE ALSO ALLOWED and passed through to the request body verbatim, so backend-specific parameters still work."
+    },
+    "modelModes": {
+      "type": "object",
+      "description": "Switchable named presets shown in the model picker. Each key is a user-visible mode label (e.g. \"Think\", \"No Think\"); each value is a params object merged into the request body when that mode is active. Per-mode sampling params override `defaultParams`; params set nowhere are omitted so the server's own default applies. Toggle reasoning via chat_template_kwargs.enable_thinking or reasoning_effort.",
+      "additionalProperties": {
+        "allOf": [{ "$ref": "#/$defs/requestParams" }],
+        "description": "Request params for this mode. Same vocabulary as defaultParams."
+      }
+    },
+    "defaultMode": {
+      "type": "string",
+      "description": "Mode active before the user picks one. Must match one of the modelModes keys; otherwise the first key is used."
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "toolCalling": { "type": "boolean", "default": true, "description": "Model supports tool/function calling." },
+        "imageInput": { "type": "boolean", "default": false, "description": "Model supports vision/image input." }
+      }
+    },
+    "streamInactivityTimeout": {
+      "type": "number",
+      "minimum": 0,
+      "default": 0,
+      "description": "SSE stream inactivity timeout in ms. 0 = disabled (wait indefinitely)."
+    },
+    "initialResponseTimeoutMs": {
+      "type": "number",
+      "minimum": 0,
+      "default": 600000,
+      "description": "Budget in ms for the server to send the first response headers. 0 = wait indefinitely. Raise it for slow-starting servers (model load / queue backlog)."
+    },
+    "autoContinueRetries": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 1,
+      "description": "Auto-retry count for empty/truncated responses (assistant prefill). 0 = off."
+    },
+    "systemMessageReplacementsFile": {
+      "type": "string",
+      "description": "Path to a JSON file of { ruleName, find, replace } pairs applied to every system message. Recommended: .vllm/prompt-replacements.json"
+    },
+    "cost": {
+      "type": "object",
+      "description": "Optional per-model cost rates for the dashboard Token Usage tracker. All rates per 1,000,000 tokens in currency units.",
+      "properties": {
+        "input": { "type": "number", "description": "Cost per 1,000,000 fresh (uncached) input tokens." },
+        "output": { "type": "number", "description": "Cost per 1,000,000 output tokens (includes reasoning tokens)." },
+        "cachedInput": { "type": "number", "description": "Cost per 1,000,000 cache-read input tokens." },
+        "currency": { "type": "string", "default": "USD", "description": "Display unit. \"AI Credits\" = compare with Copilot picker (1 credit = $0.01, enter credits directly)." }
+      }
+    }
+  },
+  "$defs": {
+    "requestParams": {
+      "type": "object",
+      "description": "vLLM request-body parameters. KEYS ARE snake_case (top_p, maxOutputTokens is an entry field, NOT a param). Any param you do not set is OMITTED from the request, so the server's own default applies. The properties below are the KNOWN, documented vLLM vocabulary; other keys are NOT rejected — they are passed through verbatim so newer or backend-specific parameters still reach the server. See docs/configuration-reference.md for the full table.",
+      "additionalProperties": true,
+      "properties": {
+        "temperature": { "type": "number", "minimum": 0, "maximum": 2, "description": "Sampling temperature. 0 = greedy. Omitted when unset — the server's default applies." },
+        "top_p": { "type": "number", "minimum": 0, "maximum": 1, "description": "Nucleus sampling threshold. Omitted when unset — the server's default applies." },
+        "top_k": { "type": "integer", "minimum": -1, "description": "Top-k sampling. -1 = disabled (vLLM-only)." },
+        "min_p": { "type": "number", "minimum": 0, "maximum": 1, "description": "Minimum probability threshold (vLLM-only)." },
+        "presence_penalty": { "type": "number", "minimum": -2, "maximum": 2, "description": "Topic-repetition discouragement." },
+        "frequency_penalty": { "type": "number", "minimum": -2, "maximum": 2, "description": "Token-repetition discouragement." },
+        "repetition_penalty": { "type": "number", "description": "Repetition penalty; 1.0 = none (vLLM-only)." },
+        "length_penalty": { "type": "number", "description": "Beam-search length penalty; 1.0 = none (vLLM-only)." },
+        "seed": { "type": "integer", "description": "Random seed for reproducibility." },
+        "stop": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Stop sequence(s)." },
+        "stop_token_ids": { "type": "array", "items": { "type": "integer" }, "description": "Stop on token IDs (vLLM-only)." },
+        "include_stop_str_in_output": { "type": "boolean", "description": "Include the stop string in the output (vLLM-only)." },
+        "ignore_eos": { "type": "boolean", "description": "Ignore EOS and keep generating; use with min_tokens (vLLM-only)." },
+        "min_tokens": { "type": "integer", "minimum": 0, "description": "Minimum output tokens before stop sequences are honored." },
+        "skip_special_tokens": { "type": "boolean", "description": "Strip special tokens from output (vLLM-only)." },
+        "spaces_between_special_tokens": { "type": "boolean", "description": "Insert spaces between special tokens (vLLM-only)." },
+        "truncate_prompt_tokens": { "type": "integer", "description": "Cap prompt length server-side; -1 = none (vLLM-only)." },
+        "thinking_token_budget": { "type": "integer", "description": "Max reasoning tokens; requires --reasoning-parser; -1 = unlimited (vLLM-only)." },
+        "bad_words": { "type": "array", "items": { "type": "string" }, "description": "Words the model must not generate (vLLM-only)." },
+        "repetition_detection": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_pattern_size": { "type": "integer" },
+            "min_count": { "type": "integer" },
+            "min_pattern_size": { "type": "integer" }
+          },
+          "description": "N-gram repetition early-stop; opt-in (vLLM-only)."
+        },
+        "structured_outputs": { "type": "object", "description": "Token-level constraints: json, regex, choice, or grammar; mutually exclusive (vLLM-only, vLLM >= 0.12)." },
+        "chat_template_kwargs": { "type": "object", "description": "vLLM chat template params. Common keys: enable_thinking (bool), preserve_thinking (bool), reasoning_effort (string)." },
+        "reasoning_effort": { "type": "string", "description": "Reasoning effort. vLLM maps 'high'/'max' → enable_thinking=true, 'none' → false (auto-inject). May also be placed inside chat_template_kwargs." },
+        "allowed_token_ids": { "type": "array", "items": { "type": "integer" }, "description": "Restrict generation to these token IDs (vLLM-only; niche)." },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Output token budget for this scope — sent to the server as max_tokens. In a modelModes entry it sets that mode's response ceiling; in defaultParams it sets the model-scope budget. Overrides maxOutputTokens for the request but is clamped to the model's context window AND the server-reported output ceiling (maxOutputTokens). Prefer setting it per-mode via modelModes."
+        },
+        "model": {
+          "not": {},
+          "description": "FORBIDDEN — reserved by the runtime (chatProtocol.ts strips it); the model id is derived from the entry, never from params."
+        },
+        "messages": {
+          "not": {},
+          "description": "FORBIDDEN — reserved by the runtime (chatProtocol.ts strips it); messages are built by the extension."
+        },
+        "stream": {
+          "not": {},
+          "description": "FORBIDDEN — reserved by the runtime (chatProtocol.ts always forces stream: true)."
+        },
+        "stream_options": {
+          "not": {},
+          "description": "FORBIDDEN — reserved by the runtime (chatProtocol.ts sets stream_options.include_usage)."
+        }
+      }
+    }
+  }
+}

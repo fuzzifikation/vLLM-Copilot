@@ -5,7 +5,7 @@ import { resolveRequestParams, type ModelConfig } from '../src/config.js';
  * Structured output is now a raw vLLM request param (`structured_outputs`) carried
  * in a model's `defaultParams` or a `modelModes` entry — there is no global setting
  * and no parsing layer. These tests verify it flows through the per-model resolution
- * chain (built-in defaults ← model defaultParams ← selected mode).
+ * chain (server defaults ← model defaultParams ← selected mode).
  */
 describe('structured_outputs via resolveRequestParams', () => {
   it('passes structured_outputs from defaultParams', () => {
@@ -55,13 +55,13 @@ describe('structured_outputs via resolveRequestParams', () => {
 });
 
 describe('resolveRequestParams layering', () => {
-  it('applies built-in defaults (temperature, top_p) when nothing set', () => {
+  it('omits sampling params when nothing is configured (server defaults apply)', () => {
     const params = resolveRequestParams(undefined, undefined);
-    expect(params.temperature).toBe(1.0);
-    expect(params.top_p).toBe(1.0);
+    expect(params.temperature).toBeUndefined();
+    expect(params.top_p).toBeUndefined();
   });
 
-  it('model defaultParams override built-in defaults', () => {
+  it('model defaultParams are applied when present', () => {
     const model: ModelConfig = {
       id: 'm',
       serverUrl: 'http://localhost:8000',
@@ -92,7 +92,7 @@ describe('resolveRequestParams layering', () => {
 });
 
 describe('resolveRequestParams runtime options layer', () => {
-  it('runtime options override built-in defaults', () => {
+  it('runtime options are applied when present', () => {
     const params = resolveRequestParams(undefined, undefined, { max_tokens: 500, temperature: 0.2 });
     expect(params.max_tokens).toBe(500);
     expect(params.temperature).toBe(0.2);

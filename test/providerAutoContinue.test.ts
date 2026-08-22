@@ -517,3 +517,37 @@ describe('config-read / pipeline failure routing', () => {
     expect(progress.report).not.toHaveBeenCalled();
   });
 });
+
+describe('provider mode tracking (Option A metadata re-registration)', () => {
+  it('fires onDidChangeLanguageModelChatInformation only when the selected mode changes', async () => {
+    const { provider } = setupProvider([[ev({ content: 'hi', finishReason: 'stop' as any })]], 0);
+    const fired: string[] = [];
+    provider.onDidChangeLanguageModelChatInformation(() => fired.push('change'));
+
+    const progress = { report: vi.fn() };
+    const messages = [{ content: [] }] as any;
+    const model = { id: 'm', maxOutputTokens: 100 } as any;
+
+    // No mode on first request → baseline, no fire.
+    await provider.provideLanguageModelChatResponse(model, messages, {} as any, progress as any, makeToken());
+    expect(fired).toHaveLength(0);
+
+    // Mode selected → re-registration fires.
+    await provider.provideLanguageModelChatResponse(
+      model, messages, { modelConfiguration: { reasoningEffort: 'Think' } } as any, progress as any, makeToken(),
+    );
+    expect(fired).toHaveLength(1);
+
+    // Same mode again → deduped, no additional fire.
+    await provider.provideLanguageModelChatResponse(
+      model, messages, { modelConfiguration: { reasoningEffort: 'Think' } } as any, progress as any, makeToken(),
+    );
+    expect(fired).toHaveLength(1);
+
+    // Switching mode → fires again.
+    await provider.provideLanguageModelChatResponse(
+      model, messages, { modelConfiguration: { reasoningEffort: 'No Think' } } as any, progress as any, makeToken(),
+    );
+    expect(fired).toHaveLength(2);
+  });
+});

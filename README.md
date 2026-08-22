@@ -69,6 +69,21 @@ If you want to support this work: [![Sponsor via PayPal](https://img.shields.io/
 </td></tr>
 </table>
 
+> **Let Copilot write your model config for you**
+
+<table>
+<tr><td>
+
+Your AI can build a valid `vllm-copilot.models` entry (server, auth, params, model modes) without you touching `settings.json`. The extension registers a **chat tool** (`vllm-copilot_model_schema`) that hands Copilot the model-entry schema and the parameter rules on demand.
+
+- **Just ask:** *"configure my Qwen3.6 model with Think / No Think modes"* — Copilot calls the tool automatically.
+- **Force it:** if your AI gets shy, type `#vllmModelSchema` in the chat input to attach the tool to your prompt.
+
+No workspace files are created; the schema is served from the extension itself.
+
+</td></tr>
+</table>
+
 > **Add OpenRouter Model** (full provider support, cost tracking and auto selection)
 
 <table>
