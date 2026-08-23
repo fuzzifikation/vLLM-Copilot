@@ -1,7 +1,7 @@
 # SGLang Backend Compatibility Plan
 
-**Status:** Research complete — plan ready, no implementation started
-**Date:** 2026-08-17
+**Status:** Research complete — plan ready, no implementation started. Metric names re-verified against `main` and sequencing corrected for OpenRouter having shipped (2026-08-22).
+**Date:** 2026-08-17 (updated 2026-08-22)
 **Research basis:** Verified against `sgl-project/sglang` source (Python + Rust servers, `sgl-router`, `sgl-model-gateway`, docs, and test fixtures). Every wire-format claim below is grounded in source, not docs-vibes.
 
 ## 0. TL;DR — and the OpenRouter sequencing question
@@ -19,14 +19,17 @@ They do not share a transport, a discovery path, or a request body. Neither bloc
 
 **The one decision to make before continuing:** the dashboard/metrics classification. Today it is binary — `serverType === 'vllm'` gets full metrics, everything else is flagged `(degraded)`. OpenRouter's plan already replaces this binary with per-backend classification (OpenRouter = "managed remote", not degraded). SGLang is the first backend that genuinely needs a **metrics mapper** (`sglang:*` names map onto ~80% of the dashboard fields — see §5). So:
 
-> **Decision:** when the OpenRouter dashboard work lands, implement the per-backend classification as a small lookup table of backend descriptors (health endpoint, version endpoint, metrics source, managed-remote flag) — **not** as a vllm-vs-everything binary and **not** as a full backend registry. This is the seam both OpenRouter and SGLang hit. A ~40-line table serves all six backends; a full registry is gold-plating the OpenRouter plan explicitly warned against.
+> **Decision (revised 2026-08-22): two seams, not one.** The per-backend classification is NOT a single table that finesses the whole dashboard. Split it by layer:
+> - **Data acquisition** (`fetchAllEndpoints`): a small lookup table of backend descriptors (health endpoint, version endpoint, metrics source, managed-remote flag) decides WHAT to fetch. A ~40-line table serves all six backends; a full registry is gold-plating. This is table-driven dispatch over a uniform operation (fetch + parse) — not finesse.
+> - **Rendering** (`dashboard.ts`): a **per-backend renderer strategy** — one renderer per backend composing shared row primitives. OpenRouter already proves this pattern (distinct `OpenRouterAccountTreeItem` + `getRelayModelTreeItems`). SGLang gets its own render path: its own summary line, version label, section order, "Retractions" label, metrics-disabled hint, and deep-dive eligibility. It is NOT "vLLM with `if (serverType === 'sglang')` patches."
+> **Why not one table driving rendering:** the current code has exactly two render paths — a shared server renderer (vLLM + LM Studio/llama.cpp/Ollama, where "degraded" is missing *data*, not a code path) and the OpenRouter relay path. Bolting SGLang onto the shared renderer with more conditionals recreates the `ServerTreeItem` constructor's inline `isOpenRouterRelay`/`isVllm` branches. A per-backend renderer (a small strategy map, possibly one module `dashboardRenderers.ts`) gives SGLang a real path while the ~200 shared metric-row lines stay single-sourced.
 
-**Recommended sequencing:**
-1. **Land OpenRouter first.** It is implementation-ready; the control-plane module (`src/openRouter.ts`, 26 tests) and the `RuntimeModelLimits` widening are already in. Do not slow it down with a registry refactor.
-2. **Build the per-backend descriptor table as part of OpenRouter's dashboard delivery** (its plan already promises per-backend classification).
-3. **Land SGLang after**, as a small additive delivery on top. Then SGLang is: `ServerType` arm + classifier arm + limits arm + the metrics mapper + `/server_info` version source.
+**Recommended sequencing (updated 2026-08-22 — OpenRouter shipped but did NOT deliver a reusable classification seam):**
+1. **Land the acquisition descriptor table** (`fetchAllEndpoints` in `src/vllmMetrics.ts`). It still splits on a binary `isVllm`; the OpenRouter account/credits probe is an inline branch. A local refactor of shipped code, no new surface.
+2. **Land the renderer strategy** (`dashboard.ts`): extract the inline `isOpenRouterRelay`/`isVllm` branches from `ServerTreeItem` and `getServerMetricsChildren` into per-backend renderers. OpenRouter gets its proper path; the shared metric-row builder takes a per-backend label/behavior map; SGLang slots in as a third renderer. This is the precondition that makes "SGLang has its own path, not patched vLLM" true (§6).
+3. **Land SGLang after**, as a small additive delivery: `ServerType` arm + classifier arm + limits arm + the metrics mapper + `/server_info` version source + the SGLang renderer + deep-dive eligibility (precondition #2).
 
-Why not both in one branch: both touch `ServerType`, config validation, the package schema, and the classifier. Doing them together means one giant PR and merge pain for zero user-visible gain. Sequential gives two reviewable changes, and SGLang directly reuses the classification OpenRouter's dashboard work establishes.
+Why not both in one branch: both touch `ServerType`, config validation, the package schema, and the classifier. Doing them together means one giant PR and merge pain for zero user-visible gain. Sequential gives two reviewable changes. Note: OpenRouter's shipped dashboard work does **not** give SGLang a reusable seam — it shipped inline conditionals, so steps 1–2 are SGLang's own preconditions, not inheritance.
 
 Why not a backend registry now: the OpenRouter plan's guardrail still holds — the `resolveRuntimeLimits` switch at 6 arms is still small and each arm expresses a real, small difference. SGLang is the closest thing to a "vLLM clone" (its limits arm is identical to vLLM's), but that shared-ness lives entirely in the metrics/version layer, which the descriptor table handles. A registry would touch four working backends for no user-visible benefit.
 
@@ -45,6 +48,7 @@ The extension stays vLLM-first. SGLang is an opt-in secondary backend, labeled a
 - **Add one `ServerType` arm, not a backend registry.** The existing switch expresses the real differences; SGLang fits inside it (see §6).
 - **No request-body changes.** Verified: SGLang's `ChatCompletionRequest` accepts the extension's `max_tokens` (`max_completion_tokens or max_tokens`; `max_tokens` is deprecated-but-supported). `chat_template_kwargs`, tools, `tool_choice`, sampling params, `stream_options.include_usage` all pass through. vLLM-only continuation flags are already stripped for non-vLLM types and would apply to `sglang` too.
 - **Metrics mapper in `vllmMetrics.ts`, not a new subsystem.** `sglang:*` → dashboard field mapping lives beside the existing `vllm:*` parsing. This is the bulk of the work.
+- **Per-backend renderer, not patched vLLM.** SGLang gets its own dashboard render path (a renderer strategy composing shared row primitives), the way OpenRouter already has its own relay path. No `if (serverType === 'sglang')` branches in the shared `ServerTreeItem` / `getServerMetricsChildren` code.
 - **Server-reported context only.** Same policy as every backend: no fabricated windows. The plain server and the model gateway report real context; the classic router does not (§4).
 
 ## 3. Verified API Contract
@@ -92,27 +96,31 @@ The classic router is the one case that cannot be rescued. Same policy as every 
 | `kvCacheUsagePercent` | `sglang:token_usage` (0–1 gauge) | ×100; vLLM's `kv_cache_usage_perc` is already a percent |
 | `runningRequests` | `sglang:num_running_reqs` (gauge) | |
 | `waitingRequests` | `sglang:num_queue_reqs` (gauge) | |
-| `cacheHitRate` | `sglang:cache_hit_rate` (gauge) | radix prefix-cache hit rate |
+| `cacheHitRate` | `sglang:cache_hit_rate` (gauge, **0–1 fraction** — example `0.0075`) | **×100.** The dashboard renders `cacheHitRate` as a percent (`fmtPct`, `dashboard.ts` L628). vLLM's path computes a percent in the extension; SGLang emits a fraction — the conversion must be in the mapper |
 | `avgTTFTMs` | `sglang:time_to_first_token_seconds` (`_sum`/`_count`, ×1000) | histogram |
-| `avgTPOTMs` | `sglang:time_per_output_token_seconds` OR `sglang:inter_token_latency_seconds` | **verify** which the target version serves; both appear in source/docs |
+| `avgTPOTMs` | `sglang:inter_token_latency_seconds` (**primary** — the name `TokenizerMetricsCollector` emits); `sglang:time_per_output_token_seconds` (**alias** — `production_metrics.mdx` + gateway fixtures) | **resolved 2026-08-22**: accept BOTH, prefer the primary; ×1000 to ms. Bonus: same histogram semantics and `_sum`/`_count` shape as vLLM's TPOT source, so the parser arm is near-identical |
 | `avgTputTokPerSec` | `sglang:gen_throughput` (gauge, tok/s) | simpler than vLLM's pooled sum/sum |
 | `avgPrefillTputTokPerSec` | — | no verified prefill-time histogram; fall back to client-measured rendering (existing non-vLLM path) |
-| `preemptions` | `sglang:num_retracted_requests_total` (counter) | **DECIDED: label it "Retractions"**, not "Preemptions". SGLang "retracts" (evicts to reclaim KV slots) ≠ vLLM preemption. Surface the honest name; do not rename vLLM's "Preemptions" row for the SGLang path, and don't label a retraction count as preemptions. Add a footnote that retraction ≈ preemption but is not identical. |
+| `preemptions` | `sglang:num_retracted_requests_total` (counter; siblings `num_retracted_input_tokens_total` / `num_retracted_output_tokens_total`; the old gauge `num_retracted_reqs` carries an upstream "remove me" TODO) | **DECIDED: label it "Retractions"**, not "Preemptions". SGLang "retracts" (evicts to reclaim KV slots) ≠ vLLM preemption. Add a footnote that retraction ≈ preemption but is not identical. Use the counter, not the deprecated gauge. **Delivered via the SGLang renderer's label map — not an `if (sglang)` branch in the shared row builder.** |
 | `evictions` | — | no direct analog verified; leave empty |
-| spec decode | `sglang:spec_verify_calls_total`, `sglang:spec_num_draft_tokens` | partial; **verify** cumulative names |
+| `specAcceptanceRate` | `sglang:spec_accept_rate` (gauge, 0–1 fraction) | **resolved 2026-08-22**: vLLM's rate is pooled (accepted ÷ proposed drafts, cumulative); SGLang's is an instantaneous per-batch fraction. Map it, but it reads as *current*, not cumulative. ×100 |
+| `specDraftsTotal` / `specDraftDepth` | — | **leave empty.** No honest source: `spec_num_draft_tokens` is a *currently-active* gauge, `spec_verify_calls_total` counts verify *batches*, not drafts. Filling these would fabricate semantics (§9) |
 | `version` | `/server_info.version` | not `/version` |
 | `maxModelLen` | `/v1/models.max_model_len` | same path as vLLM |
 
-**Critical caveat:** SGLang serves `/metrics` only when launched with `--enable-metrics`. vLLM serves it by default. The docs must say so, and the mapper must treat an empty scrape as "metrics disabled", not "server dead".
+**Critical caveat:** SGLang serves `/metrics` only when launched with `--enable-metrics` (vLLM serves it by default). The docs must say so. **Precise "disabled" signal (resolved 2026-08-22):** with metrics off, `/metrics` still returns 200 — prometheus_client always serves the default process/go registry — but with **zero `sglang:`-prefixed names**. Detection is name-based, not status-based. And decide the UX: don't render it as a plain no-metrics backend (indistinguishable from LM Studio) — show a one-line "Metrics disabled — launch with `--enable-metrics`" hint.
 
-Labels: SGLang metrics carry `model_name` labels (and `is_streaming` on token histograms). The mapper must sum across model labels like the vLLM parser does.
+**Labels (resolved 2026-08-22):** SGLang emits `model_name` **plus** `tp_rank`, `pp_rank`, `dp_rank`, `engine_type`, `moe_ep_rank` (and `priority` under priority scheduling) — every metric appears once per rank. The existing model-bucketed accumulators in `MetricsParser` already handle this (counts sum across ranks, ratios average), but the plan's "sum across model labels" instruction is underspecified: aggregation must span **all** label dimensions except the bucketed one, or multi-GPU servers double-count. Add a two-`tp_rank` test.
+
+**SGLang-only telemetry the dashboard doesn't consume (future deep-dive material, out of scope):** `sglang:utilization`, `sglang:fwd_occupancy`, `sglang:realtime_tokens_total` (prefill_compute / prefill_cache / decode), `sglang:forward_execution_seconds_total`, and memory gauges (`weight_memory_usage_gb`, `kv_cache_memory_usage_gb`, `context_len`). Dashboard richness is bounded by its ~15 `ServerMetrics` fields, not by what SGLang exposes — these are the first genuinely usable memory/utilization signals any backend has offered. Record, don't build (§9).
 
 ## 6. Minimal Change Set
 
-> **Implementation preconditions (from code review 2026-08-17):**
-> 1. Gate `/version` + `/load` by backend in `fetchAllEndpoints` (no permanent-404 crutch).
-> 2. Surface SGLang retractions under the label **"Retractions"** (not "Preemptions") — locked decision, see §5.
-> 3. Resolve the two `**verify**` metrics against the actual target (newest) SGLang version before writing the mapper.
+> **Implementation preconditions (updated 2026-08-22):**
+> 1. **Gate `/version` + `/load` by backend in `fetchAllEndpoints`** (no permanent-404 crutch). Still required — the file uses the binary `isVllm` split and the OpenRouter account/credits probe is already an inline branch. Land this as the descriptor-table step (§0).
+> 2. **Deep-dive gate.** `dashboard.ts` L86 sets `contextValue = isVllm ? state : ${state}NoDive`. SGLang has real metrics + version, so it must get deep-dive — the gate needs a backend-aware condition, not `isVllm`.
+> 3. **Surface SGLang retractions under "Retractions"** (not "Preemptions") — locked decision, see §5.
+> 4. **Verify the Rust server's `sglang:*` metric names.** Research verified the Python collector (`python/sglang/srt/observability/metrics_collector.py`). The Rust server (`SGLANG_RUST_SERVER=1`, increasingly the default) has its own metrics implementation — the plan cites rust files for HTTP endpoints but NOT for metric names. Before shipping, confirm the Rust server emits the same `sglang:*` names, or scope the mapper to the Python server and gate the Rust server's dashboard rows.
 
 ### Configuration (`src/config.ts` + package schema)
 - Add `'sglang'` to `ServerType` (`'vllm' | 'lmstudio' | 'llamacpp' | 'ollama' | 'openrouter' | 'sglang'`).
@@ -130,10 +138,11 @@ Labels: SGLang metrics carry `model_name` labels (and `is_streaming` on token hi
 - `fetchAllEndpoints`: version from `/server_info` (parse `version`) when `serverType === 'sglang'`; online probe stays `/health` (SGLang serves it — unlike LM Studio/llama.cpp/Ollama).
 - **Gate `/version` and `/load` by backend.** Today `fetchAllEndpoints` unconditionally fires both for every backend and tolerates a 404. On SGLang they 404 on every poll tick forever — 2 wasted round-trips per server per interval, and correctness depends on 404-silence. Fix: fetch `/version` only for vLLM (and `/server_info` for SGLang), and `/load` only for vLLM; drop the 404-tolerance crutch. This is a small `fetchAllEndpoints` change, not a rewrite.
 - Add the `sglang:*` mapping from §5 alongside the `vllm:*` parser (single `MetricsParser` entry point, prefix-dispatch).
-- **Hard gate before writing the mapper: resolve the two `**verify**` metrics against the actual target SGLang version.** Target newest SGLang only (repo policy). Before implementation, pin "newest SGLang serves `time_per_output_token_seconds` XOR `inter_token_latency_seconds`" (and the spec-decode counter names) by reading that version's source. Do not write the mapper on a guess; the plan's `**verify**` flags are resolved at implementation time, not discovered at runtime.
+- **Metrics resolved 2026-08-22:** TPOT = `inter_token_latency_seconds` (primary) + `time_per_output_token_seconds` (alias); spec-decode = `spec_accept_rate` only (drafts/depth rows stay empty); `cache_hit_rate` needs ×100; multi-rank label aggregation. The one remaining research gate is the Rust server metric inventory (precondition #4).
 
 ### Dashboard / deep-dive (`src/dashboard.ts`, `deepDiveView.ts`)
-- Part of OpenRouter's per-backend classification work (§0). SGLang renders as a local server **with** metrics (not `(degraded)`).
+- **SGLang renderer** (precondition #2's strategy map, §0): its own summary line, version label (`/server_info`), section order, "Retractions" label, and the "metrics disabled — launch with `--enable-metrics`" hint when the scrape is 200-with-zero-`sglang:`. Composes the shared metric-row primitives — it does NOT duplicate them and does NOT grow `if (serverType === 'sglang')` branches in shared code.
+- **Deep-dive eligibility**: `dashboard.ts` L86 gates `contextValue` on `isVllm`. With the renderer strategy, deep-dive availability becomes a per-backend renderer decision. SGLang qualifies (real metrics + version); the deep-dive webview then needs SGLang's version source (`/server_info`) and its raw metrics — same `ServerRawData` shape, so no webview fork, but the version label must not assume `/version`.
 
 ### Error text (`src/messageConverter.ts`, `tokenBudget.ts`)
 - No functional change required; context-length errors already match. Verify the budget messaging names "sglang" where a backend name leaks.
@@ -145,7 +154,7 @@ Labels: SGLang metrics carry `model_name` labels (and `is_streaming` on token hi
 
 - Classifier: `owned_by: "sglang"` → `sglang`, with and without `max_model_len`; order vs vLLM rule.
 - Resolver: plain server `max_model_len` resolves; missing field throws with the backend-specific message; gateway `/server_info.max_context_length` fallback.
-- Metrics mapper: synthetic `sglang:*` Prometheus text → expected `ServerMetrics` (percent conversion, histogram averages, model-label summing, empty scrape → not-dead).
+- Metrics mapper: synthetic `sglang:*` Prometheus text → expected `ServerMetrics` (percent conversions for `token_usage` **and** `cache_hit_rate`, histogram averages ×1000, model-label summing, multi-rank aggregation (two `tp_rank` values, one model), metrics-disabled detection (200 with zero `sglang:` lines → not-dead + disabled hint).
 - Request body: `max_tokens` + `stream_options.include_usage` snapshot against SGLang's accepted fields (contract test, like the other backends).
 - SSE: reasoning/content/tool deltas, `[DONE]`, usage-only final chunk (reuse existing fixtures; SGLang shape is identical).
 - Router limitation: `{id, object, owned_by}` only → model skipped with actionable message.
