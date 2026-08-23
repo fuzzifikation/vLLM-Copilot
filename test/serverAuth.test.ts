@@ -39,7 +39,7 @@ describe('promptForServerAuth', () => {
   });
 
   it('returns key-derived auth when the optional headers box is dismissed (no flow abort)', async () => {
-    // The headers box is optional — dismissing it (Escape/focus loss) must mean
+    // The headers box is optional — dismissing it (Escape) must mean
     // "no custom headers", NOT "cancel the whole Add flow". A silent abort here
     // was what made "picked a model" look like nothing happened.
     inputBoxSpy.mockResolvedValueOnce('abc123').mockResolvedValueOnce(undefined);
@@ -49,6 +49,23 @@ describe('promptForServerAuth', () => {
     expect(result).toEqual({ Authorization: 'Bearer abc123' });
     expect(inputBoxSpy).toHaveBeenCalledTimes(2);
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps the headers box open on focus loss so users can copy headers from another app', async () => {
+    // Regression: switching to another program to copy headers must NOT auto-dismiss
+    // the headers box. That silently skipped the headers and continued with
+    // key-only auth, making the server probe report "server not reachable". Both
+    // the key box and the headers box must set ignoreFocusOut: true. Skipping is
+    // still possible via Escape (undefined) or Enter on empty ('').
+    inputBoxSpy.mockResolvedValueOnce('sk-123').mockResolvedValueOnce('{"X-API-Key":"h"}');
+
+    const result = await promptForServerAuth(opts);
+
+    expect(result).toEqual({ Authorization: 'Bearer sk-123', 'X-API-Key': 'h' });
+    const keyCall = inputBoxSpy.mock.calls[0][0] as any;
+    const headersCall = inputBoxSpy.mock.calls[1][0] as any;
+    expect(keyCall.ignoreFocusOut).toBe(true);
+    expect(headersCall.ignoreFocusOut).toBe(true);
   });
 
   it('skips the headers box entirely when promptForHeaders is false (OpenRouter)', async () => {

@@ -247,6 +247,7 @@ export async function activate(context: vscode.ExtensionContext) {
         const current = vscode.workspace.getConfiguration('vllm-copilot.dashboard').get<number>('pollIntervalMs', 15000);
         const input = await vscode.window.showInputBox({
           prompt: 'Set polling interval (e.g. 15s, 30s, 1m)',
+          ignoreFocusOut: true,
           value: `${current / 1000}s`,
           validateInput: (val: string) => {
             const s = val.replace(/s$/, '');

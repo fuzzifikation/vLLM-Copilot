@@ -63,6 +63,7 @@ export async function pickModelFromServer(
     detail: m.root ? `root: ${m.root}` : '',
   }));
   const selected = await vscode.window.showQuickPick(items, {
+    ignoreFocusOut: true,
     ...(title ? { title } : {}),
     placeHolder: `Select a model on ${host}`,
   });
@@ -384,6 +385,7 @@ export async function runOpenRouterAddFlow(
         detail: `vllmModelId: ${m.vllmModelId ?? m.id}`,
       }));
       const picked = await vscode.window.showQuickPick(items, {
+        ignoreFocusOut: true,
         placeHolder: `Multiple configs share "${requestedId}" — choose which to replace`,
       });
       if (!picked) {
@@ -649,6 +651,7 @@ export function registerAddServerModelCommand(
           detail: `vllmModelId: ${m.vllmModelId ?? m.id}`,
         }));
         const picked = await vscode.window.showQuickPick(items, {
+          ignoreFocusOut: true,
           placeHolder: `Multiple configs share "${modelId}" — choose which to replace`,
         });
         if (!picked) {

@@ -71,6 +71,7 @@ export function registerSetModelPersonalityCommand(
       }));
 
       const modelPick = await vscode.window.showQuickPick(modelItems, {
+        ignoreFocusOut: true,
         title: 'Set Model Personality (step 1/2)',
         placeHolder: 'Select a model',
       });
@@ -128,6 +129,7 @@ export function registerSetModelPersonalityCommand(
         : (active?.name ?? modelPick.model.systemMessageReplacementsFile) || 'Default (no personality)';
 
       const personalityPick = await vscode.window.showQuickPick(pickItems, {
+        ignoreFocusOut: true,
         title: 'Set Model Personality (step 2/2)',
         placeHolder: `Current: ${currentLabel}`,
       });

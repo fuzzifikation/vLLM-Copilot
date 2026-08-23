@@ -94,6 +94,7 @@ export function registerAutoConfigureModelCommand(
       });
 
       const selected = await vscode.window.showQuickPick(items, {
+        ignoreFocusOut: true,
         placeHolder: 'Select a model to re-configure',
       });
       if (!selected) {

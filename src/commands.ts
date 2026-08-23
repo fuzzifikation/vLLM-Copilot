@@ -62,6 +62,7 @@ export function registerDiagnoseConnectionCommand(
     }));
 
     const picked = await vscode.window.showQuickPick(items, {
+      ignoreFocusOut: true,
       placeHolder: 'Select a model to diagnose',
     });
     if (!picked) return;
@@ -171,6 +172,7 @@ export function registerCleanSessionsCommand(
 
     const selected = await vscode.window.showQuickPick<SessionPickedItem>(picks, {
       canPickMany: true,
+      ignoreFocusOut: true,
       placeHolder: 'Select workspaces to clean (multi-select allowed)',
     });
     if (!selected?.length) return;
@@ -424,7 +426,7 @@ export function registerResetUsageCommand(outputChannel: vscode.OutputChannel): 
       vscode.window.showInformationMessage('No usage recorded yet.');
       return;
     }
-    const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Reset usage for…' });
+    const picked = await vscode.window.showQuickPick(items, { ignoreFocusOut: true, placeHolder: 'Reset usage for…' });
     if (!picked) return;
     const confirm = await vscode.window.showWarningMessage(
       `Reset usage for ${picked.label}?`,
@@ -476,7 +478,7 @@ export function registerConfigureCostCommand(
         description: resolveVllmModelId(m),
         model: m,
       })),
-      { placeHolder: 'Select a model to set per-1M cost rates' },
+      { ignoreFocusOut: true, placeHolder: 'Select a model to set per-1M cost rates' },
     );
     if (!picked) return;
 
@@ -497,6 +499,7 @@ export function registerConfigureCostCommand(
     const askRate = async (value: number | undefined, prompt: string): Promise<string | undefined> => {
       return vscode.window.showInputBox({
         prompt,
+        ignoreFocusOut: true,
         value: value !== undefined && value > 0 ? String(value) : '',
         placeHolder: '0 = unpriced',
         validateInput: v => (v === '' || (!isNaN(Number(v)) && Number(v) >= 0) ? undefined : 'Enter a non-negative number'),
@@ -513,11 +516,11 @@ export function registerConfigureCostCommand(
     let currency = currencyNow;
     const curPick = await vscode.window.showQuickPick(
       ['USD', 'AI Credits', 'Other…'].map(label => ({ label })),
-      { placeHolder: `Currency label (currently ${currencyNow})` },
+      { ignoreFocusOut: true, placeHolder: `Currency label (currently ${currencyNow})` },
     );
     if (curPick === undefined) return;
     if (curPick.label === 'Other…') {
-      const custom = await vscode.window.showInputBox({ prompt: 'Currency label (display only)', value: currencyNow });
+      const custom = await vscode.window.showInputBox({ ignoreFocusOut: true, prompt: 'Currency label (display only)', value: currencyNow });
       if (custom === undefined) return;
       if (custom.trim()) currency = custom.trim();
     } else {

@@ -77,6 +77,7 @@ export async function configureByokUtilityModel(output: vscode.OutputChannel): P
       },
     ],
     {
+      ignoreFocusOut: true,
       placeHolder: 'Select utility model behavior for BYOK models',
     }
   );

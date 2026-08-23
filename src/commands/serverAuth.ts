@@ -107,20 +107,25 @@ export async function promptForServerAuth(options: {
 
   // Custom headers (optional). Accepts JSON or forgiving shorthand.
   // Merged on top of the key-derived auth headers, so a custom header wins.
-  // Dismissing this optional box (Escape / focus loss) means "no headers" —
-  // it must NOT abort the whole Add flow. So unlike the key box, `ignoreFocusOut`
-  // is NOT set: clicking away here is an intentional "skip", and an empty result
-  // simply means no custom headers.
+  // `ignoreFocusOut: true` like the key box: users MUST be able to switch to
+  // another app (Teams, email, password manager) to copy headers and paste them
+  // back. Without it the box auto-dismisses on focus loss, the flow silently
+  // continues with no headers, and the server probe reports "server not
+  // reachable". Skipping is still possible via Escape (returns `undefined`) or
+  // Enter on empty (returns `''`) — both mean "no custom headers" and must NOT
+  // abort the whole Add flow.
   const headersInput = await vscode.window.showInputBox({
     title: options.headersTitle,
     prompt: options.headersPrompt,
     placeHolder: options.headersPlaceholder,
+    ignoreFocusOut: true,
     validateInput: (v) => {
       const r = parseHeadersInput(v);
       return 'error' in r ? r.error : undefined;
     },
   });
-  // `undefined` (Escape/focus-out) and `''` (Enter on empty) both mean no headers.
+  // `undefined` (Escape) and `''` (Enter on empty) both mean no headers.
+  // Focus loss no longer dismisses the box (ignoreFocusOut above).
   if (headersInput === undefined) return { ...buildAuthHeaders(apiKey) };
   const parsedHeaders = parseHeadersInput(headersInput);
   // Unreachable in practice: the headers box's validateInput uses the same
