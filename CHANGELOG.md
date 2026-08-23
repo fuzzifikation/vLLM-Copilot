@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- **Add Server headers box stays open** — switching to another app (Teams, email, password manager) to copy HTTP headers no longer auto-dismisses the input and skips them, which made the server probe report "server not reachable". All input prompts now stay open on focus loss, so you can always switch programs mid-entry.
 - **Outdated docs** — README, configuration reference, and manual now match how the extension actually behaves.
 
 ## v1.32.2 — OpenRouter provider selection & dashboard details
