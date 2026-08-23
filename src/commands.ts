@@ -209,6 +209,34 @@ export function registerCleanSessionsCommand(
 }
 
 /**
+ * Merge newly entered auth into a model's existing request headers.
+ *
+ * Update Auth must NEVER wipe a field the user didn't touch. Replacing the whole
+ * requestHeaders object meant rotating the API key silently deleted any existing
+ * custom headers (e.g. CF-Access proxy headers) — the same class of silent data
+ * loss as the focus-loss bug. Merge semantics: a non-empty key sets
+ * Authorization, entered headers merge on top, and anything left empty keeps the
+ * existing value. Returns the SAME reference when nothing changes so callers can
+ * detect a no-op (clearing auth entirely is done by editing settings.json).
+ * @internal Exported for testing.
+ */
+export function mergeAuthHeaders(
+  existing: Record<string, string> | undefined,
+  incoming: Record<string, string>,
+): Record<string, string> | undefined {
+  if (Object.keys(incoming).length === 0) return existing; // nothing entered → no-op
+  const merged: Record<string, string> = { ...(existing ?? {}) };
+  let changed = false;
+  for (const [k, v] of Object.entries(incoming)) {
+    if (merged[k] !== v) {
+      merged[k] = v;
+      changed = true;
+    }
+  }
+  return changed ? merged : existing;
+}
+
+/**
  * Update auth (API key + request headers) for all models on a server.
  * Triggered from right-click context menu on a server node in the dashboard.
  */
@@ -229,52 +257,66 @@ export function registerUpdateServerAuthCommand(
     // flow) already collected credentials, REUSE them — never re-prompt and
     // discard the first key. Otherwise prompt, provider-aware: OpenRouter
     // requires the key (chat bills per account), generic servers keep it optional.
-    let finalHeaders: Record<string, string> | undefined;
+    let combinedHeaders: Record<string, string>;
     if (initialHeaders && Object.keys(initialHeaders).length > 0) {
-      finalHeaders = initialHeaders;
+      combinedHeaders = initialHeaders;
     } else {
-      const combinedHeaders = await promptForServerAuth({
+      const collected = await promptForServerAuth({
         apiKeyTitle: `Update Auth for ${serverUrl} (1/2)`,
         apiKeyPrompt: isOpenRouterUrl(serverUrl)
           ? 'OpenRouter API key. Sent as "Authorization: Bearer <key>". Get one at https://openrouter.ai/keys. Required.'
-          : '(optional) vLLM API key. Sent as "Authorization: Bearer <key>". Leave empty to clear.',
-        apiKeyPlaceholder: isOpenRouterUrl(serverUrl) ? 'sk-or-v1-...' : 'abc123... or leave empty to clear',
+          : '(optional) vLLM API key. Sent as "Authorization: Bearer <key>". Leave empty to keep the current value.',
+        apiKeyPlaceholder: isOpenRouterUrl(serverUrl) ? 'sk-or-v1-...' : 'abc123... or leave empty to keep',
         requireApiKey: isOpenRouterUrl(serverUrl),
         headersTitle: `Update Auth for ${serverUrl} (2/2)`,
-        headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty to clear.',
+        headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty to keep the current value.',
         headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
       });
-      if (combinedHeaders === undefined) {
+      if (collected === undefined) {
         outputChannel.appendLine(`[INFO] Update Auth cancelled for ${serverUrl} — no credentials entered.`);
         return; // cancelled
       }
-      finalHeaders = Object.keys(combinedHeaders).length > 0 ? combinedHeaders : undefined;
+      combinedHeaders = collected;
     }
 
-    // Update all models pointing to this server
+    // Update all models pointing to this server. MERGE the newly entered auth
+    // into each model's existing requestHeaders — never replace wholesale, so
+    // rotating only the key can't wipe custom proxy headers (and vice versa).
+    // Fields left empty keep their current value (clearing is settings.json).
     const config = vscode.workspace.getConfiguration('vllm-copilot');
     const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
     const normalizedUrl = normalizeServerUrl(serverUrl);
+    let matched = 0;
     let updated = 0;
+    let mergedHeaders: Record<string, string> | undefined;
     const updatedModels = existing.map(m => {
       if (m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl) {
+        matched++;
+        const nextHeaders = mergeAuthHeaders(m.requestHeaders, combinedHeaders);
+        if (nextHeaders === m.requestHeaders) return m; // no-op — nothing changed
+        if (mergedHeaders === undefined) mergedHeaders = nextHeaders;
         updated++;
-        return { ...m, requestHeaders: finalHeaders };
+        return { ...m, requestHeaders: nextHeaders };
       }
       return m;
     });
 
-    if (updated === 0) {
+    if (matched === 0) {
       vscode.window.showWarningMessage(`No models found for server ${serverUrl}.`);
+      return;
+    }
+    if (updated === 0) {
+      outputChannel.appendLine(`[INFO] Update Auth: no changes for ${serverUrl} — fields left empty keep their current values.`);
+      vscode.window.showInformationMessage(`No auth changes for ${serverUrl}. Enter a new key or headers to update.`);
       return;
     }
 
     await config.update('models', updatedModels, vscode.ConfigurationTarget.Global);
     _provider.clearCache();
-    // Push new headers to the metrics engine so open deep-dive uses fresh auth.
+    // Push merged headers to the metrics engine so open deep-dive uses fresh auth.
     // Update-if-present only: Update Auth must not create a zero-subscriber
     // engine (an engine only exists when a dashboard/deep-dive is subscribed).
-    updateMetricsEngineHeaders(serverUrl, finalHeaders ?? {});
+    updateMetricsEngineHeaders(serverUrl, mergedHeaders ?? {});
     outputChannel.appendLine(`[INFO] Updated auth for ${updated} model(s) on ${serverUrl}.`);
     vscode.window.showInformationMessage(`Updated auth for ${updated} model(s) on ${serverUrl}.`);
   });

@@ -417,6 +417,35 @@ describe('ServerSettingsViewProvider', () => {
       expect(refreshSpy).not.toHaveBeenCalled();
       expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
     });
+
+    it('P3: a failed save replies save-failed so the webview re-arms its draft (no silent wipe)', async () => {
+      // Regression: on a failed save the webview's one-shot `pendingSave` flag is
+      // consumed only by a 'data' message — which a failed save suppresses. The
+      // stale flag would make the NEXT unrelated 'data' refresh wipe the draft the
+      // user just failed to save. saveModelConfig must reply 'save-failed' so the
+      // webview clears the flag and re-arms the dirty indicator.
+      const providerWithView = new ServerSettingsViewProvider(mockContext, mockOutputChannel);
+      const postMessage = vi.fn();
+      (providerWithView as any).view = { webview: { postMessage } };
+
+      vscode.workspace._mockConfig = {
+        get: () => [],
+        update: vi.fn().mockRejectedValue(new Error('write failed')),
+      };
+
+      await expect(
+        (providerWithView as any).saveModelConfig({
+          id: 'new-model',
+          vllmModelId: 'new-model',
+          serverUrl: 'http://localhost:8000',
+          displayName: 'New Model',
+        }),
+      ).rejects.toThrow('write failed');
+
+      expect(postMessage).toHaveBeenCalledWith({ type: 'save-failed' });
+      // Still no success toast or config write side effects.
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+    });
   });
 
   describe('applyPersonality', () => {

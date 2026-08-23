@@ -453,11 +453,24 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       serverUrl: serverUrl || '',
     };
 
-    const result = await patchModelConfig(identity, rest);
-    this.outputChannel.appendLine(`[SETTINGS] Saved config for ${identity.id}`);
-    this.clearCache?.();
-    vscode.window.showInformationMessage(
-      `Settings saved for "${result.model.displayName || identity.id}"`
-    );
+    try {
+      const result = await patchModelConfig(identity, rest);
+      this.outputChannel.appendLine(`[SETTINGS] Saved config for ${identity.id}`);
+      this.clearCache?.();
+      vscode.window.showInformationMessage(
+        `Settings saved for "${result.model.displayName || identity.id}"`
+      );
+    } catch (err) {
+      // Reply so the webview knows the save FAILED. The webview sets a one-shot
+      // `pendingSave` flag that is consumed ONLY by a 'data' message; a failed
+      // save suppresses the refresh (no 'data' arrives), leaving the flag set.
+      // The NEXT unrelated refresh would then be misread as the save's answer and
+      // wipe the draft the user just failed to save. Notifying it lets the
+      // webview clear the flag and re-arm the dirty indicator without touching
+      // field values. This message is scoped to save only — other actions never
+      // set pendingSave, so a stray 'save-failed' is a harmless no-op.
+      this.view?.webview.postMessage({ type: 'save-failed' });
+      throw err;
+    }
   }
 }

@@ -56,6 +56,17 @@
 
   // Wait for data from extension
   window.addEventListener('message', e => {
+    // A failed save: the extension answers with 'save-failed' (no 'data' refresh
+    // follows, so `pendingSave` would otherwise stay set and the NEXT unrelated
+    // 'data' message would be misread as the save's answer and wipe the draft).
+    // Clear the stale flag and re-arm the dirty indicator WITHOUT touching field
+    // values — the user's unsaved edits stay put, and a later external refresh
+    // correctly merges instead of discarding them.
+    if (e.data && e.data.type === 'save-failed') {
+      pendingSave = false;
+      markDirty();
+      return;
+    }
     if (e.data && e.data.type === 'data') {
       // Preserve the user's current server/model selection across refreshes —
       // the host always posts the first server/first model, which would reset

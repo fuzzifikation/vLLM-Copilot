@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.32.4 — Focus-loss and auth data-safety fixes
+
+### Fixed
+
+- **Add Server headers box stays open** — switching to another app (Teams, email, password manager) to copy HTTP headers no longer auto-dismisses the input and skips them, which made the server probe report "server not reachable". All input prompts now stay open on focus loss, so you can always switch programs mid-entry.
+- **Update Auth no longer wipes your headers** — rotating just the API key (or just the proxy headers) merges into the existing per-model headers instead of replacing the whole set, so custom headers like CF-Access survive an auth update.
+- **Model Settings no longer loses unsaved edits on a failed save** — if a save fails (e.g. a settings write error), the form keeps your changes and the "unsaved" indicator instead of a later unrelated refresh silently discarding them.
+
 ## v1.32.3 — Ask Copilot to configure your models; per-mode response limits
 
 ### Added
@@ -14,7 +22,6 @@
 
 ### Fixed
 
-- **Add Server headers box stays open** — switching to another app (Teams, email, password manager) to copy HTTP headers no longer auto-dismisses the input and skips them, which made the server probe report "server not reachable". All input prompts now stay open on focus loss, so you can always switch programs mid-entry.
 - **Outdated docs** — README, configuration reference, and manual now match how the extension actually behaves.
 
 ## v1.32.2 — OpenRouter provider selection & dashboard details
