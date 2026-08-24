@@ -261,4 +261,46 @@ Since the model list is small (typically < 20 entries) and the server is local/c
 
 **Moat value:** BYOK cannot request routed experts — `modelOptions` is limited to `temperature` and `top_p`. This is pure moat.
 
+## ✨ Named-Server Registry ("B") — deduplicate server identity & auth
+
+**Category:** Architecture / Vitamin (developer-experience, not user-facing moat)
+**Status:** Accepted for planning → full architecture & implementation plan: [server-registry.md](./server-registry.md) (draft, 2026-08-24)
+**Cross-note:** This *reconsiders* the per-model identity decision in [code-review.md](./code-review.md) ("Accepted product decisions: per-model server identity"). It is **not** a return to the deprecated single-global-server; it's an explicit registry of *N* named servers that models reference.
+
+**What:** Today every model entry duplicates its own `serverUrl` and `requestHeaders`. Two models on one server carry the same auth copy-pasted (e.g. the same CF-Access client-id/secret + bearer token). This introduces a real drift bug class: rotate a shared credential and every entry must be updated or it silently keeps a dead key. The display-name work (v1.33.0, `serverDisplayName`) landed as a per-model field for the same structural reason.
+
+Proposed shape — models reference a server by id instead of copying it:
+
+```jsonc
+"vllm-copilot.servers": [{
+  "id": "gw-shared",
+  "serverUrl": "https://gw.example-corp.com",
+  "requestHeaders": { "X-API-Key": "..." },
+  "displayName": "IT Server for GLM5.2",   // moves here from serverDisplayName
+  "serverType": "vllm"
+}],
+"vllm-copilot.models": [{
+  "server": "gw-shared",   // reference, not a copy
+  "id": "glm52-prod", "vllmModelId": "zai/glm-5.2", ...
+}]
+```
+
+**Why it's worth it:**
+- **Auth becomes a single source of truth** — rotate a key once, not N times. Kills the copy-paste drift bug class.
+- **Server identity becomes `id`, not a header-value fingerprint** — the entire `serverFingerprint`/`serverGroupKey`/identity-grouping machinery (dashboard, settings view, deep-dive, metrics engine) exists only to reconstruct "which scattered entries are the same box" from duplicated URL+headers. Under B that's a foreign-key join — simpler and more correct.
+- **Future server-level knobs get a home** — TLS options, per-server poll interval, proxy settings stop needing a per-model storage debate.
+- **`serverDisplayName` migrates cleanly** onto the server record; the shipped dashboard/rename logic keeps working against the registry (~70% portable).
+
+**Non-breaking migration rules (agreed):**
+1. **Additive only** — introduce `servers[]` + optional `model.server` alongside inline `serverUrl`. Nothing existing stops parsing.
+2. **Read tolerance forever** — `getConfig()` resolves both forms indefinitely; inline entries never become invalid. Deprecate in docs, never in the parser.
+3. **Opt-in migrate command** — an explicit "Migrate servers to registry" command that fingerprints existing entries, dedupes them into `servers[]`, rewrites models to refs, shows a preview/diff, and writes once. **Never** silent auto-rewrite of user settings on activate.
+
+**Costs / open decisions:**
+- Config-layer surgery across provider request path, `vllmClient` cache, discovery, dashboard/deep-dive keys, Add flow, Update Auth (mostly *deletes*), Remove Server, Test & Refresh, autoConfig, presets, BYOK, OpenRouter branch, the three schema locations, docs, and a large share of the test suite.
+- **Lifecycle rule that must be decided:** what happens when a user deletes a server entry that models still reference? (Block, or cascade-with-confirm — must be chosen, not left implicit.)
+- The rename feature shipped (v1.33.0) already solves the display-name problem, so the *remaining* justification is auth dedup + identity simplification — not renaming.
+
+**Priority:** P3 / deferred. High value, high churn. Worth doing if duplicated shared auth keeps recurring or server-level settings keep being requested; not worth it for renaming alone.
+
 **Effort:** Medium. Requires SSE response parsing, new storage fields, and dashboard UI. No server-side changes needed — all data comes from the existing vLLM response.

@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.33.0 — Rename servers & your V in the model picker
+## v1.33.0 — Rename servers & V symbol in the model picker
 
 ### Added
 
