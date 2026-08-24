@@ -60,4 +60,15 @@ describe('buildModelInfo picker id derivation', () => {
     expect(info.name).toBe('My Model');
     expect(info.id).toBe('X on a:8000');
   });
+
+  it.each(['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter'] as const)('uses the vLLM icon for %s models', (serverType) => {
+    const info = buildModelInfo(
+      { id: 'X', max_model_len: 1000 },
+      { vllmModelId: 'X', serverUrl: 'http://a:8000', serverType },
+      { maxOutputTokens: 512 },
+      'http://a:8000',
+    );
+    expect((info as unknown as { statusIcon?: { id: string } }).statusIcon?.id).toBe('vllm-copilot-model');
+  });
+
 });

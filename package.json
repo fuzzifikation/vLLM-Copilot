@@ -85,6 +85,15 @@
         "displayName": "vLLM-Copilot"
       }
     ],
+    "icons": {
+      "vllm-copilot-model": {
+        "description": "vLLM model icon shown in the model picker.",
+        "default": {
+          "fontPath": "./resources/vllm-icon.woff2",
+          "fontCharacter": "\\E001"
+        }
+      }
+    },
     "languageModelTools": [
       {
         "name": "vllm-copilot_model_schema",

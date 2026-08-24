@@ -103,6 +103,7 @@ export function buildModelInfo(
   const info: vscode.LanguageModelChatInformation & {
     configurationSchema?: { properties: Record<string, unknown> };
     isBYOK?: boolean;
+    statusIcon?: vscode.ThemeIcon;
   } = {
     id: presetId,
     name: override?.displayName || presetId,
@@ -114,6 +115,7 @@ export function buildModelInfo(
       toolCalling: override?.capabilities?.toolCalling ?? true,
       imageInput: override?.capabilities?.imageInput ?? false,
     },
+    statusIcon: new vscode.ThemeIcon('vllm-copilot-model'),
     isBYOK: true,
   };
 

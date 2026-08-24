@@ -1,12 +1,13 @@
 # Changelog
 
-## v1.33.0 — Rename your servers in the Dashboard
+## v1.33.0 — Rename servers & your V in the model picker
 
 ### Added
 
 - **Rename Server** — right-click any server in the Dashboard and give it a friendly name (e.g. `IT Server for GLM5.2`) instead of the bare host. The name is used everywhere the server is shown — Dashboard tree, Deep-Dive panel title, and the Model Settings server dropdown. Clear it any time to show the URL again.
 - **Rename applies to the whole server** — the name is written to every model sharing that server URL, so all its entries stay in sync.
 - **Not for OpenRouter** — the fixed `openrouter.ai` relay endpoint can't be renamed (menu hidden there).
+- **Your V in the model picker** — every model (vLLM, LM Studio, llama.cpp, Ollama, and OpenRouter) now shows the project's own V icon instead of a generic fallback. The glyph is derived from `resources/vllm-icon.svg` with the left arm as a hollow outline, and is built from the tracked `scripts/build-vllm-icon-font.py`.
 
 ### Fixed
 
