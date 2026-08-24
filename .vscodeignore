@@ -28,12 +28,6 @@ docs/
 !docs/images/logo.png
 # prompt-replacements/ is shipped for the Set Model Personality command
 !prompt-replacements/
-known-bugs.md
-publication-plan.md
-refactor-plan.md
-
-# User-kept reference files — never ship, never delete (see keep_this/info.md)
-keep_this/
 
 # Test files
 test/
@@ -42,18 +36,15 @@ vitest.config.ts
 # Coverage reports (dev only)
 coverage/
 
-# Colleague's unpacked source (reference only, not shipped)
-Colleague_Diagnosis_Fix/
-
 # Temp files
 temp/
 
 # Dev scripts and tools
-ssh-tunnel.bat
 scripts/
 
 # Repo/build config (not needed at runtime)
 .gitignore
+package-lock.json
 
 # Test files (local testing only — never ship)
 AGENTS.md

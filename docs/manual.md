@@ -79,7 +79,7 @@ vLLM-specific request parameters (structured outputs, `chat_template_kwargs`, to
 
 ### OpenRouter
 
-A managed remote: add one fixed endpoint, pick from ~415 cloud models, pay per use (many have free routes). The Add flow detects any `openrouter.ai` URL and routes into the OpenRouter branch. Each model can pin a provider slug and a routing mode. Full guide, including the URL table, manual config JSON, and attribution headers: **[Using OpenRouter](openrouter.md)**. Architecture notes: [openrouter-integration.md](../openrouter-integration.md).
+A managed remote: add one fixed endpoint, pick from ~415 cloud models, pay per use (many have free routes). The Add flow detects any `openrouter.ai` URL and routes into the OpenRouter branch. Each model can pin a provider slug and a routing mode. Full guide, including the URL table, manual config JSON, and attribution headers: **[Using OpenRouter](openrouter.md)**. Architecture notes: [openrouter-integration.md](openrouter-integration.md).
 
 ---
 
@@ -266,4 +266,4 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 | [Auto-Continue](auto-continue.md) | Empty/truncated response retry — how it works, config, and known limitations. |
 | [Copilot integration](copilot-integration.md) | How the extension plugs into Copilot, sessions, tool calls. |
 
-**Maintainer-only docs:** [OpenRouter architecture](../openrouter-integration.md) · [Third-party compatibility plan](thirdparty-compatibility-plan.md) · [SGLang compat plan](sglang-compat-plan.md) · [Feature ideas](feature-ideas.md) · [Code review](code-review.md).
+**Maintainer-only docs:** [OpenRouter architecture](openrouter-integration.md) · [Third-party compatibility plan](thirdparty-compatibility-plan.md) · [SGLang compat plan](sglang-compat-plan.md) · [Feature ideas](feature-ideas.md) · [Code review](code-review.md).

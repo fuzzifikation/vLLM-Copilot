@@ -56,4 +56,4 @@ These are only for attribution and rankings. Chat works fine without them, and m
 
 ## Architecture notes
 
-For how the integration is built (data flow, provider handling, per-provider limits), see [openrouter-integration.md](../openrouter-integration.md).
+For how the integration is built (data flow, provider handling, per-provider limits), see [openrouter-integration.md](openrouter-integration.md).
