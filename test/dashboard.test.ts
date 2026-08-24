@@ -233,6 +233,78 @@ describe('DashboardTreeProvider', () => {
     expect(authHeaders).toContain('Bearer secret-b');
   });
 
+  it('shows a configured serverDisplayName instead of the URL', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [
+        { id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1', serverDisplayName: 'IT Server for GLM5.2' },
+      ],
+    };
+    vi.stubGlobal('fetch', offlineFetch);
+
+    provider.setVisible(true);
+    await settle();
+
+    const labels = await rootLabels(provider);
+    expect(labels).toContain('IT Server for GLM5.2');
+    expect(labels).not.toContain('s:8000');
+  });
+
+  it('keeps identity suffixes when renamed identities share one URL', async () => {
+    // The `(identity N)` suffix keys off URL-sharing credential groups — never
+    // off label equality — so two identically-NAMED identities stay distinct.
+    (vscode as any).workspace._mockConfig = {
+      models: [
+        { id: 'a', serverUrl: 'http://gw:8000', vllmModelId: 'm-a', requestHeaders: { Authorization: 'Bearer secret-a' }, serverDisplayName: 'Gateway' },
+        { id: 'b', serverUrl: 'http://gw:8000', vllmModelId: 'm-b', requestHeaders: { Authorization: 'Bearer secret-b' }, serverDisplayName: 'Gateway' },
+      ],
+    };
+    vi.stubGlobal('fetch', offlineFetch);
+
+    provider.setVisible(true);
+    await settle();
+
+    const labels = await rootLabels(provider);
+    expect(labels).toContain('Gateway (identity 1)');
+    expect(labels).toContain('Gateway (identity 2)');
+  });
+
+  it('ignores serverDisplayName on OpenRouter relays and marks them Relay', async () => {
+    // The fixed openrouter.ai endpoint is not renamable — a hand-edited name
+    // must not render, and the node carries the Relay context value so the
+    // Rename Server menu entry is hidden for it.
+    (vscode as any).workspace._mockConfig = {
+      models: [{
+        id: 'or1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-chat',
+        serverType: 'openrouter', displayName: 'DeepSeek', serverDisplayName: 'My Relay',
+      }],
+    };
+    vi.stubGlobal('fetch', openRouterFetch);
+
+    provider.setVisible(true);
+    await settle();
+
+    const children = await provider.getChildren();
+    const serverNode = children.find(c => (c as any).label === 'openrouter.ai');
+    expect(serverNode).toBeDefined();
+    expect((serverNode as any).contextValue).toBe('serverOnlineRelay');
+    const labels = children.map(c => (c as any).label as string);
+    expect(labels).not.toContain('My Relay');
+  });
+
+  it('treats a whitespace-only hand-edited display name as unset', async () => {
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1', serverDisplayName: '   ' }],
+    };
+    vi.stubGlobal('fetch', offlineFetch);
+
+    provider.setVisible(true);
+    await settle();
+
+    const labels = await rootLabels(provider);
+    expect(labels).toContain('s:8000');
+    expect(labels).not.toContain('   ');
+  });
+
   it('renders online server metric rows from a completed poll', async () => {
     (vscode as any).workspace._mockConfig = {
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],

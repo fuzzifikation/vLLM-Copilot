@@ -41,7 +41,10 @@ class ServerTreeItem extends vscode.TreeItem {
    * @param requestHeaders - This identity's exact credentials, carried so the
    *   Deep-Dive command uses the right ones (never the first model's).
    * @param displayLabel - Optional disambiguated label (e.g. `s:8000 (identity 2)`) when
-   *   multiple identities share one URL; defaults to `shortUrl(serverUrl)`.
+   *   multiple identities share one URL; defaults to `shortUrl(serverUrl)` or the
+   *   user-set `serverDisplayName`.
+   * @param serverDisplayName - The user-set label WITHOUT any identity suffix —
+   *   carried so the Deep-Dive command can title its panel with the clean name.
    */
   constructor(
     public readonly key: string,
@@ -52,6 +55,7 @@ class ServerTreeItem extends vscode.TreeItem {
     public readonly metrics: ServerMetrics,
     public readonly serverType?: ServerType,
     displayLabel?: string,
+    public readonly serverDisplayName?: string,
   ) {
     const displayName = displayLabel ?? shortUrl(serverUrl);
     const statusIcon = metrics.online
@@ -84,7 +88,12 @@ class ServerTreeItem extends vscode.TreeItem {
     // servers expose auth/remove but not the vLLM metrics deep-dive.
     const isVllm = serverType === undefined || serverType === 'vllm';
     const state = metrics.online ? 'serverOnline' : 'serverOffline';
-    this.contextValue = isVllm ? state : `${state}NoDive`;
+    // OpenRouter relays get their own context-value pair: Deep-Dive AND Rename
+    // Server are hidden there (fixed managed endpoint). Other non-vLLM backends
+    // keep NoDive — no vLLM metrics, but renamable.
+    this.contextValue = isVllm ? state
+      : isOpenRouterRelay ? `${state}Relay`
+      : `${state}NoDive`;
   }
 }
 
@@ -378,6 +387,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     url: string;
     requestHeaders: Record<string, string>;
     serverType?: ServerType;
+    /** User-set server label (first non-empty among the group's models), or undefined. */
+    serverDisplayName?: string;
     metrics: ServerMetrics;
     dispose: () => void;
   }> = [];
@@ -466,6 +477,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         requestHeaders: Record<string, string>;
         modelIds: string[];
         serverType?: ServerType;
+        serverDisplayName?: string;
       }>();
       for (const model of config.models) {
         if (!model.serverUrl) continue;
@@ -480,6 +492,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         const wireId = model.vllmModelId ?? model.id;
         if (wireId) group.modelIds.push(wireId);
         if (!group.serverType && model.serverType) group.serverType = model.serverType;
+        // Single normalization/filtering point for the display name: trimmed
+        // (whitespace-only hand-edits never render as blank labels) and skipped
+        // for OpenRouter (the fixed relay endpoint is not renamable).
+        const name = model.serverType === 'openrouter'
+          ? undefined
+          : model.serverDisplayName?.trim();
+        if (!group.serverDisplayName && name) group.serverDisplayName = name;
       }
 
       for (const [fp, group] of identityMap) {
@@ -497,6 +516,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
           url: group.url,
           requestHeaders: group.requestHeaders,
           serverType: group.serverType,
+          serverDisplayName: group.serverDisplayName,
           metrics: engine.getCachedAggregated() ?? emptyFallbackMetrics(),
           dispose: sub.dispose,
         });
@@ -526,16 +546,23 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
   async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
     if (!element) {
       const items: vscode.TreeItem[] = [this.getPollIntervalTreeItem()];
-      // Disambiguate labels when multiple identities share one URL so each
-      // credential set is visibly its own node.
+      // Label precedence: user-set serverDisplayName first, else shortUrl. The
+      // `(identity N)` suffix keys off URL-sharing identities ONLY — never off
+      // label equality — so two identically-NAMED credential groups on one URL
+      // stay distinguishable instead of collapsing back into look-alike nodes.
       const urlCount = new Map<string, number>();
       for (const sub of this.subscriptions) urlCount.set(sub.url, (urlCount.get(sub.url) ?? 0) + 1);
       const urlSeen = new Map<string, number>();
       const servers = this.subscriptions.map(sub => {
         const n = (urlSeen.get(sub.url) ?? 0) + 1;
         urlSeen.set(sub.url, n);
-        const label = (urlCount.get(sub.url) ?? 1) > 1 ? `${shortUrl(sub.url)} (identity ${n})` : undefined;
-        return new ServerTreeItem(sub.key, sub.fp, sub.url, sub.requestHeaders, sub.metrics, sub.serverType, label);
+        const shared = (urlCount.get(sub.url) ?? 1) > 1;
+        const base = sub.serverDisplayName ?? shortUrl(sub.url);
+        // Always pass the computed base: with a single identity there is no
+        // suffix, and passing undefined here would make ServerTreeItem fall
+        // back to shortUrl — silently dropping a configured display name.
+        const label = shared ? `${base} (identity ${n})` : base;
+        return new ServerTreeItem(sub.key, sub.fp, sub.url, sub.requestHeaders, sub.metrics, sub.serverType, label, sub.serverDisplayName);
       });
       return [...items, ...servers, new AddServerTreeItem(), new TestRefreshTreeItem()];
     }

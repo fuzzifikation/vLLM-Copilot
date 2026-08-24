@@ -35,6 +35,7 @@ You are editing the \`vllm-copilot.models\` array in the user's VS Code \`settin
 - Each entry is self-contained: its own \`serverUrl\`, \`requestHeaders\`, params, and modes. There is NO global server and no global API key.
 - Required: \`serverUrl\` (OpenAI-compatible endpoint) and \`id\` (unique entry key).
 - \`serverType\` defaults to \`vllm\`; set it explicitly for \`lmstudio\`, \`llamacpp\`, \`ollama\`, or \`openrouter\`.
+- \`serverDisplayName\` (optional): human-friendly label shown in the Dashboard instead of the URL. Server-scoped — when setting it manually, use the SAME value on every entry sharing a \`serverUrl\` (the Rename Server command does this automatically). Never set it on OpenRouter entries.
 - Put auth as \`requestHeaders\` on the entry, e.g. \`{ "Authorization": "Bearer <key>" }\`.
 
 ## Parameter resolution (highest wins)

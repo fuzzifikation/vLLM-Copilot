@@ -69,6 +69,27 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     );
   });
 
+  it('preserves the server display name when the replacement omits it', async () => {
+    // Rename Server labels the box; presets and auto-configure go through this
+    // replace path and must never wipe the user's label.
+    existingConfig = [baseConfig({ serverDisplayName: 'IT Server for GLM5.2' })];
+
+    await replaceModelConfig(baseConfig({ displayName: 'Renamed' }));
+
+    const stored = storedModels();
+    expect(stored[0].displayName).toBe('Renamed');
+    expect(stored[0].serverDisplayName).toBe('IT Server for GLM5.2');
+  });
+
+  it("replace-mode '' on serverDisplayName clears it (explicit clear signal)", async () => {
+    existingConfig = [baseConfig({ serverDisplayName: 'Old Name' })];
+
+    await replaceModelConfig(baseConfig({ serverDisplayName: '' }));
+
+    const stored = storedModels();
+    expect('serverDisplayName' in stored[0]).toBe(false);
+  });
+
   it('clears the replacements file when the new value is an empty string', async () => {
     existingConfig = [
       baseConfig({ systemMessageReplacementsFile: '.vllm/prompt-replacements-tough-love.json' }),

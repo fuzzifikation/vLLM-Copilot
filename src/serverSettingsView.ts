@@ -68,6 +68,8 @@ interface ServerGroup {
    */
   key: string;
   url: string;
+  /** User-set server label (first non-empty among the group's models), or undefined. */
+  serverDisplayName?: string;
   models: ModelConfig[];
   serverModelIds: string[];
   /** Backend detected from the server's /v1/models data (undefined = unknown). */
@@ -250,6 +252,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       models: ModelConfig[];
       publicModels: ModelConfig[];
       requestHeaders: Record<string, string>;
+      serverDisplayName?: string;
     }>();
     for (const model of config.models) {
       if (!model.serverUrl) continue;
@@ -262,6 +265,14 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
         serverMap.set(fp, existing);
       }
       existing.models.push(model);
+      // Mirror the dashboard's single normalization point for the display name:
+      // trimmed (whitespace-only hand-edits never render as blank labels) and
+      // skipped for OpenRouter relays (fixed endpoint, not renamable). The
+      // webview's relay-guard stays as defense-in-depth, not the source of truth.
+      const name = model.serverType === 'openrouter'
+        ? undefined
+        : model.serverDisplayName?.trim();
+      if (!existing.serverDisplayName && name) existing.serverDisplayName = name;
       // Public projection: header values never reach the webview DOM.
       existing.publicModels.push({
         ...toPublicModelConfig(model, { strip: true }),
@@ -296,7 +307,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
         // /v1/models signature — when the endpoint signal is inconclusive (or unreachable),
         // adopt the persisted serverType of a configured sibling on the same server.
         const detectedServerType = resolveDetectedServerType(entries, group.models);
-        return { key: serverGroupKey(fp), url, models: group.publicModels, serverModelIds, detectedServerType };
+        return { key: serverGroupKey(fp), url, serverDisplayName: group.serverDisplayName, models: group.publicModels, serverModelIds, detectedServerType };
       }),
     );
     const firstServer = servers[0];

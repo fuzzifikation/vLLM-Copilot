@@ -12,8 +12,24 @@ interface ReadyMessage {
   type: 'ready';
 }
 
-/** Singleton — only one deep-dive panel per server at a time. */
-const openPanels = new Map<string, vscode.WebviewPanel>();
+/** Singleton — only one deep-dive panel per server at a time. The URL rides
+ *  alongside so a rename can retitle every panel of that server by URL match
+ *  (the map key is a one-way identity hash, not reversible to a URL). */
+const openPanels = new Map<string, { panel: vscode.WebviewPanel; url: string }>();
+
+/**
+ * Retitle every open Deep-Dive panel for a server (matched by normalized URL).
+ * Called after Rename Server so panels that stay open across the rename
+ * (`retainContextWhenHidden`) don't keep a stale label until reopened.
+ */
+export function updateDeepDiveTitle(serverUrl: string, displayName?: string): void {
+  const normalized = normalizeServerUrl(serverUrl);
+  for (const entry of openPanels.values()) {
+    if (normalizeServerUrl(entry.url) === normalized) {
+      entry.panel.title = `vLLM Deep-Dive: ${displayName || entry.url}`;
+    }
+  }
+}
 
 export function openDeepDive(
   serverUrl: string,
@@ -21,22 +37,27 @@ export function openDeepDive(
   serverType: ServerType,
   context: vscode.ExtensionContext,
   outputChannel: vscode.OutputChannel,
+  /** User-set server label — used in the panel title instead of the raw URL. */
+  displayName?: string,
 ): void {
   // Panels are keyed by server IDENTITY (normalized URL + header fingerprint)
   // so `http://host:8000`, `http://host:8000/`, and `http://host:8000/v1` share
   // one panel — matching the metrics engine — while two identities on one URL
   // (different per-model credentials) get separate panels with their own auth.
   const panelKey = serverGroupKey(serverFingerprint(normalizeServerUrl(serverUrl), requestHeaders));
-  // If a panel for this server is already open, reveal it
+  // If a panel for this server is already open, reveal it. Update the title as
+  // well — the title is only set at creation, so a rename while the panel stays
+  // open (retainContextWhenHidden) would otherwise show the stale label.
   const existing = openPanels.get(panelKey);
   if (existing) {
-    existing.reveal(vscode.ViewColumn.Beside);
+    existing.panel.title = `vLLM Deep-Dive: ${displayName || serverUrl}`;
+    existing.panel.reveal(vscode.ViewColumn.Beside);
     return;
   }
 
   const panel = vscode.window.createWebviewPanel(
     'vllm-copilot.deepDive',
-    `vLLM Deep-Dive: ${serverUrl}`,
+    `vLLM Deep-Dive: ${displayName || serverUrl}`,
     vscode.ViewColumn.Beside,
     { enableScripts: true, retainContextWhenHidden: true },
   );
@@ -105,7 +126,7 @@ export function openDeepDive(
     msgDisposable.dispose();
   });
 
-  openPanels.set(panelKey, panel);
+  openPanels.set(panelKey, { panel, url: serverUrl });
 }
 
 function buildHtml(webview: vscode.Webview, scriptUri: vscode.Uri, styleUri: vscode.Uri): string {

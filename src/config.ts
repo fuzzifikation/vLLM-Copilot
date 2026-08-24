@@ -57,6 +57,20 @@ export interface ModelConfig {
    */
   serverUrl?: string;
   /**
+   * Optional human-friendly name for this server, shown in the dashboard tree
+   * and the Model Settings server dropdown in place of the raw URL.
+   *
+   * SERVER-level (not model-level), stored per-model because the config has no
+   * global server object. The dashboard groups models by server identity (URL +
+   * header fingerprint) and uses the FIRST non-empty `serverDisplayName` in the
+   * group as the node label — so models sharing one endpoint can share a single
+   * meaningful name instead of repeating the same URL. Set via the dashboard's
+   * **Rename Server** context action, which writes it to every model in the
+   * group. Empty/omitted falls back to the server URL. Not applicable to
+   * OpenRouter relays (the fixed `openrouter.ai` endpoint is never renamed).
+   */
+  serverDisplayName?: string;
+  /**
    * Backend serving this model: `vllm` (default), `lmstudio`, `llamacpp`, or
    * `ollama`. Missing/omitted ALWAYS means `vllm`. Set by the Add Server
    * flow after detection, or manually for a secondary backend. Used to select the
@@ -759,6 +773,7 @@ export function findModelConfig(
  */
 const CLEARABLE_ON_EMPTY: readonly (keyof ModelConfig)[] = [
   'displayName',
+  'serverDisplayName',
   'serverType',
   'maxOutputTokens',
   'maxInputTokens',

@@ -22,6 +22,10 @@
       "enum": ["vllm", "lmstudio", "llamacpp", "ollama", "openrouter"],
       "description": "Backend protocol. Default: vllm. Missing/omitted always means vllm. Set explicitly for non-vLLM backends."
     },
+    "serverDisplayName": {
+      "type": "string",
+      "description": "Optional human-friendly name for this server, shown in the dashboard tree and the Model Settings server dropdown instead of the raw URL. Server-level (stored per-model): the dashboard uses the first non-empty value among the models sharing this server identity (URL + headers). Set via the dashboard's Rename Server context action; empty/omitted falls back to the server URL. Not applicable to OpenRouter relays."
+    },
     "vllmModelId": {
       "type": "string",
       "description": "Actual model id on the server (e.g. Qwen/Qwen3.6-27B). Allows several entries with different id values to point at the same server model. Defaults to id."

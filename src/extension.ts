@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider.js';
-import { getConfig, validateConfig, resolveServerConfig, resolveServerType } from './config.js';
+import { getConfig, validateConfig, resolveServerConfig, resolveServerType, normalizeServerUrl } from './config.js';
 import { FileLogger } from './logger.js';
 import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault } from './autoConfig.js';
 import { setSessionManagerOutput } from './sessionManager.js';
@@ -13,6 +13,7 @@ import {
   registerCleanSessionsCommand,
   registerSetModelPersonalityCommand,
   registerUpdateServerAuthCommand,
+  registerRenameServerCommand,
   registerRemoveServerCommand,
   registerRemoveModelCommand,
   registerResetUsageCommand,
@@ -182,6 +183,7 @@ export async function activate(context: vscode.ExtensionContext) {
       registerCleanSessionsCommand(outputChannel, context.extension.extensionKind),
       registerSetModelPersonalityCommand(context, activeProvider, outputChannel),
       registerUpdateServerAuthCommand(context, activeProvider, outputChannel),
+      registerRenameServerCommand(context, activeProvider, outputChannel),
       registerRemoveServerCommand(context, activeProvider, outputChannel),
       registerRemoveModelCommand(context, activeProvider, outputChannel),
       registerResetUsageCommand(outputChannel),
@@ -219,7 +221,20 @@ export async function activate(context: vscode.ExtensionContext) {
         const headers = fromTreeItem
           ? arg.requestHeaders
           : (firstModel ? (resolveServerConfig(firstModel).requestHeaders ?? {}) : {});
-        openDeepDive(serverUrl, headers, serverType, context, outputChannel);
+        // Display name: carried on the tree item when present; otherwise look
+        // it up (first non-empty, trimmed, never OpenRouter) from the models on
+        // this URL — covers string AND bare-object programmatic invocations.
+        const normalizedArg = normalizeServerUrl(serverUrl);
+        const carried = typeof arg === 'object' && typeof arg?.serverDisplayName === 'string'
+          ? arg.serverDisplayName.trim()
+          : undefined;
+        const displayName = carried || models.find((m: any) =>
+              m.serverUrl
+              && normalizeServerUrl(m.serverUrl) === normalizedArg
+              && m.serverType !== 'openrouter'
+              && m.serverDisplayName?.trim()
+            )?.serverDisplayName?.trim();
+        openDeepDive(serverUrl, headers, serverType, context, outputChannel, displayName);
       }),
     );
 

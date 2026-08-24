@@ -16,6 +16,7 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 |-------|:-------:|-------------|
 | `serverUrl` | — | **Required.** Server URL (OpenAI-compatible). Each model targets its own server. |
 | `serverType` | `vllm` | Backend protocol. `vllm` \| `lmstudio` \| `llamacpp` \| `ollama` \| `openrouter`. **Set automatically by Add Server**, and auto-detected in Model Settings for unconfigured models (from `/v1/models`, or a configured sibling's type). Missing always means `vllm`. Manual third-party entries must set this — the extension never probes at runtime. |
+| `serverDisplayName` | — | Optional **server label** shown in the Dashboard tree and the Model Settings server dropdown instead of the raw URL (e.g. `"IT Server for GLM5.2"`). Server-scoped, stored per model: the first non-empty value among the models sharing a server identity (URL + headers) wins; **Rename Server** (right-click a server node in the Dashboard) writes it to every model sharing that URL, so hand-edited partial configs may differ. Empty/omitted shows the URL. Not applicable to OpenRouter. |
 | `provider` | — | ⚡ **OpenRouter only.** The exact provider slug (from `GET /api/v1/models/{id}/endpoints`) to force routing to that provider via `provider: { only: [slug] }`. Use the **Provider** dropdown in Model Settings — never hand-derive. Omitted/empty = Auto. |
 | `routingMode` | `standard` | ⚡ **OpenRouter only.** How OpenRouter sorts/chooses among eligible providers when routing is **Auto** (no `provider` pinned): `standard` (price-weighted load balancing, no suffix), `nitro` (throughput-first + priority tier → wire id `:nitro`), `exacto` (quality/tool-calling-first → wire id `:exacto`). Ignored when a provider is pinned. Set via the **Routing** dropdown in Model Settings. |
 | `requestHeaders` | `{}` | HTTP headers for this server (auth, routing). **Isolated** — never shared across servers. |
@@ -218,6 +219,7 @@ A working chat model — minimum viable config. No modes, no custom params, just
 
     // ── Server & auth (per-model, isolated) ──────────────
     "serverUrl": "http://localhost:8000",             // required
+    "serverDisplayName": "IT Server for GLM5.2",      // optional Dashboard label (Rename Server sets this on all sibling models)
     "requestHeaders": {                               // auth/routing; never shared across servers
       "Authorization": "Bearer <your-token>",
       "X-Custom-Header": "<your-value>"

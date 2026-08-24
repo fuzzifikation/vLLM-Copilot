@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM integration to GitHub Copilot for professional (and self-hosted) servers (supports full featureset of vLLM and Copilot). No subscription, no data sent to third parties. Live observability: queue status, KV-cache, throughput, etc and full UI (dashboard). Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
-  "version": "1.32.4",
+  "version": "1.33.0",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -162,6 +162,11 @@
         "category": "vLLM-Copilot"
       },
       {
+        "command": "vllm-copilot.renameServer",
+        "title": "Rename Server",
+        "category": "vLLM-Copilot"
+      },
+      {
         "command": "vllm-copilot.removeServer",
         "title": "Remove Server",
         "category": "vLLM-Copilot"
@@ -200,13 +205,22 @@
         {
           "command": "vllm-copilot.configureCost",
           "when": "false"
+        },
+        {
+          "command": "vllm-copilot.renameServer",
+          "when": "false"
         }
       ],
       "view/item/context": [
         {
           "command": "vllm-copilot.updateServerAuth",
-          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive)",
+          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive || viewItem == serverOnlineRelay || viewItem == serverOfflineRelay)",
           "group": "1_server@1"
+        },
+        {
+          "command": "vllm-copilot.renameServer",
+          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive)",
+          "group": "1_server@2"
         },
         {
           "command": "vllm-copilot.openDeepDive",
@@ -245,6 +259,10 @@
                   "enum": ["vllm", "lmstudio", "llamacpp", "ollama", "openrouter"],
                   "default": "vllm",
                   "markdownDescription": "Backend serving this model. **Default: `vllm`.** Missing/omitted always means `vllm`. Secondary backends (LM Studio, llama.cpp, Ollama, OpenRouter) must be added via the **Add vLLM Server & Model** command or set `serverType` explicitly."
+                },
+                "serverDisplayName": {
+                  "type": "string",
+                  "markdownDescription": "**Optional server label** shown in the Dashboard tree and the Model Settings server dropdown instead of the raw URL (e.g. `\"IT Server for GLM5.2\"`). Server-level: the label of the FIRST model on a server that sets it is used, and **Rename Server** (right-click a server in the Dashboard) writes it to every model sharing that URL. Empty/omitted shows the URL."
                 },
                 "provider": {
                   "type": "string",

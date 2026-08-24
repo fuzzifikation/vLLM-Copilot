@@ -23,6 +23,7 @@ import {
   WorkspaceEntry,
 } from './sessionManager.js';
 import { updateMetricsEngineHeaders } from './vllmMetrics.js';
+import { updateDeepDiveTitle } from './deepDiveView.js';
 import { resetUsage, getServersWithUsage } from './usageStore.js';
 import { isOpenRouterUrl } from './openRouter.js';
 
@@ -319,6 +320,123 @@ export function registerUpdateServerAuthCommand(
     updateMetricsEngineHeaders(serverUrl, mergedHeaders ?? {});
     outputChannel.appendLine(`[INFO] Updated auth for ${updated} model(s) on ${serverUrl}.`);
     vscode.window.showInformationMessage(`Updated auth for ${updated} model(s) on ${serverUrl}.`);
+  });
+}
+
+/**
+ * Apply (or clear) a server display name on every model entry sharing the
+ * server URL. Pure helper, exported for testing.
+ *
+ * Matching scope is the NORMALIZED URL — deliberately wider than the URL +
+ * header fingerprint that groups the dashboard tree. The name labels "the box",
+ * not one credential's view of it; two header identities on one URL are two
+ * views of the same server and share its label. The dashboard keeps rendering
+ * `(identity N)` suffixes per credential group, so distinct identities stay
+ * distinguishable even when they now share a friendly name.
+ *
+ * An empty/whitespace `displayName` CLEARS: matched entries lose the key
+ * entirely (this write path bypasses `normalizeModelEntry`, so `''` would
+ * otherwise be persisted verbatim). Entries whose value already equals the
+ * target are left untouched so an unchanged config produces no write.
+ */
+export function applyServerDisplayName(
+  existing: ModelConfig[],
+  serverUrl: string,
+  displayName: string,
+): { models: ModelConfig[]; matched: number; changed: number } {
+  const normalizedUrl = normalizeServerUrl(serverUrl);
+  const trimmed = displayName.trim();
+  let matched = 0;
+  let changed = 0;
+  const models = existing.map(m => {
+    if (!m.serverUrl || normalizeServerUrl(m.serverUrl) !== normalizedUrl) return m;
+    matched++;
+    if ((m.serverDisplayName ?? '') === trimmed) return m; // no-op — nothing changed
+    changed++;
+    const next = { ...m };
+    if (trimmed === '') delete next.serverDisplayName;
+    else next.serverDisplayName = trimmed;
+    return next;
+  });
+  return { models, matched, changed };
+}
+
+/**
+ * Rename a server for display: sets `serverDisplayName` on every model entry
+ * pointing at the given server URL. The Dashboard tree shows that name instead
+ * of the bare host; empty input clears it (the URL is shown again).
+ * Triggered from right-click context menu on a server node in the dashboard.
+ * Not applicable to OpenRouter — openrouter.ai is a fixed managed relay.
+ */
+export function registerRenameServerCommand(
+  _context: vscode.ExtensionContext,
+  provider: VllmChatModelProvider,
+  outputChannel: vscode.OutputChannel,
+): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.renameServer', async (arg?: any) => {
+    // VS Code passes the tree item for context menus; extract serverUrl.
+    const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
+    if (!serverUrl) {
+      vscode.window.showErrorMessage('Server URL not provided.');
+      return;
+    }
+    if (isOpenRouterUrl(serverUrl)) {
+      vscode.window.showInformationMessage(
+        'Rename Server does not apply to OpenRouter — openrouter.ai is a fixed managed relay.'
+      );
+      return;
+    }
+
+    const config = vscode.workspace.getConfiguration('vllm-copilot');
+    // Pre-prompt read serves ONLY the input prefill — the authoritative read
+    // happens after the await below, so a settings edit made while the prompt
+    // is open is never clobbered by a stale snapshot (same pattern as Update
+    // Auth, which also reads after its prompts).
+    const normalizedUrl = normalizeServerUrl(serverUrl);
+    const current = (config.get<ModelConfig[]>('models') || [])
+      .find(m =>
+        m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl && m.serverDisplayName?.trim()
+      )?.serverDisplayName?.trim() ?? '';
+
+    const name = await vscode.window.showInputBox({
+      ignoreFocusOut: true,
+      title: 'Rename Server',
+      prompt: `Display name for ${serverUrl} in the vLLM Dashboard. Empty clears the name.`,
+      placeHolder: 'e.g. IT Server for GLM5.2',
+      value: current,
+    });
+    if (name === undefined) {
+      outputChannel.appendLine(`[INFO] Rename Server cancelled for ${serverUrl}.`);
+      return; // cancelled
+    }
+
+    // Re-read AFTER the prompt: models may have changed while it was open.
+    const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+    const { models, matched, changed } = applyServerDisplayName(existing, serverUrl, name);
+    if (matched === 0) {
+      // Distinct from no-op: nothing points at this URL — a stale tree item or
+      // a programmatic call with a wrong URL should fail loudly, not "no changes".
+      vscode.window.showWarningMessage(`No models found for server ${serverUrl}.`);
+      return;
+    }
+    if (changed === 0) {
+      vscode.window.showInformationMessage(`No changes for ${serverUrl}.`);
+      return;
+    }
+
+    await config.update('models', models, vscode.ConfigurationTarget.Global);
+    provider.clearCache();
+    const trimmed = name.trim();
+    // Retitle any open Deep-Dive panels for this server immediately — without
+    // this they keep the old label until closed and reopened.
+    updateDeepDiveTitle(serverUrl, trimmed || undefined);
+    if (trimmed) {
+      outputChannel.appendLine(`[INFO] Renamed server ${serverUrl} to "${trimmed}" (${changed} model(s)).`);
+      vscode.window.showInformationMessage(`Server renamed to "${trimmed}".`);
+    } else {
+      outputChannel.appendLine(`[INFO] Cleared display name for ${serverUrl} (${changed} model(s)).`);
+      vscode.window.showInformationMessage(`Display name cleared — showing the URL again.`);
+    }
   });
 }
 

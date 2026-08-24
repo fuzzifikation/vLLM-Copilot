@@ -272,15 +272,20 @@
     let h = '<div class="selector-row">';
     h += '<label>Server</label><select id="sSel">';
     // A URL may host several header identities (per-model credentials). The option
-    // VALUE is the group key; the label shows the URL, disambiguated when more
-    // than one identity shares it.
+    // VALUE is the group key; the label prefers the user-set server display name,
+    // falling back to the URL, disambiguated when more than one identity shares it.
     const urlCount = {};
     S.servers.forEach(s => { urlCount[s.url] = (urlCount[s.url] || 0) + 1; });
     const urlSeen = {};
     S.servers.forEach(s => {
       const n = (urlSeen[s.url] || 0) + 1;
       urlSeen[s.url] = n;
-      const label = urlCount[s.url] > 1 ? s.url + ' (identity ' + n + ')' : s.url;
+      // Prefer the user-set server display name over the URL — trimmed, and
+      // never for OpenRouter relays (fixed managed endpoint, not renamable).
+      const relay = (s.models || []).some(function (m) { return m && m.serverType === 'openrouter'; });
+      const nm = relay ? '' : String(s.serverDisplayName || '').trim();
+      const base = nm || s.url;
+      const label = urlCount[s.url] > 1 ? base + ' (identity ' + n + ')' : base;
       h += '<option value="' + E(s.key) + '"' + (s.key === S.selServer ? ' selected' : '') + '>' + E(label) + '</option>';
     });
     h += '</select>';

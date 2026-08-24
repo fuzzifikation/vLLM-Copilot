@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.33.0 — Rename your servers in the Dashboard
+
+### Added
+
+- **Rename Server** — right-click any server in the Dashboard and give it a friendly name (e.g. `IT Server for GLM5.2`) instead of the bare host. The name is used everywhere the server is shown — Dashboard tree, Deep-Dive panel title, and the Model Settings server dropdown. Clear it any time to show the URL again.
+- **Rename applies to the whole server** — the name is written to every model sharing that server URL, so all its entries stay in sync.
+- **Not for OpenRouter** — the fixed `openrouter.ai` relay endpoint can't be renamed (menu hidden there).
+
+### Fixed
+
+- **Server names survive reconfigure** — re-running Auto-Configure or applying a preset no longer wipes a custom server name.
+- **Deep-Dive panels retitle live** — renaming while a Deep-Dive panel is open updates its title immediately, instead of showing the old name until reopen.
+
+### Changed
+
+- **Whitespace-safe names** — a hand-edited whitespace-only name is treated as unset and falls back to the URL.
+
 ## v1.32.4 — Focus-loss and auth data-safety fixes
 
 ### Fixed

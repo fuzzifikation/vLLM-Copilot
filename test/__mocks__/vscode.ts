@@ -388,6 +388,7 @@ export const window: {
   createQuickPick<T extends QuickPickItem>(): QuickPick<T>;
   withProgress<R>(options: unknown, task: (progress: Progress<unknown>) => Thenable<R>): Promise<R>;
   createOutputChannel(name: string): OutputChannel;
+  createWebviewPanel(viewType: string, title: string, showOptions: ViewColumn, options?: unknown): WebviewPanel;
   showTextDocument(document: unknown, ..._rest: unknown[]): Promise<unknown>;
 } = {
   showInformationMessage: () => Promise.resolve(undefined),
@@ -441,6 +442,21 @@ export const window: {
     dispose: () => {},
   }),
   showTextDocument: () => Promise.resolve({}),
+  createWebviewPanel: (viewType, title) => ({
+    viewType,
+    title,
+    webview: {
+      html: '',
+      options: {},
+      cspSource: '',
+      onDidReceiveMessage: () => ({ dispose: () => {} }),
+      postMessage: () => Promise.resolve(true),
+      asWebviewUri: (uri) => uri,
+    },
+    onDidDispose: () => ({ dispose: () => {} }),
+    reveal: () => {},
+    dispose: () => {},
+  }),
 };
 
 // ── commands ───────────────────────────────────────────────────────────────
@@ -467,6 +483,31 @@ export const commands: {
 };
 
 // ── Webview (type-only surface for serverSettingsView / deepDiveView) ──────
+/** Editor column placement — the subset `deepDiveView` uses (`Beside`). */
+export enum ViewColumn {
+  Active = -1,
+  Beside = -2,
+  One = 1,
+  Two = 2,
+  Three = 3,
+  Four = 4,
+  Five = 5,
+  Six = 6,
+  Seven = 7,
+  Eight = 8,
+  Nine = 9,
+}
+
+/** Editor-area webview panel — the surface `deepDiveView` uses. */
+export interface WebviewPanel {
+  readonly viewType: string;
+  title: string;
+  webview: Webview;
+  onDidDispose: Event<void>;
+  reveal(column?: ViewColumn, preserveFocus?: boolean): void;
+  dispose(): void;
+}
+
 export interface Webview {
   html: string;
   options: Record<string, unknown>;

@@ -43,8 +43,11 @@ function assertValidIdentity(configId: string | undefined, serverUrl: string | u
  * settings) are overwritten by the replacement; that is the contract. Only
  * infrastructure/personal fields the replacement cannot know survive:
  * `serverUrl` (required identity), `requestHeaders` (when the replacement
- * omits them), and `systemMessageReplacementsFile` (undefined preserves the
- * previous value; `''` clears it via `normalizeModelEntry`).
+ * omits them), `serverDisplayName` (same rule as requestHeaders: undefined
+ * preserves the previous value; `''` clears it via `normalizeModelEntry` —
+ * presets and auto-configuration must never wipe a user's server label),
+ * and `systemMessageReplacementsFile` (undefined preserves the previous
+ * value; `''` clears it via `normalizeModelEntry`).
  *
  * On no match the entry is appended with `id` verbatim — deriving a composite
  * id is the caller's job. Callers' objects are never mutated. Top-level
@@ -76,6 +79,7 @@ export async function replaceModelConfig(entry: IdentifiedModelConfig): Promise<
     const merged: ModelConfig = {
       ...clean,
       requestHeaders: clean.requestHeaders ?? prev.requestHeaders,
+      serverDisplayName: clean.serverDisplayName ?? prev.serverDisplayName,
       systemMessageReplacementsFile: replacementsFile,
     };
     const next = existing.slice();
