@@ -145,7 +145,7 @@ When server flags aren't set, the node shows a hint: "Start vLLM with `--enable-
 
 ### Token Usage & Cost
 
-Under each server, a collapsible **Token Usage and Cost** node shows **cumulative** token consumption across all requests (not just the last one). It updates **immediately** after every completed prompt — it does not wait for the metrics poll interval. The node is **model-first**: one collapsible entry per model (labeled by `displayName`), each with **Today** and **Overall** rows. For the design and data model behind this feature, see [usage.md](usage.md).
+Under each server, a collapsible **Token Usage and Cost** node shows **cumulative** token consumption across all requests (not just the last one). It updates **immediately** after every completed prompt — it does not wait for the metrics poll interval. The node is **model-first**: one collapsible entry per model (labeled by `displayName`), each with **Today** and **Overall** rows. For the design and data model behind this feature, see [usage.md](usage.md). **OpenRouter servers do not show this node** — every relay model already carries its own token/cost rows in its expanded details, so a server-level aggregate would be pure duplication. (Usage is still recorded, and **Reset Usage** stays available via the palette command.)
 
 | Row | Description |
 |---|---|

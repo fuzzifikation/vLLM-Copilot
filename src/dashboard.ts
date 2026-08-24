@@ -775,7 +775,10 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       // NORMALIZED URL (same as the Last Request lookup above), so normalize
       // before the read or the node silently vanishes for scheme-less/slash/v1 forms.
       const normalizedUrl = normalizeServerUrl(serverUrl);
-      if (hasServerUsage(normalizedUrl)) {
+      // OpenRouter suppresses the aggregate node: every relay model already shows
+      // its own token/cost rows in its expanded details (actual usage.cost), so a
+      // server-level sum would be pure duplication.
+      if (!isOpenRouterRelay && hasServerUsage(normalizedUrl)) {
         items.push(new TokenUsageTreeItem(normalizedUrl));
       }
     }

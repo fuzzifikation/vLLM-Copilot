@@ -8,7 +8,7 @@
 
 ## What it is
 
-A client-side tracker that shows **cumulative** token consumption and cost for every configured server, live in the dashboard. It captures each completed prompt exactly once and surfaces it in two places:
+A client-side tracker that shows **cumulative** token consumption and cost for every configured server, live in the dashboard (the server-level **Token Usage and Cost** node is suppressed on OpenRouter — relay models show their own cost/token rows instead). It captures each completed prompt exactly once and surfaces it in two places:
 
 - **Last Request** — the most recent prompt per server (per-prompt tokens, timing, and cost).
 - **Token Usage and Cost** — **model-first**: one collapsible node per model whose collapsed line carries the price (`$11.51 today and $31.13 total`), expanding to **Today / Overall** token-only rows (persisted across reloads).
