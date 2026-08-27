@@ -304,3 +304,25 @@ Proposed shape — models reference a server by id instead of copying it:
 **Priority:** P3 / deferred. High value, high churn. Worth doing if duplicated shared auth keeps recurring or server-level settings keep being requested; not worth it for renaming alone.
 
 **Effort:** Medium. Requires SSE response parsing, new storage fields, and dashboard UI. No server-side changes needed — all data comes from the existing vLLM response.
+
+## 🌐 Remote Model Presets — fetch `model-configs/` from the GitHub repo
+
+**Problem:** A new model releases (e.g. Qwen3.8-Flash-Next, 2026-08-26) and the preset for it only reaches users after a full VSIX build + marketplace publish. Presets are the fastest-moving content in the repo, but they're locked to the release cadence.
+
+**Idea (hybrid, NOT remote-only):**
+- Keep `model-configs/` bundled in the VSIX as the tested baseline (unchanged — `test/modelConfigPresets.test.ts` keeps guarding exactly what ships, and offline/air-gapped installs keep working).
+- Add an explicit user command **"Fetch Latest Presets from GitHub"**: downloads `model-configs/*.json` from the repo's `main` branch into `context.globalStorage`, cached with a date stamp. Hardcoded repo URL, nothing else.
+- `loadModelPresets` reads bundled first, then overlays the remote-cached files; remote wins on same `vllmModelId` (they are newer). Preset *matching* is already substring-based, so nothing downstream changes.
+
+**Why hybrid and not remote-only:**
+- **Trust:** presets silently become request parameters (`defaultParams`, `chat_template_kwargs`). Bundled + release = two review gates; remote-only = whoever pushed to `main` changes every user's requests immediately, with no version pin.
+- **Offline first-run:** local-vLLM users are frequently air-gapped; Auto-Configure must work with zero network.
+- **Schema drift:** an extension update can change `ModelConfig` semantics; a bundled version boundary prevents old remote presets from misbehaving silently.
+
+**Costs / open decisions:**
+- Small fetch + cache + "update available" affordance in Model Settings; overlay ordering in `presets.ts`; per-file parse isolation already exists (`parsePresetJson` skips malformed files).
+- Decide: silent periodic check vs. command-only (command-only is the safer default; a badge "new presets available" can come later).
+
+**Priority:** P3 / deferred. The bundled flow costs little while the release cadence stays weekly-ish. Build this when community preset PRs start arriving or releases slow down.
+
+**Effort:** Low-medium. One command, one fetch/cache module, an overlay step in preset loading, and tests for overlay precedence + cache invalidation.
