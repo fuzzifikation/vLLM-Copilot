@@ -15,7 +15,7 @@
 //     multi-turn conversation history. Poolside recommends preserving reasoning
 //     content for agentic coding workflows so the model can see prior reasoning steps.
 //
-// Copy the "id" object below into your settings.json:
+// To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
 // Token budgets (262,144-token context):
@@ -51,39 +51,49 @@
 //     shared by all modes). Override per-mode by adding the key inside a specific mode entry.
 //
 {
-  "vllmModelId": "Laguna-S-2.1",
-  "displayName": "Laguna-S-2.1",
-  "family": "laguna",
-  "maxOutputTokens": 32768,
-  "capabilities": {
-    "toolCalling": true,
-    "imageInput": false
+  "presetVersion": 1,
+  "match": ["Laguna-S-2.1"],
+  "meta": {
+    "name": "Laguna-S-2.1",
+    "source": "https://huggingface.co/poolside/Laguna-S-2.1",
+    "verified": "2026-07-28",
+    "notes": "Poolside coding model with preserved thinking. Binary thinking (no effort levels); temp 0.7 general / 0.2 code; repetition_penalty 1.05 baseline."
   },
-  "defaultParams": {
-    "repetition_penalty": 1.05
-  },
-  "modelModes": {
-    "Think (General)": {
-      "chat_template_kwargs": {
-        "enable_thinking": true,
-        "preserve_thinking": true
-      },
-      "temperature": 0.7,
-      "top_p": 0.95
+  "config": {
+    "vllmModelId": "Laguna-S-2.1",
+    "displayName": "Laguna-S-2.1",
+    "family": "laguna",
+    "maxOutputTokens": 32768,
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
     },
-    "Think (Code)": {
-      "chat_template_kwargs": {
-        "enable_thinking": true,
-        "preserve_thinking": true
-      },
-      "temperature": 0.2,
-      "top_p": 0.95
+    "defaultParams": {
+      "repetition_penalty": 1.05
     },
-    "No Think": {
-      "chat_template_kwargs": {
-        "enable_thinking": false
+    "modelModes": {
+      "Think (General)": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "temperature": 0.7,
+        "top_p": 0.95
+      },
+      "Think (Code)": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "temperature": 0.2,
+        "top_p": 0.95
+      },
+      "No Think": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
       }
-    }
-  },
-  "defaultMode": "Think (General)"
+    },
+    "defaultMode": "Think (General)"
+  }
 }

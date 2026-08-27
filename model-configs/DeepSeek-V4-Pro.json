@@ -24,7 +24,7 @@
 // do NOT reserve that much: input = context − output, and even 65K output
 // leaves ~983K input at 1M context.
 //
-// Copy the "id" object below into your settings.json:
+// To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
 // Token budgets:
@@ -33,38 +33,48 @@
 
 
 {
-  "vllmModelId": "DeepSeek-V4-Pro",
-  "displayName": "DeepSeek V4 Pro",
-  "family": "deepseek_v4",
-  "maxOutputTokens": 65536,
-  "capabilities": {
-    "toolCalling": true,
-    "imageInput": false
+  "presetVersion": 1,
+  "match": ["DeepSeek-V4-Pro"],
+  "meta": {
+    "name": "DeepSeek V4 Pro",
+    "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813",
+    "verified": "2026-08-27",
+    "notes": "V4 flagship (1.6T MoE, 1M context, text-only). Thinking via chat_template_kwargs {thinking, reasoning_effort}; card sampling temp=1.0, top_p=0.95."
   },
-  "modelModes": {
-    "Think (Max)": {
-      "chat_template_kwargs": {
-        "thinking": true,
-        "reasoning_effort": "max"
-      },
-      "max_tokens": 65536,
-      "temperature": 1.0,
-      "top_p": 0.95
+  "config": {
+    "vllmModelId": "DeepSeek-V4-Pro",
+    "displayName": "DeepSeek V4 Pro",
+    "family": "deepseek_v4",
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
     },
-    "Think (High)": {
-      "chat_template_kwargs": {
-        "thinking": true,
-        "reasoning_effort": "high"
+    "modelModes": {
+      "Think (Max)": {
+        "chat_template_kwargs": {
+          "thinking": true,
+          "reasoning_effort": "max"
+        },
+        "max_tokens": 65536,
+        "temperature": 1.0,
+        "top_p": 0.95
       },
-      "max_tokens": 32768,
-      "temperature": 1.0,
-      "top_p": 0.95
+      "Think (High)": {
+        "chat_template_kwargs": {
+          "thinking": true,
+          "reasoning_effort": "high"
+        },
+        "max_tokens": 32768,
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "No Think": {
+        "max_tokens": 16384,
+        "temperature": 1.0,
+        "top_p": 1.0
+      }
     },
-    "No Think": {
-      "max_tokens": 16384,
-      "temperature": 1.0,
-      "top_p": 1.0
-    }
-  },
-  "defaultMode": "Think (Max)"
+    "defaultMode": "Think (Max)"
+  }
 }

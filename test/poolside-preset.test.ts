@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePresetJson, findPresetForModel } from '../src/commands/presets.js';
+import { parsePresetFile, findPresetForModel } from '../src/commands/presets.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -11,11 +11,10 @@ describe('Poolside Laguna-S-2.1 preset', () => {
   // substring matcher — no normalization needed.
   it('matches a NVFP4-quantized served id', async () => {
     const text = await fs.readFile(PRESET_PATH, 'utf8');
-    const config = parsePresetJson(text);
-    expect(config).not.toBeNull();
-    expect(config?.vllmModelId).toBe('Laguna-S-2.1');
+    const preset = parsePresetFile(text, 'Poolside-Laguna-S-2.1.json');
+    expect(preset).not.toBeNull();
+    expect(preset!.config.vllmModelId).toBe('Laguna-S-2.1');
 
-    const preset = { config: config!, sourceFile: 'Poolside-Laguna-S-2.1.json' };
-    expect(findPresetForModel([preset], 'poolside/Laguna-S-2.1-NVFP4')).toBe(preset);
+    expect(findPresetForModel([preset!], 'poolside/Laguna-S-2.1-NVFP4')).toBe(preset);
   });
 });

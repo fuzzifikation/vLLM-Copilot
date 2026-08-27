@@ -12,7 +12,7 @@
 //   - `reasoning_effort: "no_think" / "low" / "high"` — controls chain-of-thought depth
 //     "no_think" (default) = direct response; "high" = deep reasoning
 //
-// Copy the "id" object below into your settings.json:
+// To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
 // Token budgets:
@@ -29,35 +29,45 @@
 
 
 {
-  "vllmModelId": "Hy3",
-  "displayName": "Hy3",
-  "family": "hy_v3",
-  "maxOutputTokens": 32768,
-  "capabilities": {
-    "toolCalling": true,
-    "imageInput": false
+  "presetVersion": 1,
+  "match": ["Hy3"],
+  "meta": {
+    "name": "Hy3",
+    "source": "https://huggingface.co/tencent/Hy3",
+    "verified": "2026-07-18",
+    "notes": "Tencent Hy3. Chain-of-thought depth via chat_template_kwargs.reasoning_effort (high/low/no_think). Sampling temp=0.9, top_p=1.0."
   },
-  "modelModes": {
-    "Think (Deep)": {
-      "chat_template_kwargs": {
-        "reasoning_effort": "high"
-      },
-      "temperature": 0.9,
-      "top_p": 1.0
+  "config": {
+    "vllmModelId": "Hy3",
+    "displayName": "Hy3",
+    "family": "hy_v3",
+    "maxOutputTokens": 32768,
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
     },
-    "Think (Light)": {
-      "chat_template_kwargs": {
-        "reasoning_effort": "low"
+    "modelModes": {
+      "Think (Deep)": {
+        "chat_template_kwargs": {
+          "reasoning_effort": "high"
+        },
+        "temperature": 0.9,
+        "top_p": 1.0
       },
-      "temperature": 0.9,
-      "top_p": 1.0
-    },
-    "No Think": {
-      "chat_template_kwargs": {
-        "reasoning_effort": "no_think"
+      "Think (Light)": {
+        "chat_template_kwargs": {
+          "reasoning_effort": "low"
+        },
+        "temperature": 0.9,
+        "top_p": 1.0
       },
-      "temperature": 0.9,
-      "top_p": 1.0
+      "No Think": {
+        "chat_template_kwargs": {
+          "reasoning_effort": "no_think"
+        },
+        "temperature": 0.9,
+        "top_p": 1.0
+      }
     }
   }
 }

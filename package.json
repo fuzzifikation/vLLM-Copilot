@@ -1,8 +1,8 @@
 {
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
-  "description": "vLLM integration to GitHub Copilot for professional (and self-hosted) servers (supports full featureset of vLLM and Copilot). No subscription, no data sent to third parties. Live observability: queue status, KV-cache, throughput, etc and full UI (dashboard). Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
-  "version": "1.33.2",
+  "description": "vLLM integration to GitHub Copilot for professional (and self-hosted) servers (supports full featureset of vLLM and Copilot). No subscription, no telemetry — no work content to any third party. Live observability: queue status, KV-cache, throughput, etc and full UI (dashboard). Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
+  "version": "1.34.0",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -452,6 +452,7 @@
     "license:check": "license-checker-rseidelsohn --production --excludePrivatePackages --onlyAllow \"MIT;ISC;Apache-2.0;BSD-2-Clause;BSD-3-Clause;CC0-1.0;CC-BY-3.0;BlueOak-1.0.0\"",
     "license:notices": "node scripts/generate-notices.mjs",
     "check:prompt-drift": "node scripts/check-prompt-drift.mjs",
+    "gen:presets": "node scripts/gen-preset-index.mjs",
     "build": "npm run license:check && npm run compile && npm run test:typecheck && npm test && npm run test:coverage && npx @vscode/vsce package"
   },
   "devDependencies": {

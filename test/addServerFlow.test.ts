@@ -154,6 +154,53 @@ describe('confirmAndSaveAddedModel', () => {
     expect(output.appendLine).toHaveBeenCalledWith(expect.stringContaining('[INFO] Model add cancelled'));
     warningSpy.mockRestore();
   });
+
+  it('preset fast-path: saves immediately, NO second confirm modal, reports via toast', async () => {
+    const onSaved = vi.fn();
+
+    const saved = await confirmAndSaveAddedModel(
+      finalConfig as any,
+      'model',
+      'http://host:8000',
+      'detail',
+      output,
+      onSaved,
+      'glm-5.2-config.json',
+    );
+
+    expect(saved).toBe(true);
+    expect(replaceSpy).toHaveBeenCalledWith(finalConfig);
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    // The "really add?" rubber stamp is gone — no modal with Save to Settings.
+    expect(infoSpy).not.toHaveBeenCalledWith(
+      expect.any(String), { modal: true }, 'Save to Settings', 'Copy JSON',
+    );
+    // Toast is link-only: no buttons, the GitHub blob URL is the escape hatch.
+    expect(infoSpy).toHaveBeenCalledWith(
+      'Model "model" added from preset glm-5.2-config.json. '
+      + 'https://github.com/fuzzifikation/vLLM-Copilot/blob/main/model-configs/glm-5.2-config.json',
+    );
+    expect(clipboardSpy).not.toHaveBeenCalled();
+  });
+
+  it('preset fast-path: remote preset links the blob URL with the remote: tag stripped', async () => {
+    const saved = await confirmAndSaveAddedModel(
+      finalConfig as any,
+      'model',
+      'http://host:8000',
+      'detail',
+      output,
+      undefined,
+      'remote:New-Model.json',
+    );
+
+    expect(saved).toBe(true);
+    expect(replaceSpy).toHaveBeenCalledWith(finalConfig); // saved BEFORE the toast
+    expect(infoSpy).toHaveBeenCalledWith(
+      'Model "model" added from preset New-Model.json (from vLLM-Copilot/main). '
+      + 'https://github.com/fuzzifikation/vLLM-Copilot/blob/main/model-configs/New-Model.json',
+    );
+  });
 });
 
 describe('registerAddServerModelCommand', () => {

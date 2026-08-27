@@ -29,57 +29,66 @@
 //   temperature=1.0, top_p=0.95, top_k=20, min_p=0.0,
 //   presence_penalty=0.0, repetition_penalty=1.0
 //
-// Copy the "id" object below into your settings.json:
+// To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 
 
 {
-  "vllmModelId": "Qwen3.8-27B",
-  "displayName": "Qwen3.8-27B",
-  "family": "qwen3_5",
-  "maxOutputTokens": 32768,
-  "capabilities": {
-    "toolCalling": true,
-    "imageInput": false
+  "presetVersion": 1,
+  "match": ["Qwen3.8-27B"],
+  "meta": {
+    "name": "Qwen3.8-27B (DRAFT)",
+    "source": "https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B",
+    "notes": "DRAFT — model unreleased. Params inherited from the Qwen3.8-2.4T-A95B family card: reasoning_effort xhigh/medium/low, enable_thinking toggle. Verify on release."
   },
-  "modelModes": {
-    "Think (Deep)": {
-      "chat_template_kwargs": {
-        "enable_thinking": true,
-        "preserve_thinking": true
-      },
-      "reasoning_effort": "xhigh",
-      "temperature": 1.0,
-      "top_p": 0.95,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+  "config": {
+    "vllmModelId": "Qwen3.8-27B",
+    "displayName": "Qwen3.8-27B",
+    "family": "qwen3_5",
+    "maxOutputTokens": 32768,
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
     },
-    "Think (Balanced)": {
-      "chat_template_kwargs": {
-        "enable_thinking": true,
-        "preserve_thinking": true
+    "modelModes": {
+      "Think (Deep)": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "reasoning_effort": "xhigh",
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "repetition_penalty": 1.0
       },
-      "reasoning_effort": "medium",
-      "temperature": 1.0,
-      "top_p": 0.95,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "Think (Balanced)": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "reasoning_effort": "medium",
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "repetition_penalty": 1.0
+      },
+      "No Think": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        },
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 1.5,
+        "repetition_penalty": 1.0
+      }
     },
-    "No Think": {
-      "chat_template_kwargs": {
-        "enable_thinking": false
-      },
-      "temperature": 0.7,
-      "top_p": 0.8,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 1.5,
-      "repetition_penalty": 1.0
-    }
-  },
-  "defaultMode": "Think (Deep)"
+    "defaultMode": "Think (Deep)"
+  }
 }

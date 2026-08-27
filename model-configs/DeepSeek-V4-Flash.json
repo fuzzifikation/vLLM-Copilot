@@ -10,7 +10,7 @@
 //    top_p = 1.0 otherwise"
 // Evaluation uses temperature=1.0, top_p=0.95 with max reasoning effort.
 //
-// Copy the object below into your settings.json:
+// To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
 // Token budgets:
@@ -41,30 +41,39 @@
 //   - No Think:       Direct responses, no thinking tokens (IdentityReasoningParser)
 
 {
-  "vllmModelId": "DeepSeek-V4-Flash",
-  "displayName": "DeepSeek V4 Flash",
-  "family": "deepseek_v4",
-  "maxOutputTokens": 65536,
-  "capabilities": {
-    "toolCalling": true,
-    "imageInput": false
+  "presetVersion": 1,
+  "match": ["DeepSeek-V4-Flash"],
+  "meta": {
+    "name": "DeepSeek V4 Flash",
+    "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731",
+    "notes": "1M-context MoE. Thinking depth via top-level reasoning_effort (max/high/none, auto-injected by vLLM); card sampling temp=1.0, top_p=0.95."
   },
-  "modelModes": {
-    "Think (Max)": {
-      "reasoning_effort": "max",
-      "temperature": 1.0,
-      "top_p": 0.95
+  "config": {
+    "vllmModelId": "DeepSeek-V4-Flash",
+    "displayName": "DeepSeek V4 Flash",
+    "family": "deepseek_v4",
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
     },
-    "Think (High)": {
-      "reasoning_effort": "high",
-      "temperature": 1.0,
-      "top_p": 0.95
+    "modelModes": {
+      "Think (Max)": {
+        "reasoning_effort": "max",
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "Think (High)": {
+        "reasoning_effort": "high",
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "No Think": {
+        "reasoning_effort": "none",
+        "temperature": 1.0,
+        "top_p": 1.0
+      }
     },
-    "No Think": {
-      "reasoning_effort": "none",
-      "temperature": 1.0,
-      "top_p": 1.0
-    }
-  },
-  "defaultMode": "Think (High)"
+    "defaultMode": "Think (High)"
+  }
 }

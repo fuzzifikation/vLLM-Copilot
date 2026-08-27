@@ -320,7 +320,7 @@ Proposed shape — models reference a server by id instead of copying it:
 - **Schema drift:** an extension update can change `ModelConfig` semantics; a bundled version boundary prevents old remote presets from misbehaving silently.
 
 **Costs / open decisions:**
-- Small fetch + cache + "update available" affordance in Model Settings; overlay ordering in `presets.ts`; per-file parse isolation already exists (`parsePresetJson` skips malformed files).
+- Small fetch + cache + "update available" affordance in Model Settings; overlay ordering in `presets.ts`; per-file parse isolation already exists (`parsePresetFile` skips malformed files).
 - Decide: silent periodic check vs. command-only (command-only is the safer default; a badge "new presets available" can come later).
 
 **Priority:** P3 / deferred. The bundled flow costs little while the release cadence stays weekly-ish. Build this when community preset PRs start arriving or releases slow down.

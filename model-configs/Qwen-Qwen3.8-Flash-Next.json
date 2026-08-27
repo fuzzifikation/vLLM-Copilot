@@ -40,60 +40,70 @@
 //   texts". Qwen ran all agentic benchmarks at native 256K without YaRN, so
 //   this preset budgets for native context only.
 //
-// Copy the "id" object below into your settings.json:
+// To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 
 
 {
-  "vllmModelId": "Qwen3.8-Flash-Next",
-  "displayName": "Qwen3.8-Flash-Next",
-  "family": "qwen4_exp",
-  "maxOutputTokens": 32768,
-  "capabilities": {
-    "toolCalling": true,
-    "imageInput": true
+  "presetVersion": 1,
+  "match": ["Qwen3.8-Flash-Next"],
+  "meta": {
+    "name": "Qwen3.8-Flash-Next",
+    "source": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8",
+    "verified": "2026-08-27",
+    "notes": "qwen4_exp MoE (125B/6B active) with vision, 262K context. reasoning_effort xhigh/medium/low; official card sampling for thinking and no-think."
   },
-  "modelModes": {
-    "Think (Deep)": {
-      "chat_template_kwargs": {
-        "enable_thinking": true,
-        "preserve_thinking": true
-      },
-      "reasoning_effort": "xhigh",
-      "max_tokens": 32768,
-      "temperature": 1.0,
-      "top_p": 0.95,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+  "config": {
+    "vllmModelId": "Qwen3.8-Flash-Next",
+    "displayName": "Qwen3.8-Flash-Next",
+    "family": "qwen4_exp",
+    "maxOutputTokens": 32768,
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
     },
-    "Think (Balanced)": {
-      "chat_template_kwargs": {
-        "enable_thinking": true,
-        "preserve_thinking": true
+    "modelModes": {
+      "Think (Deep)": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "reasoning_effort": "xhigh",
+        "max_tokens": 32768,
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "repetition_penalty": 1.0
       },
-      "reasoning_effort": "medium",
-      "max_tokens": 32768,
-      "temperature": 1.0,
-      "top_p": 0.95,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "Think (Balanced)": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "reasoning_effort": "medium",
+        "max_tokens": 32768,
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "repetition_penalty": 1.0
+      },
+      "No Think": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        },
+        "max_tokens": 16384,
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 1.5,
+        "repetition_penalty": 1.0
+      }
     },
-    "No Think": {
-      "chat_template_kwargs": {
-        "enable_thinking": false
-      },
-      "max_tokens": 16384,
-      "temperature": 0.7,
-      "top_p": 0.8,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 1.5,
-      "repetition_penalty": 1.0
-    }
-  },
-  "defaultMode": "Think (Deep)"
+    "defaultMode": "Think (Deep)"
+  }
 }

@@ -28,7 +28,7 @@
 // these and asks clients to omit them; local vLLM applies sampling params,
 // so the modes below set exactly these values.
 //
-// Copy the object below into your settings.json:
+// To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
 // Token budgets:
@@ -43,39 +43,49 @@
 //   - Think (Low):  minimal reasoning effort
 
 {
-  "vllmModelId": "Kimi-K3",
-  "displayName": "Kimi K3",
-  "family": "kimi_k3",
-  "maxOutputTokens": 65536,
-  "capabilities": {
-    "toolCalling": true,
-    "imageInput": true
+  "presetVersion": 1,
+  "match": ["Kimi-K3"],
+  "meta": {
+    "name": "Kimi K3",
+    "source": "https://huggingface.co/moonshotai/Kimi-K3",
+    "verified": "2026-08-27",
+    "notes": "3T-class multimodal (vision), 1M context. Thinking always on; effort low/high/max via reasoning_effort. Fixed sampling temp=1.0, top_p=0.95."
   },
-  "modelModes": {
-    "Think (Max)": {
-      "reasoning_effort": "max",
-      "max_tokens": 65536,
-      "temperature": 1.0,
-      "top_p": 0.95,
-      "presence_penalty": 0,
-      "frequency_penalty": 0
+  "config": {
+    "vllmModelId": "Kimi-K3",
+    "displayName": "Kimi K3",
+    "family": "kimi_k3",
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
     },
-    "Think (High)": {
-      "reasoning_effort": "high",
-      "max_tokens": 32768,
-      "temperature": 1.0,
-      "top_p": 0.95,
-      "presence_penalty": 0,
-      "frequency_penalty": 0
+    "modelModes": {
+      "Think (Max)": {
+        "reasoning_effort": "max",
+        "max_tokens": 65536,
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "presence_penalty": 0,
+        "frequency_penalty": 0
+      },
+      "Think (High)": {
+        "reasoning_effort": "high",
+        "max_tokens": 32768,
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "presence_penalty": 0,
+        "frequency_penalty": 0
+      },
+      "Think (Low)": {
+        "reasoning_effort": "low",
+        "max_tokens": 16384,
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "presence_penalty": 0,
+        "frequency_penalty": 0
+      }
     },
-    "Think (Low)": {
-      "reasoning_effort": "low",
-      "max_tokens": 16384,
-      "temperature": 1.0,
-      "top_p": 0.95,
-      "presence_penalty": 0,
-      "frequency_penalty": 0
-    }
-  },
-  "defaultMode": "Think (Max)"
+    "defaultMode": "Think (Max)"
+  }
 }

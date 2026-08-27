@@ -8,6 +8,7 @@ import { detectServerType } from '../runtimeLimits.js';
 import { ensureByokUtilityDefault } from './byok.js';
 import { promptForServerAuth } from './serverAuth.js';
 import { fetchWithTimeout, resolveModelConfigForAddSafely } from './hfDiscovery.js';
+import { presetBlobUrl } from './presets.js';
 import {
   OPENROUTER_API_BASE,
   parseOpenRouterBranchInput,
@@ -94,6 +95,16 @@ export async function persistAddedModel(
  * its JSON) and offer a window reload. Shared by the preset and HuggingFace
  * branches of the Add flow, and by the auto-configure command's "unconfigured
  * model" branch — both end the same way.
+ *
+ * Preset fast-path: when `presetFile` is set (the config came from the
+ * "Use Preset" dialog), the model is saved IMMEDIATELY and reported via a
+ * non-blocking toast. That dialog already captured informed consent — modes,
+ * notes, verified date and provenance, modally — so a second "really add?"
+ * modal would be a rubber stamp. The toast carries a direct GitHub link to the
+ * preset file (click in the notification, or copy it) — that replaces the
+ * Copy JSON escape hatch: the user can read the real file instead of our
+ * paste of it. HuggingFace/OpenRouter discovery keeps the review-before-save
+ * modal: a sniffed config is guesswork and deserves eyes.
  * @internal Exported for the auto-configure flow.
  */
 export async function confirmAndSaveAddedModel(
@@ -102,11 +113,26 @@ export async function confirmAndSaveAddedModel(
   serverUrl: string,
   detail: string,
   output: vscode.OutputChannel,
-  onSaved?: () => void
+  onSaved?: () => void,
+  presetFile?: string
 ): Promise<boolean> {
   output.appendLine(`[INFO] Add server ${serverUrl} → ${modelId}:`);
   output.appendLine(detail);
   output.appendLine(`Config: ${JSON.stringify(toPublicModelConfig(finalConfig), null, 2)}`);
+
+  if (presetFile !== undefined) {
+    // Informed consent was already given in the modal preset dialog — save now.
+    await persistAddedModel(finalConfig, onSaved);
+    const fileLabel = presetFile.startsWith('remote:')
+      ? `${presetFile.slice('remote:'.length)} (from vLLM-Copilot/main)`
+      : presetFile;
+    // GitHub link instead of a Copy JSON button — the source of truth is one
+    // click away, and notifications linkify the URL.
+    vscode.window.showInformationMessage(
+      `Model "${modelId}" added from preset ${fileLabel}. ${presetBlobUrl(presetFile)}`,
+    );
+    return true;
+  }
 
   const action = await vscode.window.showInformationMessage(
     `Add "${modelId}" from ${serverUrl}?\n\n${detail}`,
@@ -704,6 +730,6 @@ export function registerAddServerModelCommand(
       finalConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
     }
 
-    await confirmAndSaveAddedModel(finalConfig, modelId, serverUrl, discoveryResult.summary.join('\n'), output, () => provider.clearCache());
+    await confirmAndSaveAddedModel(finalConfig, modelId, serverUrl, discoveryResult.summary.join('\n'), output, () => provider.clearCache(), discoveryResult.presetFile);
   });
 }

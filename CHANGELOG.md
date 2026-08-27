@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.34.0 — Remote model presets
+
+### Added
+
+- **Live preset lookup** — when you **Add Server / Auto-Configure**, the extension checks a tiny preset index on the vLLM-Copilot GitHub repo and, if your model matches, downloads that one preset file. New presets pushed to `main` now reach every user the same day — no VSIX release needed. The lookup runs parallel to the normal discovery, is bounded by a 2-second timeout, and any failure (offline, firewalled, bad data) silently falls back to bundled presets. Remote files pass the same schema guard as bundled ones: only client request-shaping fields are allowed — a preset can never touch your server URL, headers or backend type; a single unknown field rejects the whole file.
+- **Provenance in the preset confirm dialog** — the dialog now shows what a preset configures (`notes`), its source and its verification date. Shown for bundled and remote presets alike. A **View Preset File** button opens the exact preset file on GitHub, so you can read the real JSON yourself.
+- **One dialog, not two** — choosing **Use Preset** now saves the model immediately; a toast confirms and repeats the link to the preset file. The preset dialog already asked an informed question, so the old second "Save to Settings" confirm was a rubber stamp. HuggingFace auto-discovered configs still get the full review-before-save dialog.
+
+### Changed
+
+- **Preset format v2** — all bundled presets use a versioned envelope (`presetVersion` / `match` / `meta` / `config`). Matching and merge behavior are byte-for-byte unchanged. `model-configs/index.json` is generated from the presets (GitHub Action on push, `npm run gen:presets` manually) and a drift test fails the build on a stale list.
+
 ## v1.33.2 — New model presets: DeepSeek-V4-Pro, Kimi K3 & MiniMax M3
 
 ### Added
@@ -10,6 +22,7 @@
 
 ### Changed
 
+- **GLM-5.3-Flash preset renamed to GLM-5.3** — the generic id covers GLM-5.3 and GLM-5.3-Flash alike via substring matching; a dedicated Flash preset will only return if the full model turns out to need a different config.
 - **Preset headers are client config only** — hosting tips (serve flags, hardware, docker recipes) removed from all presets; headers keep mode mechanics, sampling rationale and wire caveats, plus bare vLLM recipe links.
 
 ### Removed

@@ -36,7 +36,7 @@ describe('loadModelPresets', () => {
     (vscode as any).workspace._mockFsReadFile = (uri: string) => {
       if (String(uri).endsWith('Good-Preset.json')) {
         return Promise.resolve(
-          encode('{ "vllmModelId": "org/Model", "modelModes": { "balanced": {} } }'),
+          encode('{ "presetVersion": 1, "match": ["org/Model"], "config": { "vllmModelId": "org/Model", "modelModes": { "balanced": {} } } }'),
         );
       }
       if (String(uri).endsWith('Broken-Preset.json')) {
@@ -68,5 +68,23 @@ describe('loadModelPresets', () => {
 
     const presets = await loadModelPresets(vscode.Uri.file('/ext'));
     expect(presets).toEqual([]);
+  });
+
+  it('skips the generated index.json — it is the remote list, not a preset', async () => {
+    // index.json ships inside model-configs/ (served from the repo). It is
+    // valid JSON; without the explicit skip it would be read and parsed on
+    // every load only for the v2 guard to reject it.
+    (vscode as any).workspace._mockFsReadDirectory = () =>
+      Promise.resolve([
+        ['index.json', vscode.FileType.File],
+        ['Good-Preset.json', vscode.FileType.File],
+      ]);
+    (vscode as any).workspace._mockFsReadFile = () =>
+      Promise.resolve(encode('{ "presetVersion": 1, "match": ["org/Model"], "config": { "vllmModelId": "org/Model", "modelModes": { "balanced": {} } } }'));
+
+    const presets = await loadModelPresets(vscode.Uri.file('/ext'));
+
+    expect(presets).toHaveLength(1);
+    expect(presets[0].sourceFile).toBe('Good-Preset.json');
   });
 });

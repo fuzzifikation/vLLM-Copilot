@@ -9,7 +9,7 @@
 //   - `preserve_thinking: true` — keeps <think>...</think> blocks visible in multi-turn
 //     conversation history. Same Jinja template as Qwen3.5/3.6 family.
 //
-// Copy the object below into your settings.json:
+// To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
 // Token budgets:
@@ -24,58 +24,68 @@
 //   - No Think:         Direct responses, no thinking tokens
 
 {
-  "vllmModelId": "Agents-A1",
-  "displayName": "Agents-A1",
-  "family": "qwen3_5_moe",
-  "maxOutputTokens": 32768,
-  "capabilities": {
-    "toolCalling": true,
-    "imageInput": true
+  "presetVersion": 1,
+  "match": ["Agents-A1"],
+  "meta": {
+    "name": "Agents-A1",
+    "source": "https://huggingface.co/InternScience/Agents-A1",
+    "verified": "2026-07-18",
+    "notes": "Scientific agent MoE on the Qwen3.5/3.6 chat template. Thinking toggle via enable_thinking; per-domain modes use the authors' evaluation sampling."
   },
-  "modelModes": {
-    "Think (General)": {
-      "chat_template_kwargs": {
-        "enable_thinking": true,
-        "preserve_thinking": true
-      },
-      "temperature": 0.85,
-      "top_p": 0.95,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 1.1,
-      "repetition_penalty": 1.0
+  "config": {
+    "vllmModelId": "Agents-A1",
+    "displayName": "Agents-A1",
+    "family": "qwen3_5_moe",
+    "maxOutputTokens": 32768,
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
     },
-    "Think (Coding)": {
-      "chat_template_kwargs": {
-        "enable_thinking": true,
-        "preserve_thinking": true
+    "modelModes": {
+      "Think (General)": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "temperature": 0.85,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 1.1,
+        "repetition_penalty": 1.0
       },
-      "temperature": 1.0,
-      "top_p": 0.95,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 1.5,
-      "repetition_penalty": 1.0
+      "Think (Coding)": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 1.5,
+        "repetition_penalty": 1.0
+      },
+      "Think (Science)": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "temperature": 0.6,
+        "top_p": 0.95
+      },
+      "No Think": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        },
+        "temperature": 0.85,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 1.1,
+        "repetition_penalty": 1.0
+      }
     },
-    "Think (Science)": {
-      "chat_template_kwargs": {
-        "enable_thinking": true,
-        "preserve_thinking": true
-      },
-      "temperature": 0.6,
-      "top_p": 0.95
-    },
-    "No Think": {
-      "chat_template_kwargs": {
-        "enable_thinking": false
-      },
-      "temperature": 0.85,
-      "top_p": 0.95,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 1.1,
-      "repetition_penalty": 1.0
-    }
-  },
-  "defaultMode": "Think (General)"
+    "defaultMode": "Think (General)"
+  }
 }

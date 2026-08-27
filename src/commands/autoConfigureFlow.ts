@@ -77,7 +77,7 @@ export function registerAutoConfigureModelCommand(
         }
         await confirmAndSaveAddedModel(
           newConfig, vllmId, serverUrl, discoveryResult.summary.join('\n'), output,
-          () => provider.clearCache()
+          () => provider.clearCache(), discoveryResult.presetFile
         );
         return;
       }

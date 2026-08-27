@@ -16,7 +16,7 @@
 //     Without it, thinking is stripped from earlier turns. Useful for coding/agent
 //     scenarios where the model benefits from seeing prior reasoning steps.
 //
-// Copy the "id" object below into your settings.json:
+// To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
 // Token budgets:
@@ -33,50 +33,60 @@
 
 
 {
-  "vllmModelId": "Qwen3.6-27B",
-  "displayName": "Qwen3.6-27B",
-  "family": "qwen3_5",
-  "maxOutputTokens": 32768,
-  "capabilities": {
-    "toolCalling": true,
-    "imageInput": true
+  "presetVersion": 1,
+  "match": ["Qwen3.6-27B"],
+  "meta": {
+    "name": "Qwen3.6-27B",
+    "source": "https://huggingface.co/Qwen/Qwen3.6-27B",
+    "verified": "2026-07-10",
+    "notes": "Qwen3.6 dense 27B with vision. enable_thinking toggle + preserved thinking across turns; official card sampling per mode."
   },
-  "modelModes": {
-    "Think (General)": {
-      "chat_template_kwargs": {
-        "enable_thinking": true,
-        "preserve_thinking": true
-      },
-      "temperature": 1.0,
-      "top_p": 0.95,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+  "config": {
+    "vllmModelId": "Qwen3.6-27B",
+    "displayName": "Qwen3.6-27B",
+    "family": "qwen3_5",
+    "maxOutputTokens": 32768,
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
     },
-    "Think (Coding)": {
-      "chat_template_kwargs": {
-        "enable_thinking": true,
-        "preserve_thinking": true
+    "modelModes": {
+      "Think (General)": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "repetition_penalty": 1.0
       },
-      "temperature": 0.6,
-      "top_p": 0.95,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "Think (Coding)": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "repetition_penalty": 1.0
+      },
+      "No Think": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        },
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 1.5,
+        "repetition_penalty": 1.0
+      }
     },
-    "No Think": {
-      "chat_template_kwargs": {
-        "enable_thinking": false
-      },
-      "temperature": 0.7,
-      "top_p": 0.8,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 1.5,
-      "repetition_penalty": 1.0
-    }
-  },
-  "defaultMode": "Think (General)"
+    "defaultMode": "Think (General)"
+  }
 }

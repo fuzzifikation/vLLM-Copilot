@@ -15,7 +15,7 @@ GitHub Copilot provides the familiar chat, tools, and model picker; You provide 
 
 For teams running AI on their own vLLM servers for many users, this gives you the professional Copilot integration: 
 
-- **Data handling**: **No third party. No subscription. No affiliation. No central service. No telemetry.** Prompts, code, and company data go only to each model's configured inference server. They are not sent to GitHub Copilot or GitHub or anywhere else! 
+- **Data handling**: **No subscription. No affiliation. No central service. No telemetry.** Prompts, code, and company data go only to each model's configured inference server — they are never sent to GitHub Copilot or GitHub. Other extension traffic (model metadata from HuggingFace, curated presets from GitHub) carries no work content.
 - **Production vLLM observability**: a live dashboard of server availability, queue status, KV-cache usage, TTFT, throughput, per-request token details, and a cumulative token & cost tracker. Your admins and users will know what is going on!
 - **Multi-server, multi-user by design**: each server and model carries its own endpoint, auth, sampling, and token budget. Different teams, environments, or credentials stay isolated and independently managed. But all models are available in the model picker of familiar Copilot!
 - **Full request control**: model modes give you any vLLM parameter, such as thinking effort, sampling, structured output, and token budgets. Switch them per model from the Copilot picker.
@@ -61,7 +61,7 @@ If you want to support this work: [![Sponsor via PayPal](https://img.shields.io/
 
 1. **Install** this extension from the VS Code Marketplace.
 2. **Open the vLLM panel:** click the **V** icon in the activity bar (left sidebar). The **Dashboard** opens.
-3. **Add your vLLM server & model:** *(same for llama.cpp, lm-studio, ollama)* in the Dashboard, click **Add or Reconfigure Server/Model** at the bottom of the tree → enter your server URL → *(optional) enter vLLM API key and HTTP request headers from IT* → pick a model → done. The extension auto-configures the model (family, capabilities, context window) from the server and bundled presets or HuggingFace.
+3. **Add your vLLM server & model:** *(same for llama.cpp, lm-studio, ollama)* in the Dashboard, click **Add or Reconfigure Server/Model** at the bottom of the tree → enter your server URL → *(optional) enter vLLM API key and HTTP request headers from IT* → pick a model → done. The extension auto-configures the model (family, capabilities, context window) from curated presets (bundled, and refreshed live from GitHub when online) or HuggingFace.
 4. **Edit settings** *(optional)*: open the **Model Settings** view (below the Dashboard) to adjust displayName, params, model modes, and more. No `settings.json` editing required.
 5. **Change the personality** *(optional)*: in **Model Settings**, pick a model and choose a personality from the dropdown in its **General** section (or `Ctrl+Shift+P` → **Set Model Personality**). Pick **Default (no personality)** later to clear it.
 6. **Chat:** Open Copilot Chat, pick your model from the dropdown. Switch modes from the same picker.

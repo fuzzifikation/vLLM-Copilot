@@ -1,27 +1,157 @@
 import { describe, it, expect } from 'vitest';
-import { mergePresetWithUserConfig, findPresetForModel, stripJsonComments, parsePresetJson } from '../src/commands/presets.js';
+import {
+  mergePresetWithUserConfig,
+  findPresetForModel,
+  stripJsonComments,
+  parsePresetFile,
+  PRESET_CONFIG_KEYS,
+  type PresetConfig,
+} from '../src/commands/presets.js';
 import { parseHeadersInput } from '../src/commands/serverAuth.js';
 import type { ModelConfig } from '../src/config.js';
 
-describe('parsePresetJson', () => {
+/** Test-only convenience: guard-validated config payload, or null. */
+const parsePresetJson = (text: string): PresetConfig | null =>
+  parsePresetFile(text, '')?.config ?? null;
+
+describe('parsePresetFile — forgiving raw parse + envelope unwrap', () => {
   it('parses clean JSON with comments', () => {
-    const cfg = parsePresetJson('// a preset\n{ "id": "m", "maxOutputTokens": 4096 }');
-    expect(cfg).toEqual({ id: 'm', maxOutputTokens: 4096 });
+    const cfg = parsePresetJson(
+      '// a preset\n{ "presetVersion": 1, "match": ["m"], "config": { "vllmModelId": "m", "maxOutputTokens": 4096 } }',
+    );
+    expect(cfg).toEqual({ vllmModelId: 'm', maxOutputTokens: 4096 });
   });
 
   it('repairs a trailing comma', () => {
-    const cfg = parsePresetJson('{ "id": "m", "maxOutputTokens": 4096, }');
-    expect(cfg?.id).toBe('m');
+    const cfg = parsePresetJson(
+      '{ "presetVersion": 1, "match": ["m"], "config": { "vllmModelId": "m", "maxOutputTokens": 4096, } }',
+    );
+    expect(cfg?.vllmModelId).toBe('m');
   });
 
   it('repairs single quotes and missing commas', () => {
-    const cfg = parsePresetJson("{ 'id': 'm'\n 'displayName': 'M' }");
-    expect(cfg?.id).toBe('m');
+    const cfg = parsePresetJson(
+      "{ 'presetVersion': 1\n 'match': ['m']\n 'config': { 'vllmModelId': 'm', 'displayName': 'M' } }",
+    );
+    expect(cfg?.vllmModelId).toBe('m');
     expect(cfg?.displayName).toBe('M');
   });
 
   it('returns null for unrepairable garbage', () => {
     expect(parsePresetJson('not json at all @@@')).toBeNull();
+  });
+
+  it('unwraps a v2 envelope to its config', () => {
+    const cfg = parsePresetJson(
+      '{ "presetVersion": 1, "match": ["M"], "config": { "vllmModelId": "M", "modelModes": {} } }',
+    );
+    expect(cfg).toEqual({ vllmModelId: 'M', modelModes: {} });
+  });
+});
+
+describe('parsePresetFile (format v2)', () => {
+  const v2 = JSON.stringify({
+    presetVersion: 1,
+    match: ['GLM-5.3'],
+    meta: {
+      name: 'GLM-5.3',
+      source: 'https://example.org/card',
+      verified: '2026-08-27',
+      notes: 'Thinking always on.',
+    },
+    config: { vllmModelId: 'GLM-5.3', modelModes: { deep: { reasoning_effort: 'max' } } },
+  });
+
+  it('parses a valid v2 envelope into match/meta/config', () => {
+    const p = parsePresetFile(v2, 'glm.json');
+    expect(p).not.toBeNull();
+    expect(p!.sourceFile).toBe('glm.json');
+    expect(p!.match).toEqual(['GLM-5.3']);
+    expect(p!.meta).toEqual({
+      name: 'GLM-5.3',
+      source: 'https://example.org/card',
+      verified: '2026-08-27',
+      notes: 'Thinking always on.',
+    });
+    expect(p!.config.vllmModelId).toBe('GLM-5.3');
+  });
+
+  it('rejects an unknown presetVersion', () => {
+    const text = v2.replace('"presetVersion":1', '"presetVersion":2');
+    expect(text).not.toBe(v2); // guard against a no-op replace ever again
+    expect(parsePresetFile(text, 'x.json')).toBeNull();
+  });
+
+  it('rejects missing or empty match', () => {
+    expect(parsePresetFile('{ "presetVersion": 1, "config": {} }', 'x.json')).toBeNull();
+    expect(parsePresetFile('{ "presetVersion": 1, "match": [], "config": {} }', 'x.json')).toBeNull();
+  });
+
+  it('rejects the whole file on an unknown config key (asymmetric guard)', () => {
+    const text = JSON.stringify({
+      presetVersion: 1,
+      match: ['M'],
+      config: { vllmModelId: 'M', serverUrl: 'https://evil.example' },
+    });
+    expect(parsePresetFile(text, 'x.json')).toBeNull();
+  });
+
+  it('tolerates unknown meta fields (forward compat) but keeps the file', () => {
+    const text = JSON.stringify({
+      presetVersion: 1,
+      match: ['M'],
+      meta: { name: 'M', authorBio: 'future field', verified: 42 },
+      config: { vllmModelId: 'M' },
+    });
+    const p = parsePresetFile(text, 'x.json');
+    expect(p).not.toBeNull();
+    expect(p!.meta).toEqual({ name: 'M' }); // unknown + ill-typed fields dropped
+  });
+
+  it('rejects legacy bare configs — the v2 envelope is the only format', () => {
+    // The legacy shim was removed before shipping its first release: it
+    // accepted unvalidated configs WITHOUT the PRESET_CONFIG_KEYS allow-list
+    // check — a smuggle path for transport fields, not a compatibility feature.
+    expect(parsePresetFile('// old style\n{ "vllmModelId": "Legacy-M", "modelModes": {} }', 'l.json')).toBeNull();
+  });
+
+  it('PRESET_CONFIG_KEYS excludes identity and transport fields', () => {
+    for (const forbidden of ['id', 'serverUrl', 'requestHeaders', 'serverType', 'provider']) {
+      expect(PRESET_CONFIG_KEYS.has(forbidden)).toBe(false);
+    }
+    for (const allowed of ['vllmModelId', 'modelModes', 'defaultParams', 'estimateCharsPerToken']) {
+      expect(PRESET_CONFIG_KEYS.has(allowed)).toBe(true);
+    }
+  });
+});
+
+describe('findPresetForModel with v2 match patterns', () => {
+  const mk = (sourceFile: string, match: string[], vllmModelId: string) => ({
+    config: { vllmModelId },
+    sourceFile,
+    match,
+  });
+
+  it('matches any pattern from the match list, case-insensitively', () => {
+    const p = mk('x.json', ['GLM-5.3', 'glm5'], 'GLM-5.3');
+    expect(findPresetForModel([p], 'zai-org/GLM-5.3-FP8')).toBe(p);
+    expect(findPresetForModel([p], 'some-glm5-quant')).toBe(p);
+    expect(findPresetForModel([p], 'other', 'server/GLM-5.3-root')).toBe(p);
+  });
+
+  it('longest matching pattern wins across presets', () => {
+    const generic = mk('generic.json', ['DeepSeek-V4-Flash'], 'DeepSeek-V4-Flash');
+    const specific = mk('specific.json', ['DeepSeek-V4-Flash-0731'], 'DeepSeek-V4-Flash-0731');
+    expect(findPresetForModel([generic, specific], 'DeepSeek-V4-Flash-0731')).toBe(specific);
+    expect(findPresetForModel([specific, generic], 'deepseek-v4-flash-0731-preview')).toBe(specific);
+    expect(findPresetForModel([generic, specific], 'DeepSeek-V4-Flash-NVFP4')).toBe(generic);
+  });
+
+  it('ties keep array order — [remote, ...bundled] gives remote priority for free', () => {
+    const remote = mk('remote:f.json', ['GLM-5.3'], 'GLM-5.3');
+    const bundled = mk('GLM-5.3.json', ['GLM-5.3'], 'GLM-5.3');
+    expect(findPresetForModel([remote, bundled], 'GLM-5.3-FP8')).toBe(remote);
+    expect(findPresetForModel([bundled, remote], 'GLM-5.3-FP8')).toBe(bundled);
   });
 });
 
@@ -71,8 +201,7 @@ describe('parseHeadersInput', () => {
 });
 
 describe('mergePresetWithUserConfig', () => {
-  const presetConfig: ModelConfig = {
-    id: 'test/model',
+  const presetConfig: PresetConfig = {
     vllmModelId: 'test/model',
     displayName: 'Test Model',
     family: 'test_family',
@@ -153,8 +282,8 @@ describe('mergePresetWithUserConfig', () => {
   });
 
   it('handles preset with no modelModes (result has none)', () => {
-    const presetWithoutModes: ModelConfig = {
-      id: 'test/model',
+    const presetWithoutModes: PresetConfig = {
+      vllmModelId: 'test/model',
       maxOutputTokens: 1000,
     };
     const userConfig: ModelConfig = {
@@ -171,7 +300,7 @@ describe('mergePresetWithUserConfig', () => {
   });
 
   it('handles both preset and user having no modelModes', () => {
-    const emptyPreset: ModelConfig = { id: 'test/model' };
+    const emptyPreset: PresetConfig = { vllmModelId: 'test/model' };
     const emptyUser: ModelConfig = { id: 'test/model' };
     const merged = mergePresetWithUserConfig(emptyPreset, emptyUser);
 
@@ -179,8 +308,7 @@ describe('mergePresetWithUserConfig', () => {
   });
 
   it('preserves the user id/vllmModelId instead of the preset\'s', () => {
-    const preset: ModelConfig = {
-      id: 'zai-org/GLM-5.2',
+    const preset: PresetConfig = {
       vllmModelId: 'zai-org/GLM-5.2',
       displayName: 'GLM-5.2',
       maxOutputTokens: 32768,
@@ -197,7 +325,7 @@ describe('mergePresetWithUserConfig', () => {
   });
 
   it('drops vllmModelId when the user config has none', () => {
-    const preset: ModelConfig = { id: 'repo/Model', vllmModelId: 'repo/Model', maxOutputTokens: 100 };
+    const preset: PresetConfig = { vllmModelId: 'repo/Model', maxOutputTokens: 100 };
     const userConfig: ModelConfig = { id: 'my-model' }; // no vllmModelId
     const merged = mergePresetWithUserConfig(preset, userConfig);
 
@@ -206,10 +334,11 @@ describe('mergePresetWithUserConfig', () => {
   });
 });
 
-describe('findPresetForModel', () => {
+describe('findPresetForModel — substring matching on curated patterns', () => {
   const preset = {
-    config: { vllmModelId: 'GLM-5.2' } as ModelConfig,
+    config: { vllmModelId: 'GLM-5.2' },
     sourceFile: 'glm-5.2-config.json',
+    match: ['GLM-5.2'],
   };
   const presets = [preset];
 
@@ -221,8 +350,9 @@ describe('findPresetForModel', () => {
   it('matches a llama.cpp full-path gguf served id by basename', () => {
     // /srv/data/models/Qwen3.8-27B-Q6_K.gguf → preset "Qwen3.8-27B"
     const pathPreset = {
-      config: { vllmModelId: 'Qwen3.8-27B' } as ModelConfig,
+      config: { vllmModelId: 'Qwen3.8-27B' },
       sourceFile: 'Qwen-Qwen3.8-27B.json',
+      match: ['Qwen3.8-27B'],
     };
     expect(findPresetForModel([pathPreset], '/srv/data/models/Qwen3.8-27B-Q6_K.gguf')).toBe(pathPreset);
   });
@@ -240,16 +370,18 @@ describe('findPresetForModel', () => {
   it('matches a cross-org quantized variant when the id is a substring', () => {
     // "DeepSeek-V4-Flash" appears inside "nvidia/DeepSeek-V4-Flash-NVFP4".
     const dsPreset = {
-      config: { vllmModelId: 'DeepSeek-V4-Flash' } as ModelConfig,
+      config: { vllmModelId: 'DeepSeek-V4-Flash' },
       sourceFile: 'DeepSeek-V4-Flash.json',
+      match: ['DeepSeek-V4-Flash'],
     };
     expect(findPresetForModel([dsPreset], 'nvidia/DeepSeek-V4-Flash-NVFP4')).toBe(dsPreset);
   });
 
   it('does not cross-match a different model that shares a name token', () => {
     const chatPreset = {
-      config: { vllmModelId: 'DeepSeek-V4-Chat' } as ModelConfig,
+      config: { vllmModelId: 'DeepSeek-V4-Chat' },
       sourceFile: 'DeepSeek-V4-Chat.json',
+      match: ['DeepSeek-V4-Chat'],
     };
     expect(findPresetForModel([chatPreset], 'nvidia/DeepSeek-V4-Flash-NVFP4')).toBeUndefined();
   });
@@ -259,20 +391,22 @@ describe('findPresetForModel', () => {
     // generic and specific presets both match the 0731 served id. The longest
     // vllmModelId must win — independent of readDirectory() ordering.
     const generic = {
-      config: { vllmModelId: 'DeepSeek-V4-Flash' } as ModelConfig,
+      config: { vllmModelId: 'DeepSeek-V4-Flash' },
       sourceFile: 'DeepSeek-V4-Flash.json',
+      match: ['DeepSeek-V4-Flash'],
     };
     const specific = {
-      config: { vllmModelId: 'DeepSeek-V4-Flash-0731' } as ModelConfig,
+      config: { vllmModelId: 'DeepSeek-V4-Flash-0731' },
       sourceFile: 'DeepSeek-V4-Flash-0731.json',
+      match: ['DeepSeek-V4-Flash-0731'],
     };
     expect(findPresetForModel([generic, specific], 'DeepSeek-V4-Flash-0731')).toBe(specific);
     expect(findPresetForModel([specific, generic], 'DeepSeek-V4-Flash-0731')).toBe(specific);
   });
 
-  it('never matches a preset without a vllmModelId', () => {
-    const noId = { config: { id: 'x' } as ModelConfig, sourceFile: 'x.json' };
-    expect(findPresetForModel([noId], 'anything')).toBeUndefined();
+  it('never matches a preset with an empty match list', () => {
+    const noPatterns = { config: { vllmModelId: 'x' }, sourceFile: 'x.json', match: [] };
+    expect(findPresetForModel([noPatterns], 'anything')).toBeUndefined();
   });
 });
 

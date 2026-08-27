@@ -1,0 +1,44 @@
+name: Regenerate preset index
+
+# Layer 1 of the preset-index freshness chain (docs/remote-presets-plan.md §3):
+# whenever preset files change, regenerate model-configs/index.json and commit
+# it, so the live remote list can never lag the directory. Layer 2 is the
+# Vitest drift test (npm run build gate). index.json changes are excluded to
+# avoid a self-trigger loop (belt: the bot commit also carries [skip ci]).
+
+on:
+  push:
+    paths:
+      - 'model-configs/**'
+      - '!model-configs/index.json'
+      - 'scripts/gen-preset-index.mjs'
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The generator is dependency-free Node — no npm install needed.
+      - name: Generate index.json
+        run: node scripts/gen-preset-index.mjs
+
+      - name: Commit if changed
+        run: |
+          if ! git diff --quiet -- model-configs/index.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add model-configs/index.json
+            git commit -m "chore: regenerate preset index [skip ci]"
+            git push
+            echo "index.json regenerated and pushed"
+          else
+            echo "index.json already current"
+          fi

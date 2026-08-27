@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-08-27",
+  "presets": [
+    {
+      "match": [
+        "Agents-A1"
+      ],
+      "file": "Agents-A1-config.json"
+    },
+    {
+      "match": [
+        "DeepSeek-V4-Flash"
+      ],
+      "file": "DeepSeek-V4-Flash.json"
+    },
+    {
+      "match": [
+        "DeepSeek-V4-Pro"
+      ],
+      "file": "DeepSeek-V4-Pro.json"
+    },
+    {
+      "match": [
+        "GLM-5.3"
+      ],
+      "file": "GLM-5.3.json"
+    },
+    {
+      "match": [
+        "Kimi-K3"
+      ],
+      "file": "Kimi-K3.json"
+    },
+    {
+      "match": [
+        "MiniMax-M3"
+      ],
+      "file": "MiniMax-M3.json"
+    },
+    {
+      "match": [
+        "Laguna-S-2.1"
+      ],
+      "file": "Poolside-Laguna-S-2.1.json"
+    },
+    {
+      "match": [
+        "Qwen3.6-27B"
+      ],
+      "file": "Qwen-Qwen3.6-27B.json"
+    },
+    {
+      "match": [
+        "Qwen3.6-35B-A3B"
+      ],
+      "file": "Qwen-Qwen3.6-35B-A3B.json"
+    },
+    {
+      "match": [
+        "Qwen3.8-27B"
+      ],
+      "file": "Qwen-Qwen3.8-27B.json"
+    },
+    {
+      "match": [
+        "Qwen3.8-Flash-Next"
+      ],
+      "file": "Qwen-Qwen3.8-Flash-Next.json"
+    },
+    {
+      "match": [
+        "Hy3"
+      ],
+      "file": "Tencent-Hy3-config.json"
+    },
+    {
+      "match": [
+        "GLM-5.2"
+      ],
+      "file": "glm-5.2-config.json"
+    }
+  ]
+}

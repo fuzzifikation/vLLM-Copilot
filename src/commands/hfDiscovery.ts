@@ -4,7 +4,8 @@ import { buildEndpoint } from '../config.js';
 import { describeError } from '../messageConverter.js';
 import { resolveRuntimeLimits } from '../runtimeLimits.js';
 import { autoConfigureOpenRouterModel } from '../openRouter.js';
-import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig } from './presets.js';
+import { fetchRemotePreset } from '../presetRemote.js';
+import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig, presetBlobUrl } from './presets.js';
 
 /**
  * Auto-configure a model by fetching metadata from HuggingFace and the server.
@@ -61,6 +62,15 @@ export interface AutoConfigResult {
   summary: string[];
   /** Suggested max-output token count, derived from server context window. */
   suggestedMaxOutputTokens?: number;
+  /**
+   * Set only when the config came from the "Use Preset" branch (bundled or
+   * remote preset file name). The Add/Auto-configure flows use it to skip the
+   * redundant second confirm modal — the preset dialog already captured
+   * informed consent (modes + notes + provenance), so saving straight to a
+   * toast is proportionate. Absent for HuggingFace/OpenRouter discovery, which
+   * keep the review-before-save modal because their config is guesswork.
+   */
+  presetFile?: string;
 }
 
 /**
@@ -316,6 +326,7 @@ async function fetchVllmModelInfo(
  * @param baseConfig - The user's existing config (for auto-configure) or a minimal identity
  *   config (for add-server). Fields like `serverUrl` are added by the caller.
  * @param serverRoot - Optional `root` from vLLM server model info (used for preset matching).
+ * @param log - Optional output-channel logger (remote preset lookup diagnostics).
  */
 export async function resolveModelConfigForAdd(
   context: vscode.ExtensionContext,
@@ -325,6 +336,7 @@ export async function resolveModelConfigForAdd(
   serverRoot?: string,
   baseConfig?: ModelConfig,
   serverType: ServerType = 'vllm',
+  log?: (msg: string) => void,
 ): Promise<AutoConfigResult | null> {
   // OpenRouter: exact-model metadata is the ONLY discovery source. HF chat-
   // template sniffing cannot express its reasoning object or
@@ -337,19 +349,64 @@ export async function resolveModelConfigForAdd(
     return autoConfigureOpenRouterModel(modelId);
   }
 
-  const presets = await loadModelPresets(context.extensionUri);
+  // Bundled presets (local fs) and the live remote lookup run IN PARALLEL —
+  // the lookup is bounded (2 s timeout) and every failure resolves undefined,
+  // so offline/air-gapped behaves exactly like the bundled-only flow.
+  const bundledPromise = loadModelPresets(context.extensionUri);
+  const remotePromise = fetchRemotePreset(modelId, serverRoot, log ?? (() => {}));
+  const bundled = await bundledPromise;
+  const remote = await remotePromise;
+  // Array order IS the priority rule: findPresetForModel breaks longest-match
+  // ties by first-wins, so [remote, ...bundled] makes a remote preset win over
+  // a same-pattern bundled one, while a longer (more specific) bundled pattern
+  // still wins. Zero new selection logic.
+  const presets = remote ? [remote, ...bundled] : bundled;
   const preset = findPresetForModel(presets, modelId, serverRoot);
 
   if (preset) {
     const modeNames = Object.keys(preset.config.modelModes ?? {}).join(', ') || 'none';
-    const choice = await vscode.window.showInformationMessage(
-      `A curated preset is available for "${modelId}" (${preset.sourceFile}).\n\nModes: ${modeNames}.\n\nUse the preset, or auto-discover settings from HuggingFace instead?`,
-      { modal: true },
-      'Use Preset',
-      'Auto-Discover'
-    );
-    if (choice === undefined) return null; // cancelled
-    if (choice === 'Use Preset') {
+    // Provenance: what the preset configures (notes), when it was verified,
+    // and where the numbers came from — the informed-consent block, shown for
+    // bundled and remote alike (uniform UI, no "remote = scary" asymmetry).
+    // Long source URLs get their own line so they never wrap mid-URL.
+    const isRemote = preset.sourceFile.startsWith('remote:');
+    const fileName = isRemote ? preset.sourceFile.slice('remote:'.length) : preset.sourceFile;
+    const detail = [
+      preset.meta?.notes,
+      preset.meta?.verified ? `verified ${preset.meta.verified}` : undefined,
+      preset.meta?.source,
+    ]
+      .filter((s): s is string => s !== undefined && s !== '')
+      .join('\n');
+    // Modal text is inert chrome — no links, no selection; buttons are the
+    // only interactive affordance and appear left-to-right in argument
+    // order, the first as the Enter-default. This dialog IS the save consent
+    // (there is no second confirm), so the message states the consequence
+    // instead of asking a question the buttons already answer. The preset
+    // file is one icon-button away; viewing is decision-neutral and re-asks.
+    const origin = isRemote ? ' (from vLLM-Copilot/main)' : '';
+    const message =
+      `Preset "${fileName}"${origin} matches "${modelId}".\n\n` +
+      `Modes: ${modeNames}.${detail ? `\n\n${detail}` : ''}\n\n` +
+      `Using it saves the model to Settings right away — adjust it later in Model Settings.`;
+    let picked: string | undefined;
+    for (;;) {
+      const choice = await vscode.window.showInformationMessage(
+        message,
+        { modal: true },
+        { title: 'Use Preset', icon: new vscode.ThemeIcon('check') },
+        { title: 'Auto-Discover from HuggingFace', icon: new vscode.ThemeIcon('search') },
+        { title: 'View Preset File', icon: new vscode.ThemeIcon('link-external') },
+      );
+      // Real VS Code resolves the chosen MessageItem; test mocks may resolve
+      // the bare title string. Accept both shapes.
+      const chosen = choice as string | { title?: string } | undefined;
+      picked = typeof chosen === 'string' ? chosen : chosen?.title;
+      if (picked !== 'View Preset File') break;
+      await vscode.env.openExternal(vscode.Uri.parse(presetBlobUrl(preset.sourceFile)));
+    }
+    if (picked === undefined) return null; // cancelled
+    if (picked === 'Use Preset') {
       const userConfig = baseConfig ?? { id: modelId, vllmModelId: modelId };
       // Strict policy: a preset config is only usable when the server reports a real
       // context window. Resolve it HERE so the preset path cannot bypass the check —
@@ -361,6 +418,7 @@ export async function resolveModelConfigForAdd(
           `Using preset ${preset.sourceFile}. Modes: ${modeNames}.`,
           `Context window (${serverType}): ${limits.contextWindow.toLocaleString('en-US')} tokens`,
         ],
+        presetFile: preset.sourceFile,
       };
     }
   }
@@ -397,7 +455,8 @@ export async function resolveModelConfigForAddSafely(
 ): Promise<AutoConfigResult | null> {
   try {
     return await resolveModelConfigForAdd(
-      context, modelId, serverUrl, requestHeaders, serverRoot, baseConfig, serverType
+      context, modelId, serverUrl, requestHeaders, serverRoot, baseConfig, serverType,
+      msg => output.appendLine(msg),
     );
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);

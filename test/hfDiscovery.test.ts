@@ -148,7 +148,8 @@ describe('autoConfigureModel', () => {
 
 describe('resolveModelConfigForAdd', () => {
   const extContext = { extensionUri: vscode.Uri.file('/ext') } as any;
-  const PRESET_JSON = '{ "vllmModelId": "org/Model", "modelModes": { "balanced": {} } }';
+  const PRESET_JSON =
+    '{ "presetVersion": 1, "match": ["org/Model"], "config": { "vllmModelId": "org/Model", "modelModes": { "balanced": {} } } }';
 
   const jsonResponse = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -192,6 +193,9 @@ describe('resolveModelConfigForAdd', () => {
 
   it('returns null when the user cancels the preset dialog', async () => {
     seedPreset();
+    // The flow now performs a live remote preset lookup — stub it as offline
+    // so the test exercises bundled behavior without touching the network.
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({}, 404)));
     const infoSpy = vi
       .spyOn(vscode.window, 'showInformationMessage')
       .mockResolvedValue(undefined);
@@ -200,6 +204,14 @@ describe('resolveModelConfigForAdd', () => {
 
     expect(result).toBeNull();
     expect(infoSpy).toHaveBeenCalledTimes(1);
+    // Buttons are MessageItems with icons — modal text cannot host links,
+    // so the blob URL is only reachable by clicking. Argument order is the
+    // left-to-right order; the first is the Enter-default.
+    const buttons = infoSpy.mock.calls[0].slice(2) as { title: string; icon?: unknown }[];
+    expect(buttons.map(b => b.title)).toEqual([
+      'Use Preset', 'Auto-Discover from HuggingFace', 'View Preset File',
+    ]);
+    expect(buttons.every(b => b.icon !== undefined)).toBe(true);
   });
 
   it('returns the preset-merged config, preserving the caller identity, on Use Preset', async () => {
@@ -220,11 +232,13 @@ describe('resolveModelConfigForAdd', () => {
     expect(result!.modelConfig.vllmModelId).toBe('user-wire');
     expect(result!.modelConfig.modelModes).toEqual({ balanced: {} });
     expect(result!.summary[0]).toContain('Using preset Preset.json');
+    // Marks the result as preset-sourced → the Add flow skips the second modal.
+    expect(result!.presetFile).toBe('Preset.json');
   });
 
   it('falls through to HuggingFace discovery when Auto-Discover is chosen', async () => {
     seedPreset();
-    vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue('Auto-Discover' as any);
+    vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue('Auto-Discover from HuggingFace' as any);
     const fetchFn = stubDiscovery();
 
     const result = await resolveModelConfigForAdd(extContext, 'org/Model', 'http://host:8000');
@@ -232,6 +246,7 @@ describe('resolveModelConfigForAdd', () => {
     expect(result).not.toBeNull();
     // Discovery ran (HF model_type surfaced) rather than the preset.
     expect(result!.modelConfig.family).toBe('qwen');
+    expect(result!.presetFile).toBeUndefined(); // discovery keeps the review modal
     expect(fetchFn).toHaveBeenCalled();
   });
 
@@ -245,6 +260,112 @@ describe('resolveModelConfigForAdd', () => {
     expect(result!.modelConfig.id).toBe('unknown-model');
     expect(result!.modelConfig.family).toBe('qwen');
     expect(fetchFn).toHaveBeenCalled();
+  });
+
+  // ---- Live remote preset lookup (src/presetRemote.ts integration) ----
+
+  const REMOTE_V2 = {
+    presetVersion: 1,
+    match: ['org/Model'],
+    meta: {
+      name: 'org Model',
+      source: 'https://example.org/card',
+      verified: '2026-08-27',
+      notes: 'Remote preset notes.',
+    },
+    config: { vllmModelId: 'org/Model', modelModes: { Fast: { temperature: 0.3 } }, defaultMode: 'Fast' },
+  };
+
+  /** Route the remote index + winner file; /v1/models serves the strict context check. */
+  const stubRemoteHit = () => {
+    const fn = vi.fn(async (url: string) => {
+      if (url.endsWith('/v1/models')) {
+        return jsonResponse({ data: [{ id: 'org/Model', max_model_len: 8192 }] });
+      }
+      if (url.endsWith('index.json')) {
+        return jsonResponse({ schemaVersion: 1, presets: [{ match: ['org/Model'], file: 'orgModel.json' }] });
+      }
+      if (url.endsWith('orgModel.json')) {
+        return jsonResponse(REMOTE_V2);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal('fetch', fn);
+    return fn;
+  };
+
+  it('offers a remote preset hit with provenance and applies it on Use Preset', async () => {
+    seedNoPresets();
+    stubRemoteHit();
+    const infoSpy = vi
+      .spyOn(vscode.window, 'showInformationMessage')
+      .mockResolvedValue('Use Preset' as any);
+
+    const result = await resolveModelConfigForAdd(extContext, 'org/Model', 'http://host:8000');
+
+    expect(result).not.toBeNull();
+    // Dialog carries origin + notes + provenance (informed consent for a fetched file).
+    const message = String(infoSpy.mock.calls[0][0]);
+    expect(message).toContain('Preset "orgModel.json" (from vLLM-Copilot/main) matches "org/Model".');
+    expect(message).toContain('Remote preset notes.');
+    expect(message).toContain('verified 2026-08-27');
+    expect(message).toContain('https://example.org/card');
+    // This dialog IS the save consent (no second modal) — it must say so.
+    expect(message).toContain('saves the model to Settings right away');
+    const buttons = infoSpy.mock.calls[0].slice(2) as { title: string }[];
+    expect(buttons.some(b => b.title === 'View Preset File')).toBe(true);
+    // The remote config is what got merged, tagged with its remote source.
+    expect(result!.modelConfig.modelModes).toEqual({ Fast: { temperature: 0.3 } });
+    expect(result!.summary[0]).toContain('remote:orgModel.json');
+    expect(result!.presetFile).toBe('remote:orgModel.json');
+  });
+
+  it('View Preset File opens the GitHub blob (remote: stripped) and re-asks without choosing', async () => {
+    seedNoPresets();
+    stubRemoteHit();
+    const openSpy = vi.spyOn(vscode.env, 'openExternal').mockResolvedValue(true);
+    const infoSpy = vi
+      .spyOn(vscode.window, 'showInformationMessage')
+      .mockResolvedValueOnce('View Preset File' as any)
+      .mockResolvedValueOnce(undefined as any); // user cancels on the re-ask
+
+    const result = await resolveModelConfigForAdd(extContext, 'org/Model', 'http://host:8000');
+
+    // Viewing is decision-neutral: nothing resolved, nothing saved.
+    expect(result).toBeNull();
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://github.com/fuzzifikation/vLLM-Copilot/blob/main/model-configs/orgModel.json',
+    );
+    expect(infoSpy).toHaveBeenCalledTimes(2); // dialog reopened after viewing
+  });
+
+  it('remote preset wins a same-pattern tie against the bundled preset', async () => {
+    seedPreset(); // bundled PRESET_JSON: match ['org/Model'], modes { balanced }
+    stubRemoteHit();
+    vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue('Use Preset' as any);
+
+    const result = await resolveModelConfigForAdd(extContext, 'org/Model', 'http://host:8000');
+
+    // Equal-length patterns → array order decides → [remote, ...bundled] ⇒ remote wins.
+    expect(result).not.toBeNull();
+    expect(result!.modelConfig.modelModes).toEqual({ Fast: { temperature: 0.3 } });
+    expect(result!.summary[0]).toContain('remote:orgModel.json');
+  });
+
+  it('offline lookup keeps bundled-preset behavior unchanged', async () => {
+    seedPreset();
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new TypeError('fetch failed'); // fully offline
+    }));
+    const infoSpy = vi
+      .spyOn(vscode.window, 'showInformationMessage')
+      .mockResolvedValue(undefined); // cancel — just inspect the offer
+
+    await resolveModelConfigForAdd(extContext, 'org/Model', 'http://host:8000');
+
+    const message = String(infoSpy.mock.calls[0][0]);
+    expect(message).toContain('Preset "Preset.json" matches "org/Model".');
+    expect(message).not.toContain('vLLM-Copilot/main');
   });
 
   it('routes OpenRouter models to exact-model discovery — no HF, no presets, no fabricated cap', async () => {

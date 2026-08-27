@@ -20,7 +20,7 @@
 // IMPORTANT: Qwen3.6 does NOT support the /think and /nothink soft switch from Qwen3.
 // The model thinks by default; use "No Think" mode for direct responses.
 //
-// Copy the "id" object below into your settings.json:
+// To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
 // Token budgets:
@@ -41,50 +41,60 @@
 
 
 {
-  "vllmModelId": "Qwen3.6-35B-A3B",
-  "displayName": "Qwen3.6-35B-A3B",
-  "family": "qwen3_5_moe",
-  "maxOutputTokens": 32768,
-  "capabilities": {
-    "toolCalling": true,
-    "imageInput": true
+  "presetVersion": 1,
+  "match": ["Qwen3.6-35B-A3B"],
+  "meta": {
+    "name": "Qwen3.6-35B-A3B",
+    "source": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+    "verified": "2026-07-31",
+    "notes": "Qwen3.6 MoE (35B total / 3B active) with vision. Thinks by default (no /think soft-switch); official card sampling per mode."
   },
-  "modelModes": {
-    "Think (General)": {
-      "chat_template_kwargs": {
-        "enable_thinking": true,
-        "preserve_thinking": true
-      },
-      "temperature": 1.0,
-      "top_p": 0.95,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 1.5,
-      "repetition_penalty": 1.0
+  "config": {
+    "vllmModelId": "Qwen3.6-35B-A3B",
+    "displayName": "Qwen3.6-35B-A3B",
+    "family": "qwen3_5_moe",
+    "maxOutputTokens": 32768,
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
     },
-    "Think (Coding)": {
-      "chat_template_kwargs": {
-        "enable_thinking": true,
-        "preserve_thinking": true
+    "modelModes": {
+      "Think (General)": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 1.5,
+        "repetition_penalty": 1.0
       },
-      "temperature": 0.6,
-      "top_p": 0.95,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "Think (Coding)": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "repetition_penalty": 1.0
+      },
+      "No Think": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        },
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 1.5,
+        "repetition_penalty": 1.0
+      }
     },
-    "No Think": {
-      "chat_template_kwargs": {
-        "enable_thinking": false
-      },
-      "temperature": 0.7,
-      "top_p": 0.8,
-      "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 1.5,
-      "repetition_penalty": 1.0
-    }
-  },
-  "defaultMode": "Think (General)"
+    "defaultMode": "Think (General)"
+  }
 }

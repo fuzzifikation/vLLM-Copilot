@@ -22,7 +22,7 @@
 // Sampling (card, local deployment): temperature = 1.0, top_p = 0.95,
 // top_k = 40. Applied in all modes.
 //
-// Copy the object below into your settings.json:
+// To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
 // Token budgets:
@@ -35,42 +35,52 @@
 //   - No Think:         latency-sensitive turns
 
 {
-  "vllmModelId": "MiniMax-M3",
-  "displayName": "MiniMax M3",
-  "family": "minimax_m3",
-  "maxOutputTokens": 65536,
-  "capabilities": {
-    "toolCalling": true,
-    "imageInput": true
+  "presetVersion": 1,
+  "match": ["MiniMax-M3"],
+  "meta": {
+    "name": "MiniMax M3",
+    "source": "https://huggingface.co/MiniMaxAI/MiniMax-M3",
+    "verified": "2026-08-27",
+    "notes": "Vision MoE, 1M context. Thinking via chat_template_kwargs.thinking_mode (enabled/adaptive/disabled). Card sampling temp=1.0, top_p=0.95, top_k=40."
   },
-  "modelModes": {
-    "Think (Always)": {
-      "chat_template_kwargs": {
-        "thinking_mode": "enabled"
-      },
-      "max_tokens": 65536,
-      "temperature": 1.0,
-      "top_p": 0.95,
-      "top_k": 40
+  "config": {
+    "vllmModelId": "MiniMax-M3",
+    "displayName": "MiniMax M3",
+    "family": "minimax_m3",
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
     },
-    "Think (Adaptive)": {
-      "chat_template_kwargs": {
-        "thinking_mode": "adaptive"
+    "modelModes": {
+      "Think (Always)": {
+        "chat_template_kwargs": {
+          "thinking_mode": "enabled"
+        },
+        "max_tokens": 65536,
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 40
       },
-      "max_tokens": 32768,
-      "temperature": 1.0,
-      "top_p": 0.95,
-      "top_k": 40
+      "Think (Adaptive)": {
+        "chat_template_kwargs": {
+          "thinking_mode": "adaptive"
+        },
+        "max_tokens": 32768,
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 40
+      },
+      "No Think": {
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        },
+        "max_tokens": 16384,
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 40
+      }
     },
-    "No Think": {
-      "chat_template_kwargs": {
-        "thinking_mode": "disabled"
-      },
-      "max_tokens": 16384,
-      "temperature": 1.0,
-      "top_p": 0.95,
-      "top_k": 40
-    }
-  },
-  "defaultMode": "Think (Always)"
+    "defaultMode": "Think (Always)"
+  }
 }
