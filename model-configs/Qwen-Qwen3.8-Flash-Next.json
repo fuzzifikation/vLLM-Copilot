@@ -34,29 +34,14 @@
 //     benched at. Truncated thinking turns are rare and recoverable.
 //   - No Think gets 16,384 (direct answers rarely need more).
 //
-// 1M context via YaRN — OFF BY DEFAULT, opt-in server recipe only:
-//   Static YaRN (what vLLM/SGLang implement) keeps the scaling factor constant
-//   regardless of input length, which the card warns "potentially impacts
-//   performance on shorter texts". Qwen ran all agentic benchmarks at native
-//   256K without YaRN. Only enable when long context is actually required, and
-//   match `factor` to the real need (e.g. factor 2.0 for 524,288):
-//     VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 vllm serve Qwen/Qwen3.8-Flash-Next-FP8 \
-//       --max-model-len 1000000 \
-//       --hf-overrides '{"text_config": {"rope_parameters": {"mrope_interleaved": true, "mrope_section": [11,11,10], "rope_type": "yarn", "rope_theta": 10000000, "partial_rotary_factor": 0.25, "factor": 4.0, "original_max_position_embeddings": 262144}}}'
+// Longer context via YaRN is a server-side option — deliberately NOT assumed
+//   here: static YaRN keeps the scaling factor constant regardless of input
+//   length, which the card warns "potentially impacts performance on shorter
+//   texts". Qwen ran all agentic benchmarks at native 256K without YaRN, so
+//   this preset budgets for native context only.
 //
 // Copy the "id" object below into your settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
-//
-// Serving requirements (official recipe, updated 2026-08-26):
-//   - vLLM >= 0.29.0; use image vllm/vllm-openai:qwen38-flash-next (PyPI wheel does
-//     not support qwen4_exp yet)
-//   - --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml
-//     (tools are Hermes-XML — qwen3_xml, NOT qwen3_coder!)
-//   - FP8 on 8×H200 requires TEP8: --tensor-parallel-size 8 --enable-expert-parallel
-//     --moe-backend triton (plain TP8 is incompatible with 128-wide FP8 blocks)
-//   - Optional MTP spec-decode: --speculative-config '{"method":"mtp","num_speculative_tokens":3}'
-//   - Optional n-gram table CPU offload (NVIDIA): VLLM_PLE_CPU_OFFLOAD=1
-//   - For vision: do NOT use --language-model-only
 
 
 {

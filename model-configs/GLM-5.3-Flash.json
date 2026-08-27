@@ -34,17 +34,6 @@
 //
 // Copy the "id" object below into your settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
-//
-// Serving requirements (official recipe, updated 2026-08-26):
-//   - vLLM >= 0.29.0; docker image vllm/vllm-openai:glm53-flash until the
-//     integration lands in a stable release
-//   - --reasoning-parser glm45 --enable-auto-tool-choice --tool-call-parser glm47
-//   - Native FP8 checkpoint is the default id; BF16 variant:
-//     zai-org/GLM-5.3-Flash-BF16 (~2× weight memory)
-//   - FP8 KV cache (--kv-cache-dtype fp8) only on Blackwell; Hopper must run
-//     BF16 KV for this model
-//   - Optional MTP spec-decode: --speculative-config '{"method":"mtp","num_speculative_tokens":5}'
-//   - For vision: do NOT use --language-model-only
 
 
 {

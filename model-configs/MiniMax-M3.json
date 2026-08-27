@@ -1,0 +1,76 @@
+// MiniMax M3 — Model configuration
+// Model card: https://huggingface.co/MiniMaxAI/MiniMax-M3
+// vLLM recipe: https://recipes.vllm.ai/MiniMaxAI/MiniMax-M3 (updated 2026-08-03)
+// Verified 2026-08-27.
+//
+// Frontier vision-language MoE (~428B total / 23B active per card), MiniMax
+// Sparse Attention (MSA), 1,048,576-token native context, native multimodal
+// (image + video + computer use). SWE-Bench Pro 59.0, Terminal-Bench 2.1 66.0.
+// The most serveable frontier coding model: BF16 ~1 TB, MXFP8 ~513 GB
+// (MiniMaxAI/MiniMax-M3-MXFP8), NVFP4/MXFP4 ~257 GB.
+// The "MiniMax-M3" id below substring-matches the MXFP8/NVFP4/MXFP4 variants.
+//
+// Thinking — controlled by chat_template_kwargs.thinking_mode (NOT a
+// reasoning_effort level):
+//   - "enabled"  — thinks before every response, incl. after tool results.
+//                  Card recommends this for complex reasoning and agents.
+//   - "adaptive" — model decides per turn (server default when unset).
+//   - "disabled" — direct answers, lowest latency.
+// The same value tunes the minimax_m3 reasoning parser, so reasoning/content
+// split correctly in every mode. vLLM exposes the block as `reasoning`.
+//
+// Sampling (card, local deployment): temperature = 1.0, top_p = 0.95,
+// top_k = 40. Applied in all modes.
+//
+// Copy the object below into your settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//
+// Token budgets:
+//   - Context window: 1,048,576 tokens; per-mode budgets below leave
+//     >=983K input tokens at full 1M server context.
+//
+// Modes:
+//   - Think (Always):   card-recommended for agentic use (Copilot requests)
+//   - Think (Adaptive): model decides per turn — vendor default
+//   - No Think:         latency-sensitive turns
+
+{
+  "vllmModelId": "MiniMax-M3",
+  "displayName": "MiniMax M3",
+  "family": "minimax_m3",
+  "maxOutputTokens": 65536,
+  "capabilities": {
+    "toolCalling": true,
+    "imageInput": true
+  },
+  "modelModes": {
+    "Think (Always)": {
+      "chat_template_kwargs": {
+        "thinking_mode": "enabled"
+      },
+      "max_tokens": 65536,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": 40
+    },
+    "Think (Adaptive)": {
+      "chat_template_kwargs": {
+        "thinking_mode": "adaptive"
+      },
+      "max_tokens": 32768,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": 40
+    },
+    "No Think": {
+      "chat_template_kwargs": {
+        "thinking_mode": "disabled"
+      },
+      "max_tokens": 16384,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": 40
+    }
+  },
+  "defaultMode": "Think (Always)"
+}

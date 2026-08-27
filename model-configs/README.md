@@ -8,11 +8,15 @@ Ready-to-use model configurations shipped with the extension. **Add vLLM Server 
 | `Qwen-Qwen3.6-27B.json` | Qwen3.6-27B | Think (General), Think (Coding), No Think | ✅ | ✅ |
 | `Qwen-Qwen3.6-35B-A3B.json` | Qwen3.6-35B-A3B | Think (General), Think (Coding), No Think | ✅ | ✅ |
 | `Qwen-Qwen3.8-27B.json` | Qwen3.8-27B ⚠️ draft | Think (Deep), Think (Balanced), No Think | ❓ | ✅ |
+| `Qwen-Qwen3.8-Flash-Next.json` | Qwen3.8-Flash-Next | Think (Deep), Think (Balanced), No Think | ✅ | ✅ |
 | `Poolside-Laguna-S-2.1.json` | Laguna-S-2.1 (Poolside) | Think, No Think | ❌ | ✅ |
 | `Tencent-Hy3-config.json` | Hy3 (Tencent) | Think (Deep), Think (Light), No Think | ❌ | ✅ |
 | `DeepSeek-V4-Flash.json` | DeepSeek V4 Flash | Think (Max), Think (High), No Think | ❌ | ✅ |
-| `DeepSeek-V4-Flash-0731.json` | DeepSeek V4 Flash (0731) | Think (Max), Think (High), No Think | ❌ | ✅ |
+| `DeepSeek-V4-Pro.json` | DeepSeek V4 Pro | Think (Max), Think (High), No Think | ❌ | ✅ |
+| `Kimi-K3.json` | Kimi K3 (Moonshot) | Think (Max), Think (High), Think (Low) | ✅ | ✅ (always on) |
+| `MiniMax-M3.json` | MiniMax M3 | Think (Always), Think (Adaptive), No Think | ✅ | ✅ |
 | `glm-5.2-config.json` | GLM-5.2 (Z-AI) | Think (Max), Think (High), No Think | ❌ | ✅ |
+| `GLM-5.3-Flash.json` | GLM-5.3-Flash (Z.ai) | Think (Max), Think (High), Think (Low) | ✅ | ✅ (always on) |
 
 To use a preset manually, copy the JSON object from the corresponding file into your `vllm-copilot.models` array (no reload needed).
 

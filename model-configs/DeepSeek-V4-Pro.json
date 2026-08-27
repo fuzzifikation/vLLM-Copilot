@@ -1,0 +1,70 @@
+// DeepSeek V4 Pro — Model configuration (official 0813 GA release)
+// Model card: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813
+// vLLM recipe: https://recipes.vllm.ai/deepseek-ai/DeepSeek-V4-Pro (updated 2026-08-26)
+// Verified 2026-08-27.
+//
+// Flagship of the V4 family: 1.6T total / 49B active MoE, hybrid CSA+HCA
+// attention, 1,048,576-token native context. Text-only. FP4+FP8 mixed
+// checkpoint (~960 GB); NVFP4 variant: nvidia/DeepSeek-V4-Pro-NVFP4.
+// The "DeepSeek-V4-Pro" id below substring-matches the 0813 GA release, the
+// preview, and the NVFP4/DSpark variants.
+//
+// Reasoning modes (recipe: keep reasoning controls in chat_template_kwargs):
+//   - Think Max:  chat_template_kwargs {thinking: true, reasoning_effort: "max"}
+//     Needs a server context window >= 393,216 (384K) — on smaller servers
+//     max-effort thinking runs can be truncated.
+//   - Think High: chat_template_kwargs {thinking: true, reasoning_effort: "high"}
+//   - No Think:   omit thinking entirely (plain request = non-think default)
+//   - A "low" effort level also exists on 0813; not exposed as a mode here
+//     (High already balances depth/latency — add it if users ask).
+//
+// Sampling (card, local deployment): temperature = 1.0; top_p = 0.95 for
+// agentic scenarios, top_p = 1.0 otherwise. Benchmark recipe: temp=1.0,
+// top_p=0.95, max effort. Card recommends up to 384K output at high/max —
+// do NOT reserve that much: input = context − output, and even 65K output
+// leaves ~983K input at 1M context.
+//
+// Copy the "id" object below into your settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//
+// Token budgets:
+//   - Context window: 1,048,576 tokens; per-mode output budgets below leave
+//     >980K input tokens in every mode.
+
+
+{
+  "vllmModelId": "DeepSeek-V4-Pro",
+  "displayName": "DeepSeek V4 Pro",
+  "family": "deepseek_v4",
+  "maxOutputTokens": 65536,
+  "capabilities": {
+    "toolCalling": true,
+    "imageInput": false
+  },
+  "modelModes": {
+    "Think (Max)": {
+      "chat_template_kwargs": {
+        "thinking": true,
+        "reasoning_effort": "max"
+      },
+      "max_tokens": 65536,
+      "temperature": 1.0,
+      "top_p": 0.95
+    },
+    "Think (High)": {
+      "chat_template_kwargs": {
+        "thinking": true,
+        "reasoning_effort": "high"
+      },
+      "max_tokens": 32768,
+      "temperature": 1.0,
+      "top_p": 0.95
+    },
+    "No Think": {
+      "max_tokens": 16384,
+      "temperature": 1.0,
+      "top_p": 1.0
+    }
+  },
+  "defaultMode": "Think (Max)"
+}

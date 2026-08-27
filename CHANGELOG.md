@@ -1,11 +1,27 @@
 # Changelog
 
+## v1.33.2 — New model presets: DeepSeek-V4-Pro, Kimi K3 & MiniMax M3
+
+### Added
+
+- **DeepSeek-V4-Pro preset** — 1M-context text flagship (1.6T/49B). Think (Max) and Think (High) drive its custom template via `chat_template_kwargs` (`thinking` + `reasoning_effort`), No Think sends a plain request. Official sampling (temp 1.0; top_p 0.95 thinking / 1.0 plain), budgets 64K/32K/16K. Matches `-0813`, preview and quantized served ids by substring.
+- **Kimi K3 preset** — first open 3T-class MoE (2.8T/104B), 1M context, native vision. Thinking is always on; modes are Think (Max / High / Low) via top-level `reasoning_effort`. Sampling is fixed per Moonshot's API (temp 1.0, top_p 0.95, no penalties). Budgets 64K/32K/16K.
+- **MiniMax M3 preset** — 428B-A23B, 1M context, multimodal. Modes Think (Always) / Think (Adaptive) / No Think via `chat_template_kwargs.thinking_mode`; official sampling (temp 1.0, top_p 0.95, top_k 40). Budgets 64K/32K/16K.
+
+### Changed
+
+- **Preset headers are client config only** — hosting tips (serve flags, hardware, docker recipes) removed from all presets; headers keep mode mechanics, sampling rationale and wire caveats, plus bare vLLM recipe links.
+
+### Removed
+
+- **`DeepSeek-V4-Flash-0731` preset** — identical to the generic DeepSeek-V4-Flash preset, which already matches that id by substring.
+
 ## v1.33.1 — New model presets: Qwen3.8-Flash-Next & GLM-5.3-Flash
 
 ### Added
 
-- **Qwen3.8-Flash-Next preset** — new `qwen4_exp` family (125B-A6B MoE, multimodal, 262K native context). Three modes: **Think (Deep)** (`reasoning_effort: xhigh`), **Think (Balanced)** (`medium`) and **No Think**, each with the official sampling recipe and its own output budget (32K/32K/16K) so large-codebase input is never starved. Serve with `--reasoning-parser qwen3 --tool-call-parser qwen3_xml`. The 1M-context YaRN server recipe is documented in the preset header as opt-in only (static YaRN can degrade short-context quality).
-- **GLM-5.3-Flash preset** — new `glm5_next` family (320B-A18B, natively multimodal, 1M native context). Thinking is always on, so modes are **Think (Max / High / Low)** via `reasoning_effort` (no No-Think mode, unlike GLM-5.2). Output budgets 64K/32K/16K. Serve with `--reasoning-parser glm45 --tool-call-parser glm47`.
+- **Qwen3.8-Flash-Next preset** — new `qwen4_exp` family (125B-A6B MoE, multimodal, 262K native context). Three modes: **Think (Deep)** (`reasoning_effort: xhigh`), **Think (Balanced)** (`medium`) and **No Think**, each with the official sampling recipe and its own output budget (32K/32K/16K) so large-codebase input is never starved. YaRN context extension is deliberately not assumed — static YaRN can degrade short-context quality, so the preset budgets for native context.
+- **GLM-5.3-Flash preset** — new `glm5_next` family (320B-A18B, natively multimodal, 1M native context). Thinking is always on, so modes are **Think (Max / High / Low)** via `reasoning_effort` (no No-Think mode, unlike GLM-5.2). Output budgets 64K/32K/16K.
 - Both presets match any quantization variant (FP8/NVFP4/GGUF) via substring matching.
 
 ## v1.33.0 — Rename servers & V symbol in the model picker

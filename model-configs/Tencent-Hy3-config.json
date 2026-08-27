@@ -15,13 +15,6 @@
 // Copy the "id" object below into your settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
-// Requirements:
-//   - vLLM built from source (v0.8+ with Hy3 support)
-//   - vLLM launched with --reasoning-parser hy_v3
-//   - For tool calling: also add --tool-call-parser hy_v3 --enable-auto-tool-choice
-//   - MTP (Multi-Token Prediction) optional: add --speculative-config.method mtp
-//   - Environment: VLLM_FLASHINFER_ALLREDUCE_BACKEND=trtllm (recommended for multi-GPU)
-//
 // Token budgets:
 //   - Context window: 262,144 tokens (256K official, vLLM rounds up)
 //   - maxOutputTokens: 32,768 (safe default for most queries)

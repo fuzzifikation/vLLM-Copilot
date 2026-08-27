@@ -23,12 +23,6 @@
 // Copy the "id" object below into your settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
-// Requirements:
-//   - vLLM >=0.19.0 launched with --reasoning-parser qwen3
-//   - For tool calling: also add --enable-auto-tool-choice --tool-call-parser qwen3_coder
-//   - For vision: do NOT use --language-model-only
-//   - For MTP: --speculative-config '{"method":"qwen3_next_mtp","num_speculative_tokens":2}'
-//
 // Token budgets:
 //   - Context window: 262,144 tokens (native), extensible up to ~1,010,000 (YaRN)
 //   - maxOutputTokens: 32,768 (official recommendation for "most queries")

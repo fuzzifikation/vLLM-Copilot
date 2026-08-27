@@ -1,0 +1,81 @@
+// Kimi K3 — Model configuration
+// Model card: https://huggingface.co/moonshotai/Kimi-K3
+// vLLM recipe: https://recipes.vllm.ai/moonshotai/Kimi-K3 (updated 2026-08-15)
+// API docs:   https://platform.kimi.ai/docs/guide/kimi-k3-quickstart
+// Verified 2026-08-27. Weights are fully open (Kimi K3 License, safetensors).
+//
+// World's first open 3T-class model: 2.8T total / 104B active (16+2 of 896
+// experts via Stable LatentMoE), Kimi Delta Attention + Gated MLA, native
+// vision (MoonViT-V2), 1,048,576-token context. Natively MXFP4-weighted /
+// MXFP8-activation (quantization-aware trained), ~1.68 TB on disk.
+// Terminal-Bench 2.1: 88.3 — currently the top open coding model.
+//
+// Thinking: ALWAYS ON — cannot be disabled. Effort is the top-level
+// `reasoning_effort` request field: "low" | "high" | "max" (default "max").
+// Unknown values fall back to max.
+//
+// PRESERVED THINKING (important): K3 is trained in preserved-thinking mode —
+// multi-turn and tool-call requests must return the COMPLETE assistant
+// message, including reasoning content and tool_calls, not just `content`.
+// This extension forwards VS Code's thinking parts back as the `reasoning`
+// field on assistant messages (messageConverter.ts), which matches vLLM's
+// current wire name (`reasoning_content` was renamed to `reasoning` in vLLM).
+// Thinking history round-trips only when the VS Code host replays
+// LanguageModelThinkingPart in the request history.
+//
+// Sampling (official, fixed for K3): temperature = 1.0, top_p = 0.95,
+// presence_penalty = 0, frequency_penalty = 0. Moonshot's cloud API fixes
+// these and asks clients to omit them; local vLLM applies sampling params,
+// so the modes below set exactly these values.
+//
+// Copy the object below into your settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//
+// Token budgets:
+//   - Context window: 1,048,576 tokens
+//   - Moonshot API default max_completion_tokens is 131072 (up to 1048576).
+//     Thinking is always on and eats output budget, so per-mode budgets
+//     below keep >=983K input tokens available at full 1M server context.
+//
+// Modes (thinking cannot be turned off — Think (Low) is the "fast" mode):
+//   - Think (Max):  default, deepest reasoning
+//   - Think (High): balanced depth/latency
+//   - Think (Low):  minimal reasoning effort
+
+{
+  "vllmModelId": "Kimi-K3",
+  "displayName": "Kimi K3",
+  "family": "kimi_k3",
+  "maxOutputTokens": 65536,
+  "capabilities": {
+    "toolCalling": true,
+    "imageInput": true
+  },
+  "modelModes": {
+    "Think (Max)": {
+      "reasoning_effort": "max",
+      "max_tokens": 65536,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "presence_penalty": 0,
+      "frequency_penalty": 0
+    },
+    "Think (High)": {
+      "reasoning_effort": "high",
+      "max_tokens": 32768,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "presence_penalty": 0,
+      "frequency_penalty": 0
+    },
+    "Think (Low)": {
+      "reasoning_effort": "low",
+      "max_tokens": 16384,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "presence_penalty": 0,
+      "frequency_penalty": 0
+    }
+  },
+  "defaultMode": "Think (Max)"
+}

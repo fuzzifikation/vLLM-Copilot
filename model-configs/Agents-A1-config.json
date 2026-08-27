@@ -12,11 +12,6 @@
 // Copy the object below into your settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
-// Requirements:
-//   - vLLM launched with --reasoning-parser qwen3
-//   - For tool calling: also add --enable-auto-tool-choice --tool-call-parser qwen3_coder
-//   - For text-only (saves KV cache): add --language-model-only (skips vision encoder)
-//
 // Token budgets:
 //   - Context window: 262,144 tokens (recommended by authors)
 //   - maxOutputTokens: 32,768 (conservative; model supports more)

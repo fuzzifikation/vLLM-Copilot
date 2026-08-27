@@ -13,13 +13,6 @@
 // Copy the object below into your settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
-// Requirements:
-//   - vLLM 0.24.0+ with --reasoning-parser deepseek_r1
-//   - vLLM launch: --speculative-config for DSpark (see model card)
-//   - For tool calling: vLLM handles DSML→OpenAI conversion automatically
-//   - --max-model-len should match your GPU capacity (model supports 1M context)
-//   - Consider --tensor-parallel-size 8 (284B total, 13B active per token)
-//
 // Token budgets:
 //   - Context window: 1,048,576 tokens (model supports up to 1M)
 //   - maxOutputTokens: 65536 (output ceiling; model supports up to 384K of output,

@@ -18,13 +18,7 @@
 // Copy the "id" object below into your settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
-// Requirements:
-//   - vLLM launched with --reasoning-parser poolside_v1 --tool-call-parser poolside_v1
-//   - For tool calling: also add --enable-auto-tool-choice
-//   - Optional: --default-chat-template-kwargs '{"enable_thinking": true}'
-//   - For speculative decoding: add --speculative-config with DFlash draft model
-//
-// Token budgets (assuming max_model_len 262,144):
+// Token budgets (262,144-token context):
 //   - maxOutputTokens: 32,768 (suitable for Copilot chat turns)
 //   - maxInputTokens: auto-computed as ~229,376
 //   - Note: model supports up to 1M context and routinely generates 100K+ tokens
