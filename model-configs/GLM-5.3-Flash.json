@@ -1,0 +1,92 @@
+// GLM-5.3-Flash (Z.ai) — Model configuration
+// Source: https://huggingface.co/zai-org/GLM-5.3-Flash + vLLM recipe
+// (recipes.vllm.ai/zai-org/GLM-5.3-Flash). Verified 2026-08-27.
+//
+// NEW ARCHITECTURE: model_type "glm5_next" (NOT glm_moe_dsa like GLM-5.2).
+// 320B total / 18B active MoE, first natively multimodal model in the GLM-5
+// series (image + video input), hybrid KDA linear attention + sparse MLA.
+// 1,048,576-token native context — NO YaRN-style extension needed.
+//
+// NOTE: These params work for ANY quantization variant. Preset matching is
+// substring-based, so this preset also matches "GLM-5.3-Flash-BF16". The
+// config's `vllmModelId` must still be an EXACT served model id.
+//
+// ⚠️ THINKING IS ALWAYS ON — the chat template opens a  block
+// unconditionally. There is NO "No Think" mode for this model (unlike
+// GLM-5.2, which has enable_thinking:false). Reasoning depth is controlled
+// ONLY through `reasoning_effort`.
+//
+// Reasoning effort (vLLM recipe + card):
+//   - low | high | max. Template resolves to "max" unless reasoning_effort is
+//     explicitly "low" or "high" — any other value falls back to "max".
+//   - Card: keep the default "max" for benchmark/leaderboard reproduction.
+//   - `clear_thinking` (chat_template_kwargs): defaults to false; the card
+//     says to pass clear_thinking=true for chat scenarios (strips historical
+//     thinking blocks from earlier turns).
+//
+// Sampling: no single official recipe; benchmark footnotes use temp=1.0 with
+// top_p between 0.95 and 1.0. temp=1.0/top_p=0.95 matches the GLM-5.2 preset.
+//
+// Token budgets (1,048,576 native context):
+//   - Card benchmarks generate up to 163,840 (HLE) / 65,536 (Terminal-Bench)
+//     tokens. 65,536 per mode still leaves ~983K input tokens.
+//   - input = context − max_tokens, so output budgets here never starve input.
+//
+// Copy the "id" object below into your settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//
+// Serving requirements (official recipe, updated 2026-08-26):
+//   - vLLM >= 0.29.0; docker image vllm/vllm-openai:glm53-flash until the
+//     integration lands in a stable release
+//   - --reasoning-parser glm45 --enable-auto-tool-choice --tool-call-parser glm47
+//   - Native FP8 checkpoint is the default id; BF16 variant:
+//     zai-org/GLM-5.3-Flash-BF16 (~2× weight memory)
+//   - FP8 KV cache (--kv-cache-dtype fp8) only on Blackwell; Hopper must run
+//     BF16 KV for this model
+//   - Optional MTP spec-decode: --speculative-config '{"method":"mtp","num_speculative_tokens":5}'
+//   - For vision: do NOT use --language-model-only
+
+
+{
+  "vllmModelId": "GLM-5.3-Flash",
+  "displayName": "GLM-5.3-Flash",
+  "family": "glm5_next",
+  "maxOutputTokens": 65536,
+  "capabilities": {
+    "toolCalling": true,
+    "imageInput": true
+  },
+  "modelModes": {
+    "Think (Max)": {
+      "reasoning_effort": "max",
+      "chat_template_kwargs": {
+        "clear_thinking": true
+      },
+      "max_tokens": 65536,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "presence_penalty": 0
+    },
+    "Think (High)": {
+      "reasoning_effort": "high",
+      "chat_template_kwargs": {
+        "clear_thinking": true
+      },
+      "max_tokens": 32768,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "presence_penalty": 0
+    },
+    "Think (Low)": {
+      "reasoning_effort": "low",
+      "chat_template_kwargs": {
+        "clear_thinking": true
+      },
+      "max_tokens": 16384,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "presence_penalty": 0
+    }
+  },
+  "defaultMode": "Think (Max)"
+}

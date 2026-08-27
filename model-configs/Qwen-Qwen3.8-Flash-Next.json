@@ -1,0 +1,114 @@
+// Qwen3.8-Flash-Next — Model configuration
+// Source: https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8 (released 2026-08-26)
+// Verified 2026-08-27 against the model card, chat_template.jinja and generation_config.json.
+//
+// NEW ARCHITECTURE: model_type "qwen4_exp" (NOT qwen3_5). 125B total / 6B active MoE
+// + 51B n-gram PLE embedding table + 4B MTP head. Multimodal (vision).
+//
+// NOTE: These params work for ANY quantization variant (FP8, NVFP4, GGUF, etc.).
+// Preset matching is substring-based, so this preset applies to any served id
+// containing "Qwen3.8-Flash-Next". The config's `vllmModelId` must still be an
+// EXACT served model id — the extension never strips or forgives mismatches.
+//
+// Chat template parameters (Jinja template variables, passed via chat_template_kwargs):
+//   - `enable_thinking: true/false` — default true; false emits no thinking tokens
+//     (template appends an empty  block). No-Think IS supported.
+//   - `preserve_thinking: true` — keeps  thinking... blocks in multi-turn history.
+//     Default true for this family; set false to strip historical thinking.
+//
+// Reasoning depth (top-level request param, NOT a chat_template_kwarg):
+//   - `reasoning_effort`: xhigh (default) | medium | low. Any other value raises a
+//     template exception. Only applies when thinking is enabled.
+//
+// Sampling (official card recipes; generation_config.json ships the thinking set):
+//   - Thinking:    temp=1.0, top_p=0.95, top_k=20, min_p=0.0, presence=0.0, rep=1.0
+//   - No-think:    temp=0.7, top_p=0.80, top_k=20, min_p=0.0, presence=1.5, rep=1.0
+//   - Qwen's own agentic benchmarks (DeepSWE, SWE-bench Pro/Multilingual) ran with
+//     temp=1.0, top_p=0.95 at a 256K context window. There is NO temp=0.6 coding
+//     variant for this model (that was Qwen3.6 only).
+//
+// Token budgets (native 262,144 context):
+//   - The card advertises up to 262K thinking / 131K final tokens, but reserving
+//     that much output would halve usable input (input = context − output).
+//     32,768 per think mode leaves ~229K input — the operating point Qwen itself
+//     benched at. Truncated thinking turns are rare and recoverable.
+//   - No Think gets 16,384 (direct answers rarely need more).
+//
+// 1M context via YaRN — OFF BY DEFAULT, opt-in server recipe only:
+//   Static YaRN (what vLLM/SGLang implement) keeps the scaling factor constant
+//   regardless of input length, which the card warns "potentially impacts
+//   performance on shorter texts". Qwen ran all agentic benchmarks at native
+//   256K without YaRN. Only enable when long context is actually required, and
+//   match `factor` to the real need (e.g. factor 2.0 for 524,288):
+//     VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 vllm serve Qwen/Qwen3.8-Flash-Next-FP8 \
+//       --max-model-len 1000000 \
+//       --hf-overrides '{"text_config": {"rope_parameters": {"mrope_interleaved": true, "mrope_section": [11,11,10], "rope_type": "yarn", "rope_theta": 10000000, "partial_rotary_factor": 0.25, "factor": 4.0, "original_max_position_embeddings": 262144}}}'
+//
+// Copy the "id" object below into your settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//
+// Serving requirements (official recipe, updated 2026-08-26):
+//   - vLLM >= 0.29.0; use image vllm/vllm-openai:qwen38-flash-next (PyPI wheel does
+//     not support qwen4_exp yet)
+//   - --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml
+//     (tools are Hermes-XML — qwen3_xml, NOT qwen3_coder!)
+//   - FP8 on 8×H200 requires TEP8: --tensor-parallel-size 8 --enable-expert-parallel
+//     --moe-backend triton (plain TP8 is incompatible with 128-wide FP8 blocks)
+//   - Optional MTP spec-decode: --speculative-config '{"method":"mtp","num_speculative_tokens":3}'
+//   - Optional n-gram table CPU offload (NVIDIA): VLLM_PLE_CPU_OFFLOAD=1
+//   - For vision: do NOT use --language-model-only
+
+
+{
+  "vllmModelId": "Qwen3.8-Flash-Next",
+  "displayName": "Qwen3.8-Flash-Next",
+  "family": "qwen4_exp",
+  "maxOutputTokens": 32768,
+  "capabilities": {
+    "toolCalling": true,
+    "imageInput": true
+  },
+  "modelModes": {
+    "Think (Deep)": {
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "preserve_thinking": true
+      },
+      "reasoning_effort": "xhigh",
+      "max_tokens": 32768,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0,
+      "presence_penalty": 0.0,
+      "repetition_penalty": 1.0
+    },
+    "Think (Balanced)": {
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "preserve_thinking": true
+      },
+      "reasoning_effort": "medium",
+      "max_tokens": 32768,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0,
+      "presence_penalty": 0.0,
+      "repetition_penalty": 1.0
+    },
+    "No Think": {
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      },
+      "max_tokens": 16384,
+      "temperature": 0.7,
+      "top_p": 0.8,
+      "top_k": 20,
+      "min_p": 0.0,
+      "presence_penalty": 1.5,
+      "repetition_penalty": 1.0
+    }
+  },
+  "defaultMode": "Think (Deep)"
+}
