@@ -36,7 +36,7 @@
 //   - Card benchmarks generate up to 163,840 (HLE) / 65,536 (Terminal-Bench)
 //     tokens, so the ladder tops at 131,072 — at full 1M context that still
 //     leaves ~917K input. On smaller serve windows pick a shorter length in
-//     the Output length dropdown.
+//     the Output Length dropdown.
 //   - input = context − max_tokens, so output budgets here never starve input.
 //
 // To use manually, copy the "config" object below into settings.json:

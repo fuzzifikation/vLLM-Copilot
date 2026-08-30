@@ -58,11 +58,11 @@
         { "type": "number", "exclusiveMinimum": 0 },
         { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 1, "maxItems": 8 }
       ],
-      "description": "Output budget. NUMBER = single cap, no dropdown. ARRAY = ordered response-length choices (strictly descending, FIRST element = default and desired budget) shown as a second model-picker dropdown ('Output length'). Array entries above the model's clamped ceiling are dropped; fewer than two usable values = no dropdown (no auto-derived ladder). When the dropdown exists the user's pick OWNS max_tokens AND is the advertised output budget — a shorter pick grows the prompt budget (context - output). Always clamped to the context window and the server-reported output ceiling."
+      "description": "Output budget. NUMBER = single cap, no dropdown. ARRAY = ordered response-length choices (strictly descending, FIRST element = default and desired budget) shown as a second model-picker dropdown ('Output Length'). Array entries above the model's clamped ceiling are dropped; fewer than two usable values = no dropdown (no auto-derived ladder). When the dropdown exists the user's pick OWNS max_tokens AND is the advertised output budget — a shorter pick grows the prompt budget (context - output). Always clamped to the context window and the server-reported output ceiling."
     },
     "maxInputTokens": {
       "type": "number",
-      "description": "Auto-computed as the server context window minus the EFFECTIVE output budget (the resolved max_tokens: the Output length pick when maxOutputTokens is an array > modelModes[selected].max_tokens > defaultParams.max_tokens > maxOutputTokens). Only set to reduce further — never higher."
+      "description": "Auto-computed as the server context window minus the EFFECTIVE output budget (the resolved max_tokens: the Output Length pick when maxOutputTokens is an array > modelModes[selected].max_tokens > defaultParams.max_tokens > maxOutputTokens). Only set to reduce further — never higher."
     },
     "estimateCharsPerToken": {
       "type": "number",
@@ -168,7 +168,7 @@
         "max_tokens": {
           "type": "integer",
           "minimum": 1,
-          "description": "Output token budget for this scope — sent to the server as max_tokens. Only consulted when maxOutputTokens is a plain number (no Output length dropdown): a dropdown pick always wins over mode and defaultParams values. Always clamped to the model's context window AND the server-reported output ceiling (maxOutputTokens). Prefer the ARRAY form of maxOutputTokens over per-mode max_tokens for length choices."
+          "description": "Output token budget for this scope — sent to the server as max_tokens. Only consulted when maxOutputTokens is a plain number (no Output Length dropdown): a dropdown pick always wins over mode and defaultParams values. Always clamped to the model's context window AND the server-reported output ceiling (maxOutputTokens). Prefer the ARRAY form of maxOutputTokens over per-mode max_tokens for length choices."
         },
         "model": {
           "not": {},

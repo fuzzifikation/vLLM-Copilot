@@ -183,7 +183,7 @@ describe('maybeOfferOutputLengthMigration', () => {
     expect((value as ModelConfig[])[0].maxOutputTokens).toEqual([8192, 2048]);
     expect(context.globalState._v).toBe('done');
     const toasts = info.mock.calls.map(c => String(c[0]));
-    expect(toasts.some(t => t.includes('added an Output length menu'))).toBe(true);
+    expect(toasts.some(t => t.includes('added an Output Length menu'))).toBe(true);
   });
 
   it('records declined without writing', async () => {

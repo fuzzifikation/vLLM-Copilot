@@ -39,6 +39,9 @@ coverage/
 # Temp files
 temp/
 
+# Stray VSIX extraction artifacts (never a real source folder here)
+extension/
+
 # Dev scripts and tools
 scripts/
 

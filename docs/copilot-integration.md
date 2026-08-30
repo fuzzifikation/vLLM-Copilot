@@ -18,7 +18,7 @@ Derived from investigating the Copilot extension's `package.json` and the VS Cod
 
 ## What Copilot does NOT send us
 
-- No `max_tokens` / output limit of its own — Copilot never originates an output cap for providers. Since v1.35 `modelConfiguration.maxOutputTokens` may carry the user's pick from our own **Output length** picker (`configurationSchema` property) — that is our schema value echoing back, not a Copilot decision. Either way we clamp it to the advertised ceiling before it reaches the wire.
+- No `max_tokens` / output limit of its own — Copilot never originates an output cap for providers. Since v1.35 `modelConfiguration.maxOutputTokens` may carry the user's pick from our own **Output Length** picker (`configurationSchema` property) — that is our schema value echoing back, not a Copilot decision. Either way we clamp it to the advertised ceiling before it reaches the wire.
 - No context truncation hints — Copilot trusts our declared `maxInputTokens` and self-manages
 
 ## What Copilot does with our declared info
@@ -30,7 +30,7 @@ Derived from investigating the Copilot extension's `package.json` and the VS Cod
 | `family` | Capability routing — Copilot picks prompt templates based on family name |
 | `capabilities.toolCalling` | Enables Agent mode for the model |
 | `capabilities.imageInput` | Routes image pastes to the model |
-| `configurationSchema` | Renders dropdowns in the model picker UI ("Model Mode" and, when `maxOutputTokens` is an array, "Output length") |
+| `configurationSchema` | Renders dropdowns in the model picker UI ("Model Mode" and, when `maxOutputTokens` is an array, "Output Length") |
 
 ## How Copilot Builds Prompts
 
@@ -287,7 +287,7 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
    }
    ```
 
-2. **VS Code reads `configurationSchema.properties`** — but NOT freely: the model picker renders exactly **two** sections, hardcoded to the groups `navigation` and `tokens` (`modelPickerConfiguration.ts::_buildItems`), and each section reads only the **first** property whose `group` matches and which has a non-empty `enum`. A third property, or a second one inside an already-filled group, is silently dropped from the main picker (it still appears in the "Configure..." management panel via `createModelConfigurationActions`). This is not theoretical — v1.35 shipped two `navigation` properties and the second (Output length) never rendered. One control per group. Period.
+2. **VS Code reads `configurationSchema.properties`** — but NOT freely: the model picker renders exactly **two** sections, hardcoded to the groups `navigation` and `tokens` (`modelPickerConfiguration.ts::_buildItems`), and each section reads only the **first** property whose `group` matches and which has a non-empty `enum`. A third property, or a second one inside an already-filled group, is silently dropped from the main picker (it still appears in the "Configure..." management panel via `createModelConfigurationActions`). This is not theoretical — v1.35 shipped two `navigation` properties and the second (Output Length) never rendered. One control per group. Period.
 
 3. **User selection is persisted** in VS Code's `_modelConfigurations` store (per model ID).
 
@@ -343,14 +343,14 @@ The model **hover** card mirrors this: `SUPPORTED_CONFIG_GROUPS = ['navigation',
 **Our implementation:**
 - Users define `modelModes` in `vllm-copilot.models` — custom parameter presets for each model
 - **Auto-Configure** (invoked from the **Add vLLM Server & Model** command) detects `family`, capabilities, and `defaultParams`. It does **not** synthesize `modelModes` from HuggingFace chat templates — thinking modes require model-specific knowledge that isn't discoverable from Jinja conditionals. Modes come from bundled presets (`model-configs/`) or, for OpenRouter models, from the `reasoning` metadata.
-- We return `configurationSchema` with a `reasoningEffort` property whose enum values are the user's `modelModes` keys, `group: "navigation"` — and, for models with an ARRAY `maxOutputTokens`, an independent `maxOutputTokens` property (numeric enum, `group: "tokens"` — NOT `navigation`: the renderer keeps only one property per group, so a second `navigation` property is silently dropped) rendered as an "Output length" dropdown; its selection owns the request's `max_tokens` **and** the advertised output budget — a pick change re-publishes metadata (provider-tracked, deduped; a pick equal to the advertised ceiling triggers nothing), so Copilot's prompt budget (window − pick) grows when the user picks shorter (see `resolveOutputLengthOptions` in `modelInfo.ts`)
+- We return `configurationSchema` with a `reasoningEffort` property whose enum values are the user's `modelModes` keys, `group: "navigation"` — and, for models with an ARRAY `maxOutputTokens`, an independent `maxOutputTokens` property (numeric enum, `group: "tokens"` — NOT `navigation`: the renderer keeps only one property per group, so a second `navigation` property is silently dropped) rendered as an "Output Length" dropdown; its selection owns the request's `max_tokens` **and** the advertised output budget — a pick change re-publishes metadata (provider-tracked, deduped; a pick equal to the advertised ceiling triggers nothing), so Copilot's prompt budget (window − pick) grows when the user picks shorter (see `resolveOutputLengthOptions` in `modelInfo.ts`)
 - **Important:** The `reasoningEffort` property name is what Copilot expects in the schema, but the *values* and *parameters* are completely user-defined. This is a general-purpose parameter preset mechanism — not limited to thinking/reasoning. Any inference parameter (temperature, top_p, chat_template_kwargs, etc.) can be configured per mode.
 - Even models with zero thinking capability benefit from model modes — e.g., "Creative" (high temperature, low top_p) vs "Precise" (low temperature, high top_p), or "Fast" vs "Thorough"
 - On request, we read `options.modelConfiguration.reasoningEffort` and spread the selected mode's parameters into the vLLM request body
 - The title shown in the model picker is "Model Mode" (not "Thinking Effort") to reflect the broader capability
 
 **Context size (not implemented, but possible):**
-- Numeric enums render fine — our Output length dropdown is one. But it currently **occupies the `tokens` group slot**, and only one property per group renders: adding `contextSize` later would collide with our own picker unless one of them moves or they merge.
+- Numeric enums render fine — our Output Length dropdown is one. But it currently **occupies the `tokens` group slot**, and only one property per group renders: adding `contextSize` later would collide with our own picker unless one of them moves or they merge.
 - Claude Sonnet 4.6 exposes `contextSize` as a number enum with `group: "tokens"`
 - To implement: add `contextSize` property to `configurationSchema.properties` with enum of token counts
 - On request, read `options.modelConfiguration.contextSize` and use it to adjust `maxInputTokens`/`maxOutputTokens`

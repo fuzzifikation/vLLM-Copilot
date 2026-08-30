@@ -144,7 +144,7 @@ describe('buildPickerBanners', () => {
     expect(warningText?.output_limit).not.toContain('context window');
   });
 
-  it('points at the Output length dropdown when the model offers one', () => {
+  it('points at the Output Length dropdown when the model offers one', () => {
     const { warningText } = buildPickerBanners(
       // Head 2048 = configured budget, clamped to 1024 by the window/provider;
       // entries ≤ ceiling survive → [1024, 512] renders the menu to point at.
@@ -154,7 +154,7 @@ describe('buildPickerBanners', () => {
       undefined,
       true,
     );
-    expect(warningText?.output_limit).toContain('Output length dropdown');
+    expect(warningText?.output_limit).toContain('Output Length dropdown');
   });
 
   it('does not advertise a dropdown the model does not render', () => {
@@ -167,7 +167,7 @@ describe('buildPickerBanners', () => {
       true,
     );
     expect(warningText?.output_limit).toBeDefined();
-    expect(warningText?.output_limit).not.toContain('Output length');
+    expect(warningText?.output_limit).not.toContain('Output Length');
   });
 
   it('stays silent for the token-or-two the budget derivation always shaves', () => {

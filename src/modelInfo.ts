@@ -88,7 +88,7 @@ export function buildPickerBanners(
     // it is the actionable control for working within the cap. Same inputs as
     // the schema builder, so the banner can never advertise an absent dropdown.
     if (resolveOutputLengthOptions(override?.maxOutputTokens, budget.maxOutputTokens)) {
-      warningText.output_limit += ' Pick a response length in the Output length dropdown to work within this cap.';
+      warningText.output_limit += ' Pick a response length in the Output Length dropdown to work within this cap.';
     }
   }
 
@@ -167,7 +167,7 @@ export function buildConfigurationSchema(
   if (lengths) {
     properties.maxOutputTokens = {
       type: 'number',
-      title: 'Output length',
+      title: 'Output Length',
       enum: lengths.values,
       enumItemLabels: lengths.labels,
       default: lengths.values[0],

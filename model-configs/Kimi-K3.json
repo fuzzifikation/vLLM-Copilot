@@ -37,7 +37,7 @@
 //     the ladder below adopts that vendor default as its head: thinking is
 //     always on and eats output budget. At full 1M server context even 131072
 //     leaves ~917K input; on smaller serve windows pick a shorter length in the
-//     Output length dropdown to hand tokens back to the prompt.
+//     Output Length dropdown to hand tokens back to the prompt.
 //
 // Modes (thinking cannot be turned off — Think (Low) is the "fast" mode):
 //   - Think (Max):  default, deepest reasoning

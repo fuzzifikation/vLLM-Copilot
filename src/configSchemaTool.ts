@@ -41,7 +41,7 @@ You are editing the \`vllm-copilot.models\` array in the user's VS Code \`settin
 ## Parameter resolution (highest wins)
 server defaults (unset params omitted) → entry.\`defaultParams\` → the selected entry.\`modelModes[<selected mode>]\`
 
-So a mode overrides \`defaultParams\`, and \`defaultParams\` overrides the server's default. Any parameter you do not set anywhere is omitted from the request — the server decides.\nException: when \`maxOutputTokens\` is an ARRAY, the user's **Output length** picker selection outranks *every* \`max_tokens\` layer (mode, defaultParams, scalar budget) — see below.
+So a mode overrides \`defaultParams\`, and \`defaultParams\` overrides the server's default. Any parameter you do not set anywhere is omitted from the request — the server decides.\nException: when \`maxOutputTokens\` is an ARRAY, the user's **Output Length** picker selection outranks *every* \`max_tokens\` layer (mode, defaultParams, scalar budget) — see below.
 
 ## Model modes (\`modelModes\`)
 - An object whose keys are user-visible mode labels ("Think", "No Think", ...) and whose values are param objects merged into the request body when that mode is active.

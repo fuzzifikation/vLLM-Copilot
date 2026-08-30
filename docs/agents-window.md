@@ -67,7 +67,7 @@ Rules the bootstrap follows:
   behavior may change between VS Code versions, and agent-host sessions are
   still preview territory. If the picker stays empty after a full restart,
   that is worth a bug report — to VS Code first, this extension second.
-- **Model Mode / Output length dropdowns** are rendered by VS Code from the
+- **Model Mode / Output Length dropdowns** are rendered by VS Code from the
   metadata we provide; whether the Agents window surfaces them the same way the
   main chat does depends on the host version. If a mode seems ignored, check
   the request with `vllm-copilot.enableFileLogging` before blaming the model.

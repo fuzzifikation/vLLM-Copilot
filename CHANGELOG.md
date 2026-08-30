@@ -1,11 +1,11 @@
 # Changelog
 
-## v1.35.0 — Output length, picker banners & the Agents window
+## v1.35.0 — Output Length, picker banners & the Agents window
 
 ### Added
 
 - **Works in the new Agents window ("Open in Agents")** — your vLLM models now show up in Agent Host sessions; the required VS Code settings are enabled automatically (values you set yourself are never overwritten). Fully restart VS Code once after updating.
-- **Output-length picker** — models whose `maxOutputTokens` is an **array** of response lengths get a second model-picker dropdown ("Output length"), independent of Model Mode. First entry = default; your pick overrides per-mode / `defaultParams` `max_tokens`. Picking a shorter length hands the freed tokens back to your prompt; a longer pick applies once the context re-resolves (one request later). All 14 bundled presets now ship a length ladder. VS Code remembers your choice per model.
+- **Output-length picker** — models whose `maxOutputTokens` is an **array** of response lengths get a second model-picker dropdown ("Output Length"), independent of Model Mode. First entry = default; your pick overrides per-mode / `defaultParams` `max_tokens`. Picking a shorter length hands the freed tokens back to your prompt; a longer pick applies once the context re-resolves (one request later). All 14 bundled presets now ship a length ladder. VS Code remembers your choice per model.
 - **Model-picker banners** — models whose output budget is clamped by the context window or a provider cap now say so, with the reason, right in the model picker.
 - **One-time menu update for existing models** — offered on startup, built from the matching preset or your own configured `max_tokens` values; previewable; nothing changes unless you accept.
 

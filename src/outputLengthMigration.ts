@@ -157,7 +157,7 @@ export function planOutputLengthMigration(
 /** Preview document text: one before/after block per proposal, JSONC-ish. */
 export function formatMigrationPreview(proposals: readonly OutputLengthProposal[]): string {
   const lines: string[] = [
-    '// vLLM-Copilot — proposed Output length menu updates',
+    '// vLLM-Copilot — proposed Output Length menu updates',
     '// Close this editor and choose "Update output length menus" in the vLLM-Copilot notification to apply.',
     '',
   ];
@@ -206,7 +206,7 @@ export async function maybeOfferOutputLengthMigration(
     if (proposals.length === 0) return; // no honest menus to offer — never nag
 
     const pick = await vscode.window.showInformationMessage(
-      `vLLM-Copilot 1.35 adds an "Output length" dropdown to the model picker for models with a maxOutputTokens menu. ${proposals.length} configured model${proposals.length === 1 ? '' : 's'} can get it. Update now?`,
+      `vLLM-Copilot 1.35 adds an "Output Length" dropdown to the model picker for models with a maxOutputTokens menu. ${proposals.length} configured model${proposals.length === 1 ? '' : 's'} can get it. Update now?`,
       { title: BTN_UPDATE, isCloseAffordance: false },
       { title: BTN_REVIEW },
       { title: BTN_NOT_NOW, isCloseAffordance: true },
@@ -227,7 +227,7 @@ export async function maybeOfferOutputLengthMigration(
       });
       await vscode.window.showTextDocument(doc);
       const confirm = await vscode.window.showInformationMessage(
-        `Apply the ${proposals.length} Output length menu update${proposals.length === 1 ? '' : 's'} shown in the preview?`,
+        `Apply the ${proposals.length} Output Length menu update${proposals.length === 1 ? '' : 's'} shown in the preview?`,
         { title: BTN_UPDATE },
         { title: 'Cancel', isCloseAffordance: true },
       );
@@ -247,7 +247,7 @@ export async function maybeOfferOutputLengthMigration(
     }
     await context.globalState.update(MIGRATION_FLAG, 'done');
     void vscode.window.showInformationMessage(
-      `vLLM-Copilot: added an Output length menu to ${proposals.length} model${proposals.length === 1 ? '' : 's'}. Pick it in the model picker — a shorter choice frees tokens for your prompt. If the dropdown is not visible yet, open the model list once and click the "Output length" chip on the model.`
+      `vLLM-Copilot: added an Output Length menu to ${proposals.length} model${proposals.length === 1 ? '' : 's'}. Pick it in the model picker — a shorter choice frees tokens for your prompt. If the dropdown is not visible yet, open the model list once and click the "Output Length" chip on the model.`
     );
   } catch (err) {
     output.appendLine(`[WARN] Output length migration check failed: ${err instanceof Error ? err.message : String(err)}`);

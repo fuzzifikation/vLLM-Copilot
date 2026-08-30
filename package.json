@@ -316,7 +316,7 @@
                     { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 1, "maxItems": 8 }
                   ],
                   "default": 4096,
-                  "markdownDescription": "Output budget. **Number** = single cap, no dropdown. **Array** = ordered response-length choices (strictly descending, FIRST element = default and desired budget) shown as an **Output length** dropdown in the model picker. Array entries above the model's ceiling are dropped; fewer than two usable values = no dropdown. When the dropdown exists, the user's pick owns `max_tokens` **and** the advertised output budget — a shorter pick grows the prompt budget. Always clamped to the context window and the server-reported output ceiling. **Default: 4096.**"
+                  "markdownDescription": "Output budget. **Number** = single cap, no dropdown. **Array** = ordered response-length choices (strictly descending, FIRST element = default and desired budget) shown as an **Output Length** dropdown in the model picker. Array entries above the model's ceiling are dropped; fewer than two usable values = no dropdown. When the dropdown exists, the user's pick owns `max_tokens` **and** the advertised output budget — a shorter pick grows the prompt budget. Always clamped to the context window and the server-reported output ceiling. **Default: 4096.**"
                 },
                 "maxInputTokens": {
                   "type": "number",

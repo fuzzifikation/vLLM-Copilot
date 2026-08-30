@@ -20,7 +20,7 @@
 //   - Context window: 1,048,576 tokens (same base architecture as GLM-5.3).
 //   - maxOutputTokens ladder [131072, 65536, 32768, 16384] — default 131,072
 //     leaves ~917K input at full 1M server context; on smaller serve windows
-//     pick a shorter length in the Output length dropdown.
+//     pick a shorter length in the Output Length dropdown.
 //
 // To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]

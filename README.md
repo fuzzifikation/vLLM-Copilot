@@ -18,7 +18,7 @@ For teams running AI on their own vLLM servers for many users, this gives you th
 - **Data handling**: **No subscription. No affiliation. No central service. No telemetry.** Prompts, code, and company data go only to each model's configured inference server — they are never sent to GitHub Copilot or GitHub. Other extension traffic (model metadata from HuggingFace, curated presets from GitHub) carries no work content.
 - **Production vLLM observability**: a live dashboard of server availability, queue status, KV-cache usage, TTFT, throughput, per-request token details, and a cumulative token & cost tracker. Your admins and users will know what is going on!
 - **Multi-server, multi-user by design**: each server and model carries its own endpoint, auth, sampling, and token budget. Different teams, environments, or credentials stay isolated and independently managed. But all models are available in the model picker of familiar Copilot!
-- **Full request control**: model modes give you any vLLM parameter, such as thinking effort, sampling, and structured output — plus a dedicated **Output length** dropdown to cap response length on the fly. Switch both per model from the Copilot picker.
+- **Full request control**: model modes give you any vLLM parameter, such as thinking effort, sampling, and structured output — plus a dedicated **Output Length** dropdown to cap response length on the fly. Switch both per model from the Copilot picker.
 - **OpenRouter**: add any of **~415 cloud models** in a few clicks. Useful for teams without GPU capacity. Real context window, capabilities, pricing, and **actual spend** (`usage.cost`) show on the dashboard. See [Using OpenRouter](#using-openrouter).
 - **[Works in the VS Code Agents window](#agents-window-screenshot)**: your vLLM models in the new "Open in Agents" agent cockpit — autonomous sessions, worktree isolation, all of it. Auto-enabled since v1.35.0, nothing to configure, just restart VS Code. See [Agents window guide](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md).
 - **Other backends supported**: llama.cpp, LM Studio, and Ollama alongside vLLM, each with core features like chat, streaming, tools, personalities, and usage tracking.
@@ -128,7 +128,7 @@ coding, and creative work, including their sampling and vLLM-specific request se
 | Multiple servers (per-model endpoint) | ✅ | ✅ |
 | Custom request headers (auth tokens) | ✅ | ✅ |
 | Thinking-effort picker (enum only) | ✅ | ✅ (as model mode) |
-| Output length picker (predefined response caps) | ❌ | ✅ (second picker dropdown) |
+| Output Length picker (predefined response caps) | ❌ | ✅ (second picker dropdown) |
 | Arbitrary `chat_template_kwargs` (including `enable_thinking`) | ❌ | ✅ (switchable per model mode) |
 | Sampling params (basic: `temperature`, `top_p`) | ✅ (fixed per model) | ✅ (configurable per model and per model mode) |
 | Advanced sampling parameters (`top_k`, `min_p`, `repetition_penalty`, `length_penalty`, etc.) | ❌ | ✅ (switchable per model mode) |
@@ -227,7 +227,7 @@ A visual editor for per-model configuration, no `settings.json` required:
 - **Structured output**: JSON schema enforcement for data extraction
 - **Anything vLLM supports**: bad words, repetition detection, request shaping
 
-**Output length is not a mode knob** — models and presets whose `maxOutputTokens` is an **array** of response lengths (bundled presets do) get a second, independent **Output length** dropdown next to the mode picker (e.g. 16K / 32K / 64K), so you cap response length per request without touching settings. VS Code remembers your pick per model — and a shorter pick hands the freed tokens back to your prompt: Copilot's input budget grows to match.
+**Output length is not a mode knob** — models and presets whose `maxOutputTokens` is an **array** of response lengths (bundled presets do) get a second, independent **Output Length** dropdown next to the mode picker (e.g. 16K / 32K / 64K), so you cap response length per request without touching settings. VS Code remembers your pick per model — and a shorter pick hands the freed tokens back to your prompt: Copilot's input budget grows to match. Right after the dropdown first appears for a model, VS Code's picker can lag and show only the mode section — open the model list once and click the **Output Length** chip on the model to fix it (a VS Code snapshot bug, [reported upstream](https://github.com/microsoft/vscode/issues/333413)).
 
 **Add vLLM Server & Model** auto-generates modes from bundled presets (or OpenRouter reasoning metadata). An example config and the full syntax are in the [Manual → Model modes](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md#model-modes).
 </td>

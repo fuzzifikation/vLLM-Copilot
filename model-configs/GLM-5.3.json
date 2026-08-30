@@ -39,7 +39,7 @@
 //   - Card agent benchmarks generate up to 128,000–163,840 tokens, so the
 //     ladder tops at 131,072 — at full 1M server context that still leaves
 //     ~917K input. On smaller serve windows (e.g. 262K) pick 65536 or lower
-//     in the Output length dropdown to keep input headroom.
+//     in the Output Length dropdown to keep input headroom.
 //   - input = context − max_tokens, so output budgets here never starve input.
 //
 // To use manually, copy the "config" object below into settings.json:

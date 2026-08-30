@@ -1012,7 +1012,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         `Total ${fmtCount(contextWindow)}  ·  Output ${fmtCount(maxOutput)}${maxOutputMenu && maxOutputMenu.length > 1 ? ` (${maxOutputMenu.length} picks)` : ''}`,
         'layers',
         maxOutputMenu && maxOutputMenu.length > 1
-          ? `Total context length (input + output) and the configured output ceiling. Output length picker offers: ${maxOutputMenu.map(n => n.toLocaleString('en-US')).join(' / ')}.`
+          ? `Total context length (input + output) and the configured output ceiling. Output Length picker offers: ${maxOutputMenu.map(n => n.toLocaleString('en-US')).join(' / ')}.`
           : 'Total context length (input + output) and the configured output ceiling.',
       ));
     } else if (contextWindow !== undefined) {
