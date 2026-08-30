@@ -59,6 +59,8 @@ Rules the bootstrap follows:
 4. Open the model picker — your vLLM-Copilot models are listed there. Pick one,
    prompt, and your GPU does the agent loop.
 
+![vLLM-Copilot models in the Agents window picker](images/Agents-Window.png)
+
 ## Fine print
 
 - **Experimental.** Microsoft documents both settings as experimental;

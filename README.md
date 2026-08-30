@@ -20,7 +20,7 @@ For teams running AI on their own vLLM servers for many users, this gives you th
 - **Multi-server, multi-user by design**: each server and model carries its own endpoint, auth, sampling, and token budget. Different teams, environments, or credentials stay isolated and independently managed. But all models are available in the model picker of familiar Copilot!
 - **Full request control**: model modes give you any vLLM parameter, such as thinking effort, sampling, and structured output — plus a dedicated **Output length** dropdown to cap response length on the fly. Switch both per model from the Copilot picker.
 - **OpenRouter**: add any of **~415 cloud models** in a few clicks. Useful for teams without GPU capacity. Real context window, capabilities, pricing, and **actual spend** (`usage.cost`) show on the dashboard. See [Using OpenRouter](#using-openrouter).
-- **Works in the VS Code Agents window**: your vLLM models in the new "Open in Agents" agent cockpit — autonomous sessions, worktree isolation, all of it. Auto-enabled since v1.35.0, nothing to configure, just restart VS Code. See [Agents window guide](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md).
+- **[Works in the VS Code Agents window](#agents-window-screenshot)**: your vLLM models in the new "Open in Agents" agent cockpit — autonomous sessions, worktree isolation, all of it. Auto-enabled since v1.35.0, nothing to configure, just restart VS Code. See [Agents window guide](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md).
 - **Other backends supported**: llama.cpp, LM Studio, and Ollama alongside vLLM, each with core features like chat, streaming, tools, personalities, and usage tracking.
 
 <div align="center">
@@ -33,6 +33,17 @@ For full view expand the details-arrow:
 </details>
 
 <em>Every vLLM-Copilot feature at a glance. Click to zoom.</em>
+
+</div>
+
+<div align="center">
+
+<a id="agents-window-screenshot"></a>
+<a href="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/Agents-Window.png">
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/Agents-Window.png" width="500" alt="vLLM-Copilot models in the VS Code Agents window model picker: MiniMax-M3, GLM-5.3, GLM-5.2-FP8 and DeepSeek-V4-Pro, each on its own server">
+</a>
+
+<em>Your vLLM models, straight from your own servers, in the VS Code <strong>Agents window</strong> ("Open in Agents"). Click to zoom.</em>
 
 </div>
 
