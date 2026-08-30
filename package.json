@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM integration for GitHub Copilot and the VS Code Agents window on professional (and self-hosted) servers (supports full featureset of vLLM and Copilot). No subscription, no telemetry — no work content to any third party. Live observability: queue status, KV-cache, throughput, etc and full UI (dashboard). Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
-  "version": "1.35.0",
+  "version": "1.35.1",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -116,7 +116,11 @@
           "properties": {
             "section": {
               "type": "string",
-              "enum": ["all", "schema", "guide"],
+              "enum": [
+                "all",
+                "schema",
+                "guide"
+              ],
               "description": "What to return: all (default), only the JSON schema, or only the prose guide."
             }
           }
@@ -269,7 +273,13 @@
                 },
                 "serverType": {
                   "type": "string",
-                  "enum": ["vllm", "lmstudio", "llamacpp", "ollama", "openrouter"],
+                  "enum": [
+                    "vllm",
+                    "lmstudio",
+                    "llamacpp",
+                    "ollama",
+                    "openrouter"
+                  ],
                   "default": "vllm",
                   "markdownDescription": "Backend serving this model. **Default: `vllm`.** Missing/omitted always means `vllm`. Secondary backends (LM Studio, llama.cpp, Ollama, OpenRouter) must be added via the **Add vLLM Server & Model** command or set `serverType` explicitly."
                 },
@@ -283,7 +293,11 @@
                 },
                 "routingMode": {
                   "type": "string",
-                  "enum": ["standard", "nitro", "exacto"],
+                  "enum": [
+                    "standard",
+                    "nitro",
+                    "exacto"
+                  ],
                   "markdownDescription": "⚡ **OpenRouter only** — how OpenRouter sorts/chooses among eligible providers when routing is **Auto** (no `provider` pinned). `standard` (default) = price-weighted load balancing; `nitro` = throughput-first + priority tier; `exacto` = quality/tool-calling-first. Ignored when a provider is pinned. Set via the **Routing** dropdown in Model Settings."
                 },
                 "requestHeaders": {
@@ -312,8 +326,19 @@
                 },
                 "maxOutputTokens": {
                   "anyOf": [
-                    { "type": "number", "exclusiveMinimum": 0 },
-                    { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 1, "maxItems": 8 }
+                    {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "minItems": 1,
+                      "maxItems": 8
+                    }
                   ],
                   "default": 4096,
                   "markdownDescription": "Output budget. **Number** = single cap, no dropdown. **Array** = ordered response-length choices (strictly descending, FIRST element = default and desired budget) shown as an **Output Length** dropdown in the model picker. Array entries above the model's ceiling are dropped; fewer than two usable values = no dropdown. When the dropdown exists, the user's pick owns `max_tokens` **and** the advertised output budget — a shorter pick grows the prompt budget. Always clamped to the context window and the server-reported output ceiling. **Default: 4096.**"
