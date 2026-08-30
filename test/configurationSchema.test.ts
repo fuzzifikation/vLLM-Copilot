@@ -77,10 +77,13 @@ describe('buildConfigurationSchema', () => {
       expect(prop.enum).toEqual([8192, 4096, 2048]);
       expect(prop.enumItemLabels).toEqual(['8K', '4K', '2K']);
       expect(prop.default).toBe(8192);
-      expect(prop.group).toBe('navigation');
+      // The length picker MUST be in 'tokens', not 'navigation' — VS Code
+      // renders one property per group, so a second 'navigation' property is
+      // silently dropped (the field bug this pins).
+      expect(prop.group).toBe('tokens');
     });
 
-    it('modes and lengths coexist as two independent navigation properties', () => {
+    it('modes and lengths coexist in DISTINCT groups (renderer keeps one per group)', () => {
       const schema = buildConfigurationSchema({
         modelModes: { Think: {}, Fast: {} },
         maxOutputTokens: [32768, 16384, 8192],
@@ -89,7 +92,7 @@ describe('buildConfigurationSchema', () => {
       expect(schema!.properties.reasoningEffort).toBeDefined();
       expect(schema!.properties.maxOutputTokens).toBeDefined();
       expect((schema!.properties.reasoningEffort as any).group).toBe('navigation');
-      expect((schema!.properties.maxOutputTokens as any).group).toBe('navigation');
+      expect((schema!.properties.maxOutputTokens as any).group).toBe('tokens');
     });
   });
 

@@ -94,8 +94,9 @@ export function buildRequest(
     ? modelConfiguration.reasoningEffort as string
     : undefined;
 
-  // Output-length picker (second `navigation` property in configurationSchema):
-  // an explicit user pick that outranks mode/defaultParams max_tokens. Only the
+  // Output-length picker (`maxOutputTokens` property in configurationSchema,
+  // group 'tokens'): an explicit user pick that outranks mode/defaultParams
+  // max_tokens. Only the
   // type check happens here — normalization and the ceiling clamp are owned by
   // resolveMaxTokensForRequest, so a stale cached schema can never push
   // max_tokens above what Copilot was told the model can do. Non-numeric

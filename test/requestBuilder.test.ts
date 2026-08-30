@@ -134,7 +134,7 @@ describe('buildRequest', () => {
     expect(result.mergedOptions.max_tokens).toBe(200);
   });
 
-  // Output-length PICKER (maxOutputTokens vector → second navigation dropdown):
+  // Output-length PICKER (maxOutputTokens vector → 'tokens'-group dropdown):
   // the pick must outrank every max_tokens layer, normalize defensively, and
   // still respect the advertised≡wire invariant (up-picks wait for metadata
   // re-registration — the ONE-request lag; down-picks are instant).

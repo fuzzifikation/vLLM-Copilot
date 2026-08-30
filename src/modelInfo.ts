@@ -115,7 +115,16 @@ export function buildPickerBanners(
 
 /**
  * Build the `configurationSchema` for a model's picker settings: up to two
- * independent `group: 'navigation'` dropdowns, each persisted per-model by VS Code.
+ * independent dropdowns, each persisted per-model by VS Code.
+ *
+ * THE GROUP RULE (learned the hard way, in the field, at release): VS Code's
+ * picker renders exactly TWO sections — `navigation` and `tokens` — and each
+ * reads only the FIRST property of its group (modelPickerConfiguration.ts,
+ * `_getConfigProperty`). Two properties in one group silently lose the
+ * second; that is exactly how the length picker vanished while modes
+ * rendered fine. Modes own `navigation`; output length owns `tokens` (the
+ * group Copilot itself uses for its context-size selector — we never emit
+ * `contextSize`, so our `tokens` slot is uncontested).
  *
  * 1. `reasoningEffort` — the model MODE dropdown (behavior params: reasoning,
  *    sampling, template kwargs). Emitted when the model has modes.
@@ -162,7 +171,9 @@ export function buildConfigurationSchema(
       enum: lengths.values,
       enumItemLabels: lengths.labels,
       default: lengths.values[0],
-      group: 'navigation',
+      // NOT 'navigation' — that slot belongs to the mode dropdown, and the
+      // renderer keeps only one property per group. See the header comment.
+      group: 'tokens',
     };
   }
 

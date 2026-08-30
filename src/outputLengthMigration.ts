@@ -247,7 +247,7 @@ export async function maybeOfferOutputLengthMigration(
     }
     await context.globalState.update(MIGRATION_FLAG, 'done');
     void vscode.window.showInformationMessage(
-      `vLLM-Copilot: added an Output length menu to ${proposals.length} model${proposals.length === 1 ? '' : 's'}. Pick it in the model picker — a shorter choice frees tokens for your prompt.`
+      `vLLM-Copilot: added an Output length menu to ${proposals.length} model${proposals.length === 1 ? '' : 's'}. Pick it in the model picker — a shorter choice frees tokens for your prompt. If the dropdown is not visible yet, open the model list once and click the "Output length" chip on the model.`
     );
   } catch (err) {
     output.appendLine(`[WARN] Output length migration check failed: ${err instanceof Error ? err.message : String(err)}`);
