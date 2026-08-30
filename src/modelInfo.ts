@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import { extractFamilyWithSource } from './modelUtils.js';
 import { deriveTokenBudget, resolveOutputBudgetScalar, resolveOutputLengthVector, type TokenBudget } from './tokenBudget.js';
 import { buildModelId, type ModelConfig } from './config.js';
+import type { KnownBudget } from './provider/budgetLedger.js';
 
 /**
  * True when `current` (a VS Code version string such as `1.135.0` or
@@ -351,4 +352,108 @@ export function buildModelInfo(
   }
 
   return info;
+}
+
+/** Budget provenance for an offline row (see {@link buildOfflineModelInfo}). */
+export interface OfflineBudgetInfo {
+  /** What the server last reported when it was reachable, if ever. */
+  lastKnown?: KnownBudget;
+  /** The user-configured input clamp (`maxInputTokens`), if any. */
+  configuredInputTokens?: number;
+  /** The user-configured output budget (mode chain), if any — never a built-in default. */
+  configuredOutputTokens?: number;
+  /** Verbatim failure reason shown to the user. */
+  reason: string;
+}
+
+/**
+ * Build the picker row for a model whose server did not answer. The model
+ * STAYS VISIBLE — a server that is simply switched off (home laptop, work box)
+ * must not silently delete the user's model — but the row must be honest about
+ * what it knows:
+ *
+ *  - last successful budget known → advertise it, labeled stale;
+ *  - otherwise only genuinely configured limits (mode chain, `maxInputTokens`)
+ *    are advertised; unknown values become explicitly labeled 1-token
+ *    placeholders — NEVER a built-in default, which Copilot would then budget
+ *    real requests against;
+ *  - the row carries the offline warning banner (`warningText`, shown in the
+ *    model hover) plus a warning status icon, and no Output-length menu (a
+ *    menu scaled to a stale or placeholder ceiling would offer picks the
+ *    request path could not honor).
+ *
+ * Deliberately routed through {@link buildModelInfo} with a synthetic
+ * `max_model_len`: the picker id, family, BYOK routing and clamp math
+ * (including the `maxInputTokens` clamp the stored window alone cannot carry)
+ * then come from the SAME pipeline as live rows, so an offline row can never
+ * drift from its healthy twin in anything except the honest budget and the
+ * offline markers.
+ */
+export function buildOfflineModelInfo(
+  serverModel: { id: string },
+  override: Partial<ModelConfig> | undefined,
+  config: { maxOutputTokens: number },
+  serverUrl: string,
+  budget: OfflineBudgetInfo,
+): vscode.LanguageModelChatInformation {
+  const positive = (n: number | undefined): number | undefined =>
+    n !== undefined && Number.isFinite(n) && n >= 1 ? Math.floor(n) : undefined;
+
+  const knownLen = positive(budget.lastKnown?.maxModelLen);
+  const knownOut = positive(budget.lastKnown?.maxOutputTokens);
+
+  let window: number;
+  let output: number;
+  let offlineText: string;
+  if (knownLen !== undefined && knownOut !== undefined && knownLen >= 2) {
+    window = knownLen;
+    output = Math.max(1, Math.min(knownOut, window - 1));
+    offlineText = `Offline — ${budget.reason} The budget shown is from the last successful connection and may be stale.`;
+  } else {
+    // Never reached (or the stored entry was malformed): advertise ONLY what
+    // the user/preset actually configured. The built-in output default is off
+    // limits — presenting it would be a fabricated budget.
+    const configuredOut = positive(budget.configuredOutputTokens)
+      ?? positive(resolveOutputBudgetScalar(override?.maxOutputTokens));
+    const configuredIn = positive(budget.configuredInputTokens);
+    window = (configuredIn ?? 1) + (configuredOut ?? 1);
+    output = configuredOut ?? 1;
+    offlineText = configuredIn !== undefined || configuredOut !== undefined
+      ? `Offline — ${budget.reason} The server was never reached; the budget reflects only your configured limits (anything unconfigured is a labeled 1-token placeholder).`
+      : `Offline — ${budget.reason} The server was never reached and no limits are configured, so the budget is 1-token placeholders until it answers once.`;
+  }
+
+  const row = buildModelInfo(
+    { id: serverModel.id, max_model_len: window },
+    override,
+    config,
+    serverUrl,
+    undefined,
+    undefined,
+    output,
+  );
+
+  const offline = row as vscode.LanguageModelChatInformation & {
+    statusIcon?: vscode.ThemeIcon;
+    warningText?: Record<string, string>;
+    configurationSchema?: { properties: Record<string, unknown> };
+  };
+  offline.statusIcon = new vscode.ThemeIcon('warning');
+  // Offline banner first; healthy-row banners (e.g. disabled tool calling) are
+  // still true offline and stay. The synthetic scalar output suppresses any
+  // bogus output_limit banner (advertised == configured-reference here).
+  offline.warningText = { offline: offlineText, ...(offline.warningText ?? {}) };
+  // Drop the Output-length dropdown: it renders from the RAW vector override
+  // (by design, so picks survive re-registration), so it does NOT vanish just
+  // because the advertised budget is synthetic. Copilot reserves prompt space
+  // against the advertised output — a menu scaled to a stale or placeholder
+  // ceiling would offer lengths the advertised budget cannot justify, until
+  // the server answers and the real one returns. The Mode dropdown stays: it
+  // selects behavior, not a reserved budget (and picks only reach the
+  // provider with a request, which targets the dead server either way).
+  if (offline.configurationSchema?.properties.maxOutputTokens !== undefined) {
+    const { maxOutputTokens: _menuDropped, ...rest } = offline.configurationSchema.properties;
+    offline.configurationSchema = Object.keys(rest).length > 0 ? { properties: rest } : undefined;
+  }
+  return offline;
 }

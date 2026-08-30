@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Models never vanish when a server is off.** An unreachable model stays in the picker marked **offline** (error in its hover) instead of disappearing — switch off the work box at home and the work model is still where you left it. Its advertised budget is the last one the server actually reported (labeled stale) or, if the server never answered, only limits you configured — never an invented default.
+
+### Fixed
+
+- **The model list now heals itself.** A list captured during an outage is no longer trusted forever: while any model is offline, Copilot's list lookups get the cached list instantly while a single background re-check runs, and a recovered server reappears in the picker on its own — no reload, no manual refresh.
+
 ## v1.35.2-rc0
 
 ### Fixed

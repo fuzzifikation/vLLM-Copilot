@@ -328,3 +328,188 @@ describe('clearCache (invalidation + change event)', () => {
     expect(client.getConfigCached).toHaveBeenCalledTimes(callsAfterRequest);
   });
 });
+
+describe('self-healing after an outage', () => {
+  it('serves the offline cache during the cooldown while healing in the background', async () => {
+    // Server down at first resolve: the model STAYS visible (offline row).
+    // While any row is offline the cache is not authoritative; a silent call
+    // inside the dead-server cooldown returns the cached list IMMEDIATELY
+    // (never stalling behind a 10s probe) and re-checks in the background,
+    // firing the change event on full recovery so the picker updates itself.
+    vi.useFakeTimers();
+    try {
+      let online = false;
+      const client = fakeClient({
+        getConfigCached: vi.fn(async () => configWithModel),
+        getModelContextWindow: vi.fn(async () => {
+          if (!online) throw new Error('connect ECONNREFUSED');
+          return { contextWindow: 8192 };
+        }),
+      });
+      const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+      let events = 0;
+      provider.onDidChangeLanguageModelChatInformation(() => { events++; });
+
+      const down = await provider.provideLanguageModelChatInformation({ silent: false }, makeToken());
+      expect(down).toHaveLength(1); // offline row, not a vanishing model
+      expect((down[0] as any).warningText?.offline).toContain('connect ECONNREFUSED');
+
+      // Server recovers. A silent call inside the cooldown serves the cached
+      // offline list without waiting, and kicks a background heal.
+      online = true;
+      const throttled = await provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+      expect((throttled[0] as any).warningText?.offline).toBeDefined();
+
+      // The background pass settles: cache healed, change event fired once.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(events).toBe(1);
+
+      // Healed metadata is authoritative now: served directly, no re-probe.
+      const up = await provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+      expect((up[0] as any).warningText?.offline).toBeUndefined();
+      expect(client.getConfigCached).toHaveBeenCalledTimes(2); // down pass + background heal
+
+      await provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+      expect(client.getConfigCached).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('concurrent resolves join one shared discovery pass', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const client = fakeClient({
+      getConfigCached: vi.fn(async () => configWithModel),
+      getModelContextWindow: vi.fn(async () => { await gate; return { contextWindow: 8192 }; }),
+    });
+    const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+
+    const p1 = provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+    const p2 = provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+    await new Promise(resolve => setImmediate(resolve));
+    expect(client.getModelContextWindow).toHaveBeenCalledTimes(1); // one probe wave, not two
+
+    release();
+    const [a, b] = await Promise.all([p1, p2]);
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(1);
+    expect(client.getConfigCached).toHaveBeenCalledTimes(1);
+  });
+
+  it('a resolve after invalidation never waits behind the obsolete in-flight pass', async () => {
+    // clearCache() mid-probe bumps the generation: a fresh resolve must start
+    // its OWN probe immediately instead of joining (and waiting behind) the
+    // obsolete pass — whose result would be discarded anyway.
+    let release: () => void = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const client = fakeClient({
+      getConfigCached: vi.fn(async () => configWithModel),
+      getModelContextWindow: vi.fn(async () => { await gate; return { contextWindow: 8192 }; }),
+    });
+    const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+
+    const p1 = provider.provideLanguageModelChatInformation({ silent: false }, makeToken());
+    await new Promise(resolve => setImmediate(resolve));
+    expect(client.getModelContextWindow).toHaveBeenCalledTimes(1);
+
+    provider.clearCache(); // settings change / Test & Refresh mid-probe
+    const p2 = provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+    await new Promise(resolve => setImmediate(resolve));
+    expect(client.getModelContextWindow).toHaveBeenCalledTimes(2); // fresh pass, no stale join
+
+    release();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toHaveLength(1);
+    expect(r2).toHaveLength(1);
+    // The abandoned pass converges on the published result — no third wave.
+    expect(client.getModelContextWindow).toHaveBeenCalledTimes(2);
+  });
+
+  it('a request against a just-recovered server is not strangled by its stale offline row', async () => {
+    // The recovery race: server wakes up between the last discovery and the
+    // request. VS Code still holds the offline row (placeholder budget), and
+    // request construction hard-clamps the wire max_tokens to the advertised
+    // value — so the provider must re-check live and build the request from
+    // the healed row, not the snapshot.
+    let online = false;
+    let wireMaxTokens: number | undefined;
+    const client = fakeClient({
+      getConfigCached: vi.fn(async () => configWithModel),
+      getModelContextWindow: vi.fn(async () => {
+        if (!online) throw new Error('connect ECONNREFUSED');
+        return { contextWindow: 8192 };
+      }),
+      chatCompletionStream: vi.fn(async function* (_m: string, _msgs: unknown, options: { max_tokens?: number }) {
+        wireMaxTokens = options.max_tokens;
+      }),
+    });
+    const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+    let events = 0;
+    provider.onDidChangeLanguageModelChatInformation(() => { events++; });
+
+    // Discovery while the server is down → offline placeholder row cached.
+    const down = await provider.provideLanguageModelChatInformation({ silent: false }, makeToken());
+    expect(down[0].maxOutputTokens).toBe(1); // 1-token placeholder
+
+    // Server recovers — no silent resolve happens before the request (the race).
+    online = true;
+    await provider.provideLanguageModelChatResponse(
+      down[0], // VS Code hands over the STALE offline row
+      [{ role: vscode.LanguageModelChatMessageRole.User, content: [] }] as any,
+      {} as any,
+      { report: vi.fn() } as any,
+      makeToken(),
+    );
+
+    // The provider re-discovered on the request path and the wire carries the
+    // HEALTHY advertised budget — not the placeholder clamp.
+    expect(client.getModelContextWindow).toHaveBeenCalledTimes(2);
+    expect(wireMaxTokens).toBe(4096); // default output at 8192 window, not 1
+    // Full recovery is pushed to VS Code so the picker's ⚠ marker clears now,
+    // not at some later silent resolve.
+    expect(events).toBe(1);
+  });
+
+  it('a request for a model id absent from the cache never triggers a discovery probe', async () => {
+    // VS Code can hand over a stale row for a model that no longer exists
+    // (deleted from settings) or arrive mid-refresh (cache nulled). Such a row
+    // also has "no registered window" — probing it would fire a full server
+    // wave on EVERY doomed request. Only OUR offline rows may trigger a probe.
+    const client = fakeClient({
+      getConfigCached: vi.fn(async () => configWithModel),
+      getModelContextWindow: vi.fn(async () => ({ contextWindow: 8192 })),
+    });
+    const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+
+    await provider.provideLanguageModelChatResponse(
+      { id: 'ghost', maxOutputTokens: 100, maxInputTokens: 100 } as any,
+      [{ content: [] }] as any,
+      {} as any,
+      { report: vi.fn() } as any,
+      makeToken(),
+    );
+
+    expect(client.getModelContextWindow).not.toHaveBeenCalled(); // no probe wave
+  });
+
+  it('a non-silent resolve re-probes even when a complete cache exists (management flows want the truth now)', async () => {
+    // silent:false = VS Code's provider-management flows. Upstream contract:
+    // these always recompute; only silent calls may reuse the cache. A fast
+    // path that answers a first non-silent call from a pre-existing complete
+    // cache would show a just-died server as healthy in the management UI.
+    const client = fakeClient({ getConfigCached: vi.fn(async () => configWithModel) });
+    const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+
+    await provider.provideLanguageModelChatInformation({ silent: false }, makeToken());
+    expect(client.getConfigCached).toHaveBeenCalledTimes(1);
+
+    // Silent: cache-served (authoritative), no probe.
+    await provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+    expect(client.getConfigCached).toHaveBeenCalledTimes(1);
+
+    // Non-silent again: must hit the servers again, not the cache.
+    await provider.provideLanguageModelChatInformation({ silent: false }, makeToken());
+    expect(client.getConfigCached).toHaveBeenCalledTimes(2);
+  });
+});

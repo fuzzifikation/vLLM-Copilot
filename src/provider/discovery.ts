@@ -9,10 +9,11 @@ import {
   buildModelId,
   type ModelConfig,
 } from '../config.js';
-import { buildModelInfo } from '../modelInfo.js';
+import { buildModelInfo, buildOfflineModelInfo } from '../modelInfo.js';
 import { deriveTokenBudget } from '../tokenBudget.js';
 import { describeError } from '../messageConverter.js';
 import type { ProviderClient } from './contracts.js';
+import { ledgerKey, type BudgetLedger } from './budgetLedger.js';
 
 /**
  * Discover available models from configured overrides: fetch each model's
@@ -23,10 +24,14 @@ import type { ProviderClient } from './contracts.js';
  * the cached-model set are the provider's (lifecycle/cache owner); this function
  * takes the overrides + client and returns the discovered models.
  *
- * Policy: a model is served ONLY when its server reports a context window on the
- * standard documented path for its backend. A missing window or unreachable server
- * THROWS from the resolver and the model is skipped with a clear warning — never
- * a fabricated budget. The resolver's own message is preserved verbatim so the
+ * Policy: a model whose server answers is served from the server's honest
+ * metadata — never a fabricated budget. A model whose server does NOT answer
+ * (unreachable, or no window in otherwise-working metadata) STAYS VISIBLE as
+ * an offline row: switching a server off must not silently delete the user's
+ * model from the picker. The offline row advertises the last-known-good budget
+ * from the {@link BudgetLedger} (labeled stale) or, if the server never
+ * answered, only genuinely configured limits with labeled 1-token placeholders
+ * for the unknowns. The resolver's own message is preserved verbatim so the
  * user sees the backend-specific cause, not a vague rewrite.
  *
  * Output-budget contract: with a vector-form `maxOutputTokens`, the advertised
@@ -67,7 +72,9 @@ export async function discoverModels(
    * filtered by the pre-pick ceiling, so menu options never depend on the pick.
    */
   selectedLengthByModel?: ReadonlyMap<string, number>,
-): Promise<vscode.LanguageModelChatInformation[]> {
+  /** Last-known-good budget store: recorded on success, recalled to build offline rows. */
+  ledger?: BudgetLedger,
+): Promise<DiscoveryResult> {
   // Process each model: fetch context window from server, build info, or record error.
   // All models are queried in parallel so discovery time = max(server latencies), not sum.
   const tasks = modelOverrides.map(async (override) => {
@@ -88,9 +95,10 @@ export async function discoverModels(
     // Picker id — matches buildModelInfo's derivation so provider-tracked mode
     // selections keyed by model.id resolve to the right override.
     const presetId = override.id || buildModelId(serverConfig.serverUrl, vllmModelId);
-
-    // Legacy output-budget chain (mode > defaultParams > vector head / scalar),
-    // clamped below. Used as the advertised budget ONLY while no length pick
+  // Ledger identity — the REAL one (server + wire id), not the picker id, so a
+  // repointed or shared id can never graft one server's budget onto another
+  // target's offline row (globalState is shared across workspaces).
+  const identity = ledgerKey(serverConfig.serverUrl, vllmModelId);
     // exists; once a pick exists the pick wins — even over a per-mode
     // `max_tokens` — and the advertised budget follows the pick.
     const selectedMode = selectedModeByModel?.get(presetId);
@@ -133,8 +141,7 @@ export async function discoverModels(
       // ceiling clamped to what the model can promise.
       const pick = selectedLengthByModel?.get(presetId);
       const effectiveOutputTokens = pick !== undefined ? Math.min(pick, outputMenuCeiling) : legacyMaxOutput;
-      return {
-        model: buildModelInfo(serverModel, override, settings, serverConfig.serverUrl, limits.maxOutputTokens, (family, modelId) => {
+      const model = buildModelInfo(serverModel, override, settings, serverConfig.serverUrl, limits.maxOutputTokens, (family, modelId) => {
           // Fires only when no preset-declared family was available AND
           // HuggingFace auto-discovery did not provide one — the heuristic
           // fell through to the org-name guess. The family is just a sort key
@@ -143,31 +150,64 @@ export async function discoverModels(
           output.appendLine(
             `[WARN] Model "${modelId}" — family estimated as "${family}" from org-name fallback (no preset/HuggingFace family available). Family is informational only; use a preset or run auto-discovery for authoritative values.`
           );
-        }, effectiveOutputTokens, outputMenuCeiling),
+      }, effectiveOutputTokens, outputMenuCeiling);
+      // Remember what THIS server reported about THIS wire model so a later
+      // outage can serve an honest stale budget instead of a guess.
+      ledger?.record(identity, { maxModelLen: limits.contextWindow, maxOutputTokens: model.maxOutputTokens });
+      return {
+        model,
         contextWindow: limits.contextWindow,
         error: null,
+        offline: false,
       };
     } catch (err) {
-      const id = override.id || vllmModelId || '(unnamed model)';
+      // Server didn't answer — keep the model visible as an offline row with
+      // the best honest budget available (last-known > configured > labeled
+      // placeholders). The failure counts toward `failures` so the provider
+      // knows this list is a snapshot of a broken moment, not the truth.
+      const reason = describeError(err);
+      const model = buildOfflineModelInfo(
+        { id: vllmModelId },
+        override,
+        settings,
+        serverConfig.serverUrl,
+        {
+          lastKnown: ledger?.recall(identity),
+          configuredInputTokens: override.maxInputTokens,
+          // Mode chain only — deliberately NOT `?? settings.maxOutputTokens`:
+          // the built-in default is not something this model ever proved.
+          configuredOutputTokens: resolveConfiguredMaxTokens(override, selectedMode),
+          reason,
+        },
+      );
       return {
-        model: null,
+        model,
         contextWindow: null,
-        error: `[WARN] Model "${id}" skipped: ${describeError(err)}`,
+        error: `[WARN] Model "${presetId}" offline: ${reason}`,
+        offline: true,
       };
     }
   });
 
   const results = await Promise.all(tasks);
   const models: vscode.LanguageModelChatInformation[] = [];
+  let offlineCount = 0;
 
-  // Every task self-catches and resolves with `{ model, error }` — no task can
-  // reject (a rejection here would be a programming error inside the map
-  // callback, not a model-skipping condition). `Promise.all` is honest: there is
-  // no rejected branch to handle.
-  for (const { model, contextWindow, error } of results) {
+  // Every task self-catches and resolves with `{ model, error, offline }` — no
+  // task can reject (a rejection here would be a programming error inside the
+  // map callback, not a model-skipping condition). `Promise.all` is honest:
+  // there is no rejected branch to handle.
+  const offlineIds = new Set<string>();
+  for (const { model, contextWindow, error, offline } of results) {
     if (model) {
       models.push(model);
+      // Offline rows register NO context window on purpose: the provider's
+      // window map feeds post-stream diagnostics for LIVE requests only.
       if (contextWindow !== null) onModelDiscovered?.(model.id, contextWindow);
+      if (offline) {
+        offlineCount++;
+        offlineIds.add(model.id);
+      }
     }
     if (error) {
       output.appendLine(error);
@@ -193,10 +233,23 @@ export async function discoverModels(
   if (models.length > 0) {
     const summary = models.map(m => {
       const ctx = ((m.maxInputTokens || 0) + (m.maxOutputTokens || 0)).toLocaleString('en-US');
-      return `${m.id} (${ctx} ctx)`;
+      return `${m.id} (${ctx} ctx)${offlineIds.has(m.id) ? ' ⚠offline' : ''}`;
     }).join(', ');
-    output.appendLine(`[INFO] Loaded ${models.length} model(s): ${summary}`);
+    const offlineNote = offlineCount > 0 ? ` (${offlineCount} offline)` : '';
+    output.appendLine(`[INFO] Loaded ${models.length} model(s)${offlineNote}: ${summary}`);
   }
 
-  return models;
+  return { models, failures: offlineCount };
+}
+
+/**
+ * Discovery outcome: the picker rows (healthy AND offline) plus the count of
+ * transient failures. `failures > 0` means the list is a snapshot of a broken
+ * moment — the provider keeps re-checking (throttled) instead of trusting it.
+ * Permanent skips (a model with no `serverUrl`) are NOT failures: re-probing
+ * cannot fix a config error, so they must not pin the cache incomplete.
+ */
+export interface DiscoveryResult {
+  models: vscode.LanguageModelChatInformation[];
+  failures: number;
 }
