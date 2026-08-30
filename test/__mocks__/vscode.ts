@@ -306,7 +306,7 @@ export const workspace: {
   fs: { readDirectory(uri: Uri): Promise<[string, FileType][]>; readFile(uri: Uri): Promise<Uint8Array>; };
   createFileSystemWatcher(globPattern: string | RelativePattern): FileSystemWatcher;
   onDidChangeConfiguration(listener: (e: ConfigurationChangeEvent) => any): Disposable;
-  openTextDocument(uri: Uri | string): Thenable<unknown>;
+  openTextDocument(uri: Uri | string | { language?: string; content?: string }): Thenable<unknown>;
   // Test hooks (typed so tests can set them without casts).
   _mockConfig: any;
   _mockFsReadDirectory?: (uri: Uri) => Promise<[string, FileType][]>;
@@ -347,7 +347,7 @@ export const workspace: {
     dispose: () => {},
   }),
   onDidChangeConfiguration: () => ({ dispose: () => {} }),
-  openTextDocument: () => Promise.resolve({}),
+  openTextDocument: (_uri: Uri | string | { language?: string; content?: string }) => Promise.resolve({}),
 };
 
 // ── env ────────────────────────────────────────────────────────────────────

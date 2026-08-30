@@ -44,6 +44,10 @@
     "model-mode",
     "thinking-mode",
     "structured-output",
+    "agents",
+    "agent-mode",
+    "agentic",
+    "agents-window",
     "ai"
   ],
   "activationEvents": [

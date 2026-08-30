@@ -21,6 +21,7 @@ import {
 } from './commands.js';
 import { setExtensionVersion } from './diagnostics.js';
 import { initUsageStore } from './usageStore.js';
+import { maybeOfferOutputLengthMigration } from './outputLengthMigration.js';
 import { DashboardTreeProvider } from './dashboard.js';
 import { ServerSettingsViewProvider } from './serverSettingsView.js';
 import { openDeepDive } from './deepDiveView.js';
@@ -168,6 +169,13 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.lm.registerLanguageModelChatProvider(VENDOR_ID, activeProvider)
     );
+
+    // One-time offer: give pre-1.35 model entries an Output length menu
+    // (offline — preset match + the user's own max_tokens values only).
+    // Fire-and-forget like the BYOK ensure above; failures land in the Output channel.
+    maybeOfferOutputLengthMigration(context, outputChannel).catch(err => {
+      outputChannel.appendLine(`[WARN] Output length migration offer failed: ${err}`);
+    });
 
     // Expose the model-entry schema to Copilot Chat as an on-demand LM tool so
     // the user's AI can build valid vllm-copilot.models entries (server, params,
