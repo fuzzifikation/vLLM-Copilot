@@ -227,7 +227,7 @@ A visual editor for per-model configuration, no `settings.json` required:
 - **Structured output**: JSON schema enforcement for data extraction
 - **Anything vLLM supports**: bad words, repetition detection, request shaping
 
-**Output length is not a mode knob** — models and presets whose `maxOutputTokens` is an **array** of response lengths (bundled presets do) get a second, independent **Output Length** dropdown next to the mode picker (e.g. 16K / 32K / 64K), so you cap response length per request without touching settings. VS Code remembers your pick per model — and a shorter pick hands the freed tokens back to your prompt: Copilot's input budget grows to match. Right after the dropdown first appears for a model, VS Code's picker can lag and show only the mode section — open the model list once and click the **Output Length** chip on the model to fix it (a VS Code snapshot bug, [reported upstream](https://github.com/microsoft/vscode/issues/333413)).
+**Output length is not a mode knob** — models and presets whose `maxOutputTokens` is an **array** of response lengths (bundled presets do) get a second, independent **Output Length** dropdown next to the mode picker (e.g. 16K / 32K / 64K), so you cap response length per request without touching settings. VS Code remembers your pick per model — and a shorter pick hands the freed tokens back to your prompt: Copilot's input budget grows to match. Right after the dropdown first appears for a model, VS Code's picker can lag and show only the mode section — open the model list once and click the **Output Length** chip on the model to fix it (see screenshot; a VS Code snapshot bug, [reported upstream](https://github.com/microsoft/vscode/issues/333413)).
 
 **Add vLLM Server & Model** auto-generates modes from bundled presets (or OpenRouter reasoning metadata). An example config and the full syntax are in the [Manual → Model modes](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md#model-modes).
 </td>
@@ -236,6 +236,10 @@ A visual editor for per-model configuration, no `settings.json` required:
 <img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/model-mode.png" width="100%" alt="Model mode picker showing different configurations">
 
 <em>Switch between model modes directly from the Copilot model picker: Think, No Think, Precise, etc.</em>
+
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/OutputLength_Picker_Workaround.png" width="100%" alt="Model list hover card showing the Output Length chip to click">
+
+<em>Dropdown not showing right after an update? Open the model list and click the <b>Output Length</b> chip (arrow) — one click heals VS Code's stale picker snapshot.</em>
 
 </td>
 </tr>
