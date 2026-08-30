@@ -2,6 +2,7 @@ import * as path from 'path';
 import { createHash } from 'node:crypto';
 import * as vscode from 'vscode';
 import type { WireStructuredOutputConfig } from './types.js';
+import { resolveOutputBudgetScalar } from './tokenBudget.js';
 
 export type StructuredOutputConfig = WireStructuredOutputConfig;
 
@@ -34,7 +35,22 @@ export interface ModelConfig {
   /** Model family (e.g. "qwen3_5", "deepseek_v4"). Auto-detected from HuggingFace config.model_type. */
   family?: string;
   maxInputTokens?: number;
-  maxOutputTokens?: number;
+  /**
+   * Output budget — TWO shapes, one field:
+   * - `number`: a single cap. No dropdown, budget = that value (clamped to the
+   *   context window and any server-reported output ceiling).
+   * - `number[]`: ordered response lengths (positive ints, strictly descending,
+   *   ≤ 8) rendered as the model picker's second **Output length** dropdown —
+   *   the OUTPUT axis, independent of `modelModes` (behavior). The FIRST entry
+   *   is both the picker default and the desired output budget; entries above
+   *   the clamped ceiling are dropped from the menu, and the user's pick IS the
+   *   advertised output budget (shorter pick = more prompt headroom). Fewer
+   *   than two usable entries suppress the dropdown — preset authors own the
+   *   menu, runtime invents nothing. When the dropdown exists its selection
+   *   OWNS the request's `max_tokens`, outranking mode/defaultParams layers.
+   * See `resolveOutputLengthVector` / `resolveOutputBudgetScalar` (tokenBudget.ts).
+   */
+  maxOutputTokens?: number | number[];
   capabilities?: {
     toolCalling?: boolean;
     imageInput?: boolean;
@@ -259,14 +275,31 @@ export function resolveConfiguredMaxTokens(
  * Copilot's runtime `modelOptions.max_tokens` is deliberately NOT consulted —
  * the output budget is owned by the model config; the caller re-asserts this
  * value after layering so Copilot's UI value never reaches the wire.
+ *
+ * The output-length PICKER (`pickerTokens` — the `maxOutputTokens` property of
+ * `modelConfiguration`, chosen by the user in the model picker) takes highest
+ * precedence: an explicit UI pick outranks any `max_tokens` embedded in a mode
+ * or `defaultParams`. Modes are behavior presets, not length presets — the
+ * per-mode `max_tokens` layer exists only as a fallback for models without a
+ * length dropdown. The advertised ceiling it clamps against is derived from
+ * the model's own budget under the physical clamps (discovery), so for vector
+ * models the pick genuinely wins over a legacy mode budget — the wire can
+ * still never exceed what Copilot was told.
  */
 export function resolveMaxTokensForRequest(
   override: ModelConfig | undefined,
   selectedMode: string | undefined,
   modelMaxOutputTokens: number,
   modelContextWindow: number,
+  pickerTokens?: number,
 ): number {
-  const requested = Math.min(resolveConfiguredMaxTokens(override, selectedMode) ?? modelMaxOutputTokens, modelMaxOutputTokens);
+  const normalizedPicker = typeof pickerTokens === 'number' && Number.isFinite(pickerTokens)
+    ? Math.max(1, Math.floor(pickerTokens))
+    : undefined;
+  const requested = Math.min(
+    normalizedPicker ?? resolveConfiguredMaxTokens(override, selectedMode) ?? modelMaxOutputTokens,
+    modelMaxOutputTokens,
+  );
   const window = modelContextWindow > 0 ? modelContextWindow : modelMaxOutputTokens;
   return Math.min(requested, Math.max(1, window - 1));
 }
@@ -275,7 +308,7 @@ export function resolveMaxTokensForRequest(
 export function resolveModelSettings(override: ModelConfig | undefined): ResolvedModelSettings {
   const finiteOr = (value: number | undefined, fallback: number): number =>
     typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-  const maxOutputTokens = finiteOr(override?.maxOutputTokens, DEFAULT_MODEL_SETTINGS.maxOutputTokens);
+  const maxOutputTokens = resolveOutputBudgetScalar(override?.maxOutputTokens) ?? DEFAULT_MODEL_SETTINGS.maxOutputTokens;
   const estimateCharsPerToken = finiteOr(override?.estimateCharsPerToken, DEFAULT_MODEL_SETTINGS.estimateCharsPerToken);
   const streamInactivityTimeout = finiteOr(override?.streamInactivityTimeout, DEFAULT_MODEL_SETTINGS.streamInactivityTimeout);
   const initialResponseTimeoutMs = finiteOr(override?.initialResponseTimeoutMs, DEFAULT_MODEL_SETTINGS.initialResponseTimeoutMs);
@@ -651,7 +684,25 @@ export function validateConfig(config: VllmConfig): string[] {
       );
     }
 
-    if (model.maxOutputTokens !== undefined && (!Number.isFinite(model.maxOutputTokens) || model.maxOutputTokens <= 0)) {
+    // maxOutputTokens: scalar budget OR an ordered vector (the picker's Output
+    // length menu, head = default). Keep the vector contract honest — positive
+    // integers, strictly descending, ≤ 8 menu entries.
+    if (Array.isArray(model.maxOutputTokens)) {
+      const lengths = model.maxOutputTokens;
+      if (lengths.length === 0) {
+        warnings.push(`Model "${display}": maxOutputTokens is an empty array — treated as unset (default budget, no dropdown).`);
+      } else {
+        if (lengths.some(n => !Number.isInteger(n) || n <= 0)) {
+          warnings.push(`Model "${display}": maxOutputTokens as a vector must contain positive integers only.`);
+        }
+        if (lengths.length > 1 && lengths.some((n, i) => i > 0 && n >= lengths[i - 1])) {
+          warnings.push(`Model "${display}": maxOutputTokens as a vector should be strictly descending (the first entry is the default).`);
+        }
+        if (lengths.length > 8) {
+          warnings.push(`Model "${display}": maxOutputTokens vector has ${lengths.length} entries; only the first 8 are offered in the picker.`);
+        }
+      }
+    } else if (model.maxOutputTokens !== undefined && (!Number.isFinite(model.maxOutputTokens) || model.maxOutputTokens <= 0)) {
       warnings.push(`Model "${display}": maxOutputTokens is ${model.maxOutputTokens}; should be finite and > 0.`);
     }
     if (model.estimateCharsPerToken !== undefined && (!Number.isFinite(model.estimateCharsPerToken) || model.estimateCharsPerToken <= 0)) {

@@ -45,7 +45,7 @@
     "vllmModelId": "Qwen3.8-27B",
     "displayName": "Qwen3.8-27B",
     "family": "qwen3_5",
-    "maxOutputTokens": 32768,
+    "maxOutputTokens": [32768, 16384, 8192],
     "capabilities": {
       "toolCalling": true,
       "imageInput": false

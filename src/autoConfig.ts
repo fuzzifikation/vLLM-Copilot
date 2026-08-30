@@ -6,4 +6,4 @@
  */
 export { registerAddServerModelCommand } from './commands/addServerFlow.js';
 export { registerAutoConfigureModelCommand } from './commands/autoConfigureFlow.js';
-export { ensureByokUtilityDefault, registerConfigureUtilityModelCommand } from './commands/byok.js';
+export { ensureByokUtilityDefault, ensureAgentHostModelsEnabled, registerConfigureUtilityModelCommand } from './commands/byok.js';

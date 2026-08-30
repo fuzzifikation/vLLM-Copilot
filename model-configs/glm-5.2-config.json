@@ -16,6 +16,12 @@
 //
 // Generation defaults: temperature=1.0, top_p=0.95 (from model card benchmarks).
 //
+// Token budgets:
+//   - Context window: 1,048,576 tokens (same base architecture as GLM-5.3).
+//   - maxOutputTokens ladder [131072, 65536, 32768, 16384] — default 131,072
+//     leaves ~917K input at full 1M server context; on smaller serve windows
+//     pick a shorter length in the Output length dropdown.
+//
 // To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 
@@ -32,7 +38,7 @@
     "vllmModelId": "GLM-5.2",
     "displayName": "GLM-5.2",
     "family": "glm_moe_dsa",
-    "maxOutputTokens": 32768,
+    "maxOutputTokens": [131072, 65536, 32768, 16384],
     "capabilities": {
       "toolCalling": true,
       "imageInput": false

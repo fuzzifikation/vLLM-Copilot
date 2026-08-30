@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider.js';
 import { getConfig, validateConfig, resolveServerConfig, resolveServerType, normalizeServerUrl } from './config.js';
 import { FileLogger } from './logger.js';
-import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault } from './autoConfig.js';
+import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault, ensureAgentHostModelsEnabled } from './autoConfig.js';
 import { setSessionManagerOutput } from './sessionManager.js';
 import { migrateLegacyPersonalities } from './personalityStore.js';
 import {
@@ -151,6 +151,14 @@ export async function activate(context: vscode.ExtensionContext) {
     if (fullConfig.models.length > 0) {
       ensureByokUtilityDefault().catch(err => {
         outputChannel.appendLine(`[WARN] Failed to set BYOK utility model default: ${err}`);
+      });
+      // Opt our models into Agent Host sessions (the 1.135 "Open in Agents"
+      // window): chat.agentHost.byokModels.enabled + our own
+      // extensions.supportAgentsWindow entry. Idempotent, respects explicit
+      // user values, silently skipped on VS Code builds without these
+      // settings. Takes effect after the agent host process restarts.
+      ensureAgentHostModelsEnabled().catch(err => {
+        outputChannel.appendLine(`[WARN] Failed to enable Agent Host model access: ${err}`);
       });
     }
 

@@ -25,9 +25,12 @@
 //
 // Token budgets:
 //   - Context window: 262,144 tokens (native), extensible up to ~1,010,000 (YaRN)
-//   - maxOutputTokens: 32,768 (official recommendation for "most queries")
+//   - maxOutputTokens ladder [32768, 16384, 8192] — default 32,768 (official
+//     recommendation for "most queries")
 //   - maxInputTokens: auto-computed as ~229,376 (context window minus output)
-//   - For complex tasks (math/programming competitions), increase to 81,920
+//   - For complex tasks (math/programming competitions), raise the head entry
+//     to 81,920 in settings (kept off the menu: it would tax every session's
+//     input budget as the advertised default)
 //
 // Modes (all values from official Qwen3.6 model card Best Practices section):
 //   - Think (General):  General tasks (temp=1.0, presence_penalty=1.5)
@@ -53,7 +56,7 @@
     "vllmModelId": "Qwen3.6-35B-A3B",
     "displayName": "Qwen3.6-35B-A3B",
     "family": "qwen3_5_moe",
-    "maxOutputTokens": 32768,
+    "maxOutputTokens": [32768, 16384, 8192],
     "capabilities": {
       "toolCalling": true,
       "imageInput": true

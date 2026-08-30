@@ -19,10 +19,13 @@
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
 // Token budgets (262,144-token context):
-//   - maxOutputTokens: 32,768 (suitable for Copilot chat turns)
-//   - maxInputTokens: auto-computed as ~229,376
+//   - maxOutputTokens ladder [65536, 32768, 16384, 8192] — default 65,536
+//     because thinking turns routinely run far past 32K (see below); still
+//     leaves ~196K input, matching Poolside's advice to raise the cap for
+//     long-horizon use.
+//   - maxInputTokens: auto-computed as ~196,608 at the default pick
 //   - Note: model supports up to 1M context and routinely generates 100K+ tokens
-//     in thinking mode for agentic tasks. Increase maxOutputTokens for long-horizon use.
+//     in thinking mode for agentic tasks.
 //
 // Important: The Laguna-S-2.1 release card does not list sampling parameters.
 // The values below (temperature=1.0, top_k=20) are taken from Poolside's
@@ -63,7 +66,7 @@
     "vllmModelId": "Laguna-S-2.1",
     "displayName": "Laguna-S-2.1",
     "family": "laguna",
-    "maxOutputTokens": 32768,
+    "maxOutputTokens": [65536, 32768, 16384, 8192],
     "capabilities": {
       "toolCalling": true,
       "imageInput": false

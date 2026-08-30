@@ -234,6 +234,50 @@ Since the model list is small (typically < 20 entries) and the server is local/c
 **Category:** Painkiller (MoE transparency)
 **Status:** Not implemented
 
+---
+
+## ✨ Output-Length Picker (second model-picker dropdown)
+
+**Category:** Vitamin (UX) — rides the same moat plumbing as model modes
+**Status:** ✅ Implemented — see "What actually shipped" at the end of this entry
+
+**What:** A second dropdown in the Copilot model picker (next to the existing Model Mode dropdown) that lets the user pick a predefined output length — e.g. `1K / 4K / 16K / Max` — instead of digging into model settings to change `maxOutputTokens`. VS Code persists the choice per model and sends it on every request.
+
+**Why it matters:**
+- Capping output is the cheapest way to control latency and rambling on local models; raising it recovers truncated edits. Both are common enough to belong in the picker, not in JSON.
+- Pairs naturally with the `output_limit` picker banner shipped in v1.34: the banner tells you the budget is clamped, the dropdown lets you react to it.
+
+**Verified API facts (2026-08-30, `vscode.proposed.chatProvider.d.ts` @ main + VS Code core source):**
+- `configurationSchema` is a JSON Schema (`LanguageModelConfigurationSchema`); **"Each property in `properties` defines a configurable option"** — multiple dropdowns per model are explicitly supported, each with `group: 'navigation'` renders as its own primary model-picker action.
+- Precedent in VS Code's own Copilot CLI provider: it builds `properties` with `contextSize` **and** `reasoningEffort` side by side, with **numeric enums** (`contextSize: { enum: [200_000, 1_000_000] }`) — raw numbers are valid enum values.
+- VS Code resolves the effective config itself: *"resolved values … with user overrides applied on top of schema defaults"* (`_resolveModelConfigurationWithDefaults` in `languageModels.ts`) and delivers it as `ProvideLanguageModelChatResponseOptions.modelConfiguration`. **Persistence is VS Code's job, not ours.**
+- Our plumbing already exists end-to-end: `buildConfigurationSchema()` emits the `reasoningEffort` property, and `provider.ts` + `provider/requestBuilder.ts` already read `modelConfiguration`. This idea adds a second property to the same, working pipe.
+- Runtime floor: `configurationSchema`/`modelConfiguration` are recognized since VS Code 1.128 (our engine floor). Multi-property schemas are newer upstream but degrade gracefully — worst case an old host renders fewer dropdowns.
+
+**Implementation plan:**
+1. **Schema** (`modelInfo.ts::buildConfigurationSchema`): extend signature with the model's `TokenBudget` and reported ceiling. Add property `maxOutputTokens`:
+   - `enum`: ladder `[1024, 2048, 4096, 8192, 16384, 32768, …]` filtered to values ≤ `min(budget.maxModelLen − 1, reportedMaxOutputTokens ?? ∞)`, **plus** the currently-resolved `budget.maxOutputTokens` (so the schema default is always an enum member).
+   - `default`: `budget.maxOutputTokens` (preserves today's behavior when the user never touches the dropdown).
+   - `enumItemLabels`: `1K / 2K / 4K / …`; `title: 'Output limit'`; `group: 'navigation'`.
+   - Emit only when the filtered ladder has ≥ 2 distinct options — never show a one-choice dropdown.
+2. **Request side** (`provider/requestBuilder.ts`): read `modelConfiguration?.maxOutputTokens`, accept a finite number, clamp to `budget.maxOutputTokens`, and use it as the request's `max_tokens`. Precedence: **picker selection > model-mode param > settings** (an explicit user pick in the UI beats a background preset; the context-window clamp always wins last). Mirror the read in `provider.ts` where mode resolution already happens, so both paths agree.
+3. **Do not persist** the selection into `vllm-copilot.models` — VS Code owns persistence. Our settings `maxOutputTokens` remains the default source.
+4. **Tests:** schema filtering (small-window models), default-is-in-enum, single-option suppression, request-builder override + clamp, mode-vs-picker precedence.
+
+**Open questions:**
+- Should modes that set their own output tokens hide the dropdown, or just lose to it (proposed: lose to it)?
+- Ladder granularity for tiny local models (add 512?) — decide from real `max_model_len` distributions.
+
+**Effort:** Low. One schema extension, one request-side read, tests. Roughly 60–100 lines.
+
+**What actually shipped (deviations from the plan above):**
+- **No derived ladder.** The plan proposed auto-deriving a menu for every model; that was reverted as scope creep against the repo's "no generic fallback" contract and the user's "pre-define those" intent. A dropdown appears **only** when a model/preset declares a vector-form `maxOutputTokens`.
+- **Merged field shape:** `maxOutputTokens` accepts `number | number[]`. A separate `outputLengths` field existed briefly during development and was merged back into `maxOutputTokens` before release (the pick-as-advertised change below made the scalar ceiling redundant with the vector head) — unreleased, so zero migration. Array ordered, **first element = default AND desired budget**, filtered against the clamped ceiling (dropped entries never shown; a dropped head promotes the next survivor), de-duped, capped at 8. Fewer than 2 survivors → no dropdown.
+- **The pick IS the advertised budget.** Discovery clamps the tracked pick to a static pre-pick ceiling (window + server-reported clamps applied) and advertises that as `maxOutputTokens` — since Copilot derives the prompt budget as window − output, a shorter pick genuinely grows prompt headroom. A pick change re-publishes model metadata (provider-tracked, deduped; the default pick == ceiling triggers no re-registration). The menu and the clamp banner scale against the **static ceiling**, so picking 16K never removes 32K from the menu and a deliberate pick never reads as a clamp warning.
+- **Precedence:** picker pick > `modelModes[selected].max_tokens` > `defaultParams.max_tokens` > budget head — always clamped to the ceiling. Modes are now behavior-only; 6 bundled presets had their per-mode `max_tokens` migrated into the array form of `maxOutputTokens`.
+- **Not persisted** into `vllm-copilot.models` (VS Code owns persistence, as planned).
+- **Deferred (separate step):** a migration notification for existing installs whose saved models predate the array form (they get no dropdown until the model is re-added / re-merged). **Release-ordering caveat:** vector-form preset files must NOT be pushed to `main` before the 1.35.0 extension ships — v1.34 recognizes the `maxOutputTokens` key but its scalar-only math silently degrades an array to the 4096 default.
+
 **What:** vLLM supports `--enable-return-routed-experts` (server flag) and `enable_return_routed_experts` (per-request sampling param). When enabled, vLLM returns which experts were used for each token in the response. This is a **per-request output field** — not a Prometheus metric. Currently the extension ignores it.
 
 **Why it matters:**

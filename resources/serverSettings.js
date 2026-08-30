@@ -400,8 +400,11 @@
         '<div class="field-hint">Path to JSON find/replace rules file (relative paths resolve against the workspace root)</div></div>' +
         '<div class="checkbox-row"><input type="checkbox" id="captureCb" ' + (S.systemMessageCapture ? 'checked' : '') + '><label>Record system prompts</label></div>' +
         '<div class="field-hint">Capture Copilot system prompts to the workspace\'s .vllm/system-messages.json — used to build replacement rules</div>');
-      h += sec('Token Budget', fields([{ k: 'maxOutputTokens', t: 'number', v: m.maxOutputTokens ?? 4096, h: 'Max output tokens (default: 4096)' },
-        { k: 'maxInputTokens', t: 'number', v: m.maxInputTokens ?? '', h: 'Auto-computed; set to reserve headroom' },
+      h += sec('Token Budget',
+        '<div class="field"><label>maxOutputTokens</label>' +
+        '<input type="text" data-f="maxOutputTokens" placeholder="65536, 32768, 16384" value="' + E(Array.isArray(m.maxOutputTokens) ? m.maxOutputTokens.join(', ') : String(m.maxOutputTokens ?? '')) + '">' +
+        '<div class="field-hint">Max output tokens — or comma-separated choices (descending, first = default) to show the Copilot picker\'s "Output length" dropdown. Values above the model cap are hidden. Empty = default 4096</div></div>' +
+        fields([{ k: 'maxInputTokens', t: 'number', v: m.maxInputTokens ?? '', h: 'Auto-computed; set to reserve headroom' },
         { k: 'estimateCharsPerToken', t: 'number', v: m.estimateCharsPerToken ?? 3.5, h: 'Avg chars/token (default: 3.5)' }]));
       h += sec('Capabilities',
         '<div class="checkbox-row"><input type="checkbox" data-k="caps.toolCalling" ' + ((m.capabilities?.toolCalling ?? true) ? 'checked' : '') + '><label>Tool Calling (default: enabled)</label></div>' +
@@ -626,11 +629,29 @@
     const u = { ...mc };
     document.querySelectorAll('[data-f]').forEach(el => {
       const k = el.dataset.f;
+      // maxOutputTokens is a number OR number[] — the generic collector would
+      // store the raw string; the same input is parsed into a value after this loop.
+      if (k === 'maxOutputTokens') return;
       // Empty value is an explicit CLEAR signal: `''` reaches the store, which maps
       // '' → delete for every clearable scalar field (normalizeModelEntry). A typed
       // `0` is a real value and stays (e.g. streamInactivityTimeout 0 = infinite).
       u[k] = el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value;
     });
+    // maxOutputTokens: scalar cap OR comma-separated vector (Output length
+    // dropdown choices). One value → number; several → number[]. Empty input is
+    // the '' CLEAR signal (normalizeModelEntry deletes the key → default,
+    // no dropdown). An unparsable entry aborts the save rather than silently
+    // dropping menu options.
+    const motInput = document.querySelector('[data-f="maxOutputTokens"]');
+    if (motInput) {
+      const parts = motInput.value.split(',').map(s => s.trim()).filter(s => s !== '');
+      const nums = parts.map(Number);
+      if (nums.some(n => !Number.isInteger(n) || n <= 0)) {
+        void webviewAlert('Max output tokens must be a positive whole number, or comma-separated whole numbers (e.g. 65536, 32768, 16384).');
+        return;
+      }
+      u.maxOutputTokens = nums.length === 0 ? '' : nums.length === 1 ? nums[0] : nums;
+    }
     // Routing mode is only meaningful when routing is Auto (no pinned provider).
     // If a provider is pinned, drop the mode — sorting a single provider is
     // meaningless, and the request path ignores it anyway; keep the config honest.

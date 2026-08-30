@@ -134,6 +134,91 @@ describe('buildRequest', () => {
     expect(result.mergedOptions.max_tokens).toBe(200);
   });
 
+  // Output-length PICKER (maxOutputTokens vector → second navigation dropdown):
+  // the pick must outrank every max_tokens layer, normalize defensively, and
+  // still respect the advertised≡wire invariant (up-picks wait for metadata
+  // re-registration — the ONE-request lag; down-picks are instant).
+  describe('output-length picker (modelConfiguration.maxOutputTokens)', () => {
+    const advModel = (mo: number, mi: number) => ({ id: 'm', maxOutputTokens: mo, maxInputTokens: mi }) as any;
+    const vectorOverride = {
+      models: [{
+        id: 'm', serverUrl: 'http://host:8000',
+        maxOutputTokens: [4096, 2048],
+        defaultParams: { max_tokens: 1000 },
+        modelModes: { deep: { max_tokens: 3000 } },
+      }],
+      enableFileLogging: false,
+    } as any;
+
+    it('the pick outranks mode AND defaultParams max_tokens', () => {
+      const result = buildRequest(
+        advModel(4096, 4096), [] as any,
+        opts({ modelConfiguration: { reasoningEffort: 'deep', maxOutputTokens: 2048 } }),
+        vectorOverride, output,
+      );
+      expect(result.mergedOptions.max_tokens).toBe(2048); // > defaultParams 1000, < mode 3000 — pick wins outright
+    });
+
+    it('a shorter pick applies instantly (pick below the advertised budget)', () => {
+      const result = buildRequest(
+        advModel(4096, 4096), [] as any,
+        opts({ modelConfiguration: { maxOutputTokens: 2048 } }),
+        vectorOverride, output,
+      );
+      expect(result.mergedOptions.max_tokens).toBe(2048);
+    });
+
+    it('an up-pick clamps to the still-advertised budget (ONE-request lag, specified behavior)', () => {
+      // P2 scenario, pinned as SPEC: user picks 4096 while Copilot still holds
+      // 2048 metadata (re-registration fires on THIS request). The wire must
+      // not exceed what Copilot was told — Copilot sized the prompt against
+      // 2048, and providers may reject over-budget max_tokens outright.
+      const result = buildRequest(
+        advModel(2048, 6144), [] as any,
+        opts({ modelConfiguration: { maxOutputTokens: 4096 } }),
+        vectorOverride, output,
+      );
+      expect(result.mergedOptions.max_tokens).toBe(2048);
+    });
+
+    it('normalizes the pick: fractional floors down, non-positive floors to 1', () => {
+      const fractional = buildRequest(
+        advModel(4096, 4096), [] as any,
+        opts({ modelConfiguration: { maxOutputTokens: 1024.7 } }),
+        vectorOverride, output,
+      );
+      expect(fractional.mergedOptions.max_tokens).toBe(1024);
+      const zero = buildRequest(
+        advModel(4096, 4096), [] as any,
+        opts({ modelConfiguration: { maxOutputTokens: 0 } }),
+        vectorOverride, output,
+      );
+      expect(zero.mergedOptions.max_tokens).toBe(1);
+    });
+
+    it('non-numeric or non-finite picks fall back to the legacy chain', () => {
+      // Stale/garbage modelConfiguration (string, NaN) must never reach the
+      // wire as a budget — legacy precedence (mode > defaultParams) applies.
+      for (const junk of ['2048', NaN]) {
+        const result = buildRequest(
+          advModel(4096, 4096), [] as any,
+          opts({ modelConfiguration: { reasoningEffort: 'deep', maxOutputTokens: junk } }),
+          vectorOverride, output,
+        );
+        expect(result.mergedOptions.max_tokens).toBe(3000); // the mode's value, clamped to advertised 4096
+      }
+    });
+
+    it('no picker value at all keeps the legacy chain untouched', () => {
+      const result = buildRequest(
+        advModel(4096, 4096), [] as any,
+        opts(),
+        vectorOverride, output,
+      );
+      expect(result.mergedOptions.max_tokens).toBe(1000); // defaultParams — no mode selected, advertised chain value
+    });
+  });
+
   it('clamps to the context window as a defense when the advertised budget is incoherent', () => {
     // A 0 input allowance makes window = advertised, so window-1 must cap it.
     // Only reachable with an incoherent model object — deriveTokenBudget never

@@ -30,9 +30,9 @@
 // Token budgets (native 262,144 context):
 //   - The card advertises up to 262K thinking / 131K final tokens, but reserving
 //     that much output would halve usable input (input = context − output).
-//     32,768 per think mode leaves ~229K input — the operating point Qwen itself
-//     benched at. Truncated thinking turns are rare and recoverable.
-//   - No Think gets 16,384 (direct answers rarely need more).
+//     The maxOutputTokens ladder defaults to 32,768 — ~229K input survives, the
+//     operating point Qwen itself benched at. Truncated thinking turns are rare
+//     and recoverable; 16,384 serves direct answers and 8,192 quick exchanges.
 //
 // Longer context via YaRN is a server-side option — deliberately NOT assumed
 //   here: static YaRN keeps the scaling factor constant regardless of input
@@ -57,7 +57,7 @@
     "vllmModelId": "Qwen3.8-Flash-Next",
     "displayName": "Qwen3.8-Flash-Next",
     "family": "qwen4_exp",
-    "maxOutputTokens": 32768,
+    "maxOutputTokens": [32768, 16384, 8192],
     "capabilities": {
       "toolCalling": true,
       "imageInput": true
@@ -69,7 +69,6 @@
           "preserve_thinking": true
         },
         "reasoning_effort": "xhigh",
-        "max_tokens": 32768,
         "temperature": 1.0,
         "top_p": 0.95,
         "top_k": 20,
@@ -83,7 +82,6 @@
           "preserve_thinking": true
         },
         "reasoning_effort": "medium",
-        "max_tokens": 32768,
         "temperature": 1.0,
         "top_p": 0.95,
         "top_k": 20,
@@ -95,7 +93,6 @@
         "chat_template_kwargs": {
           "enable_thinking": false
         },
-        "max_tokens": 16384,
         "temperature": 0.7,
         "top_p": 0.8,
         "top_k": 20,

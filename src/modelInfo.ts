@@ -6,39 +6,204 @@
 
 import * as vscode from 'vscode';
 import { extractFamilyWithSource } from './modelUtils.js';
-import { deriveTokenBudget } from './tokenBudget.js';
+import { deriveTokenBudget, resolveOutputBudgetScalar, resolveOutputLengthVector, type TokenBudget } from './tokenBudget.js';
 import { buildModelId, type ModelConfig } from './config.js';
 
 /**
- * Build the `configurationSchema` for a model's picker settings.
+ * True when `current` (a VS Code version string such as `1.135.0` or
+ * `1.136.0-insider`) is at least `minimum` (`major.minor`). Unparsable inputs
+ * return false — an unknown runtime is treated as too old, never as capable.
+ */
+export function isVersionAtLeast(minimum: string, current: string): boolean {
+  const min = /^(\d+)\.(\d+)/.exec(minimum);
+  const cur = /^(\d+)\.(\d+)/.exec(current);
+  if (!min || !cur) {
+    return false;
+  }
+  const [minMajor, minMinor] = [Number(min[1]), Number(min[2])];
+  const [curMajor, curMinor] = [Number(cur[1]), Number(cur[2])];
+  return curMajor > minMajor || (curMajor === minMajor && curMinor >= minMinor);
+}
+
+/**
+ * `warningText` has been part of the `chatProvider` proposal since VS Code
+ * 1.128 (verified against `release/1.128`). `infoText` landed later — it only
+ * exists from 1.135 (verified: absent in `release/1.130`, present in
+ * `release/1.135`). Older cores silently ignore unknown metadata fields, so
+ * emitting `infoText` unconditionally would be harmless but dishonest; the
+ * runtime gate keeps the metadata we advertise exactly what the host renders.
+ */
+const INFO_TEXT_MIN_VSCODE = '1.135';
+
+/**
+ * Derive model-picker banners (`warningText` / `infoText`, shown in the model
+ * hover) from inputs that are already known at discovery time. Every message
+ * states a derived fact about THIS model — never a guess — and a banner that
+ * merely restates information VS Code already shows (context size, vision)
+ * is deliberately not emitted.
  *
- * Returns undefined when the model has no model modes configured.
+ * Exported separately so each rule is unit-testable without the version gate;
+ * `buildModelInfo` passes the real `vscode.version` result.
+ *
+ * @param supportsInfoText - false suppresses `infoText` (host too old);
+ *   `warningText` is never suppressed.
+ * @param effectiveOutputTokens - the budget actually advertised/wired (tracked
+ *   output-length pick included). When present it IS the banner's "configured"
+ *   reference — a deliberate shorter pick is the feature working, not a clamp.
+ *   Absent → the raw configured budget (vector head or scalar).
+ */
+export function buildPickerBanners(
+  override: Partial<ModelConfig> | undefined,
+  config: { maxOutputTokens: number },
+  budget: TokenBudget,
+  reportedMaxOutputTokens: number | undefined,
+  supportsInfoText: boolean,
+  effectiveOutputTokens?: number,
+): { warningText?: Record<string, string>; infoText?: Record<string, string> } {
+  const warningText: Record<string, string> = {};
+  const infoText: Record<string, string> = {};
+
+  // Explicitly disabled tool calling means agent mode silently cannot work —
+  // worth a banner before the user blames the extension.
+  if (override?.capabilities?.toolCalling === false) {
+    warningText.tool_calling = 'Tool calling is disabled for this model, so Agent mode cannot use it. Enable tool calling in the vLLM-Copilot model settings if the model supports tools.';
+  }
+
+  // Output budget clamped well below what was configured (by the context
+  // window or a provider-reported completion ceiling). "Well below" = more
+  // than 5% under: the budget derivation always shaves a token or two to keep
+  // input room, and a 1-token deviation is noise, not news.
+  const configuredOutput = effectiveOutputTokens ?? resolveOutputBudgetScalar(override?.maxOutputTokens) ?? config.maxOutputTokens;
+  const desiredOutput = Number.isFinite(configuredOutput)
+    ? Math.max(1, Math.floor(configuredOutput))
+    : 1;
+  if (budget.maxOutputTokens < desiredOutput * 0.95) {
+    const providerCapped = reportedMaxOutputTokens !== undefined
+      && !Number.isNaN(reportedMaxOutputTokens)
+      && reportedMaxOutputTokens < desiredOutput;
+    warningText.output_limit = providerCapped
+      ? `The provider caps responses to ${budget.maxOutputTokens} tokens — below the configured output budget of ${desiredOutput}.`
+      : `The ${budget.maxModelLen}-token context window caps responses to ${budget.maxOutputTokens} tokens — below the configured output budget of ${desiredOutput}.`;
+    // When a length dropdown actually renders for this model, point at it —
+    // it is the actionable control for working within the cap. Same inputs as
+    // the schema builder, so the banner can never advertise an absent dropdown.
+    if (resolveOutputLengthOptions(override?.maxOutputTokens, budget.maxOutputTokens)) {
+      warningText.output_limit += ' Pick a response length in the Output length dropdown to work within this cap.';
+    }
+  }
+
+  // Non-default OpenRouter routing changes which backend actually serves the
+  // request — purely informational, exactly what infoText is for.
+  if (override?.serverType === 'openrouter') {
+    const bits: string[] = [];
+    if (override.provider) {
+      bits.push(`pinned to provider \"${override.provider}\"`);
+    }
+    if (override.routingMode && override.routingMode !== 'standard') {
+      bits.push(`\"${override.routingMode}\" routing`);
+    }
+    if (bits.length > 0) {
+      infoText.openrouter_routing = `OpenRouter requests are ${bits.join(' with ')}.`;
+    }
+  }
+
+  return {
+    warningText: Object.keys(warningText).length > 0 ? warningText : undefined,
+    infoText: supportsInfoText && Object.keys(infoText).length > 0 ? infoText : undefined,
+  };
+}
+
+/**
+ * Build the `configurationSchema` for a model's picker settings: up to two
+ * independent `group: 'navigation'` dropdowns, each persisted per-model by VS Code.
+ *
+ * 1. `reasoningEffort` — the model MODE dropdown (behavior params: reasoning,
+ *    sampling, template kwargs). Emitted when the model has modes.
+ * 2. `maxOutputTokens` — the output-LENGTH dropdown (see
+ *    {@link resolveOutputLengthOptions}). Emitted ONLY when the model declares
+ *    a VECTOR-form `maxOutputTokens` AND at least two entries survive the
+ *    ceiling — never auto-derived, in keeping with the no-generic-fallback
+ *    contract the mode dropdown follows. Orthogonal to modes by design: the
+ *    length menu is identical for every mode.
+ *
+ * Returns undefined when neither dropdown has anything to show.
  *
  * @param override - Per-model override from `vllm-copilot.models` settings
+ * @param outputCeiling - The output budget the menu is scaled against (discovery
+ *   passes the static pre-pick ceiling); the picker never offers more than the
+ *   model promised.
  */
 export function buildConfigurationSchema(
-  override: Pick<ModelConfig, 'modelModes' | 'defaultMode'> | undefined
+  override: Pick<ModelConfig, 'modelModes' | 'defaultMode' | 'maxOutputTokens'> | undefined,
+  outputCeiling: number
 ): { properties: Record<string, unknown> } | undefined {
+  const properties: Record<string, unknown> = {};
+
   if (override?.modelModes && Object.keys(override.modelModes).length > 0) {
     const modes = Object.keys(override.modelModes);
     const defaultMode = override.defaultMode && modes.includes(override.defaultMode)
       ? override.defaultMode
       : modes[0];
-    return {
-      properties: {
-        reasoningEffort: {
-          type: 'string',
-          title: 'Model Mode',
-          enum: modes,
-          enumItemLabels: modes,
-          default: defaultMode,
-          group: 'navigation',
-        },
-      },
+    properties.reasoningEffort = {
+      type: 'string',
+      title: 'Model Mode',
+      enum: modes,
+      enumItemLabels: modes,
+      default: defaultMode,
+      group: 'navigation',
     };
   }
 
-  return undefined;
+  const lengths = resolveOutputLengthOptions(override?.maxOutputTokens, outputCeiling);
+  if (lengths) {
+    properties.maxOutputTokens = {
+      type: 'number',
+      title: 'Output length',
+      enum: lengths.values,
+      enumItemLabels: lengths.labels,
+      default: lengths.values[0],
+      group: 'navigation',
+    };
+  }
+
+  return Object.keys(properties).length > 0 ? { properties } : undefined;
+}
+
+/** Compact label for a token count: 512 → "512", 16384 → "16K", 1536 → "1.5K". */
+export function formatTokenLabel(tokens: number): string {
+  if (tokens >= 1024) {
+    const k = tokens / 1024;
+    return `${Number.isInteger(k) ? k : k.toFixed(1)}K`;
+  }
+  return String(tokens);
+}
+
+/**
+ * Resolve the output-length dropdown's options and labels from a VECTOR-form
+ * `maxOutputTokens` (ordered; FIRST element is the default). There is
+ * deliberately NO derived fallback: a scalar budget renders no length
+ * dropdown, same no-generic-fallback contract the mode dropdown
+ * follows — preset authors own the menu, runtime invents nothing.
+ *
+ * Entries above `ceiling` are dropped — the menu never offers what the model
+ * was not advertised to deliver (VS Code reserves prompt space against the
+ * advertised output, so an over-ceiling pick could only 400). If the first
+ * vector entry is dropped, the next surviving entry becomes the default.
+ * Returns undefined for the scalar form or when fewer than two distinct valid
+ * options survive.
+ */
+export function resolveOutputLengthOptions(
+  maxOutputTokens: number | number[] | undefined,
+  ceiling: number,
+): { values: number[]; labels: string[] } | undefined {
+  if (!Array.isArray(maxOutputTokens) || !Number.isFinite(ceiling)) {
+    return undefined;
+  }
+  const values = resolveOutputLengthVector(maxOutputTokens)?.filter(n => n <= ceiling);
+  if (!values || values.length < 2) {
+    return undefined;
+  }
+  return { values, labels: values.map(formatTokenLabel) };
 }
 
 /**
@@ -71,8 +236,36 @@ export function buildModelInfo(
    * `[WARN]` line. Optional — omit to suppress.
    */
   onFamilyFallback?: (family: string, modelId: string) => void,
+  /**
+   * The output budget to advertise and wire (discovery passes the tracked
+   * output-length pick, or the legacy mode/config chain value, pre window- and
+   * provider-clamp). Replaces the old contract of CLONING the override with
+   * this scalar — the raw override must stay intact because a vector-form
+   * `maxOutputTokens` inside it IS the Output length menu: a scalar clone
+   * would silently delete the dropdown. Undefined (direct callers, tests)
+   * falls back to the override's own budget — the legacy path.
+   */
+  effectiveOutputTokens?: number,
+  /**
+   * Static output budget the Output-length menu and clamp banners are scaled
+   * against (discovery passes the model budget under the physical clamps only
+   * — window + server-reported, never a mode's `max_tokens`, never the picked
+   * value). The menu must keep offering lengths above the current pick, a
+   * deliberate shorter pick must not read as a clamp warning, and a legacy
+   * per-mode budget must not shrink the menu on a mode switch. Falls back to
+   * the advertised budget when omitted.
+   */
+  outputMenuCeiling?: number,
 ): vscode.LanguageModelChatInformation {
-  const budget = deriveTokenBudget(serverModel.max_model_len, config.maxOutputTokens, override, serverModel.id, reportedMaxOutputTokens);
+  const budget = deriveTokenBudget(
+    serverModel.max_model_len,
+    config.maxOutputTokens,
+    effectiveOutputTokens !== undefined
+      ? { ...override, maxOutputTokens: effectiveOutputTokens }
+      : override,
+    serverModel.id,
+    reportedMaxOutputTokens,
+  );
 
   // Resolve family: preset-declared family is authoritative; otherwise fall back
   // to the heuristic. When the heuristic itself falls through to the org-name
@@ -104,6 +297,8 @@ export function buildModelInfo(
     configurationSchema?: { properties: Record<string, unknown> };
     isBYOK?: boolean;
     statusIcon?: vscode.ThemeIcon;
+    warningText?: Record<string, string>;
+    infoText?: Record<string, string>;
   } = {
     id: presetId,
     name: override?.displayName || presetId,
@@ -119,9 +314,29 @@ export function buildModelInfo(
     isBYOK: true,
   };
 
-  const schema = override ? buildConfigurationSchema(override) : undefined;
+  const schema = buildConfigurationSchema(override, outputMenuCeiling ?? budget.maxOutputTokens);
   if (schema) {
     info.configurationSchema = schema;
+  }
+
+  // Clamp banners compare against the STATIC ceiling, not the picked budget:
+  // a deliberate shorter pick is the feature working, not a clamp to warn about.
+  const bannerBudget = outputMenuCeiling !== undefined
+    ? { ...budget, maxOutputTokens: Math.max(budget.maxOutputTokens, outputMenuCeiling) }
+    : budget;
+  const banners = buildPickerBanners(
+    override,
+    config,
+    bannerBudget,
+    reportedMaxOutputTokens,
+    isVersionAtLeast(INFO_TEXT_MIN_VSCODE, vscode.version),
+    effectiveOutputTokens,
+  );
+  if (banners.warningText) {
+    info.warningText = banners.warningText;
+  }
+  if (banners.infoText) {
+    info.infoText = banners.infoText;
   }
 
   return info;

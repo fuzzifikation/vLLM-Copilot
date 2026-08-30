@@ -33,9 +33,11 @@
 //
 // Token budgets:
 //   - Context window: 1,048,576 tokens
-//   - Moonshot API default max_completion_tokens is 131072 (up to 1048576).
-//     Thinking is always on and eats output budget, so per-mode budgets
-//     below keep >=983K input tokens available at full 1M server context.
+//   - Moonshot API default max_completion_tokens is 131072 (up to 1048576) —
+//     the ladder below adopts that vendor default as its head: thinking is
+//     always on and eats output budget. At full 1M server context even 131072
+//     leaves ~917K input; on smaller serve windows pick a shorter length in the
+//     Output length dropdown to hand tokens back to the prompt.
 //
 // Modes (thinking cannot be turned off — Think (Low) is the "fast" mode):
 //   - Think (Max):  default, deepest reasoning
@@ -55,7 +57,7 @@
     "vllmModelId": "Kimi-K3",
     "displayName": "Kimi K3",
     "family": "kimi_k3",
-    "maxOutputTokens": 65536,
+    "maxOutputTokens": [131072, 65536, 32768, 16384],
     "capabilities": {
       "toolCalling": true,
       "imageInput": true
@@ -63,7 +65,6 @@
     "modelModes": {
       "Think (Max)": {
         "reasoning_effort": "max",
-        "max_tokens": 65536,
         "temperature": 1.0,
         "top_p": 0.95,
         "presence_penalty": 0,
@@ -71,7 +72,6 @@
       },
       "Think (High)": {
         "reasoning_effort": "high",
-        "max_tokens": 32768,
         "temperature": 1.0,
         "top_p": 0.95,
         "presence_penalty": 0,
@@ -79,7 +79,6 @@
       },
       "Think (Low)": {
         "reasoning_effort": "low",
-        "max_tokens": 16384,
         "temperature": 1.0,
         "top_p": 0.95,
         "presence_penalty": 0,

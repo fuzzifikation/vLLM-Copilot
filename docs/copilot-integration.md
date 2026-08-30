@@ -18,7 +18,7 @@ Derived from investigating the Copilot extension's `package.json` and the VS Cod
 
 ## What Copilot does NOT send us
 
-- No `max_tokens` / output limit — Copilot does NOT pass this to providers; we determine it ourselves from `config.maxOutputTokens` (or per-model override)
+- No `max_tokens` / output limit of its own — Copilot never originates an output cap for providers. Since v1.35 `modelConfiguration.maxOutputTokens` may carry the user's pick from our own **Output length** picker (`configurationSchema` property) — that is our schema value echoing back, not a Copilot decision. Either way we clamp it to the advertised ceiling before it reaches the wire.
 - No context truncation hints — Copilot trusts our declared `maxInputTokens` and self-manages
 
 ## What Copilot does with our declared info
@@ -30,7 +30,7 @@ Derived from investigating the Copilot extension's `package.json` and the VS Cod
 | `family` | Capability routing — Copilot picks prompt templates based on family name |
 | `capabilities.toolCalling` | Enables Agent mode for the model |
 | `capabilities.imageInput` | Routes image pastes to the model |
-| `configurationSchema` | Renders settings in model picker UI (e.g., "Model Mode" dropdown) |
+| `configurationSchema` | Renders dropdowns in the model picker UI ("Model Mode" and, when `maxOutputTokens` is an array, "Output length") |
 
 ## How Copilot Builds Prompts
 
@@ -341,13 +341,14 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
 **Our implementation:**
 - Users define `modelModes` in `vllm-copilot.models` — custom parameter presets for each model
 - **Auto-Configure** (invoked from the **Add vLLM Server & Model** command) detects `family`, capabilities, and `defaultParams`. It does **not** synthesize `modelModes` from HuggingFace chat templates — thinking modes require model-specific knowledge that isn't discoverable from Jinja conditionals. Modes come from bundled presets (`model-configs/`) or, for OpenRouter models, from the `reasoning` metadata.
-- We return `configurationSchema` with a `reasoningEffort` property whose enum values are the user's `modelModes` keys, `group: "navigation"`
+- We return `configurationSchema` with a `reasoningEffort` property whose enum values are the user's `modelModes` keys, `group: "navigation"` — and, for models with an ARRAY `maxOutputTokens`, a second independent `maxOutputTokens` property (numeric enum, `group: "navigation"`) rendered as an "Output length" dropdown; its selection owns the request's `max_tokens` **and** the advertised output budget — a pick change re-publishes metadata (provider-tracked, deduped; a pick equal to the advertised ceiling triggers nothing), so Copilot's prompt budget (window − pick) grows when the user picks shorter (see `resolveOutputLengthOptions` in `modelInfo.ts`)
 - **Important:** The `reasoningEffort` property name is what Copilot expects in the schema, but the *values* and *parameters* are completely user-defined. This is a general-purpose parameter preset mechanism — not limited to thinking/reasoning. Any inference parameter (temperature, top_p, chat_template_kwargs, etc.) can be configured per mode.
 - Even models with zero thinking capability benefit from model modes — e.g., "Creative" (high temperature, low top_p) vs "Precise" (low temperature, high top_p), or "Fast" vs "Thorough"
 - On request, we read `options.modelConfiguration.reasoningEffort` and spread the selected mode's parameters into the vLLM request body
 - The title shown in the model picker is "Model Mode" (not "Thinking Effort") to reflect the broader capability
 
 **Context size (not implemented, but possible):**
+- The shipped Output length dropdown (`maxOutputTokens` property, numeric enum, `group: "navigation"`) already proves this schema shape works end-to-end — same mechanism, output side.
 - Claude Sonnet 4.6 exposes `contextSize` as a number enum with `group: "tokens"`
 - To implement: add `contextSize` property to `configurationSchema.properties` with enum of token counts
 - On request, read `options.modelConfiguration.contextSize` and use it to adjust `maxInputTokens`/`maxOutputTokens`

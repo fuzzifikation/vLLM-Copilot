@@ -54,6 +54,39 @@ describe('resolveMaxTokensForRequest', () => {
     const override = { id: 'm', serverUrl: 'http://host:8000', modelModes: { X: { max_tokens: -5 } } };
     expect(resolveMaxTokensForRequest(override, 'X', 4096, 32768)).toBe(1);
   });
+
+  it('picker outranks mode and defaultParams max_tokens', () => {
+    const override = {
+      id: 'm', serverUrl: 'http://host:8000',
+      defaultParams: { max_tokens: 1000 },
+      modelModes: { Think: { max_tokens: 8000 } },
+    };
+    // Even though Think wants 8000, the explicit UI pick (4096) wins.
+    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32768, 4096)).toBe(4096);
+    // Picking the full advertised length still works.
+    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32768, 8000)).toBe(8000);
+  });
+
+  it('clamps the picker pick to the advertised ceiling too', () => {
+    const override = { id: 'm', serverUrl: 'http://host:8000', modelModes: { Think: { max_tokens: 8000 } } };
+    // A stale cached schema offering more than advertised must not exceed it.
+    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32768, 32000)).toBe(8000);
+  });
+
+  it('ignores a non-finite picker value and falls back to mode/defaultParams', () => {
+    const override = {
+      id: 'm', serverUrl: 'http://host:8000',
+      defaultParams: { max_tokens: 1000 },
+      modelModes: { Think: { max_tokens: 8000 } },
+    };
+    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32768, Number.NaN)).toBe(8000);
+    // undefined picker → legacy resolution unchanged.
+    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32768, undefined)).toBe(8000);
+  });
+
+  it('floors a fractional picker pick', () => {
+    expect(resolveMaxTokensForRequest(undefined, undefined, 8000, 32768, 4096.9)).toBe(4096);
+  });
 });
 
 // ── resolveServerType ───────────────────────────────────────────────────
@@ -253,6 +286,24 @@ describe('validateConfig', () => {
   it('warns on maxOutputTokens <= 0', () => {
     expect(validateConfig(withModel({ maxOutputTokens: 0 })).length).toBeGreaterThan(0);
     expect(validateConfig(withModel({ maxOutputTokens: -1 })).length).toBeGreaterThan(0);
+  });
+
+  it('accepts a valid descending maxOutputTokens vector without warning', () => {
+    expect(validateConfig(withModel({ maxOutputTokens: [16384, 8192, 4096] }))).toHaveLength(0);
+  });
+
+  it('warns on a malformed maxOutputTokens vector', () => {
+    // Empty array is indistinguishable from omitting the field — still a typo.
+    expect(validateConfig(withModel({ maxOutputTokens: [] })).some(w => w.includes('maxOutputTokens'))).toBe(true);
+    // Non-positive or fractional entries break the enum contract.
+    expect(validateConfig(withModel({ maxOutputTokens: [8192, 0] })).some(w => w.includes('positive integers'))).toBe(true);
+    expect(validateConfig(withModel({ maxOutputTokens: [8192, 4096.5] })).some(w => w.includes('positive integers'))).toBe(true);
+    // Ascending order (or duplicates) violate "first entry is the default, strictly descending".
+    expect(validateConfig(withModel({ maxOutputTokens: [8192, 16384] })).some(w => w.includes('descending'))).toBe(true);
+    expect(validateConfig(withModel({ maxOutputTokens: [8192, 8192] })).some(w => w.includes('descending'))).toBe(true);
+    // More than 8 entries — the picker only offers the first 8.
+    const nine = Array.from({ length: 9 }, (_, i) => (9 - i) * 1024);
+    expect(validateConfig(withModel({ maxOutputTokens: nine })).some(w => w.includes('first 8'))).toBe(true);
   });
 
   it('warns on estimateCharsPerToken <= 0', () => {

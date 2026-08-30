@@ -71,7 +71,7 @@ The backend is auto-detected when you add a server and in Model Settings; it can
 
 ### What every backend gets
 
-Native Copilot integration (chat, tools, vision, streaming), model modes, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue on empty responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
+Native Copilot integration (chat, tools, vision, streaming), model modes, output length picker, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue on empty responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
 
 ### What is vLLM-only
 
@@ -103,6 +103,7 @@ Everything else lives on each model entry. The important fields:
 - **`maxOutputTokens`** / **`maxInputTokens`** — output cap and the computed input budget.
 - **`defaultParams`** — model-wide baseline request params (snake_case vLLM body keys).
 - **`modelModes`** / **`defaultMode`** — switchable named presets, and which one starts active.
+- **`maxOutputTokens`** — max response tokens. As an **array**, an ordered list of token counts shown as a second model-picker dropdown ("Output length"), independent of modes: the first entry is the default and the desired budget; when the dropdown is present the user's pick overrides `max_tokens`.
 - **`capabilities`** — `toolCalling` (default true) and `imageInput` (vision, default false).
 - **`autoContinueRetries`** — retries for empty/truncated responses (default 1).
 - **`systemMessageReplacementsFile`** — path to a find/replace JSON file for system messages.
@@ -151,6 +152,8 @@ Model modes are **named configurations** for a model that you switch between fro
 ```
 
 The **Add vLLM Server & Model** command auto-generates modes from bundled presets (`model-configs/`) or HuggingFace data. Model-specific recommendations (e.g. Qwen sampling parameters): **[Model Modes & inference parameters](modelmodes.md)**.
+
+Output **length** is deliberately not a mode knob. Models and presets whose `maxOutputTokens` is an **array** get a second, independent **"Output length"** dropdown next to the mode picker; the user's pick overrides any `max_tokens` set in modes or `defaultParams` (always clamped to the model's ceiling). The pick is also what the extension **advertises** to Copilot as the output budget — and since Copilot derives the prompt budget as (context − output), **a shorter pick hands the freed tokens to your prompt**: more headroom for long conversations when you don't need a 64K answer. A **shorter** pick lands on the very next response's `max_tokens` instantly; a **longer** pick lands once Copilot's context display re-resolves on the first request after the change (the extension re-publishes model metadata then — the same mechanism, and the same one-request lag, mode switches use). The wire never exceeds the advertised output budget: Copilot sizes the prompt against it, so promising more could overflow the context window (or hard-fail on providers that validate it). If you pinned `maxInputTokens` explicitly, you own the split and the trade-off does not apply. Modes describe behavior — thinking depth, sampling — not response size.
 
 ---
 
@@ -264,6 +267,7 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 | [Using OpenRouter](openrouter.md) | OpenRouter setup, URL table, manual config, attribution headers. |
 | [Custom System Prompt / Personality Presets](custom-system-prompt.md) | System-prompt capture & replace pipeline. |
 | [Auto-Continue](auto-continue.md) | Empty/truncated response retry — how it works, config, and known limitations. |
+| [Agents window](agents-window.md) | Using vLLM models in the VS Code "Open in Agents" window (Agent Host BYOK). |
 | [Copilot integration](copilot-integration.md) | How the extension plugs into Copilot, sessions, tool calls. |
 
 **Maintainer-only docs:** [OpenRouter architecture](openrouter-integration.md) · [Third-party compatibility plan](thirdparty-compatibility-plan.md) · [SGLang compat plan](sglang-compat-plan.md) · [Feature ideas](feature-ideas.md) · [Code review](code-review.md).

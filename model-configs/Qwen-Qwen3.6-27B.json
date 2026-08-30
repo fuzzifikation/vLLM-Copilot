@@ -21,7 +21,8 @@
 //
 // Token budgets:
 //   - Context window: 262,144 tokens (fixed by vLLM)
-//   - maxOutputTokens: 32,768 (official recommendation for "most queries")
+//   - maxOutputTokens ladder [32768, 16384, 8192] — default 32,768 (official
+//     recommendation for "most queries"), 8,192 for quick answers
 //   - maxInputTokens: auto-computed as ~229,376 (context window minus output)
 //   - For complex tasks needing larger output, increase maxOutputTokens in settings
 //
@@ -45,7 +46,7 @@
     "vllmModelId": "Qwen3.6-27B",
     "displayName": "Qwen3.6-27B",
     "family": "qwen3_5",
-    "maxOutputTokens": 32768,
+    "maxOutputTokens": [32768, 16384, 8192],
     "capabilities": {
       "toolCalling": true,
       "imageInput": true

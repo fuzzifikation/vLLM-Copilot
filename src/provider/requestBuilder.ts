@@ -94,6 +94,15 @@ export function buildRequest(
     ? modelConfiguration.reasoningEffort as string
     : undefined;
 
+  // Output-length picker (second `navigation` property in configurationSchema):
+  // an explicit user pick that outranks mode/defaultParams max_tokens. Only the
+  // type check happens here — normalization and the ceiling clamp are owned by
+  // resolveMaxTokensForRequest, so a stale cached schema can never push
+  // max_tokens above what Copilot was told the model can do. Non-numeric
+  // (absent dropdown) → undefined → legacy resolution.
+  const pickerTokensRaw = modelConfiguration?.maxOutputTokens;
+  const pickerTokens = typeof pickerTokensRaw === 'number' ? pickerTokensRaw : undefined;
+
   const modeParams = selectedMode && override?.modelModes?.[selectedMode]
     ? override.modelModes[selectedMode]
     : undefined;
@@ -101,8 +110,9 @@ export function buildRequest(
   const mergedOptions: Record<string, unknown> = {
     // Layered params: defaults ← (max_tokens + Copilot modelOptions) ← defaultParams ← mode.
     // Copilot's modelOptions can carry arbitrary keys (incl. a UI max_tokens); a
-    // max_tokens from there is re-asserted below, so maxOutputTokens remains the
-    // only source of the output budget.
+    // max_tokens from there is re-asserted below, so Copilot's UI value never
+    // reaches the wire — the output budget is owned by the model config, or by
+    // the output-length picker when the model declares a maxOutputTokens vector.
     ...resolveRequestParams(override, selectedMode, {
       max_tokens: model.maxOutputTokens,
       ...options.modelOptions,
@@ -129,6 +139,7 @@ export function buildRequest(
     selectedMode,
     model.maxOutputTokens,
     (model.maxInputTokens || 0) + (model.maxOutputTokens || 0),
+    pickerTokens,
   );
 
   // OpenRouter provider pinning: when the model is OpenRouter and the user has

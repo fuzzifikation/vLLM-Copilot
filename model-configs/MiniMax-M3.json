@@ -26,8 +26,10 @@
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
 //
 // Token budgets:
-//   - Context window: 1,048,576 tokens; per-mode budgets below leave
-//     >=983K input tokens at full 1M server context.
+//   - Context window: 1,048,576 tokens; the maxOutputTokens ladder below
+//     (default 131,072) leaves ~917K input tokens at full 1M server context.
+//     On smaller serve windows pick a shorter length in the Output length
+//     dropdown to keep input headroom.
 //
 // Modes:
 //   - Think (Always):   card-recommended for agentic use (Copilot requests)
@@ -47,7 +49,7 @@
     "vllmModelId": "MiniMax-M3",
     "displayName": "MiniMax M3",
     "family": "minimax_m3",
-    "maxOutputTokens": 65536,
+    "maxOutputTokens": [131072, 65536, 32768, 16384],
     "capabilities": {
       "toolCalling": true,
       "imageInput": true
@@ -57,7 +59,6 @@
         "chat_template_kwargs": {
           "thinking_mode": "enabled"
         },
-        "max_tokens": 65536,
         "temperature": 1.0,
         "top_p": 0.95,
         "top_k": 40
@@ -66,7 +67,6 @@
         "chat_template_kwargs": {
           "thinking_mode": "adaptive"
         },
-        "max_tokens": 32768,
         "temperature": 1.0,
         "top_p": 0.95,
         "top_k": 40
@@ -75,7 +75,6 @@
         "chat_template_kwargs": {
           "thinking_mode": "disabled"
         },
-        "max_tokens": 16384,
         "temperature": 1.0,
         "top_p": 0.95,
         "top_k": 40

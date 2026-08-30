@@ -50,6 +50,73 @@ export async function ensureByokUtilityDefault(): Promise<void> {
 }
 
 /**
+ * VS Code setting keys for the Agent Host (VS Code 1.135+, experimental). The
+ * "Open in Agents" window runs Copilot-harness sessions in a separate Agent
+ * Host process that does NOT see LanguageModelChatProvider models unless
+ * BYOK/extension-provider models are explicitly allowed:
+ * - `chat.agentHost.byokModels.enabled` — exposes provider models to agent-host
+ *   sessions (docs: "AI language models in VS Code", BYOK note).
+ * - `extensions.supportAgentsWindow` — opt-in map deciding which extensions
+ *   activate inside the Agents window (docs: "Use the Agents window").
+ * Both are gated on registration at runtime (absent on older builds) and take
+ * effect only after the agent host process restarts.
+ */
+const AGENT_HOST_BYOK_MODELS_SECTION_KEY = 'agentHost.byokModels.enabled';
+const SUPPORT_AGENTS_WINDOW_SECTION_KEY = 'supportAgentsWindow';
+/** Publisher-qualified id — must match package.json (publisher.name). */
+const OUR_EXTENSION_ID = 'System-Sciences.vllm-copilot';
+
+/**
+ * Enable our models inside Agent Host sessions ("Open in Agents" window).
+ *
+ * Same rules as {@link ensureByokUtilityDefault}: unregistered setting on this
+ * VS Code build → skip; the user has written an explicit value → respect it,
+ * including an explicit `false` (that is an opt-out, not an oversight). For
+ * `supportAgentsWindow` (a map), only OUR key is considered — other
+ * extensions' entries are preserved, and only a missing entry is added.
+ *
+ * @internal Exported for testing.
+ */
+export async function ensureAgentHostModelsEnabled(): Promise<void> {
+  const chatConfig = vscode.workspace.getConfiguration('chat');
+  const byokInspected = chatConfig.inspect(AGENT_HOST_BYOK_MODELS_SECTION_KEY);
+  // Absent defaultValue = this VS Code build doesn't know the setting (pre-1.135).
+  if (
+    byokInspected?.defaultValue !== undefined &&
+    byokInspected.globalValue === undefined &&
+    byokInspected.workspaceValue === undefined
+  ) {
+    try {
+      await chatConfig.update(
+        AGENT_HOST_BYOK_MODELS_SECTION_KEY,
+        true,
+        vscode.ConfigurationTarget.Global
+      );
+    } catch {
+      // Not writable on this VS Code build — ignore.
+    }
+  }
+
+  const extConfig = vscode.workspace.getConfiguration('extensions');
+  const windowInspected = extConfig.inspect(SUPPORT_AGENTS_WINDOW_SECTION_KEY);
+  if (windowInspected?.defaultValue !== undefined) {
+    const current =
+      extConfig.get<Record<string, boolean>>(SUPPORT_AGENTS_WINDOW_SECTION_KEY) ?? {};
+    if (current[OUR_EXTENSION_ID] === undefined) {
+      try {
+        await extConfig.update(
+          SUPPORT_AGENTS_WINDOW_SECTION_KEY,
+          { ...current, [OUR_EXTENSION_ID]: true },
+          vscode.ConfigurationTarget.Global
+        );
+      } catch {
+        // Not writable on this VS Code build — ignore.
+      }
+    }
+  }
+}
+
+/**
  * Configure the BYOK utility model default setting. Lets the user choose
  * between using the main agent model, GitHub Copilot, or none for utility
  * flows. This is the manual counterpart to the auto-configuration above.

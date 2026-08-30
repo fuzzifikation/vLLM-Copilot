@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM integration to GitHub Copilot for professional (and self-hosted) servers (supports full featureset of vLLM and Copilot). No subscription, no telemetry — no work content to any third party. Live observability: queue status, KV-cache, throughput, etc and full UI (dashboard). Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
-  "version": "1.34.0",
+  "version": "1.35.0",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -20,7 +20,7 @@
   },
   "icon": "docs/images/logo.png",
   "engines": {
-    "vscode": "^1.125.0"
+    "vscode": "^1.128.0"
   },
   "enabledApiProposals": [
     "chatProvider",
@@ -459,7 +459,7 @@
     "@babel/parser": "^7.29.7",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^26.1.1",
-    "@types/vscode": "^1.125.0",
+    "@types/vscode": "^1.128.0",
     "@vitest/coverage-v8": "^4.1.10",
     "jsdom": "^29.1.1",
     "license-checker-rseidelsohn": "^5.0.1",

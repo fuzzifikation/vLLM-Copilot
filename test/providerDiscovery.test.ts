@@ -213,4 +213,118 @@ describe('clearCache (invalidation + change event)', () => {
     const silent = await provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
     expect(silent[0].maxOutputTokens).toBe(8000);
   });
+
+  it('advertises the picked OUTPUT LENGTH with grown input budget; the menu keeps bigger options', async () => {
+    // The output-length pick IS the advertised output budget: Copilot's context
+    // math (window − output) hands the freed tokens to the prompt. The dropdown
+    // menu is filtered by the static ceiling, so 4096 stays selectable at 2048.
+    const modelWithLengths = {
+      models: [{
+        id: 'm1', serverUrl: server, family: 'test-family',
+        maxOutputTokens: [4096, 2048],
+      }],
+      enableFileLogging: false,
+    } as VllmConfig;
+    const client = fakeClient({
+      getConfigCached: vi.fn(async () => modelWithLengths),
+      getModelContextWindow: vi.fn(async () => ({ contextWindow: 8192 })),
+    });
+    const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+
+    const first = await provider.provideLanguageModelChatInformation({ silent: false }, makeToken());
+    expect(first[0].maxOutputTokens).toBe(4096); // default = ceiling
+    expect(first[0].maxInputTokens).toBe(8192 - 4096);
+
+    // User picks 2048 in the dropdown → the next request carries the pick →
+    // metadata re-registers with the picked budget.
+    await provider.provideLanguageModelChatResponse(
+      { id: 'm1', maxOutputTokens: 4096, maxInputTokens: 4096 } as any,
+      [{ content: [] }] as any,
+      { modelConfiguration: { maxOutputTokens: 2048 } } as any,
+      { report: vi.fn() } as any,
+      makeToken(),
+    );
+
+    const refresh = await provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+    expect(refresh[0].maxOutputTokens).toBe(2048);         // advertised output = pick
+    expect(refresh[0].maxInputTokens).toBe(8192 - 2048);   // freed tokens grew the prompt budget
+    const enumVals = ((refresh[0] as any).configurationSchema as any)?.properties?.maxOutputTokens?.enum;
+    expect(enumVals).toEqual([4096, 2048]);                // menu NOT filtered by the pick
+    // A deliberate pick is not a clamp — no false warning banner.
+    expect((refresh[0] as any).warningText?.output_limit).toBeUndefined();
+  });
+
+  it('a legacy per-mode max_tokens never shrinks the Output-length menu and the pick outranks it', async () => {
+    // Menu/banner ceilings derive from the model's own budget under the
+    // PHYSICAL clamps only. A selected mode's max_tokens (legacy layer) must
+    // not collapse the dropdown on a mode switch, and a deliberate pick beats
+    // it — the advertised budget follows the pick, not the mode.
+    const modelWithModeCap = {
+      models: [{
+        id: 'm1', serverUrl: server, family: 'test-family',
+        maxOutputTokens: [4096, 2048],
+        modelModes: { Fast: { max_tokens: 1024 } },
+      }],
+      enableFileLogging: false,
+    } as VllmConfig;
+    const client = fakeClient({
+      getConfigCached: vi.fn(async () => modelWithModeCap),
+      getModelContextWindow: vi.fn(async () => ({ contextWindow: 8192 })),
+    });
+    const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+
+    const first = await provider.provideLanguageModelChatInformation({ silent: false }, makeToken());
+    expect(first[0].maxOutputTokens).toBe(4096);
+
+    // Switch to the capped mode while the default 4096 pick stays in place.
+    await provider.provideLanguageModelChatResponse(
+      { id: 'm1', maxOutputTokens: 4096, maxInputTokens: 4096 } as any,
+      [{ content: [] }] as any,
+      { modelConfiguration: { reasoningEffort: 'Fast', maxOutputTokens: 4096 } } as any,
+      { report: vi.fn() } as any,
+      makeToken(),
+    );
+
+    const refresh = await provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+    expect(refresh[0].maxOutputTokens).toBe(4096); // pick outranks the mode's 1024 cap
+    const enumVals = ((refresh[0] as any).configurationSchema as any)?.properties?.maxOutputTokens?.enum;
+    expect(enumVals).toEqual([4096, 2048]);        // menu survived the mode switch intact
+    expect((refresh[0] as any).warningText?.output_limit).toBeUndefined();
+  });
+
+  it('skips re-registration when the pick already equals the advertised output (default pick)', async () => {
+    // VS Code merges the schema default into every request, so the default pick
+    // arrives on EVERY request — re-registering for it would refetch context
+    // windows forever. Only an actual change may invalidate the cache.
+    const modelWithLengths = {
+      models: [{
+        id: 'm1', serverUrl: server, family: 'test-family',
+        maxOutputTokens: [4096, 2048],
+      }],
+      enableFileLogging: false,
+    } as VllmConfig;
+    const client = fakeClient({
+      getConfigCached: vi.fn(async () => modelWithLengths),
+      getModelContextWindow: vi.fn(async () => ({ contextWindow: 8192 })),
+    });
+    const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+
+    const first = await provider.provideLanguageModelChatInformation({ silent: false }, makeToken());
+    expect(client.getConfigCached).toHaveBeenCalledTimes(1);
+
+    await provider.provideLanguageModelChatResponse(
+      { id: 'm1', maxOutputTokens: 4096, maxInputTokens: 4096 } as any,
+      [{ content: [] }] as any,
+      { modelConfiguration: { maxOutputTokens: 4096 } } as any, // the default pick
+      { report: vi.fn() } as any,
+      makeToken(),
+    );
+    // The request itself reads config for routing — count from AFTER it, so
+    // only a spurious re-discovery could increase this number.
+    const callsAfterRequest = vi.mocked(client.getConfigCached).mock.calls.length;
+
+    const silent = await provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+    expect(silent).toBe(first); // same cache array — nothing was invalidated
+    expect(client.getConfigCached).toHaveBeenCalledTimes(callsAfterRequest);
+  });
 });

@@ -17,7 +17,8 @@
 //
 // Token budgets:
 //   - Context window: 262,144 tokens (256K official, vLLM rounds up)
-//   - maxOutputTokens: 32,768 (safe default for most queries)
+//   - maxOutputTokens ladder [32768, 16384, 8192] — default 32,768 (safe for
+//     most queries), 8,192 for quick answers
 //   - maxInputTokens: auto-computed as ~229,376 (context window minus output)
 //   - For complex tasks needing larger output, increase maxOutputTokens in settings
 //
@@ -41,7 +42,7 @@
     "vllmModelId": "Hy3",
     "displayName": "Hy3",
     "family": "hy_v3",
-    "maxOutputTokens": 32768,
+    "maxOutputTokens": [32768, 16384, 8192],
     "capabilities": {
       "toolCalling": true,
       "imageInput": false

@@ -15,11 +15,22 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
   private modelContextWindows = new Map<string, number>();
 
   /**
-   * Last selected model mode per picker id ('' = none). Used to re-register
-   * model metadata with the selected mode's `max_tokens` output budget so
-   * Copilot's context-window bar reflects the active mode (Option A).
+   * Last selected model mode per picker id ('' = none). A mode switch
+   * re-registers model metadata so Copilot's context-window bar reflects the
+   * active mode's budget — the mode's `max_tokens` while no output-length pick
+   * exists, and otherwise the mode's behavior params with the picked length
+   * still owning the output budget (the pick outranks per-mode `max_tokens`).
    */
   private lastSelectedMode = new Map<string, string>();
+
+  /**
+   * Last selected output LENGTH per picker id (absent = no dropdown/never
+   * picked). The pick IS the advertised output budget — a shorter selection
+   * grows the advertised input budget (window − output), handing the freed
+   * tokens to the prompt — so a change re-registers metadata exactly like a
+   * mode switch does, and Copilot's context math reacts on the next resolve.
+   */
+  private lastSelectedLength = new Map<string, number>();
 
   /** Instance-owned system-message pipeline (replacements + capture). */
   private readonly systemMessages: SystemMessagePipeline;
@@ -53,28 +64,50 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     this.cachedModels = null;
     this.modelContextWindows.clear();
     this.lastSelectedMode.clear();
+    this.lastSelectedLength.clear();
     this.client.invalidateConfigCache();
     this._onDidChangeLanguageModelChatInformation.fire();
   }
 
   /**
-   * Track a model's selected mode and, when it changes, re-publish model
-   * metadata so Copilot re-resolves and its context-window bar reflects the
-   * mode's `max_tokens` output budget. Deduped per model: switching between
-   * modes re-registers once per change; the first no-mode request is the
-   * baseline and triggers nothing.
+   * Track the per-model picker selections (mode + output length) and, when
+   * either changes, re-publish model metadata so Copilot re-resolves and its
+   * context-window math reflects the new budget. A mode switch re-anchors the
+   * budget via the mode's `max_tokens` (legacy); an output-length pick IS the
+   * advertised output budget (shorter pick = more prompt headroom). Deduped per
+   * model; a length-only change whose pick already equals the advertised output
+   * (the default pick == ceiling case) skips the otherwise-identical
+   * re-registration roundtrip.
    */
-  private trackModeSelection(modelId: string, selectedMode: string | undefined): void {
-    const key = selectedMode ?? '';
-    const prior = this.lastSelectedMode.get(modelId);
-    if (prior === key) return;
-    this.lastSelectedMode.set(modelId, key);
-    // Baseline (no mode ever selected): metadata already matches — nothing to re-register.
-    if (prior === undefined && key === '') return;
+  private trackConfigSelection(
+    modelId: string,
+    selectedMode: string | undefined,
+    selectedLength: number | undefined,
+  ): void {
+    const priorMode = this.lastSelectedMode.get(modelId);
+    const priorLength = this.lastSelectedLength.get(modelId);
+    const modeChanged = (priorMode ?? '') !== (selectedMode ?? '');
+    const lengthChanged = priorLength !== selectedLength;
+    if (!modeChanged && !lengthChanged) return;
+    // Baseline (nothing ever selected, nothing selected now): metadata already
+    // matches the static budget — nothing to re-register.
+    if (priorMode === undefined && priorLength === undefined && !selectedMode && selectedLength === undefined) return;
+
+    this.lastSelectedMode.set(modelId, selectedMode ?? '');
+    if (selectedLength === undefined) this.lastSelectedLength.delete(modelId);
+    else this.lastSelectedLength.set(modelId, selectedLength);
+
+    // Length-only change, pick already advertised: re-registering would
+    // re-fetch context windows to produce identical metadata.
+    if (!modeChanged && selectedLength !== undefined) {
+      const advertised = this.cachedModels?.find(m => m.id === modelId)?.maxOutputTokens;
+      if (advertised === selectedLength) return;
+    }
+
     // Increment the generation so any in-flight discovery captured BEFORE this
     // change cannot restore stale metadata when it completes (same
     // generation-invalidating pattern as clearCache). Then invalidate + fire so
-    // Copilot re-resolves with the mode's budget.
+    // Copilot re-resolves with the new budget.
     this.modelCacheGeneration++;
     this.cachedModels = null;
     this._onDidChangeLanguageModelChatInformation.fire();
@@ -120,6 +153,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         this.output,
         (modelId, contextWindow) => contextWindows.set(modelId, contextWindow),
         this.lastSelectedMode,
+        this.lastSelectedLength,
       );
       if (generation === this.modelCacheGeneration) {
         this.cachedModels = models;
@@ -170,15 +204,19 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       return;
     }
 
-    // Track the selected model mode so re-registered metadata (and Copilot's
-    // context-window bar) reflects the mode's output budget (Option A: max_tokens
-    // per mode). Read before delegating — the request builder uses the same
-    // `modelConfiguration` field to select the mode's request params.
+    // Track the selected model mode and output length so re-registered metadata
+    // (and Copilot's context-window bar) reflects the picked output budget. Read
+    // before delegating — the request builder uses the same `modelConfiguration`
+    // field to select the mode's request params and the request's max_tokens.
     const modelConfiguration = (options as any).modelConfiguration as Record<string, unknown> | undefined;
     const selectedMode = typeof modelConfiguration?.reasoningEffort === 'string'
       ? modelConfiguration.reasoningEffort
       : undefined;
-    this.trackModeSelection(model.id, selectedMode);
+    const pickerTokensRaw = modelConfiguration?.maxOutputTokens;
+    const selectedLength = typeof pickerTokensRaw === 'number' && Number.isFinite(pickerTokensRaw)
+      ? Math.max(1, Math.floor(pickerTokensRaw))
+      : undefined;
+    this.trackConfigSelection(model.id, selectedMode, selectedLength);
 
     await runChatResponse(
       {

@@ -7,8 +7,8 @@
 # vLLM-Copilot
 [![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot) [![vLLM](https://img.shields.io/badge/vLLM-Primary-01C286)](https://github.com/vllm-project/vllm) [![OpenRouter Supported](https://img.shields.io/badge/OpenRouter-Supported-00B3A6?logo=openrouter&logoColor=white)](https://openrouter.ai) [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
 
-**Your vLLM serverved models inside GitHub Copilot. Built for teams and production.**
-GitHub Copilot provides the familiar chat, tools, and model picker; You provide the model. No data ever gets sent to Copilot!
+**Your vLLM-served models inside GitHub Copilot and the VS Code Agents window. Built for teams and production.**
+GitHub Copilot provides the familiar chat, tools, and model picker; You provide the model. Requests to your models — prompts, code, context — are never sent to Copilot!
 **Multi-server, multi-user.** Full vLLM request control, live observability, strict data residency. Also works with OpenRouter (400+ cloud models, no local infrastructure, many free options), llama.cpp, LM Studio, and Ollama.
 </div>
 
@@ -18,8 +18,9 @@ For teams running AI on their own vLLM servers for many users, this gives you th
 - **Data handling**: **No subscription. No affiliation. No central service. No telemetry.** Prompts, code, and company data go only to each model's configured inference server — they are never sent to GitHub Copilot or GitHub. Other extension traffic (model metadata from HuggingFace, curated presets from GitHub) carries no work content.
 - **Production vLLM observability**: a live dashboard of server availability, queue status, KV-cache usage, TTFT, throughput, per-request token details, and a cumulative token & cost tracker. Your admins and users will know what is going on!
 - **Multi-server, multi-user by design**: each server and model carries its own endpoint, auth, sampling, and token budget. Different teams, environments, or credentials stay isolated and independently managed. But all models are available in the model picker of familiar Copilot!
-- **Full request control**: model modes give you any vLLM parameter, such as thinking effort, sampling, structured output, and token budgets. Switch them per model from the Copilot picker.
+- **Full request control**: model modes give you any vLLM parameter, such as thinking effort, sampling, and structured output — plus a dedicated **Output length** dropdown to cap response length on the fly. Switch both per model from the Copilot picker.
 - **OpenRouter**: add any of **~415 cloud models** in a few clicks. Useful for teams without GPU capacity. Real context window, capabilities, pricing, and **actual spend** (`usage.cost`) show on the dashboard. See [Using OpenRouter](#using-openrouter).
+- **Works in the VS Code Agents window**: your vLLM models in the new "Open in Agents" agent cockpit — autonomous sessions, worktree isolation, all of it. Auto-enabled since v1.35.0, nothing to configure, just restart VS Code. See [Agents window guide](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md).
 - **Other backends supported**: llama.cpp, LM Studio, and Ollama alongside vLLM, each with core features like chat, streaming, tools, personalities, and usage tracking.
 
 <div align="center">
@@ -64,7 +65,7 @@ If you want to support this work: [![Sponsor via PayPal](https://img.shields.io/
 3. **Add your vLLM server & model:** *(same for llama.cpp, lm-studio, ollama)* in the Dashboard, click **Add or Reconfigure Server/Model** at the bottom of the tree → enter your server URL → *(optional) enter vLLM API key and HTTP request headers from IT* → pick a model → done. The extension auto-configures the model (family, capabilities, context window) from curated presets (bundled, and refreshed live from GitHub when online) or HuggingFace.
 4. **Edit settings** *(optional)*: open the **Model Settings** view (below the Dashboard) to adjust displayName, params, model modes, and more. No `settings.json` editing required.
 5. **Change the personality** *(optional)*: in **Model Settings**, pick a model and choose a personality from the dropdown in its **General** section (or `Ctrl+Shift+P` → **Set Model Personality**). Pick **Default (no personality)** later to clear it.
-6. **Chat:** Open Copilot Chat, pick your model from the dropdown. Switch modes from the same picker.
+6. **Chat:** Open Copilot Chat, pick your model from the dropdown. Switch modes — and, where a model defines lengths, the output length — from the same picker.
 
 </td></tr>
 </table>
@@ -116,6 +117,7 @@ coding, and creative work, including their sampling and vLLM-specific request se
 | Multiple servers (per-model endpoint) | ✅ | ✅ |
 | Custom request headers (auth tokens) | ✅ | ✅ |
 | Thinking-effort picker (enum only) | ✅ | ✅ (as model mode) |
+| Output length picker (predefined response caps) | ❌ | ✅ (second picker dropdown) |
 | Arbitrary `chat_template_kwargs` (including `enable_thinking`) | ❌ | ✅ (switchable per model mode) |
 | Sampling params (basic: `temperature`, `top_p`) | ✅ (fixed per model) | ✅ (configurable per model and per model mode) |
 | Advanced sampling parameters (`top_k`, `min_p`, `repetition_penalty`, `length_penalty`, etc.) | ❌ | ✅ (switchable per model mode) |
@@ -212,7 +214,9 @@ A visual editor for per-model configuration, no `settings.json` required:
 - **Thinking toggles**: `enable_thinking: true/false` (from bundled presets)
 - **Sampling presets**: temperature/top_p combinations for creative vs. precise output
 - **Structured output**: JSON schema enforcement for data extraction
-- **Anything vLLM supports**: bad words, repetition detection, token budgets
+- **Anything vLLM supports**: bad words, repetition detection, request shaping
+
+**Output length is not a mode knob** — models and presets whose `maxOutputTokens` is an **array** of response lengths (bundled presets do) get a second, independent **Output length** dropdown next to the mode picker (e.g. 16K / 32K / 64K), so you cap response length per request without touching settings. VS Code remembers your pick per model — and a shorter pick hands the freed tokens back to your prompt: Copilot's input budget grows to match.
 
 **Add vLLM Server & Model** auto-generates modes from bundled presets (or OpenRouter reasoning metadata). An example config and the full syntax are in the [Manual → Model modes](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md#model-modes).
 </td>
@@ -297,7 +301,7 @@ Beyond the basics, vLLM request-body parameters give you full request control. C
 
 The backend is auto-detected on Add Server and in Model Settings; set it explicitly per model via `serverType`.
 
-**Every backend gets:** native Copilot integration (chat, tools, vision, streaming), model modes, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue on empty responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
+**Every backend gets:** native Copilot integration (chat, tools, vision, streaming), model modes, output length picker, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue on empty responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
 
 **vLLM-only:** vLLM-specific request parameters, per-request server metrics (TTFT/TPOT, KV cache, speculative decoding), and the Deep-Dive webview. Other backends show client-measured throughput instead; the dashboard shows only the rows each backend actually reports and resolves the model's context window per backend.
 
@@ -381,6 +385,8 @@ Every donation is appreciated, even a coffee. It keeps local AI development free
 ## More details
 
 This page covers the essentials. Every setting, parameter, and backend detail is in the [vLLM-Copilot Manual](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md).
+
+Your vLLM servers are not limited to VS Code: the [GitHub Copilot CLI](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/copilot-cli.md) terminal agent runs on them too, via three environment variables. And since v1.35.0 your models work in the VS Code [Agents window](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md) ("Open in Agents") — enabled automatically, nothing to configure.
 
 ---
 

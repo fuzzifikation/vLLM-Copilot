@@ -41,7 +41,7 @@ You are editing the \`vllm-copilot.models\` array in the user's VS Code \`settin
 ## Parameter resolution (highest wins)
 server defaults (unset params omitted) → entry.\`defaultParams\` → the selected entry.\`modelModes[<selected mode>]\`
 
-So a mode overrides \`defaultParams\`, and \`defaultParams\` overrides the server's default. Any parameter you do not set anywhere is omitted from the request — the server decides.
+So a mode overrides \`defaultParams\`, and \`defaultParams\` overrides the server's default. Any parameter you do not set anywhere is omitted from the request — the server decides.\nException: when \`maxOutputTokens\` is an ARRAY, the user's **Output length** picker selection outranks *every* \`max_tokens\` layer (mode, defaultParams, scalar budget) — see below.
 
 ## Model modes (\`modelModes\`)
 - An object whose keys are user-visible mode labels ("Think", "No Think", ...) and whose values are param objects merged into the request body when that mode is active.
@@ -49,8 +49,7 @@ So a mode overrides \`defaultParams\`, and \`defaultParams\` overrides the serve
 - \`defaultMode\` must match one of the \`modelModes\` keys; if omitted or invalid, the first key is used.
 - Keep mode labels short and consistent with the model's actual capabilities (does it support thinking? vision?).
 
-## Gotchas
-- \`max_tokens\` inside \`defaultParams\`/\`modelModes\` sets the OUTPUT BUDGET for that scope — it overrides \`maxOutputTokens\` and is clamped to the model's context window AND the server-reported output ceiling. Set it per-mode to give a mode its own response ceiling (e.g. "Think" = 32k, "No Think" = 8k).
+## Gotchas\n- \`max_tokens\` inside \`defaultParams\`/\`modelModes\` sets the OUTPUT BUDGET for that scope — it overrides \`maxOutputTokens\` and is clamped to the model's context window AND the server-reported output ceiling. Prefer an ARRAY \`maxOutputTokens\` (next bullet) over per-mode \`max_tokens\` for length control — modes should describe *behavior* (thinking, sampling), not output length.\n- \`maxOutputTokens\`: number OR ordered array of token counts. A number is a plain cap. An array is shown as a second model-picker dropdown ("Output length"), independent of \`modelModes\`: FIRST element = default AND desired output budget, entries above the model's clamped ceiling are dropped, fewer than 2 usable values = no dropdown at all. When the dropdown exists, the user's pick OWNS the request's \`max_tokens\` AND is the advertised output budget — a shorter pick grows the prompt budget (context − output). Example: \`"maxOutputTokens": [65536, 32768, 16384]\`. Never combine it with \`max_tokens\` in modes or \`defaultParams\`: VS Code delivers the dropdown's default even when the user never touches it, so the mode-level values are completely dead config — the picker replaces that layer, it does not merely outrank it.
 - \`model\`, \`messages\`, \`stream\`, \`stream_options\` are FORBIDDEN — the runtime owns them (the extension sets model/messages/stream/stream_options itself); never add them to params.
 - \`maxInputTokens\` is auto-computed from the server's context window minus the output budget; only set it lower.
 - Sampling params are model-specific. When unsure, start from the model's HF card; common safe defaults: \`temperature: 0.7\`, \`top_p: 0.95\` for coding; \`temperature: 1.0\` for general reasoning.

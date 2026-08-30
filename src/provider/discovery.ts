@@ -10,6 +10,7 @@ import {
   type ModelConfig,
 } from '../config.js';
 import { buildModelInfo } from '../modelInfo.js';
+import { deriveTokenBudget } from '../tokenBudget.js';
 import { describeError } from '../messageConverter.js';
 import type { ProviderClient } from './contracts.js';
 
@@ -28,16 +29,24 @@ import type { ProviderClient } from './contracts.js';
  * a fabricated budget. The resolver's own message is preserved verbatim so the
  * user sees the backend-specific cause, not a vague rewrite.
  *
- * Output-budget contract (per-mode max_tokens, Option A): the advertised
- * `maxOutputTokens` is the user-configured `max_tokens` (mode > defaultParams),
- * clamped by `deriveTokenBudget` to the context window + server-reported output
- * ceiling. The REQUEST path (`resolveMaxTokensForRequest`) clamps the wire to
- * this SAME advertised value, so the two can never disagree and the wire can
- * never exceed what Copilot was told. To make that work, the override is CLONED
- * with the effective budget as `maxOutputTokens` because `deriveTokenBudget`
- * prioritizes `override.maxOutputTokens` over its config argument — without the
- * clone, a preset/model-level `maxOutputTokens` silently discards the mode's
- * `max_tokens` and Copilot would never receive updated limits.
+ * Output-budget contract: with a vector-form `maxOutputTokens`, the advertised
+ * `maxOutputTokens` IS the tracked pick (clamped to the ceiling) — VS Code
+ * derives the prompt budget as window − output, so a shorter pick visibly
+ * grows prompt headroom and Copilot re-resolves metadata on the pick change.
+ * Without a vector the advertised value is the legacy chain (mode >
+ * defaultParams > budget head), clamped by `deriveTokenBudget` to the window +
+ * server-reported output ceiling. Either way the REQUEST path
+ * (`resolveMaxTokensForRequest`) clamps the wire to the SAME advertised value,
+ * so the two can never disagree and the wire can never exceed what Copilot was
+ * told. The advertised scalar is passed to `buildModelInfo` as
+ * `effectiveOutputTokens` — the override itself is passed RAW because a
+ * vector-form `maxOutputTokens` inside it IS the Output length menu; cloning a
+ * scalar over it would silently delete the dropdown. The static ceiling
+ * (model budget + physical clamps — never a mode's `max_tokens`, never the
+ * pick) is passed separately: the dropdown menu and clamp banners scale
+ * against it, so picking 16K leaves 32K selectable, a deliberate pick is not a
+ * clamp warning, and a legacy per-mode `max_tokens` can never shrink or
+ * collapse the menu on a mode switch.
  */
 export async function discoverModels(
   modelOverrides: ModelConfig[],
@@ -50,6 +59,14 @@ export async function discoverModels(
    * re-registered metadata (and Copilot's context-window bar) reflects it.
    */
   selectedModeByModel?: ReadonlyMap<string, string>,
+  /**
+   * Currently selected OUTPUT LENGTH per picker id (provider-tracked output-length
+   * dropdown). The pick IS the advertised output budget — a shorter pick grows
+   * the advertised input budget (window − output), handing the freed tokens to
+   * the prompt. Picks above the ceiling clamp down; the dropdown menu itself is
+   * filtered by the pre-pick ceiling, so menu options never depend on the pick.
+   */
+  selectedLengthByModel?: ReadonlyMap<string, number>,
 ): Promise<vscode.LanguageModelChatInformation[]> {
   // Process each model: fetch context window from server, build info, or record error.
   // All models are queried in parallel so discovery time = max(server latencies), not sum.
@@ -72,17 +89,12 @@ export async function discoverModels(
     // selections keyed by model.id resolve to the right override.
     const presetId = override.id || buildModelId(serverConfig.serverUrl, vllmModelId);
 
-    // Advertise the user-configured output budget (mode > defaultParams) as the
-    // model's maxOutputTokens so re-registered metadata — and Copilot's context
-    // bar — agrees with the wire (both read resolveConfiguredMaxTokens).
+    // Legacy output-budget chain (mode > defaultParams > vector head / scalar),
+    // clamped below. Used as the advertised budget ONLY while no length pick
+    // exists; once a pick exists the pick wins — even over a per-mode
+    // `max_tokens` — and the advertised budget follows the pick.
     const selectedMode = selectedModeByModel?.get(presetId);
-    const effectiveMaxOutput = resolveConfiguredMaxTokens(override, selectedMode) ?? settings.maxOutputTokens;
-    // deriveTokenBudget prioritizes `override.maxOutputTokens` over its config
-    // argument, so hand it a clone carrying the effective budget. Without this a
-    // preset/model-level maxOutputTokens silently discards the mode's max_tokens
-    // and Copilot would never receive updated limits (finding: presets all set
-    // maxOutputTokens, so the feature was dead for them).
-    const overrideForBudget = { ...override, maxOutputTokens: effectiveMaxOutput };
+    const legacyMaxOutput = resolveConfiguredMaxTokens(override, selectedMode) ?? settings.maxOutputTokens;
 
     try {
       // Resolve runtime limits (context window + optional server-reported output
@@ -98,8 +110,31 @@ export async function discoverModels(
       );
 
       const serverModel = { id: vllmModelId, max_model_len: limits.contextWindow };
+      // Menu/banner ceiling: the model's OWN budget (vector head / scalar cap)
+      // with the physical clamps (window + server-reported) applied — what the
+      // model can promise, independent of any pick. Deliberately NOT the legacy
+      // chain: a selected mode's `max_tokens` must not shrink the menu (it
+      // would flicker or vanish on mode switches, breaking the "length menu is
+      // identical for every mode" contract) and must not silently cap a
+      // deliberate pick — the pick outranks legacy per-mode budgets, and the
+      // advertised output re-registers upward to match. `maxOutputTokens:
+      // undefined` makes deriveTokenBudget fall back to the resolved model
+      // budget; buildModelInfo still receives the RAW override for the menu.
+      const outputMenuCeiling = deriveTokenBudget(
+        limits.contextWindow,
+        settings.maxOutputTokens,
+        { ...override, maxOutputTokens: undefined },
+        vllmModelId,
+        limits.maxOutputTokens,
+      ).maxOutputTokens;
+      // The output-length pick IS the advertised output budget: VS Code derives
+      // the prompt budget as window − output, so a shorter pick genuinely grows
+      // prompt headroom. min() keeps a persisted pick above a since-shrunken
+      // ceiling clamped to what the model can promise.
+      const pick = selectedLengthByModel?.get(presetId);
+      const effectiveOutputTokens = pick !== undefined ? Math.min(pick, outputMenuCeiling) : legacyMaxOutput;
       return {
-        model: buildModelInfo(serverModel, overrideForBudget, settings, serverConfig.serverUrl, limits.maxOutputTokens, (family, modelId) => {
+        model: buildModelInfo(serverModel, override, settings, serverConfig.serverUrl, limits.maxOutputTokens, (family, modelId) => {
           // Fires only when no preset-declared family was available AND
           // HuggingFace auto-discovery did not provide one — the heuristic
           // fell through to the org-name guess. The family is just a sort key
@@ -108,7 +143,7 @@ export async function discoverModels(
           output.appendLine(
             `[WARN] Model "${modelId}" — family estimated as "${family}" from org-name fallback (no preset/HuggingFace family available). Family is informational only; use a preset or run auto-discovery for authoritative values.`
           );
-        }),
+        }, effectiveOutputTokens, outputMenuCeiling),
         contextWindow: limits.contextWindow,
         error: null,
       };

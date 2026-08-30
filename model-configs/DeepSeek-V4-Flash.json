@@ -15,8 +15,10 @@
 //
 // Token budgets:
 //   - Context window: 1,048,576 tokens (model supports up to 1M)
-//   - maxOutputTokens: 65536 (output ceiling; model supports up to 384K of output,
-//     but output + input must fit within the server's max_model_len)
+//   - maxOutputTokens ladder [131072, 65536, 32768, 16384] (default 131,072).
+//     The model supports up to 384K output; even 131K leaves ~917K input at
+//     full 1M server context. On smaller serve windows pick a shorter length
+//     in the Output length dropdown — output + input must fit max_model_len.
 //   - maxInputTokens: auto-computed from server max_model_len
 //
 // Thinking mode — vLLM behavior:
@@ -52,7 +54,7 @@
     "vllmModelId": "DeepSeek-V4-Flash",
     "displayName": "DeepSeek V4 Flash",
     "family": "deepseek_v4",
-    "maxOutputTokens": 65536,
+    "maxOutputTokens": [131072, 65536, 32768, 16384],
     "capabilities": {
       "toolCalling": true,
       "imageInput": false

@@ -1001,13 +1001,19 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     // they define the model's usable envelope. "Total" prefixes the context so it
     // balances the following "Output" (Total context vs output budget).
     const contextWindow = this.relayContextWindow(e.fp, e.modelId);
-    const maxOutput = entry?.maxOutputTokens;
+    // maxOutputTokens may be a vector (Output length menu) — the head is the
+    // advertised budget; the rest are pickable options, shown in the tooltip.
+    const maxOutputRaw = entry?.maxOutputTokens;
+    const maxOutputMenu = Array.isArray(maxOutputRaw) ? maxOutputRaw : undefined;
+    const maxOutput = maxOutputMenu?.[0] ?? (typeof maxOutputRaw === 'number' ? maxOutputRaw : undefined);
     if (contextWindow !== undefined && maxOutput != null) {
       items.push(new MetricTreeItem(
         'Context Window',
-        `Total ${fmtCount(contextWindow)}  ·  Output ${fmtCount(maxOutput)}`,
+        `Total ${fmtCount(contextWindow)}  ·  Output ${fmtCount(maxOutput)}${maxOutputMenu && maxOutputMenu.length > 1 ? ` (${maxOutputMenu.length} picks)` : ''}`,
         'layers',
-        'Total context length (input + output) and the configured output ceiling.',
+        maxOutputMenu && maxOutputMenu.length > 1
+          ? `Total context length (input + output) and the configured output ceiling. Output length picker offers: ${maxOutputMenu.map(n => n.toLocaleString('en-US')).join(' / ')}.`
+          : 'Total context length (input + output) and the configured output ceiling.',
       ));
     } else if (contextWindow !== undefined) {
       items.push(new MetricTreeItem('Context Window', `Total ${fmtCount(contextWindow)}`, 'layers', 'Total context length (input + output) this model reports.'));

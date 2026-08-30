@@ -36,9 +36,10 @@
 // 1.0. temp=1.0/top_p=0.95 matches the GLM-5.2 preset.
 //
 // Token budgets (1,048,576 native context):
-//   - Card agent benchmarks generate up to 128,000–163,840 tokens. The
-//     65,536-token Max budget here is conservative: it still leaves ~983K
-//     input tokens. Raise max_tokens per mode if you run marathon agents.
+//   - Card agent benchmarks generate up to 128,000–163,840 tokens, so the
+//     ladder tops at 131,072 — at full 1M server context that still leaves
+//     ~917K input. On smaller serve windows (e.g. 262K) pick 65536 or lower
+//     in the Output length dropdown to keep input headroom.
 //   - input = context − max_tokens, so output budgets here never starve input.
 //
 // To use manually, copy the "config" object below into settings.json:
@@ -58,7 +59,7 @@
     "vllmModelId": "GLM-5.3",
     "displayName": "GLM-5.3",
     "family": "glm_moe_dsa",
-    "maxOutputTokens": 65536,
+    "maxOutputTokens": [131072, 65536, 32768, 16384],
     "capabilities": {
       "toolCalling": true
     },
@@ -68,7 +69,6 @@
         "chat_template_kwargs": {
           "clear_thinking": true
         },
-        "max_tokens": 65536,
         "temperature": 1.0,
         "top_p": 0.95,
         "presence_penalty": 0
@@ -78,7 +78,6 @@
         "chat_template_kwargs": {
           "clear_thinking": true
         },
-        "max_tokens": 32768,
         "temperature": 1.0,
         "top_p": 0.95,
         "presence_penalty": 0
@@ -88,7 +87,6 @@
         "chat_template_kwargs": {
           "clear_thinking": true
         },
-        "max_tokens": 16384,
         "temperature": 1.0,
         "top_p": 0.95,
         "presence_penalty": 0
