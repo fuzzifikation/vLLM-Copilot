@@ -16,7 +16,8 @@ Ready-to-use model configurations shipped with the extension. **Add vLLM Server 
 | `Kimi-K3.json` | Kimi K3 (Moonshot) | Think (Max), Think (High), Think (Low) | ✅ | ✅ (always on) |
 | `MiniMax-M3.json` | MiniMax M3 | Think (Always), Think (Adaptive), No Think | ✅ | ✅ |
 | `glm-5.2-config.json` | GLM-5.2 (Z-AI) | Think (Max), Think (High), No Think | ❌ | ✅ |
-| `GLM-5.3.json` | GLM-5.3 / GLM-5.3-Flash (Z.ai) | Think (Max), Think (High), Think (Low) | ✅ | ✅ (always on) |
+| `GLM-5.3.json` | GLM-5.3 (Z.ai, full) | Think (Max), Think (High), Think (Low) | ❌ | ✅ (always on) |
+| `GLM-5.3-Flash.json` | GLM-5.3-Flash (Z.ai) | Think (Max), Think (High), Think (Low) | ✅ | ✅ (always on) |
 
 To use a preset manually, copy the **`config`** object from the corresponding file into your `vllm-copilot.models` array (no reload needed) — the surrounding `presetVersion`/`match`/`meta` envelope is preset-format only, not user settings.
 

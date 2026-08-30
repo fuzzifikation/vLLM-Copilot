@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **GLM-5.3 preset split — the full model is not Flash.** The release of full GLM-5.3 showed it reuses the GLM-5.2 base (`glm_moe_dsa`, 743B/39B, text-only), while GLM-5.3-Flash is the separate `glm5_next` architecture (320B/18B, natively multimodal). `GLM-5.3.json` now describes the full model only (correct family, no false vision capability); a new `GLM-5.3-Flash.json` keeps Flash's config and wins every `GLM-5.3-Flash*` served id via longest-match. Served live via remote preset lookup — no update needed.
+
 ## v1.34.0 — Remote model presets
 
 ### Added

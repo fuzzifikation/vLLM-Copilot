@@ -1,22 +1,19 @@
-// GLM-5.3 (Z.ai, full model) — Model configuration
-// Source: https://huggingface.co/zai-org/GLM-5.3 + vLLM recipe
-// (recipes.vllm.ai/zai-org/GLM-5.3). Verified 2026-08-30.
+// GLM-5.3-Flash (Z.ai) — Model configuration
+// Source: https://huggingface.co/zai-org/GLM-5.3-Flash + vLLM recipe
+// (recipes.vllm.ai/zai-org/GLM-5.3-Flash). Verified 2026-08-27.
 //
-// NOT the same model as GLM-5.3-Flash — different base architecture:
-// the full model reuses the GLM-5.2 base (model_type "glm_moe_dsa",
-// 743B total / 39B active MoE); the card says every gain comes from
-// post-training. Flash is the separate "glm5_next" architecture and has
-// its own preset (GLM-5.3-Flash.json). Longest-match routing keeps them
-// apart: served ids containing "GLM-5.3-Flash" win the Flash preset,
-// everything else ("GLM-5.3", "GLM-5.3-FP8", ...) lands here.
+// Keyed "GLM-5.3-Flash" (longer than "GLM-5.3"): the longest-match rule
+// routes every served id containing "GLM-5.3-Flash" here, while the full
+// GLM-5.3 (a different architecture — glm_moe_dsa, text-only) gets
+// GLM-5.3.json. Do not merge them again.
 //
-// TEXT-ONLY: unlike Flash (natively multimodal), the full GLM-5.3 has no
-// image/video input — do not add imageInput without card evidence.
+// NEW ARCHITECTURE: model_type "glm5_next" (NOT glm_moe_dsa like GLM-5.2).
+// 320B total / 18B active MoE, first natively multimodal model in the
+// GLM-5 series (image + video input), hybrid KDA linear attention + sparse MLA.
 // 1,048,576-token native context — NO YaRN-style extension needed.
-// Default checkpoint is FP8 (server-side detail, irrelevant here).
 //
 // NOTE: These params work for ANY quantization variant. Preset matching is
-// substring-based, so this preset also matches "GLM-5.3-FP8". The
+// substring-based, so this preset also matches "GLM-5.3-Flash-BF16". The
 // config's `vllmModelId` must still be an EXACT served model id.
 //
 // ⚠️ THINKING IS ALWAYS ON — the chat template opens a  block
@@ -24,7 +21,7 @@
 // GLM-5.2, which has enable_thinking:false). Reasoning depth is controlled
 // ONLY through `reasoning_effort`.
 //
-// Reasoning effort (vLLM recipe + card — identical semantics to Flash):
+// Reasoning effort (vLLM recipe + card):
 //   - low | high | max. Template resolves to "max" unless reasoning_effort is
 //     explicitly "low" or "high" — any other value falls back to "max".
 //   - Card: keep the default "max" for benchmark/leaderboard reproduction.
@@ -32,13 +29,12 @@
 //     says to pass clear_thinking=true for chat scenarios (strips historical
 //     thinking blocks from earlier turns).
 //
-// Sampling: benchmark footnotes use temp=1.0 with top_p between 0.95 and
-// 1.0. temp=1.0/top_p=0.95 matches the GLM-5.2 preset.
+// Sampling: no single official recipe; benchmark footnotes use temp=1.0 with
+// top_p between 0.95 and 1.0. temp=1.0/top_p=0.95 matches the GLM-5.2 preset.
 //
 // Token budgets (1,048,576 native context):
-//   - Card agent benchmarks generate up to 128,000–163,840 tokens. The
-//     65,536-token Max budget here is conservative: it still leaves ~983K
-//     input tokens. Raise max_tokens per mode if you run marathon agents.
+//   - Card benchmarks generate up to 163,840 (HLE) / 65,536 (Terminal-Bench)
+//     tokens. 65,536 per mode still leaves ~983K input tokens.
 //   - input = context − max_tokens, so output budgets here never starve input.
 //
 // To use manually, copy the "config" object below into settings.json:
@@ -47,20 +43,21 @@
 
 {
   "presetVersion": 1,
-  "match": ["GLM-5.3"],
+  "match": ["GLM-5.3-Flash"],
   "meta": {
-    "name": "GLM-5.3",
-    "source": "https://huggingface.co/zai-org/GLM-5.3",
-    "verified": "2026-08-30",
-    "notes": "Full GLM-5.3 (glm_moe_dsa, same base as GLM-5.2, text-only). Thinking always on — depth only via reasoning_effort (max/high/low); clear_thinking strips historical thinking. temp=1.0, top_p=0.95. Flash has its own preset."
+    "name": "GLM-5.3-Flash",
+    "source": "https://huggingface.co/zai-org/GLM-5.3-Flash",
+    "verified": "2026-08-27",
+    "notes": "glm5_next family, natively multimodal (image + video). Thinking always on — depth only via reasoning_effort (max/high/low); clear_thinking strips historical thinking. temp=1.0, top_p=0.95."
   },
   "config": {
-    "vllmModelId": "GLM-5.3",
-    "displayName": "GLM-5.3",
-    "family": "glm_moe_dsa",
+    "vllmModelId": "GLM-5.3-Flash",
+    "displayName": "GLM-5.3-Flash",
+    "family": "glm5_next",
     "maxOutputTokens": 65536,
     "capabilities": {
-      "toolCalling": true
+      "toolCalling": true,
+      "imageInput": true
     },
     "modelModes": {
       "Think (Max)": {
