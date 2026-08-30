@@ -1,8 +1,8 @@
 {
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
-  "description": "vLLM integration for GitHub Copilot and the VS Code Agents window on professional (and self-hosted) servers (supports full featureset of vLLM and Copilot). No subscription, no telemetry — no work content to any third party. Live observability: queue status, KV-cache, throughput, etc and full UI (dashboard). Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
-  "version": "1.35.1",
+  "description": "vLLM integration for GitHub Copilot and the VS Code Agents window on professional (and self-hosted) servers (supports full featureset of vLLM and Copilot). No subscription, no telemetry. No work content to any third party. Live observability: queue status, KV-cache, throughput, and more, in a full dashboard UI. Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
+  "version": "1.35.2-rc0",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -263,7 +263,7 @@
           "vllm-copilot.models": {
             "type": "array",
             "default": [],
-            "markdownDescription": "Per-model configuration — server, auth, params, modes. See README Configuration Reference for details.",
+            "markdownDescription": "Per-model configuration: server, auth, params, modes. See README Configuration Reference for details.",
             "items": {
               "type": "object",
               "properties": {
@@ -289,7 +289,7 @@
                 },
                 "provider": {
                   "type": "string",
-                  "markdownDescription": "⚡ **OpenRouter only** — the exact provider slug (as returned by `GET /api/v1/models/{id}/endpoints`) to force routing to that provider via `provider: { only: [slug] }`. Use the **Provider** dropdown in Model Settings — never hand-derive. Omitted/empty = Auto (let OpenRouter route)."
+                  "markdownDescription": "⚡ **OpenRouter only**: the exact provider slug (as returned by `GET /api/v1/models/{id}/endpoints`) to force routing to that provider via `provider: { only: [slug] }`. Use the **Provider** dropdown in Model Settings, never hand-derive. Omitted/empty = Auto (let OpenRouter route)."
                 },
                 "routingMode": {
                   "type": "string",
@@ -298,7 +298,7 @@
                     "nitro",
                     "exacto"
                   ],
-                  "markdownDescription": "⚡ **OpenRouter only** — how OpenRouter sorts/chooses among eligible providers when routing is **Auto** (no `provider` pinned). `standard` (default) = price-weighted load balancing; `nitro` = throughput-first + priority tier; `exacto` = quality/tool-calling-first. Ignored when a provider is pinned. Set via the **Routing** dropdown in Model Settings."
+                  "markdownDescription": "⚡ **OpenRouter only**: how OpenRouter sorts/chooses among eligible providers when routing is **Auto** (no `provider` pinned). `standard` (default) = price-weighted load balancing; `nitro` = throughput-first + priority tier; `exacto` = quality/tool-calling-first. Ignored when a provider is pinned. Set via the **Routing** dropdown in Model Settings."
                 },
                 "requestHeaders": {
                   "type": "object",
@@ -341,7 +341,7 @@
                     }
                   ],
                   "default": 4096,
-                  "markdownDescription": "Output budget. **Number** = single cap, no dropdown. **Array** = ordered response-length choices (strictly descending, FIRST element = default and desired budget) shown as an **Output Length** dropdown in the model picker. Array entries above the model's ceiling are dropped; fewer than two usable values = no dropdown. When the dropdown exists, the user's pick owns `max_tokens` **and** the advertised output budget — a shorter pick grows the prompt budget. Always clamped to the context window and the server-reported output ceiling. **Default: 4096.**"
+                  "markdownDescription": "Output budget. **Number** = single cap, no dropdown. **Array** = ordered response-length choices (strictly descending, FIRST element = default and desired budget) shown as an **Output Length** dropdown in the model picker. Array entries above the model's ceiling are dropped; fewer than two usable values = no dropdown. When the dropdown exists, the user's pick owns `max_tokens` **and** the advertised output budget; a shorter pick grows the prompt budget. Always clamped to the context window and the server-reported output ceiling. **Default: 4096.**"
                 },
                 "maxInputTokens": {
                   "type": "number",
@@ -350,11 +350,11 @@
                 "estimateCharsPerToken": {
                   "type": "number",
                   "default": 3.5,
-                  "markdownDescription": "Average characters per token for local token estimation. **Default: 3.5.** Depends on the model's tokenizer — English models are ~3.5, tokenizers with many subword tokens may be higher."
+                  "markdownDescription": "Average characters per token for local token estimation. **Default: 3.5.** Depends on the model's tokenizer: English models are ~3.5, tokenizers with many subword tokens may be higher."
                 },
                 "defaultParams": {
                   "type": "object",
-                  "markdownDescription": "**Model-scope request params** (raw vLLM request-body keys, snake_case). Merged into the request body and overridden by the selected `modelModes` entry. Params not set here (or in a mode) are **omitted**, so the server's own defaults apply — nothing is forced.\n\nExample: `{ \"temperature\": 1, \"top_p\": 0.95, \"presence_penalty\": 0, \"repetition_detection\": { \"max_pattern_size\": 4, \"min_count\": 3 } }`"
+                  "markdownDescription": "**Model-scope request params** (raw vLLM request-body keys, snake_case). Merged into the request body and overridden by the selected `modelModes` entry. Params not set here (or in a mode) are **omitted**, so the server's own defaults apply. Nothing is forced.\n\nExample: `{ \"temperature\": 1, \"top_p\": 0.95, \"presence_penalty\": 0, \"repetition_detection\": { \"max_pattern_size\": 4, \"min_count\": 3 } }`"
                 },
                 "modelModes": {
                   "type": "object",
@@ -370,7 +370,7 @@
                 },
                 "capabilities": {
                   "type": "object",
-                  "markdownDescription": "⚡ **Experimental** — Model capabilities not discoverable from vLLM. Set these manually.",
+                  "markdownDescription": "⚡ **Experimental**: model capabilities not discoverable from vLLM. Set these manually.",
                   "properties": {
                     "toolCalling": {
                       "type": "boolean",
@@ -380,7 +380,7 @@
                     "imageInput": {
                       "type": "boolean",
                       "default": false,
-                      "markdownDescription": "⚡ **Experimental** — vLLM does not expose this. Set to `true` if your model supports vision/image input."
+                      "markdownDescription": "⚡ **Experimental**: vLLM does not expose this. Set to `true` if your model supports vision/image input."
                     }
                   }
                 },
@@ -388,7 +388,7 @@
                   "type": "number",
                   "default": 0,
                   "minimum": 0,
-                  "markdownDescription": "Inactivity timeout in ms for this model's SSE stream. If the server sends no tokens for this duration, the stream is considered stalled and the request ends. **Default: 0** (disabled — wait indefinitely)."
+                  "markdownDescription": "Inactivity timeout in ms for this model's SSE stream. If the server sends no tokens for this duration, the stream is considered stalled and the request ends. **Default: 0** (disabled: wait indefinitely)."
                 },
                 "initialResponseTimeoutMs": {
                   "type": "number",
@@ -404,7 +404,7 @@
                 },
                 "systemMessageReplacementsFile": {
                   "type": "string",
-                  "markdownDescription": "⚡ **Advanced** — Path to a JSON file with find/replace rules for system messages. Each rule: `{ \"ruleName\": \"...\", \"find\": \"exact substring\", \"replace\": \"replacement text\" }`. Applied to every system message before sending to vLLM. Recommended: `.vllm/prompt-replacements.json`",
+                  "markdownDescription": "⚡ **Advanced**: path to a JSON file with find/replace rules for system messages. Each rule: `{ \"ruleName\": \"...\", \"find\": \"exact substring\", \"replace\": \"replacement text\" }`. Applied to every system message before sending to vLLM. Recommended: `.vllm/prompt-replacements.json`",
                   "default": ""
                 },
                 "cost": {
@@ -426,7 +426,7 @@
                     "currency": {
                       "type": "string",
                       "default": "USD",
-                      "markdownDescription": "Display unit for the cost values. Default `\"USD\"`. Use `\"AI Credits\"` to compare with the Copilot model picker (1 AI credit = $0.01 — **enter credit values directly**; no conversion is applied). Any other label is shown verbatim."
+                      "markdownDescription": "Display unit for the cost values. Default `\"USD\"`. Use `\"AI Credits\"` to compare with the Copilot model picker (1 AI credit = $0.01; **enter credit values directly**, no conversion is applied). Any other label is shown verbatim."
                     }
                   },
                   "markdownDescription": "⚡ Optional per-model cost rates for the dashboard **Token Usage** tracker. All rates are per **1,000,000 tokens** and interpreted in `currency` units. Omit the whole object or set all rates to `0` to hide cost lines for this model (e.g. a free local server)."

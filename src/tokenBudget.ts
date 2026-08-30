@@ -16,7 +16,7 @@ export interface ModelOverride {
 /**
  * Accepted shapes of the per-model output budget field: a plain scalar cap, or
  * an ordered vector of response lengths whose FIRST entry is the default (the
- * vector form also renders the model picker's Output length dropdown).
+ * vector form also renders the model picker's Output Length dropdown).
  */
 export type OutputBudgetValue = number | number[];
 

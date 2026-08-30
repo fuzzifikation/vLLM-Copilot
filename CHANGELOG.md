@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.35.2-rc0
+
+### Fixed
+
+- **Consistent "Output Length" label** — the config-schema tool's AI guide and the Model Settings hint still quoted the old lowercase picker label; both now match the actual dropdown.
+
+## v1.35.1
+
+### Changed
+
+- **Agents window support is now in the Marketplace listing** — the extension description advertises it (the listing is baked into the VSIX, so this needed its own version), plus a badge and a promoted README bullet.
+
 ## v1.35.0 — Output Length, picker banners & the Agents window
 
 ### Added

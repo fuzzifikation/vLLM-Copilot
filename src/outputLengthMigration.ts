@@ -1,9 +1,9 @@
 /**
  * One-time migration offer: upgrade pre-v1.35 model entries to the vector-form
- * `maxOutputTokens` so they get the Output length dropdown.
+ * `maxOutputTokens` so they get the Output Length dropdown.
  *
  * Model entries saved before v1.35 carry a scalar `maxOutputTokens` (or none),
- * which is a perfectly valid plain cap — but renders no Output length menu.
+ * which is a perfectly valid plain cap — but renders no Output Length menu.
  * On activation (offline, zero server calls) we check whether an upgradable
  * vector can be built for each such model WITHOUT inventing anything:
  *

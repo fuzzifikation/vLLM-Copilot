@@ -403,7 +403,7 @@
       h += sec('Token Budget',
         '<div class="field"><label>maxOutputTokens</label>' +
         '<input type="text" data-f="maxOutputTokens" placeholder="65536, 32768, 16384" value="' + E(Array.isArray(m.maxOutputTokens) ? m.maxOutputTokens.join(', ') : String(m.maxOutputTokens ?? '')) + '">' +
-        '<div class="field-hint">Max output tokens — or comma-separated choices (descending, first = default) to show the Copilot picker\'s "Output length" dropdown. Values above the model cap are hidden. Empty = default 4096</div></div>' +
+        '<div class="field-hint">Max output tokens — or comma-separated choices (descending, first = default) to show the Copilot picker\'s "Output Length" dropdown. Values above the model cap are hidden. Empty = default 4096</div></div>' +
         fields([{ k: 'maxInputTokens', t: 'number', v: m.maxInputTokens ?? '', h: 'Auto-computed; set to reserve headroom' },
         { k: 'estimateCharsPerToken', t: 'number', v: m.estimateCharsPerToken ?? 3.5, h: 'Avg chars/token (default: 3.5)' }]));
       h += sec('Capabilities',
@@ -637,7 +637,7 @@
       // `0` is a real value and stays (e.g. streamInactivityTimeout 0 = infinite).
       u[k] = el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value;
     });
-    // maxOutputTokens: scalar cap OR comma-separated vector (Output length
+    // maxOutputTokens: scalar cap OR comma-separated vector (Output Length
     // dropdown choices). One value → number; several → number[]. Empty input is
     // the '' CLEAR signal (normalizeModelEntry deletes the key → default,
     // no dropdown). An unparsable entry aborts the save rather than silently

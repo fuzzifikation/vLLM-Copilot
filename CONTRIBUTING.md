@@ -25,6 +25,19 @@ See the architecture section in [`.github/copilot-instructions.md`](.github/copi
 - **Tests match source files.** `test/*.test.ts` mirrors `src/*.ts`.
 - **Webview JS is NOT checked by TypeScript.** Validate with `npm run validate-webview-js`.
 
+## License compliance
+
+All production (shipped) dependencies must carry permissive open-source licenses
+(MIT, ISC, BSD-2/3-Clause, Apache-2.0). Compliance is enforced in the build:
+
+- `npm run license:check`: fails the build if any *runtime* dependency has a
+  license outside the approved allowlist (copyleft like GPL/AGPL/LGPL and
+  unknown licenses are rejected). Runs automatically as part of `npm run build`.
+- `npm run license:notices`: regenerates `THIRD-PARTY-NOTICES.txt` (required by
+  the VS Code Marketplace for redistributed OSS). Run it whenever dependencies
+  change and commit the result.
+- `THIRD-PARTY-NOTICES.txt` is included in the packaged VSIX.
+
 ## Pull Requests
 
 - One feature or fix per PR. No drive-by refactors.

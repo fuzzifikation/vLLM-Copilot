@@ -8,18 +8,18 @@
 [![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot) [![vLLM](https://img.shields.io/badge/vLLM-Primary-01C286)](https://github.com/vllm-project/vllm) [![OpenRouter Supported](https://img.shields.io/badge/OpenRouter-Supported-00B3A6?logo=openrouter&logoColor=white)](https://openrouter.ai) [![Agents Window](https://img.shields.io/badge/VS_Code-Agents_Window_Ready-007ACC?logo=visualstudiocode&logoColor=white)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md) [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
 
 **Your vLLM-served models inside GitHub Copilot and the VS Code Agents window. Built for teams and production.**
-GitHub Copilot provides the familiar chat, tools, and model picker; You provide the model. Requests to your models — prompts, code, context — are never sent to Copilot!
+GitHub Copilot provides the familiar chat, tools, and model picker; you provide the model. Requests to your models (prompts, code, context) are never sent to Copilot!
 **Multi-server, multi-user.** Full vLLM request control, live observability, strict data residency. Also works with OpenRouter (400+ cloud models, no local infrastructure, many free options), llama.cpp, LM Studio, and Ollama.
 </div>
 
 
 For teams running AI on their own vLLM servers for many users, this gives you the professional Copilot integration: 
 
-- **Data handling**: **No subscription. No affiliation. No central service. No telemetry.** Prompts, code, and company data go only to each model's configured inference server — they are never sent to GitHub Copilot or GitHub. Other extension traffic (model metadata from HuggingFace, curated presets from GitHub) carries no work content.
-- **[Works in the VS Code Agents window](#agents-window-screenshot)**: your vLLM models in the new "Open in Agents" agent cockpit — autonomous sessions, worktree isolation, all of it. Auto-enabled since v1.35.0, nothing to configure, just restart VS Code. See [Agents window guide](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md).
+- **Data handling**: **No subscription. No affiliation. No central service. No telemetry.** Prompts, code, and company data go only to each model's configured inference server. They are never sent to GitHub Copilot or GitHub. Other extension traffic (model metadata from HuggingFace, curated presets from GitHub) carries no work content.
+- **[Works in the VS Code Agents window](#agents-window-screenshot)**: your vLLM models in the new "Open in Agents" agent cockpit, with autonomous sessions, worktree isolation, all of it. Auto-enabled since v1.35.0, nothing to configure, just restart VS Code. See [Agents window guide](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md).
 - **Production vLLM observability**: a live dashboard of server availability, queue status, KV-cache usage, TTFT, throughput, per-request token details, and a cumulative token & cost tracker. Your admins and users will know what is going on!
 - **Multi-server, multi-user by design**: each server and model carries its own endpoint, auth, sampling, and token budget. Different teams, environments, or credentials stay isolated and independently managed. But all models are available in the model picker of familiar Copilot!
-- **Full request control**: model modes give you any vLLM parameter, such as thinking effort, sampling, and structured output — plus a dedicated **Output Length** dropdown to cap response length on the fly. Switch both per model from the Copilot picker.
+- **Full request control**: model modes give you any vLLM parameter, such as thinking effort, sampling, and structured output. A dedicated **Output Length** dropdown caps response length without a settings edit. Switch both per model from the Copilot picker.
 - **OpenRouter**: add any of **~415 cloud models** in a few clicks. Useful for teams without GPU capacity. Real context window, capabilities, pricing, and **actual spend** (`usage.cost`) show on the dashboard. See [Using OpenRouter](#using-openrouter).
 - **Other backends supported**: llama.cpp, LM Studio, and Ollama alongside vLLM, each with core features like chat, streaming, tools, personalities, and usage tracking.
 
@@ -76,7 +76,7 @@ If you want to support this work: [![Sponsor via PayPal](https://img.shields.io/
 3. **Add your vLLM server & model:** *(same for llama.cpp, lm-studio, ollama)* in the Dashboard, click **Add or Reconfigure Server/Model** at the bottom of the tree → enter your server URL → *(optional) enter vLLM API key and HTTP request headers from IT* → pick a model → done. The extension auto-configures the model (family, capabilities, context window) from curated presets (bundled, and refreshed live from GitHub when online) or HuggingFace.
 4. **Edit settings** *(optional)*: open the **Model Settings** view (below the Dashboard) to adjust displayName, params, model modes, and more. No `settings.json` editing required.
 5. **Change the personality** *(optional)*: in **Model Settings**, pick a model and choose a personality from the dropdown in its **General** section (or `Ctrl+Shift+P` → **Set Model Personality**). Pick **Default (no personality)** later to clear it.
-6. **Chat:** Open Copilot Chat, pick your model from the dropdown. Switch modes — and, where a model defines lengths, the output length — from the same picker.
+6. **Chat:** Open Copilot Chat, pick your model from the dropdown. Switch modes, and where a model defines lengths also the output length, from the same picker.
 
 </td></tr>
 </table>
@@ -88,7 +88,7 @@ If you want to support this work: [![Sponsor via PayPal](https://img.shields.io/
 
 Your AI can build a valid `vllm-copilot.models` entry (server, auth, params, model modes) without you touching `settings.json`. The extension registers a **chat tool** (`vllm-copilot_model_schema`) that hands Copilot the model-entry schema and the parameter rules on demand.
 
-- **Just ask:** *"configure my Qwen3.6 model with Think / No Think modes"* — Copilot calls the tool automatically.
+- **Just ask:** *"configure my Qwen3.6 model with Think / No Think modes"*. Copilot calls the tool automatically.
 - **Force it:** if your AI gets shy, type `#vllmModelSchema` in the chat input to attach the tool to your prompt.
 
 No workspace files are created; the schema is served from the extension itself.
@@ -142,7 +142,7 @@ coding, and creative work, including their sampling and vLLM-specific request se
 
 ## Enterprise & team deployment
 
-vLLM-Copilot gives companies (and individuals) controlled access to GitHub Copilot through their own inference infrastructure. Operations get live serving metrics, per-model usage and cost tracking. A highly robust output correction of the model ensures automatic recovery from incomplete or malformed output.
+vLLM-Copilot gives companies (and individuals) controlled access to GitHub Copilot through their own inference infrastructure. Operations get live serving metrics, per-model usage and cost tracking. Broken model output is repaired automatically before it reaches your team.
 
 **No subscription. No third party receives work content beyond the configured inference server. No affiliation. No central service. No telemetry.** GitHub Copilot supplies the familiar chat, tools, model picker, and other interaction features. Prompts, code, and company data go only to the configured inference server, never to GitHub Copilot or GitHub. Other extension traffic carries no work content; it is limited to model metadata, configuration, metrics, and service status.
 
@@ -227,7 +227,7 @@ A visual editor for per-model configuration, no `settings.json` required:
 - **Structured output**: JSON schema enforcement for data extraction
 - **Anything vLLM supports**: bad words, repetition detection, request shaping
 
-**Output length is not a mode knob** — models and presets whose `maxOutputTokens` is an **array** of response lengths (bundled presets do) get a second, independent **Output Length** dropdown next to the mode picker (e.g. 16K / 32K / 64K), so you cap response length per request without touching settings. VS Code remembers your pick per model — and a shorter pick hands the freed tokens back to your prompt: Copilot's input budget grows to match. Right after the dropdown first appears for a model, VS Code's picker can lag and show only the mode section — open the model list once and click the **Output Length** chip on the model to fix it (see screenshot; a VS Code snapshot bug, [reported upstream](https://github.com/microsoft/vscode/issues/333413)).
+**Output length is its own control.** Models and presets whose `maxOutputTokens` is an **array** of response lengths (bundled presets do) get a second, independent **Output Length** dropdown next to the mode picker (e.g. 16K / 32K / 64K), so you cap response length per request without touching settings. VS Code remembers your pick per model, and a shorter pick hands the freed tokens back to your prompt: Copilot's input budget grows to match. Right after the dropdown first appears for a model, VS Code's picker can lag and show only the mode section. Open the model list once and click the **Output Length** chip on the model, which fixes it (see screenshot; VS Code snapshot bug, [reported upstream](https://github.com/microsoft/vscode/issues/333413)).
 
 **Add vLLM Server & Model** auto-generates modes from bundled presets (or OpenRouter reasoning metadata). An example config and the full syntax are in the [Manual → Model modes](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md#model-modes).
 </td>
@@ -239,7 +239,7 @@ A visual editor for per-model configuration, no `settings.json` required:
 
 <img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/OutputLength_Picker_Workaround.png" width="100%" alt="Model list hover card showing the Output Length chip to click">
 
-<em>Dropdown not showing right after an update? Open the model list and click the <b>Output Length</b> chip (arrow) — one click heals VS Code's stale picker snapshot.</em>
+<em>Dropdown not showing right after an update? Open the model list and click the <b>Output Length</b> chip (arrow). One click heals VS Code's stale picker snapshot.</em>
 
 </td>
 </tr>
@@ -285,22 +285,7 @@ Copilot accumulates session data across workspaces. **Clean Copilot Sessions** l
 
 ### vLLM request controls
 
-Beyond the basics, vLLM request-body parameters give you full request control. Configure them in `defaultParams` (model-wide) or `modelModes` (switchable from the picker). They are not exposed by the BYOK Custom Endpoint.
-
-| vLLM capability | What it enables |
-|---|---|
-| `structured_outputs` | Constrain output to JSON schema, regex, choices, or grammar |
-| `bad_words` | Prevent specific words or phrases from being generated |
-| `repetition_detection` | Stop runaway N-gram repetition |
-| `chat_template_kwargs` | Pass model-specific chat-template options such as `enable_thinking` and `preserve_thinking` |
-| `thinking_token_budget` | Set a reasoning-token budget for supported models |
-| `stop_token_ids` | Stop generation on specific token IDs |
-| `ignore_eos` | Continue generation past the end-of-sequence token |
-| `min_tokens` | Require a minimum number of generated tokens |
-| `truncate_prompt_tokens` | Cap prompt length server-side |
-| `skip_special_tokens` | Control special-token removal in the output |
-| `include_stop_str_in_output` | Keep the matched stop string in the output |
-| `allowed_token_ids` | Restrict generation to a selected set of token IDs |
+Beyond the basics, vLLM request-body parameters give you full request control: `structured_outputs` (JSON / regex / grammar constraints), `bad_words`, `repetition_detection`, `chat_template_kwargs` (`enable_thinking`, `preserve_thinking`), `thinking_token_budget`, stop-token control, `min_tokens`, `allowed_token_ids`, and more. Configure them in `defaultParams` (model-wide) or `modelModes` (switchable from the picker). The BYOK Custom Endpoint exposes none of these. Every parameter, its range and backend support: [configuration reference](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/configuration-reference.md#parameters-for-defaultparams-and-modelmodes).
 
 ### Supported servers
 
@@ -351,37 +336,16 @@ Right-click a **vLLM** server node → **vLLM Deep-Dive** opens a per-server web
 | **Add vLLM Server & Model** | Guided flow: enter server URL → discover models → auto-configure → save. An `openrouter.ai` server URL routes into the OpenRouter flow (server → key → model pick) |
 | **Test & Refresh Models** | Verify servers, list models, correct ID mismatches, check network settings |
 | **Set Model Personality** | Pick a model, pick a personality preset (or **Default** to clear), apply instantly |
-| **Configure Utility Model** | Switch utility model for MCP servers (`mainAgent` / `copilot` / `none`) |
-| **Update Auth** | Rotate API key or change auth headers for a server (right-click on server node) |
 | **vLLM Deep-Dive** | Open per-server webview with full metrics and histograms (right-click a **vLLM** server node) |
-| **Remove Model** | Remove a single configured model (button in Model Settings webview) |
-| **Remove Server** | Remove a configured server and all its models (command palette, with confirm) |
-| **Open Log File** | Open today's debug log |
-| **Clear Log Files** | Delete all debug logs (except the active one) |
-
-**Utilities** (maintenance, not daily workflow):
-
-| Command | What it does |
-|---------|--------------|
 | **Diagnose Connection** | Deep TLS/proxy/DNS/cert diagnostic report |
-| **Clean Copilot Sessions** | Wipe stale Copilot sessions across workspaces |
+
+The full command list, including auth rotation, model/server removal, log tools, and session cleanup: [Manual → Commands](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md#commands).
 
 ---
 
 ## Development
 
-### License compliance
-
-All production (shipped) dependencies are permissive open-source licenses
-(MIT, ISC, BSD-2/3-Clause, Apache-2.0). Compliance is enforced in CI/build:
-
-- `npm run license:check`: fails the build if any *runtime* dependency has a
-  license outside the approved allowlist (copyleft like GPL/AGPL/LGPL and
-  unknown licenses are rejected). Runs automatically as part of `npm run build`.
-- `npm run license:notices`: regenerates `THIRD-PARTY-NOTICES.txt` (required by
-  the VS Code Marketplace for redistributed OSS). Run it whenever dependencies
-  change and commit the result.
-- `THIRD-PARTY-NOTICES.txt` is included in the packaged VSIX.
+Dev setup, project rules, and the dependency license policy (permissive-only allowlist enforced by `npm run license:check` in the build, `THIRD-PARTY-NOTICES.txt` regenerated with `npm run license:notices`): [CONTRIBUTING.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/CONTRIBUTING.md).
 
 ---
 
@@ -401,7 +365,7 @@ Every donation is appreciated, even a coffee. It keeps local AI development free
 
 This page covers the essentials. Every setting, parameter, and backend detail is in the [vLLM-Copilot Manual](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md).
 
-Your vLLM servers are not limited to VS Code: the [GitHub Copilot CLI](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/copilot-cli.md) terminal agent runs on them too, via three environment variables. And since v1.35.0 your models work in the VS Code [Agents window](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md) ("Open in Agents") — enabled automatically, nothing to configure.
+Your vLLM servers are not limited to VS Code: the [GitHub Copilot CLI](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/copilot-cli.md) terminal agent runs on them too, via three environment variables. And since v1.35.0 your models work in the VS Code [Agents window](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md) ("Open in Agents"), enabled automatically with nothing to configure.
 
 ---
 

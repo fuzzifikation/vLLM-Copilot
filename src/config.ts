@@ -40,7 +40,7 @@ export interface ModelConfig {
    * - `number`: a single cap. No dropdown, budget = that value (clamped to the
    *   context window and any server-reported output ceiling).
    * - `number[]`: ordered response lengths (positive ints, strictly descending,
-   *   ≤ 8) rendered as the model picker's second **Output length** dropdown —
+   *   ≤ 8) rendered as the model picker's second **Output Length** dropdown —
    *   the OUTPUT axis, independent of `modelModes` (behavior). The FIRST entry
    *   is both the picker default and the desired output budget; entries above
    *   the clamped ceiling are dropped from the menu, and the user's pick IS the
