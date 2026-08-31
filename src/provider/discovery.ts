@@ -9,11 +9,10 @@ import {
   buildModelId,
   type ModelConfig,
 } from '../config.js';
-import { buildModelInfo, buildOfflineModelInfo } from '../modelInfo.js';
+import { buildModelInfo } from '../modelInfo.js';
 import { deriveTokenBudget } from '../tokenBudget.js';
 import { describeError } from '../messageConverter.js';
 import type { ProviderClient } from './contracts.js';
-import { ledgerKey, type BudgetLedger } from './budgetLedger.js';
 
 /**
  * Discover available models from configured overrides: fetch each model's
@@ -24,15 +23,15 @@ import { ledgerKey, type BudgetLedger } from './budgetLedger.js';
  * the cached-model set are the provider's (lifecycle/cache owner); this function
  * takes the overrides + client and returns the discovered models.
  *
- * Policy: a model whose server answers is served from the server's honest
- * metadata — never a fabricated budget. A model whose server does NOT answer
- * (unreachable, or no window in otherwise-working metadata) STAYS VISIBLE as
- * an offline row: switching a server off must not silently delete the user's
- * model from the picker. The offline row advertises the last-known-good budget
- * from the {@link BudgetLedger} (labeled stale) or, if the server never
- * answered, only genuinely configured limits with labeled 1-token placeholders
- * for the unknowns. The resolver's own message is preserved verbatim so the
- * user sees the backend-specific cause, not a vague rewrite.
+ * Policy: the picker is a LIVE INVENTORY. A model is listed only when its
+ * server answers right now and reports a real context window on the
+ * documented path for its backend. An unreachable server, or a model the
+ * server does not currently serve (swap, unload), drops the model from the
+ * picker entirely: settings remain the configured inventory, the picker shows
+ * what actually works. The model reappears on its own once the server serves
+ * it again. Budgets are never fabricated; the resolver's own message is
+ * preserved verbatim so the user sees the backend-specific cause in the log,
+ * not a vague rewrite.
  *
  * Output-budget contract: with a vector-form `maxOutputTokens`, the advertised
  * `maxOutputTokens` IS the tracked pick (clamped to the ceiling) — VS Code
@@ -72,9 +71,7 @@ export async function discoverModels(
    * filtered by the pre-pick ceiling, so menu options never depend on the pick.
    */
   selectedLengthByModel?: ReadonlyMap<string, number>,
-  /** Last-known-good budget store: recorded on success, recalled to build offline rows. */
-  ledger?: BudgetLedger,
-): Promise<DiscoveryResult> {
+): Promise<vscode.LanguageModelChatInformation[]> {
   // Process each model: fetch context window from server, build info, or record error.
   // All models are queried in parallel so discovery time = max(server latencies), not sum.
   const tasks = modelOverrides.map(async (override) => {
@@ -95,10 +92,6 @@ export async function discoverModels(
     // Picker id — matches buildModelInfo's derivation so provider-tracked mode
     // selections keyed by model.id resolve to the right override.
     const presetId = override.id || buildModelId(serverConfig.serverUrl, vllmModelId);
-    // Ledger identity: the REAL one (server + wire id), not the picker id, so
-    // a repointed or shared id can never graft one server's budget onto
-    // another target's offline row.
-    const identity = ledgerKey(serverConfig.serverUrl, vllmModelId);
     // Legacy output-budget chain (mode > defaultParams > vector head / scalar),
     // clamped below. Used as the advertised budget ONLY while no length pick
     // exists; once a pick exists the pick wins — even over a per-mode
@@ -153,63 +146,26 @@ export async function discoverModels(
             `[WARN] Model "${modelId}" — family estimated as "${family}" from org-name fallback (no preset/HuggingFace family available). Family is informational only; use a preset or run auto-discovery for authoritative values.`
           );
       }, effectiveOutputTokens, outputMenuCeiling);
-      // Remember what THIS server reported about THIS wire model so a later
-      // outage can serve an honest stale budget instead of a guess.
-      ledger?.record(identity, { maxModelLen: limits.contextWindow, maxOutputTokens: model.maxOutputTokens });
-      return {
-        model,
-        contextWindow: limits.contextWindow,
-        error: null,
-        offline: false,
-      };
+      return { model, contextWindow: limits.contextWindow, error: null };
     } catch (err) {
-      // Server didn't answer — keep the model visible as an offline row with
-      // the best honest budget available (last-known > configured > labeled
-      // placeholders). The failure counts toward `failures` so the provider
-      // knows this list is a snapshot of a broken moment, not the truth.
-      const reason = describeError(err);
-      const model = buildOfflineModelInfo(
-        { id: vllmModelId },
-        override,
-        settings,
-        serverConfig.serverUrl,
-        {
-          lastKnown: ledger?.recall(identity),
-          configuredInputTokens: override.maxInputTokens,
-          // Mode chain only — deliberately NOT `?? settings.maxOutputTokens`:
-          // the built-in default is not something this model ever proved.
-          configuredOutputTokens: resolveConfiguredMaxTokens(override, selectedMode),
-          reason,
-        },
-      );
-      return {
-        model,
-        contextWindow: null,
-        error: `[WARN] Model "${presetId}" offline: ${reason}`,
-        offline: true,
-      };
+      // Server did not answer (unreachable) or does not currently serve this
+      // model (swap, unload): the model drops out of the picker until its
+      // server serves it again. The reason is logged verbatim.
+      return { model: null, contextWindow: null, error: `[WARN] Model "${presetId}" unavailable: ${describeError(err)}` };
     }
   });
 
   const results = await Promise.all(tasks);
   const models: vscode.LanguageModelChatInformation[] = [];
-  let offlineCount = 0;
 
-  // Every task self-catches and resolves with `{ model, error, offline }` — no
-  // task can reject (a rejection here would be a programming error inside the
-  // map callback, not a model-skipping condition). `Promise.all` is honest:
-  // there is no rejected branch to handle.
-  const offlineIds = new Set<string>();
-  for (const { model, contextWindow, error, offline } of results) {
+  // Every task self-catches and resolves with `{ model, error }` — no task can
+  // reject (a rejection here would be a programming error inside the map
+  // callback, not a model-skipping condition). `Promise.all` is honest: there
+  // is no rejected branch to handle.
+  for (const { model, contextWindow, error } of results) {
     if (model) {
       models.push(model);
-      // Offline rows register NO context window on purpose: the provider's
-      // window map feeds post-stream diagnostics for LIVE requests only.
       if (contextWindow !== null) onModelDiscovered?.(model.id, contextWindow);
-      if (offline) {
-        offlineCount++;
-        offlineIds.add(model.id);
-      }
     }
     if (error) {
       output.appendLine(error);
@@ -235,23 +191,10 @@ export async function discoverModels(
   if (models.length > 0) {
     const summary = models.map(m => {
       const ctx = ((m.maxInputTokens || 0) + (m.maxOutputTokens || 0)).toLocaleString('en-US');
-      return `${m.id} (${ctx} ctx)${offlineIds.has(m.id) ? ' ⚠offline' : ''}`;
+      return `${m.id} (${ctx} ctx)`;
     }).join(', ');
-    const offlineNote = offlineCount > 0 ? ` (${offlineCount} offline)` : '';
-    output.appendLine(`[INFO] Loaded ${models.length} model(s)${offlineNote}: ${summary}`);
+    output.appendLine(`[INFO] Loaded ${models.length} model(s): ${summary}`);
   }
 
-  return { models, failures: offlineCount };
-}
-
-/**
- * Discovery outcome: the picker rows (healthy AND offline) plus the count of
- * transient failures. `failures > 0` means the list is a snapshot of a broken
- * moment — the provider keeps re-checking (throttled) instead of trusting it.
- * Permanent skips (a model with no `serverUrl`) are NOT failures: re-probing
- * cannot fix a config error, so they must not pin the cache incomplete.
- */
-export interface DiscoveryResult {
-  models: vscode.LanguageModelChatInformation[];
-  failures: number;
+  return models;
 }

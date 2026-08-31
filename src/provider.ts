@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import { VllmClient } from './vllmClient.js';
 import { SystemMessagePipeline } from './provider/systemMessagePipeline.js';
 import { discoverModels } from './provider/discovery.js';
-import { createBudgetLedger } from './provider/budgetLedger.js';
 import { runChatResponse } from './provider/streamOrchestrator.js';
 import type { ProviderClient } from './provider/contracts.js';
 import { resolveOverrideForModel, resolveModelSettings } from './config.js';
@@ -34,33 +33,21 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
   private lastSelectedLength = new Map<string, number>();
 
   /**
-   * True when the cached list came from a pass where EVERY configured server
-   * answered. VS Code never re-queries the picker on open — silent resolves
-   * are the only self-heal path — so an incomplete cache (any offline row) is
-   * never trusted: those silent calls re-check the servers instead of serving
-   * a snapshot of a broken moment forever. A list of permanent skips (no
-   * serverUrl) IS complete: re-probing cannot fix a config error.
+   * Generation the current `cachedModels` was computed for (-1 = none) and
+   * when it was published (0 = none). The timestamp backs the single
+   * freshness rule: a silent resolve inside the TTL serves the cache, past it
+   * the servers are re-probed. There is no "was the last pass healthy" state:
+   * the cache is simply what the servers reported at that moment, and the TTL
+   * bounds how long that snapshot may stand in for the truth. Deliberate
+   * refreshes (settings changes, Test & Refresh, mode or output-length picks)
+   * and a chat request dying on a transport failure null the cache through
+   * clearCache, so user intent and observed reality always re-probe live.
    */
-  private discoveryWasComplete = false;
-
-  /** Generation the current `cachedModels` was computed for (-1 = none). */
   private cachedGeneration = -1;
+  private cachedAt = 0;
 
-  /**
-   * Dead-server throttle: while this timestamp is in the future, silent calls
-   * serve the cached (offline) list IMMEDIATELY and re-check in the
-   * background. A blackholed server's probe costs the full metadata timeout,
-   * and VS Code resolves the model list repeatedly during an outage — without
-   * the throttle every lookup would stall ~10s. Timestamp, not timer: nothing
-   * waits, nothing is scheduled. Deliberate refreshes (Test & Refresh, mode or
-   * length picks, settings edits) null the cache through clearCache/the
-   * generation bump, and the gate only applies when a cache exists to serve —
-   * so user actions always probe live.
-   */
-  private discoveryRetryAfter = 0;
-
-  /** How long a still-down server is left alone before the next background re-check. */
-  private static readonly OFFLINE_RETRY_COOLDOWN_MS = 30_000;
+  /** How long a silent resolve may reuse the cached list before re-probing. */
+  private static readonly CACHE_TTL_MS = 60_000;
 
   /**
    * The discovery pass currently running, if any. Concurrent calls JOIN it
@@ -71,9 +58,6 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
    * its result still applies.
    */
   private discoveryRun: Promise<number> | undefined;
-
-  /** Last-known-good budgets for honest offline rows during outages. Session memory only. */
-  private readonly budgetLedger = createBudgetLedger();
 
   /** Instance-owned system-message pipeline (replacements + capture). */
   private readonly systemMessages: SystemMessagePipeline;
@@ -105,7 +89,6 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
   clearCache(): void {
     this.modelCacheGeneration++;
     this.cachedModels = null;
-    this.discoveryWasComplete = false;
     this.modelContextWindows.clear();
     this.lastSelectedMode.clear();
     this.lastSelectedLength.clear();
@@ -169,29 +152,11 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       return [];
     }
 
-    // Silent calls serve the cache when it is AUTHORITATIVE (every server
-    // answered). When it is not — an outage snapshot — re-check, but never
-    // make the caller wait behind a dead server's probe: inside the cooldown,
-    // serve the cached list NOW and heal in the background, firing the change
-    // event once the servers fully recover so VS Code re-resolves and the
-    // picker updates itself. Without this, a cache built during an outage
-    // would pin models offline until a settings change or a reload.
-    if (options.silent && this.cachedModels) {
-      if (this.discoveryWasComplete) {
-        return this.cachedModels;
-      }
-      if (Date.now() < this.discoveryRetryAfter) {
-        void this.runDiscoveryOnce()
-          .then(() => {
-            // Event ONLY on full recovery: partial heals would churn the
-            // picker, and still-failing passes just re-arm the cooldown quietly.
-            if (this.discoveryWasComplete) {
-              this._onDidChangeLanguageModelChatInformation.fire();
-            }
-          })
-          .catch(() => { /* discovery failures are already logged */ });
-        return this.cachedModels;
-      }
+    // Silent calls serve the cache while it is fresh (inside the TTL); past
+    // it they re-probe so the picker tracks reality in both directions on its
+    // own: a server that went down drops out, one that came back reappears.
+    if (options.silent && this.cachedModels && Date.now() - this.cachedAt < VllmChatModelProvider.CACHE_TTL_MS) {
+      return this.cachedModels;
     }
 
     // Track whether this call has already waited behind one pass. Re-entries
@@ -226,17 +191,15 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
    *
    * @param rejoin - true when the caller already waited behind one pass and
    *   is looping because the generation moved. Only re-entries may converge
-   *   on an already-published authoritative cache (avoiding a redundant probe
-   *   wave). A FIRST pass always probes — or joins the pass already probing —
-   *   so a non-silent resolve (VS Code's management flows: "the truth now")
-   *   is never answered from a cache built before it asked. Silent calls with
-   *   an authoritative cache never reach here at all; the gate above serves
-   *   them. An INCOMPLETE cache never satisfies the fast path either way —
-   *   healing it is the whole point of calling.
+   *   on an already-published cache (avoiding a redundant probe wave). A FIRST
+   *   pass always probes, or joins the pass already probing, so a non-silent
+   *   resolve (VS Code's management flows: "the truth now") and a silent
+   *   resolve past the TTL are never answered from a cache built before they
+   *   asked. There is no "was the last pass healthy" state: the TTL alone
+   *   decides freshness.
    */
   private runDiscoveryOnce(rejoin = false): Promise<number> {
-    if (rejoin && this.cachedModels && this.discoveryWasComplete
-      && this.cachedGeneration === this.modelCacheGeneration) {
+    if (rejoin && this.cachedModels && this.cachedGeneration === this.modelCacheGeneration) {
       return Promise.resolve(this.modelCacheGeneration);
     }
     if (this.discoveryRun) {
@@ -251,8 +214,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         if (generation === this.modelCacheGeneration) {
           this.cachedModels = [];
           this.cachedGeneration = generation;
-          this.discoveryWasComplete = true; // nothing to discover — [] is the truth
-          this.discoveryRetryAfter = 0;
+          this.cachedAt = Date.now();
           this.modelContextWindows.clear();
         }
         return generation;
@@ -262,25 +224,19 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       // discovery core (context-window fetch, model info, warnings) is a pure
       // function taking explicit collaborators.
       const contextWindows = new Map<string, number>();
-      const { models, failures } = await discoverModels(
+      const models = await discoverModels(
         modelOverrides,
         this.client,
         this.output,
         (modelId, contextWindow) => contextWindows.set(modelId, contextWindow),
         this.lastSelectedMode,
         this.lastSelectedLength,
-        this.budgetLedger,
       );
       if (generation === this.modelCacheGeneration) {
         this.cachedModels = models;
         this.cachedGeneration = generation;
+        this.cachedAt = Date.now();
         this.modelContextWindows = contextWindows;
-        // An offline row means the list is a snapshot of a broken moment, not
-        // the truth: keep re-checking (throttled) until the servers cooperate.
-        this.discoveryWasComplete = failures === 0;
-        this.discoveryRetryAfter = failures === 0
-          ? 0
-          : Date.now() + VllmChatModelProvider.OFFLINE_RETRY_COOLDOWN_MS;
       }
       return generation;
     })().finally(() => {
@@ -343,55 +299,16 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       : undefined;
     this.trackConfigSelection(model.id, selectedMode, selectedLength);
 
-    // Pre-flight for OUR offline rows: a row published in the current cache
-    // with NO registered context window (only live servers register windows).
-    // Its advertised budget is stale or placeholder, and request construction
-    // hard-clamps the wire max_tokens to it — so a server that woke up after
-    // the last discovery would be strangled by metadata from when it was dead
-    // (worst case: Copilot rejecting the prompt against a 1-token placeholder
-    // while the server is fine). A chat request is a deliberate user action —
-    // same class as Test & Refresh — so re-check live BEFORE building the
-    // request: single-flight pass, no cooldown gate on this path (a doomed
-    // request's own connection timeout dwarfs the probe anyway). Then build
-    // from the freshest row for this id, not the snapshot VS Code was holding.
-    // An id ABSENT from the cache (stale row for a deleted model, or a request
-    // arriving mid-refresh) is NOT an offline row — probing would repeat a
-    // full server wave for every doomed request, turning an instant failure
-    // into a slow one. Healthy rows (registered window): zero cost, zero probing.
-    let requestModel = model;
-    const cachedRow = this.cachedModels?.find(m => m.id === model.id);
-    if (cachedRow && !this.modelContextWindows.has(model.id)) {
-      if (!token.isCancellationRequested) {
-        try {
-          await this.runDiscoveryOnce();
-          requestModel = this.cachedModels?.find(m => m.id === model.id) ?? model;
-          // Full recovery detected here means VS Code still holds the offline
-          // row until its next silent resolve — tell it now so the picker's
-          // ⚠ marker clears the moment a request proves the server is back.
-          // (discoveryWasComplete is the whole gate: an offline row never
-          // becomes complete without the failed server actually answering.)
-          if (this.discoveryWasComplete) {
-            this._onDidChangeLanguageModelChatInformation.fire();
-          }
-        } catch {
-          // Strictly best-effort: if the re-check itself fails (corrupt config,
-          // servers screaming), proceed with the row as handed over. Error
-          // classification belongs to runChatResponse/handleResponseError —
-          // the established routing (ERROR log + chat part, quiet on cancel) —
-          // and this pre-flight must never steal it with a raw throw.
-        }
-      }
-    }
-
     await runChatResponse(
       {
         client: this.client,
         output: this.output,
         fileLogger: this.fileLogger,
         systemMessages: this.systemMessages,
-        contextWindow: this.modelContextWindows.get(requestModel.id),
+        contextWindow: this.modelContextWindows.get(model.id),
+        onTransportFailure: () => this.clearCache(),
       },
-      requestModel,
+      model,
       messages,
       options,
       progress,

@@ -8,6 +8,7 @@ import { consumeStream } from './consumeStream.js';
 import { createOutcome, resetOutcome } from './outcome.js';
 import { reportPostStreamDiagnostics, handleResponseError } from './postStream.js';
 import type { SystemMessagePipeline } from './systemMessagePipeline.js';
+import { isTransportFailure } from '../messageConverter.js';
 
 /**
  * Collaborators the chat-response orchestration needs. The provider owns the
@@ -21,6 +22,12 @@ export interface ChatDeps {
   systemMessages: SystemMessagePipeline;
   /** Authoritative server-reported context window captured during discovery. */
   contextWindow?: number;
+  /**
+   * Called once when the request fails at the transport layer (server
+   * unreachable). The picker was advertising a stale snapshot; the owner uses
+   * this to invalidate its model cache so the dead model drops out.
+   */
+  onTransportFailure?: () => void;
 }
 
 /**
@@ -184,5 +191,11 @@ export async function runChatResponse(
     }
   } catch (err) {
     handleResponseError(err, model, outcome, token, progress, output);
+    if (!token.isCancellationRequested && isTransportFailure(err)) {
+      // The advertised server refused the connection: the picker snapshot is
+      // stale. Tell the owner to invalidate so the next resolve drops this
+      // model (and siblings on the same dead server) until it is back.
+      deps.onTransportFailure?.();
+    }
   }
 }

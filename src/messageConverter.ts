@@ -322,6 +322,26 @@ export function isGracefulTermination(err: unknown): boolean {
 }
 
 /**
+ * True when the request failed at the transport layer: the server never
+ * answered (connection refused, DNS failure, undici `fetch failed`). HTTP
+ * error responses (the server answered, even with a 5xx) are NOT transport
+ * failures, and neither are cancellations, timeouts, or mid-stream resets.
+ *
+ * Used to invalidate the model cache: a transport failure means the picker
+ * was advertising a server that no longer exists, so the next resolve should
+ * re-probe rather than reuse the snapshot.
+ */
+export function isTransportFailure(err: unknown): boolean {
+  if (typeof err === 'string' || !(err instanceof Error)) return false;
+  const combined = [err, ...iterateCauses(err)]
+    .map(c => (c instanceof Error ? `${c.name} ${c.message}` : String(c)))
+    .join(' ');
+  return combined.includes('ECONNREFUSED')
+    || combined.includes('fetch failed')
+    || combined.includes('ENOTFOUND');
+}
+
+/**
  * Serialize an error to a multi-line string with full diagnostic info:
  * name, message, cause chain, and stack trace.
  * Handles both Error objects and plain string throws (fetch abort returns a string!).
