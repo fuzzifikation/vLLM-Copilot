@@ -104,8 +104,11 @@ describe('Deep-Dive webview', () => {
     expect(content.textContent).toContain('time_to_first_token_seconds');
     // Histogram bars render as SVG rects.
     expect(doc.querySelectorAll('.histogram-bar').length).toBeGreaterThan(0);
-    // lastUpdated reflects the render.
-    expect(doc.getElementById('lastUpdated')!.textContent).toContain('Updated ');
+    // The panel states when the reading was taken and how to retake it, since it
+    // deliberately stops polling after one.
+    const status = doc.getElementById('lastUpdated')!.textContent!;
+    expect(status).toContain('Snapshot ');
+    expect(status).toContain('re-open to refresh');
   });
 
   it('escapes untrusted model ids so no markup is injected', () => {
@@ -119,15 +122,27 @@ describe('Deep-Dive webview', () => {
     expect(content.textContent).toContain('evil<img');
   });
 
-  it('renders an escaped error message', () => {
+  it('shows an escaped probe error alongside the data', () => {
     const { dom } = loadDeepDive();
-    send(dom, { type: 'error', message: '<script>window.__pwned=1</script> boom' });
+    send(dom, { type: 'data', raw: makeRawData(), error: '<script>window.__pwned=1</script> boom' });
 
     const content = dom.window.document.getElementById('content')!;
-    expect(content.querySelector('.error-msg')).not.toBeNull();
+    const banner = content.querySelector('.error-msg');
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toContain('boom');
+    // The banner explains a failed probe; data that did arrive stays visible.
+    expect(content.textContent).toContain('Version Info');
     expect(content.querySelector('script')).toBeNull();
     expect((globalThis as any).__pwned).toBeUndefined();
-    expect(content.textContent).toContain('boom');
+  });
+
+  it('clears the probe error once a later tick succeeds', () => {
+    const { dom } = loadDeepDive();
+    send(dom, { type: 'data', raw: makeRawData(), error: 'Cannot connect' });
+    expect(dom.window.document.querySelector('.error-msg')).not.toBeNull();
+
+    send(dom, { type: 'data', raw: makeRawData() });
+    expect(dom.window.document.querySelector('.error-msg')).toBeNull();
   });
 
   it('Ctrl+F overlay highlights matches and navigates them', async () => {

@@ -15,7 +15,7 @@
  */
 
 import * as vscode from 'vscode';
-import { buildEndpoint, normalizeServerUrl, serverFingerprint, type ServerType } from './config.js';
+import { buildEndpoint, serverIdentity, type ServerType } from './config.js';
 import { buildRequestHeaders } from './fetchRetry.js';
 import { resolveRuntimeLimits } from './runtimeLimits.js';
 import {
@@ -344,8 +344,10 @@ const DEFAULT_POLL_MS = 15000;
  * {@link getCachedRaw}, and receive push notifications on each completed cycle.
  */
 export class ServerMetricsEngine {
-  private subscriberCount = 0;
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Whether a fetch cycle is currently running — `tick()` reschedules itself in
+   *  its `finally`, so a second concurrent cycle would spawn a second timer chain. */
+  private inFlight = false;
   private _lastAggregated: ServerMetrics | null = null;
   private _lastRaw: ServerRawData | null = null;
   private _disposed = false;
@@ -414,12 +416,25 @@ export class ServerMetricsEngine {
    */
   subscribe(callback: (aggregated: ServerMetrics, raw: ServerRawData) => void): { dispose: () => void } {
     this.callbacks.push(callback);
-    this.subscriberCount++;
-    if (this.subscriberCount === 1) {
+    // The callback list IS the reference count — a separate counter can drift if
+    // a disposable is disposed twice and then kill a subscriber still watching.
+    if (this.callbacks.length === 1) {
       // First subscriber — start polling immediately
-      this.tick();
+      void this.tick();
     }
     return { dispose: () => this.unsubscribe(callback) };
+  }
+
+  /**
+   * Fetch immediately instead of waiting for the next interval, for a view that
+   * just opened and wants a current reading. Safe to call any time: the pending
+   * tick is dropped and {@link tick} reschedules itself when the cycle ends, so
+   * the server never ends up on two polling chains.
+   */
+  pollNow(): void {
+    if (this._disposed) return;
+    this.stopPolling();
+    void this.tick();
   }
 
   /** Update request headers in-place (called by getMetricsEngine on re-use). */
@@ -460,7 +475,6 @@ export class ServerMetricsEngine {
 
   dispose(): void {
     this._disposed = true;
-    this.subscriberCount = 0;
     this.callbacks = [];
     this.stopPolling();
     // Prevent registry from returning this disposed zombie. The registry is
@@ -472,9 +486,12 @@ export class ServerMetricsEngine {
 
   private unsubscribe(callback: (aggregated: ServerMetrics, raw: ServerRawData) => void): void {
     const idx = this.callbacks.indexOf(callback);
-    if (idx >= 0) this.callbacks.splice(idx, 1);
-    this.subscriberCount--;
-    if (this.subscriberCount <= 0) {
+    // Idempotent: a second dispose of the SAME subscription must not be counted
+    // against the others, or it would tear the engine down under a viewer that is
+    // still watching.
+    if (idx < 0) return;
+    this.callbacks.splice(idx, 1);
+    if (this.callbacks.length === 0) {
       // Last subscriber left: release the engine entirely. This stops polling
       // AND removes it from the registry (via dispose), so a server whose
       // dashboard/deep-dive views are all closed stops being scraped and is
@@ -486,7 +503,11 @@ export class ServerMetricsEngine {
 
   /** One fetch cycle: hit all endpoints, parse once, cache both views, notify. */
   private async tick(): Promise<void> {
-    if (this._disposed) return;
+    // One cycle at a time: a first `subscribe` and `pollNow` can both knock while
+    // a cycle is already running, and overlapping cycles would each schedule
+    // their own next tick (two chains polling the same server forever).
+    if (this._disposed || this.inFlight) return;
+    this.inFlight = true;
 
     try {
       const { aggregated, raw } = await fetchAllEndpoints(this.serverUrl, this.requestHeaders, this.serverType);
@@ -617,8 +638,10 @@ export class ServerMetricsEngine {
         this.accountProbeSucceeded = ok;
       }
 
-      // Notify all subscribers
-      for (const cb of this.callbacks) {
+      // Notify all subscribers over a COPY: a one-shot subscriber (the Deep-Dive
+      // panel) unsubscribes from inside its own callback, and splicing the live
+      // array mid-iteration would shift later callbacks past the cursor.
+      for (const cb of [...this.callbacks]) {
         try { cb(aggregated, raw); } catch { /* subscriber error — best-effort */ }
       }
     } catch (err) {
@@ -628,8 +651,9 @@ export class ServerMetricsEngine {
       this.output?.appendLine(`[ERROR] Metrics engine tick failed for ${this.serverUrl}: ${err instanceof Error ? err.message : String(err)}`);
       console.error('[vllm-copilot] metrics engine tick failed:', err);
     } finally {
+      this.inFlight = false;
       // Always schedule next cycle — even on error we retry
-      if (!this._disposed && this.subscriberCount > 0) {
+      if (!this._disposed && this.callbacks.length > 0) {
         this.pollTimer = setTimeout(() => this.tick(), getPollSettingMs());
       }
     }
@@ -687,18 +711,17 @@ export function getMetricsEngine(
   // engine, plus the header fingerprint so different credential sets on one URL
   // stay separate. The engine stores the canonical URL for fetching; the key is
   // its registry identity.
-  const canonical = normalizeServerUrl(serverUrl);
-  const key = serverFingerprint(canonical, requestHeaders ?? {});
+  const identity = serverIdentity(serverUrl, requestHeaders);
+  const canonical = identity.serverUrl;
+  const key = identity.fingerprint;
   let engine = engineRegistry.get(key);
   if (!engine) {
-    engine = new ServerMetricsEngine(canonical, requestHeaders ?? {}, serverType, modelIds, output);
+    engine = new ServerMetricsEngine(canonical, identity.requestHeaders, serverType, modelIds, output);
     engine.setRegistryKey(key);
     engineRegistry.set(key, engine);
   } else {
-    if (requestHeaders && Object.keys(requestHeaders).length > 0) {
-      // Update headers on re-use so auth changes propagate (same identity)
-      engine.setHeaders(requestHeaders);
-    }
+    // Headers need no refresh: they are part of the registry key, so an engine
+    // found here already holds exactly the sanitized set this lookup describes.
     // Update backend type on re-use so a dashboard/deep-dive opened for a
     // non-vLLM server probes online via that backend's own endpoint, even if the
     // engine was first created before the type was known.
@@ -714,34 +737,43 @@ export function getMetricsEngine(
 }
 
 /**
- * Update request headers on existing metrics engines for this server, if any.
+ * Move one metrics engine onto its new identity after Update Auth, if it exists.
  * Unlike {@link getMetricsEngine}, this never creates an engine — it exists so
- * header-only updates (e.g. Update Auth) don't leak a zero-subscriber registry
- * entry. No-op when no engine exists.
+ * header-only updates don't leak a zero-subscriber registry entry. No-op when no
+ * engine is registered under the PREVIOUS identity.
  *
- * Update Auth converges ALL models on a URL to the same headers, so every
- * engine registered for that URL is updated in place and re-keyed to the new
- * identity. (Two pre-update identities on one URL become one identity.)
+ * The caller passes the headers of a single model (before → after), because
+ * Update Auth MERGES into each model's existing headers: models on one URL that
+ * already differ keep differing, so each changed identity gets its own call.
+ * Stamping one model's headers on every engine of the URL would hand model A's
+ * credentials to model B's open Deep-Dive.
+ *
+ * When the transition lands on an identity another engine already owns (two
+ * identities converging on one credential set), the existing engine wins and this
+ * one is left unregistered: any view still subscribed to it keeps being served
+ * (with the new auth) and it retires itself when the last of them unsubscribes.
+ * A Deep-Dive panel needs no help here — it holds no subscription between
+ * readings, so re-opening it picks the engine for the new identity.
  *
  * @param serverUrl - The vLLM server URL (canonicalized internally)
- * @param requestHeaders - New auth/routing headers
+ * @param previousHeaders - The model's headers before the update (its old identity)
+ * @param nextHeaders - Its new headers (sanitized internally, as at request time)
  */
-export function updateMetricsEngineHeaders(serverUrl: string, requestHeaders: Record<string, string>): void {
-  const canonical = normalizeServerUrl(serverUrl);
-  const newKey = serverFingerprint(canonical, requestHeaders ?? {});
-  // Collect first — we mutate the map while iterating.
-  const targets: Array<[string, ServerMetricsEngine]> = [];
-  for (const [key, engine] of engineRegistry) {
-    if (normalizeServerUrl(engine.getServerUrl()) === canonical) targets.push([key, engine]);
-  }
-  for (const [oldKey, engine] of targets) {
-    engine.setHeaders(requestHeaders ?? {});
-    engine.setRegistryKey(newKey);
-    if (oldKey !== newKey) {
-      engineRegistry.delete(oldKey);
-      engineRegistry.set(newKey, engine);
-    }
-  }
+export function updateMetricsEngineHeaders(
+  serverUrl: string,
+  previousHeaders: Record<string, string> | undefined,
+  nextHeaders: Record<string, string>,
+): void {
+  const oldKey = serverIdentity(serverUrl, previousHeaders).fingerprint;
+  const engine = engineRegistry.get(oldKey);
+  if (!engine) return;
+  const identity = serverIdentity(serverUrl, nextHeaders);
+  engine.setHeaders(identity.requestHeaders);
+  const newKey = identity.fingerprint;
+  if (oldKey === newKey) return;
+  engineRegistry.delete(oldKey);
+  engine.setRegistryKey(newKey);
+  if (!engineRegistry.has(newKey)) engineRegistry.set(newKey, engine);
 }
 
 // ─── Unified Fetch ──────────────────────────────────────────────────
@@ -790,9 +822,9 @@ async function fetchAllEndpoints(
     ? await Promise.all([
         safeFetch(buildEndpoint(baseUrl, 'health'), { signal: controller.signal, headers }),
         safeFetch(buildEndpoint(baseUrl, 'v1/models'), { signal: controller.signal, headers }),
-        safeFetch(buildEndpoint(baseUrl, 'version'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
-        safeFetch(buildEndpoint(baseUrl, 'metrics'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
-        safeFetch(buildEndpoint(baseUrl, 'load'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
+        safeFetch(buildEndpoint(baseUrl, 'version'), { signal: controller.signal, headers }).then(r => r?.ok ? r.text() : ''),
+        safeFetch(buildEndpoint(baseUrl, 'metrics'), { signal: controller.signal, headers }).then(r => r?.ok ? r.text() : ''),
+        safeFetch(buildEndpoint(baseUrl, 'load'), { signal: controller.signal, headers }).then(r => r?.ok ? r.text() : ''),
       ])
     : await Promise.all([
         Promise.resolve(new Response(null, { status: 404 })), // no /health for non-vLLM
@@ -802,7 +834,7 @@ async function fetchAllEndpoints(
         Promise.resolve(''), // no /load
       ]);
   clearTimeout(timer);
-  const modelsText = v1ModelsRes.ok ? await v1ModelsRes.text() : '';
+  const modelsText = v1ModelsRes?.ok ? await v1ModelsRes.text() : '';
 
   // ── Shared parse helpers ──
   const parseJsonSafe = <T>(text: string): T | undefined => {
@@ -814,7 +846,7 @@ async function fetchAllEndpoints(
   let maxModelLen: number | null = null;
   let parsedModels: Array<Record<string, unknown>> = [];
   let malformedOpenRouterCatalog = false;
-  if (serverType === 'openrouter' && v1ModelsRes.ok) {
+  if (serverType === 'openrouter' && v1ModelsRes?.ok) {
     // OpenRouter's /v1/models IS the authoritative catalog. Apply the same
     // boundary as fetchOpenRouterCatalog() to EVERY successful response,
     // including an empty body: a 200/204 that is not `{ data: [...] }` is a
@@ -865,21 +897,24 @@ async function fetchAllEndpoints(
   // every non-vLLM server appear offline — hiding the degraded notice, measured
   // throughput, Last Request, and Token Usage nodes even though chat works.
   const probeRes = isVllm ? healthRes : v1ModelsRes;
+  // `null` = the request never got an answer (unreachable / timed out), which is
+  // a different reason than "answered, but with an error status".
+  const probeOk = probeRes?.ok === true;
   // A reachable OpenRouter relay that returns a malformed catalog is NOT a
   // healthy server — report it as an error instead of an online empty catalog.
-  const online = isVllm ? probeRes.ok : (probeRes.ok && !malformedOpenRouterCatalog);
+  const online = isVllm ? probeOk : (probeOk && !malformedOpenRouterCatalog);
   const errorStr = online
     ? undefined
     : malformedOpenRouterCatalog
       ? `OpenRouter /v1/models returned a malformed catalog (expected { data: [...] })`
-      : probeRes.status === 0
+      : !probeRes
         ? 'Cannot connect'
         : isVllm
           ? `Health check failed: ${probeRes.status}`
           : `${serverType} /v1/models failed: ${probeRes.status}`;
 
   // ── Health body (for deep-dive) ──
-  const healthBody = online && healthRes.ok ? await healthRes.text() : undefined;
+  const healthBody = online && healthRes?.ok ? await healthRes.text() : undefined;
 
   // ── OpenRouter relay: account/key health + budget (awaited here so the
   // ── endpoint fetches above ran in parallel — never a serial stall). The probes
@@ -919,7 +954,7 @@ async function fetchAllEndpoints(
       http: {},
     },
   };
-  if (online) {
+  if (online && healthRes) {
     raw.healthStatus = healthRes.status;
     if (healthBody) raw.healthBody = healthBody;
     if (parsedVersion) raw.version = parsedVersion;
@@ -932,10 +967,17 @@ async function fetchAllEndpoints(
   return { aggregated: serverMetrics, raw };
 }
 
-/** Fetch wrapper that never throws — returns a Response with status 0 on failure. */
-async function safeFetch(url: string, options: RequestInit): Promise<Response> {
+/**
+ * Fetch wrapper that never throws — returns `null` when the request itself
+ * failed (unreachable, refused, aborted by the cycle timeout). `null` is
+ * distinct from "answered with an error status", which stays a real Response.
+ * (A synthetic `new Response(null, {status: 0})` is NOT constructible — the
+ * Response constructor requires 200..599 — so a status-0 sentinel would throw
+ * right back out of the catch and take the whole cycle down with it.)
+ */
+async function safeFetch(url: string, options: RequestInit): Promise<Response | null> {
   try { return await fetch(url, options); }
-  catch { return new Response(null, { status: 0 }); }
+  catch { return null; }
 }
 
 /** Build an empty/error ServerMetrics. */

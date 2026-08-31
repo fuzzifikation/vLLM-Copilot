@@ -4,7 +4,8 @@
  */
 
 import * as vscode from 'vscode';
-import { getConfig, resolveServerConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, serverFingerprint, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
+import { getConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, modelServerIdentity, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
+import { readModels } from './configStore.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from './openRouter.js';
 import {
@@ -480,13 +481,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         serverDisplayName?: string;
       }>();
       for (const model of config.models) {
+        // A model without a URL is unreachable and has no identity to group by.
         if (!model.serverUrl) continue;
-        const resolved = resolveServerConfig(model);
-        if (!resolved.serverUrl) continue;
-        const fp = serverFingerprint(resolved.serverUrl, resolved.requestHeaders);
+        const identity = modelServerIdentity(model);
+        const fp = identity.fingerprint;
         let group = identityMap.get(fp);
         if (!group) {
-          group = { url: resolved.serverUrl, requestHeaders: resolved.requestHeaders, modelIds: [], serverType: model.serverType };
+          group = { url: identity.serverUrl, requestHeaders: identity.requestHeaders, modelIds: [], serverType: model.serverType };
           identityMap.set(fp, group);
         }
         const wireId = model.vllmModelId ?? model.id;
@@ -521,6 +522,12 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
           dispose: sub.dispose,
         });
       }
+      // Repaint once the nodes exist. fireTreeUpdate() coalesces, so this is
+      // usually folded into the repaint the caller already scheduled — but if
+      // getConfig() resolves later than that microtask, the earlier repaint drew
+      // an empty list and nothing else would repaint until a cycle COMPLETES (up
+      // to the 5s timeout when a server is down).
+      this.fireTreeUpdate();
     } catch (err) {
       this.outputChannel.appendLine(`[DASHBOARD] refreshSubscriptions failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -894,7 +901,6 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
           if (effectiveOutput === undefined || providerCap < effectiveOutput) effectiveOutput = providerCap;
         }
       }
-      const clamped = clampCauses.length > 0;
       items.push(new OpenRouterModelTreeItem(serverUrl, modelId, label, providerLabel, fp, configuredOutput, effectiveOutput, clampCauses));
     }
     return items;
@@ -1202,7 +1208,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         ));
       }
     } else {
-      const models = this.readConfiguredModels();
+      const models = readModels();
       const rates = findModelCost(models, e.serverUrl, e.modelId);
       const requestCounts: UsageCounts = {
         prompt: e.promptTokens,
@@ -1240,7 +1246,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
 
   /** Children of the Token Usage node: one collapsible node per model. */
   private getTokenUsageChildren(e: TokenUsageTreeItem): ModelUsageTreeItem[] {
-    const models = this.readConfiguredModels();
+    const models = readModels();
     const usage = getServerUsage(e.serverUrl);
     // Union of models with any today or all-time usage (a model used yesterday
     // still needs its Overall row visible).
@@ -1279,21 +1285,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     ];
   }
 
-  /** Read the configured model entries (sync settings read) for cost lookups. */
-  private readConfiguredModels(): ModelConfig[] {
-    return vscode.workspace.getConfiguration('vllm-copilot').get<ModelConfig[]>('models') || [];
-  }
-
   /** Configured OpenRouter models for a relay server IDENTITY (URL + headers).
    *  Two identities sharing a URL have different credentials, so each model
    *  belongs to exactly one identity and appears only under its own node. */
   private getRelayModels(fp: string): ModelConfig[] {
-    return this.readConfiguredModels()
+    return readModels()
       .filter(m => m.serverType === 'openrouter')
-      .filter(m => {
-        const resolved = resolveServerConfig(m);
-        return !!resolved.serverUrl && serverFingerprint(resolved.serverUrl, resolved.requestHeaders) === fp;
-      });
+      .filter(m => modelServerIdentity(m).fingerprint === fp);
   }
 
   /** The cached per-model context window for a relay model, if resolved. */
@@ -1342,11 +1340,6 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       currency: hasActual ? 'USD' : rates?.currency,
       hasActual,
     };
-  }
-
-  async refresh(): Promise<void> {
-    await this.refreshSubscriptions();
-    this._onDidChangeTreeData.fire();
   }
 
   dispose(): void {

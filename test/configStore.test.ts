@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { replaceModelConfig, patchModelConfig, type IdentifiedModelConfig, type ModelIdentity } from '../src/configStore.js';
+import { replaceModelConfig, patchModelConfig, readModels, writeModels, type IdentifiedModelConfig, type ModelIdentity } from '../src/configStore.js';
 import { ModelConfig } from '../src/config.js';
+import { makeModelConfig } from './factories.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 /**
@@ -20,13 +21,7 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
   // Always yields an identified config (id + vllmModelId + serverUrl). The cast is
   // the helper's contract: identity tests deliberately construct invalid objects.
   const baseConfig = (overrides: Partial<ModelConfig> = {}): IdentifiedModelConfig =>
-    ({
-      id: 'test-model',
-      vllmModelId: 'test-model',
-      serverUrl: 'http://localhost:8000',
-      displayName: 'Test Model',
-      ...overrides,
-    } as IdentifiedModelConfig);
+    makeModelConfig({ displayName: 'Test Model', ...overrides }) as IdentifiedModelConfig;
 
   // Vitest aliases `vscode` to the unit-test mock (test/__mocks__/vscode.ts),
   // whose `workspace` exposes `_mockConfig`. The editor may resolve `vscode` to
@@ -186,8 +181,8 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     // Two distinct presets pointing at the same wire model on the same server —
     // this is the multi-preset scenario that previously collapsed to the first match.
     existingConfig = [
-      { id: 'preset-a', vllmModelId: 'shared-model', serverUrl: 'http://localhost:8000', displayName: 'Preset A' },
-      { id: 'preset-b', vllmModelId: 'shared-model', serverUrl: 'http://localhost:8000', displayName: 'Preset B' },
+      makeModelConfig({ id: 'preset-a', vllmModelId: 'shared-model', displayName: 'Preset A' }),
+      makeModelConfig({ id: 'preset-b', vllmModelId: 'shared-model', displayName: 'Preset B' }),
     ];
 
     await replaceModelConfig({
@@ -213,7 +208,7 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
 
   it('P1: adding a preset whose id collides with nothing creates a new entry even if the wire id exists', async () => {
     existingConfig = [
-      { id: 'preset-a', vllmModelId: 'shared-model', serverUrl: 'http://localhost:8000', displayName: 'Preset A' },
+      makeModelConfig({ id: 'preset-a', vllmModelId: 'shared-model', displayName: 'Preset A' }),
     ];
 
     await replaceModelConfig({
@@ -534,12 +529,11 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
 
   it("4a: patch-mode '' on clearable scalar fields deletes them (Save All clear semantics)", async () => {
     existingConfig = [
-      {
-        id: 'test-model', vllmModelId: 'test-model', serverUrl: 'http://localhost:8000',
+      makeModelConfig({
         displayName: 'Test Model', maxOutputTokens: 8192, maxInputTokens: 4096,
         estimateCharsPerToken: 4, streamInactivityTimeout: 30000, autoContinueRetries: 3,
         defaultMode: 'Think', defaultParams: { temperature: 0.7 },
-      },
+      }),
     ];
 
     // The webview's save() sends '' for every empty [data-f] field and for an
@@ -579,7 +573,7 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
 
   it('4b: a legitimate 0 is NOT cleared (streamInactivityTimeout 0 = infinite)', async () => {
     existingConfig = [
-      { id: 'test-model', vllmModelId: 'test-model', serverUrl: 'http://localhost:8000', streamInactivityTimeout: 30000, autoContinueRetries: 1 },
+      makeModelConfig({ streamInactivityTimeout: 30000, autoContinueRetries: 1 }),
     ];
 
     // The clear check must be `=== ''`, not truthiness: 0 is a real value.
@@ -592,7 +586,7 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
 
   it('3c: performs no user-visible side effects — the handler owns the toast', async () => {
     existingConfig = [
-      { id: 'test-model', vllmModelId: 'test-model', serverUrl: 'http://localhost:8000', displayName: 'Test Model' },
+      makeModelConfig({ displayName: 'Test Model' }),
     ];
     const toastSpy = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(undefined);
 
@@ -604,7 +598,7 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
 
   it('3c: does not mutate the configured array or the existing entry', async () => {
     const original: ModelConfig[] = [
-      { id: 'test-model', vllmModelId: 'test-model', serverUrl: 'http://localhost:8000', displayName: 'Test Model', family: 'qwen' },
+      makeModelConfig({ displayName: 'Test Model', family: 'qwen' }),
     ];
     const snapshot = JSON.parse(JSON.stringify(original));
     vscode.workspace._mockConfig = {
@@ -619,7 +613,7 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
 
   it('3c: ignores id/serverUrl smuggled into updates — identity is immutable at runtime', async () => {
     existingConfig = [
-      { id: 'real-id', vllmModelId: 'real-model', serverUrl: 'http://localhost:8000', displayName: 'Original' },
+      makeModelConfig({ id: 'real-id', vllmModelId: 'real-model', displayName: 'Original' }),
     ];
 
     // The Omit type boundary forbids this; the runtime must ignore it too.
@@ -647,5 +641,55 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
       patchModelConfig(identity({ id: '   ' }), { displayName: 'X' }),
     ).rejects.toThrow(/identity/);
     expect(updateSpy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `readModels` / `writeModels` are the only door to the `vllm-copilot.models`
+ * setting, so the rules the server-registry migration depends on are pinned here:
+ * whole-array write to the Global target, and a failed write that rejects instead
+ * of silently reporting success.
+ */
+describe('readModels / writeModels (single settings access path)', () => {
+  let existingConfig: ModelConfig[];
+  let updateSpy: ReturnType<typeof vi.fn>;
+
+  const mockWorkspace = () => (vscode as any).workspace as { _mockConfig: any };
+
+  beforeEach(() => {
+    existingConfig = [];
+    updateSpy = vi.fn().mockResolvedValue(undefined);
+    mockWorkspace()._mockConfig = {
+      get: (key: string) => (key === 'models' ? existingConfig : undefined),
+      update: updateSpy,
+      inspect: () => undefined,
+    };
+  });
+
+  afterEach(() => {
+    mockWorkspace()._mockConfig = {};
+  });
+
+  it('writes the complete array to the Global target', async () => {
+    const models = [
+      makeModelConfig({ id: 'a', serverUrl: 'http://a:8000' }),
+      makeModelConfig({ id: 'b', serverUrl: 'http://b:8000' }),
+    ];
+    await writeModels(models);
+    expect(updateSpy).toHaveBeenCalledWith('models', models, vscode.ConfigurationTarget.Global);
+  });
+
+  it('rejects when the settings write fails, so a caller cannot report success', async () => {
+    updateSpy.mockRejectedValueOnce(new Error('Settings file is read-only'));
+    await expect(writeModels([])).rejects.toThrow('read-only');
+  });
+
+  it('reads an unset setting as an empty array', () => {
+    mockWorkspace()._mockConfig = { get: () => undefined, update: updateSpy, inspect: () => undefined };
+    expect(readModels()).toEqual([]);
+  });
+
+  it('reads the stored array without normalizing entries', () => {
+    expect(readModels()).toBe(existingConfig);
   });
 });

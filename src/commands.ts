@@ -11,7 +11,7 @@ import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from './provider.js';
 import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId } from './config.js';
 import type { ModelConfig } from './config.js';
-import { patchModelConfig } from './configStore.js';
+import { patchModelConfig, readModels, writeModels } from './configStore.js';
 import { promptForServerAuth } from './commands/serverAuth.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
@@ -29,7 +29,7 @@ import { isOpenRouterUrl } from './openRouter.js';
 
 // Re-export the extracted workflows so extension.ts and tests keep a single
 // stable import surface (matches the autoConfig.ts facade pattern).
-export { registerTestAndRefreshModelsCommand, serverFingerprint, groupModelsByServer } from './commands/testAndRefresh.js';
+export { registerTestAndRefreshModelsCommand, groupModelsByServer } from './commands/testAndRefresh.js';
 export { registerSetModelPersonalityCommand, personalityApplicableTo } from './commands/personality.js';
 
 /**
@@ -284,19 +284,22 @@ export function registerUpdateServerAuthCommand(
     // into each model's existing requestHeaders — never replace wholesale, so
     // rotating only the key can't wipe custom proxy headers (and vice versa).
     // Fields left empty keep their current value (clearing is settings.json).
-    const config = vscode.workspace.getConfiguration('vllm-copilot');
-    const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+    const existing = readModels();
     const normalizedUrl = normalizeServerUrl(serverUrl);
     let matched = 0;
     let updated = 0;
-    let mergedHeaders: Record<string, string> | undefined;
+    // Header transitions per CHANGED model, so each server identity moves to its
+    // own new headers. Merge is per-model, so models that already differ on this
+    // URL still differ afterwards — one shared "new headers" value would push
+    // model A's credentials into model B's engine (and its open Deep-Dive).
+    const transitions: Array<{ previous: Record<string, string> | undefined; next: Record<string, string> }> = [];
     const updatedModels = existing.map(m => {
       if (m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl) {
         matched++;
         const nextHeaders = mergeAuthHeaders(m.requestHeaders, combinedHeaders);
-        if (nextHeaders === m.requestHeaders) return m; // no-op — nothing changed
-        if (mergedHeaders === undefined) mergedHeaders = nextHeaders;
+        if (!nextHeaders || nextHeaders === m.requestHeaders) return m; // no-op
         updated++;
+        transitions.push({ previous: m.requestHeaders, next: nextHeaders });
         return { ...m, requestHeaders: nextHeaders };
       }
       return m;
@@ -312,12 +315,14 @@ export function registerUpdateServerAuthCommand(
       return;
     }
 
-    await config.update('models', updatedModels, vscode.ConfigurationTarget.Global);
+    await writeModels(updatedModels);
     _provider.clearCache();
-    // Push merged headers to the metrics engine so open deep-dive uses fresh auth.
-    // Update-if-present only: Update Auth must not create a zero-subscriber
-    // engine (an engine only exists when a dashboard/deep-dive is subscribed).
-    updateMetricsEngineHeaders(serverUrl, mergedHeaders ?? {});
+    // Push each changed identity's headers to its metrics engine so an open
+    // deep-dive uses fresh auth. Update-if-present only: Update Auth must not
+    // create a zero-subscriber engine (an engine only exists when a
+    // dashboard/deep-dive is subscribed). Repeating a transition is a no-op, so
+    // models that shared an identity need no de-duplication here.
+    for (const t of transitions) updateMetricsEngineHeaders(serverUrl, t.previous, t.next);
     outputChannel.appendLine(`[INFO] Updated auth for ${updated} model(s) on ${serverUrl}.`);
     vscode.window.showInformationMessage(`Updated auth for ${updated} model(s) on ${serverUrl}.`);
   });
@@ -387,13 +392,12 @@ export function registerRenameServerCommand(
       return;
     }
 
-    const config = vscode.workspace.getConfiguration('vllm-copilot');
     // Pre-prompt read serves ONLY the input prefill — the authoritative read
     // happens after the await below, so a settings edit made while the prompt
     // is open is never clobbered by a stale snapshot (same pattern as Update
     // Auth, which also reads after its prompts).
     const normalizedUrl = normalizeServerUrl(serverUrl);
-    const current = (config.get<ModelConfig[]>('models') || [])
+    const current = readModels()
       .find(m =>
         m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl && m.serverDisplayName?.trim()
       )?.serverDisplayName?.trim() ?? '';
@@ -411,7 +415,7 @@ export function registerRenameServerCommand(
     }
 
     // Re-read AFTER the prompt: models may have changed while it was open.
-    const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+    const existing = readModels();
     const { models, matched, changed } = applyServerDisplayName(existing, serverUrl, name);
     if (matched === 0) {
       // Distinct from no-op: nothing points at this URL — a stale tree item or
@@ -424,7 +428,7 @@ export function registerRenameServerCommand(
       return;
     }
 
-    await config.update('models', models, vscode.ConfigurationTarget.Global);
+    await writeModels(models);
     provider.clearCache();
     const trimmed = name.trim();
     // Retitle any open Deep-Dive panels for this server immediately — without
@@ -458,8 +462,7 @@ export function registerRemoveServerCommand(
       return;
     }
 
-    const config = vscode.workspace.getConfiguration('vllm-copilot');
-    const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+    const existing = readModels();
     const normalizedUrl = normalizeServerUrl(serverUrl);
     const filtered = existing.filter(m => !(m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl));
     const removed = existing.length - filtered.length;
@@ -479,7 +482,7 @@ export function registerRemoveServerCommand(
       if (confirm !== 'Remove') return;
     }
 
-    await config.update('models', filtered, vscode.ConfigurationTarget.Global);
+    await writeModels(filtered);
     _provider.clearCache();
     outputChannel.appendLine(`[INFO] Removed ${removed} model(s) from ${serverUrl}.`);
     vscode.window.showInformationMessage(`Removed ${removed} model(s) from ${serverUrl}.`);
@@ -525,8 +528,7 @@ export function registerRemoveModelCommand(
       return;
     }
 
-    const config = vscode.workspace.getConfiguration('vllm-copilot');
-    const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+    const existing = readModels();
     const { filtered, removed } = removeModelFromConfig(existing, serverUrl, configId);
 
     if (removed === 0) {
@@ -544,7 +546,7 @@ export function registerRemoveModelCommand(
       if (confirm !== 'Remove') return;
     }
 
-    await config.update('models', filtered, vscode.ConfigurationTarget.Global);
+    await writeModels(filtered);
     _provider.clearCache();
     outputChannel.appendLine(`[INFO] Removed model "${configId}" from ${serverUrl}.`);
     vscode.window.showInformationMessage(`Removed model "${configId}" from ${serverUrl}.`);
@@ -624,8 +626,7 @@ export function registerConfigureCostCommand(
       return;
     }
     const normalized = normalizeServerUrl(serverUrl);
-    const config = vscode.workspace.getConfiguration('vllm-copilot');
-    const models: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+    const models = readModels();
     const serverModels = models.filter(m => m.serverUrl && normalizeServerUrl(m.serverUrl) === normalized);
     if (serverModels.length === 0) {
       vscode.window.showWarningMessage(`No configured models found on ${serverUrl}.`);

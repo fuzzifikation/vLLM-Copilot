@@ -29,7 +29,7 @@ import type { ModelConfig } from './config.js';
 import { resolveConfigId } from './config.js';
 import { resolveOutputLengthVector } from './tokenBudget.js';
 import { loadModelPresets, findPresetForModel, type ModelPreset } from './commands/presets.js';
-import { patchModelConfig } from './configStore.js';
+import { patchModelConfig, readModels } from './configStore.js';
 
 /** globalState key; bump the suffix if the proposal logic ever changes materially. */
 const MIGRATION_FLAG = 'vllmCopilot.outputLengthMigration.v1';
@@ -198,7 +198,7 @@ export async function maybeOfferOutputLengthMigration(
     const decided = context.globalState.get<string>(MIGRATION_FLAG);
     if (decided === 'done' || decided === 'declined') return;
 
-    const models = vscode.workspace.getConfiguration('vllm-copilot').get<ModelConfig[]>('models') || [];
+    const models = readModels();
     if (models.length === 0) return; // nothing configured yet — offer on a later activation
 
     const presets = await loadModelPresets(context.extensionUri);

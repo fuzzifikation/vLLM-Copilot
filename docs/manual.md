@@ -169,6 +169,8 @@ A native Tree View sidebar (no webviews, no extra ports) with live metrics per c
 
 A vLLM-only webview with the full server metric set: histogram breakdowns (TTFT/TPOT/token counts) with hoverable bars and the raw metric dump. Right-click a vLLM server node → **vLLM Deep-Dive**.
 
+The panel reads the server **once** when it opens and then goes quiet — it never keeps a server polling in the background. Re-run the command to take a fresh reading.
+
 ### Token usage & cost
 
 After every request, the Output channel shows exact token counts (input/output, cached tokens with prefix-cache hit %, cache creation tokens, throughput, TTFT, speculative decoding stats). The dashboard adds a **model-first** usage tracker under each server: one entry per model, price on the collapsed line, expanding to **Today** and **Overall** token rows. Key semantics:

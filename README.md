@@ -315,7 +315,7 @@ OpenRouter is a managed remote: no server to run, nothing to install. Add one fi
 <tr>
 <td valign="top" width="62%">
 
-Right-click a **vLLM** server node → **vLLM Deep-Dive** opens a per-server webview with the full metric set: histogram breakdowns (TTFT/TPOT/token counts) as hoverable bars and the raw metric dump. vLLM-only, since non-vLLM backends don't expose `/metrics`.
+Right-click a **vLLM** server node → **vLLM Deep-Dive** opens a per-server webview with the full metric set: histogram breakdowns (TTFT/TPOT/token counts) as hoverable bars and the raw metric dump. vLLM-only, since non-vLLM backends don't expose `/metrics`. It takes **one reading** when it opens and then stops polling — run the command again to retake it.
 </td>
 <td valign="top" width="38%">
 

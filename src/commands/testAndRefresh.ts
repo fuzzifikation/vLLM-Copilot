@@ -7,13 +7,10 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveServerType, serverFingerprint } from '../config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveServerType, modelServerIdentity } from '../config.js';
 import type { ModelConfig } from '../config.js';
 import type { VllmModel } from '../types.js';
 
-// Re-exported so the root `commands.ts` facade (and tests importing it) keep a
-// single stable import surface for the server-identity helper.
-export { serverFingerprint } from '../config.js';
 import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../messageConverter.js';
 import { resolveRuntimeLimits } from '../runtimeLimits.js';
 import { runDiagnostics, formatReport } from '../diagnostics.js';
@@ -47,32 +44,31 @@ interface ServerGroup {
 }
 
 /**
- * Group model configs by unique server (URL + auth headers fingerprint).
- * Each unique server appears once in the output; models without a serverUrl
- * each get their own singleton group so they can be reported individually.
+ * Group model configs by server identity (normalized URL + effective headers) so
+ * each unique server is probed once instead of N times. Models WITHOUT a serverUrl
+ * each get their own singleton group so they can be reported individually — they
+ * would otherwise all share the empty-URL identity.
  * @internal Exported for testing.
  */
-export function groupModelsByServer(
-  models: ModelConfig[],
-  resolveServer: (m: ModelConfig) => { serverUrl: string; requestHeaders: Record<string, string> },
-  resolveId: (m: ModelConfig) => string | undefined,
-): ServerGroup[] {
+export function groupModelsByServer(models: ModelConfig[]): ServerGroup[] {
   const groups = new Map<string, ServerGroup>();
-  for (const model of models) {
+  models.forEach((model, index) => {
     if (!model.serverUrl) {
-      const fp = `__nourl__${model.id ?? resolveId(model) ?? Math.random()}`;
-      groups.set(fp, { serverUrl: '', requestHeaders: {}, models: [model] });
-      continue;
+      groups.set(`__nourl__${index}`, { serverUrl: '', requestHeaders: {}, models: [model] });
+      return;
     }
-    const { serverUrl, requestHeaders } = resolveServer(model);
-    const fp = serverFingerprint(serverUrl, requestHeaders);
-    const existing = groups.get(fp);
+    const identity = modelServerIdentity(model);
+    const existing = groups.get(identity.fingerprint);
     if (existing) {
       existing.models.push(model);
     } else {
-      groups.set(fp, { serverUrl, requestHeaders, models: [model] });
+      groups.set(identity.fingerprint, {
+        serverUrl: identity.serverUrl,
+        requestHeaders: identity.requestHeaders,
+        models: [model],
+      });
     }
-  }
+  });
   return Array.from(groups.values());
 }
 
@@ -144,7 +140,7 @@ export function registerTestAndRefreshModelsCommand(
 
     // ── 1. Group models by unique server fingerprint (URL + auth headers) ──
     // Servers with identical URL and headers share one fetch instead of N.
-    const groups = groupModelsByServer(models, resolveServerConfig, resolveVllmModelId);
+    const groups = groupModelsByServer(models);
 
     // ── 2. Test each unique server once (parallel) ──
     const serverTasks = groups.map(async (group): Promise<ServerTestResult> => {

@@ -14,6 +14,7 @@ import {
   ServerMetricsEngine,
   type ModelAccumulator,
   type RawMetricEntry,
+  type ServerMetrics,
   type ServerRawData,
 } from '../src/vllmMetrics.js';
 import { resetOpenRouterProviderListCache } from '../src/openRouter.js';
@@ -919,7 +920,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
   it('releases the engine from the registry when the last subscriber unsubscribes', () => {
     // fetch resolves offline (status 0) so tick() completes quickly without
     // hanging on a real server.
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 0 })));
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
 
     const url = 'http://registry-test:8000';
     const first = getMetricsEngine(url);
@@ -937,6 +938,130 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     expect(after.getCachedAggregated()).toBeNull();
   });
 
+  it('reports an unreachable server instead of silently never notifying', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+
+    const engine = getMetricsEngine('http://unreachable:8000');
+    const seen: ServerMetrics[] = [];
+    const sub = engine.subscribe(m => { seen.push(m); });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // A failed request must still be a READING: a dashboard that never hears
+    // back keeps showing "Loading…" forever, and a one-shot Deep-Dive panel
+    // closes with "No data" instead of the reason.
+    expect(seen).toHaveLength(1);
+    expect(seen[0].online).toBe(false);
+    expect(seen[0].error).toBe('Cannot connect');
+
+    sub.dispose();
+    vi.useRealTimers();
+  });
+
+  it('pollNow takes a cycle immediately and leaves a single polling chain', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+
+    let cycles = 0;
+    const engine = getMetricsEngine('http://poll-now:8000');
+    const sub = engine.subscribe(() => { cycles++; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cycles).toBe(1);
+
+    // A view that just opened wants a current reading, not one up to an
+    // interval old.
+    engine.pollNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cycles).toBe(2);
+
+    // Still exactly ONE chain: every interval advances by one cycle. Two chains
+    // (the dropped timer plus the new one) would advance by two.
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(cycles).toBe(3);
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(cycles).toBe(4);
+
+    sub.dispose();
+    vi.useRealTimers();
+  });
+
+  it('ignores pollNow while a cycle is in flight instead of overlapping cycles', async () => {
+    vi.useFakeTimers();
+    let release: () => void = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      await gate;
+      throw new TypeError('fetch failed');
+    }));
+
+    let cycles = 0;
+    const engine = getMetricsEngine('http://reentrant:8000');
+    const sub = engine.subscribe(() => { cycles++; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cycles).toBe(0); // cycle 1 is stuck on the gate
+
+    engine.pollNow();
+    engine.pollNow();
+    await vi.advanceTimersByTimeAsync(0);
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    // Overlapping cycles would notify twice for this one round of fetches.
+    expect(cycles).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(16_000);
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(cycles).toBe(3); // one cycle per interval — not two
+
+    sub.dispose();
+    vi.useRealTimers();
+  });
+
+  it('notifies every subscriber even when one leaves from inside its own callback', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+
+    const engine = getMetricsEngine('http://one-shot:8000');
+    const seen: string[] = [];
+    // The Deep-Dive pattern: unsubscribe inside the callback. Splicing the live
+    // array mid-iteration would shift the watcher past the cursor.
+    const oneShot = engine.subscribe(() => { seen.push('panel'); oneShot.dispose(); });
+    const watcher = engine.subscribe(() => { seen.push('dashboard'); });
+
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(seen).toEqual(['panel', 'dashboard', 'dashboard']);
+
+    watcher.dispose();
+    vi.useRealTimers();
+  });
+
+  it('a doubly-disposed subscription never releases another viewer\'s engine', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+
+    const url = 'http://double-dispose:8000';
+    const engine = getMetricsEngine(url);
+    let panel = 0;
+    let dashboard = 0;
+    const panelSub = engine.subscribe(() => { panel++; });
+    const dashboardSub = engine.subscribe(() => { dashboard++; });
+    await vi.advanceTimersByTimeAsync(0); // let cycle 1 land for both viewers
+
+    panelSub.dispose();
+    panelSub.dispose(); // the same disposable, disposed twice
+
+    await vi.advanceTimersByTimeAsync(16_000);
+    // Counting the second dispose against the remaining viewer would have
+    // disposed the engine: the dashboard would freeze and the registry entry
+    // would be gone.
+    expect(dashboard).toBe(2);
+    expect(panel).toBe(1);
+    expect(getMetricsEngine(url)).toBe(engine);
+
+    dashboardSub.dispose();
+    vi.useRealTimers();
+  });
+
   it('updateMetricsEngineHeaders updates an existing engine but never creates one', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(async (url: unknown, init?: RequestInit) => {
@@ -950,7 +1075,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
 
     const url = 'http://header-update:8000';
     // No engine exists yet — update-if-present is a strict no-op.
-    updateMetricsEngineHeaders(url, { Authorization: 'Bearer new' });
+    updateMetricsEngineHeaders(url, { Authorization: 'Bearer old' }, { Authorization: 'Bearer new' });
     expect(fetchMock).not.toHaveBeenCalled();
 
     // Create an engine, subscribe (starts polling), then update headers.
@@ -958,7 +1083,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     const sub = engine.subscribe(() => {});
     await vi.advanceTimersByTimeAsync(16_000);
 
-    updateMetricsEngineHeaders(url, { Authorization: 'Bearer new' });
+    updateMetricsEngineHeaders(url, { Authorization: 'Bearer old' }, { Authorization: 'Bearer new' });
     // The registry still holds the SAME engine, re-keyed under the NEW identity
     // (looked up with the new headers, not a fresh one)…
     expect(getMetricsEngine(url, { Authorization: 'Bearer new' })).toBe(engine);
@@ -971,6 +1096,69 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     expect(authHeaders).toContain('Bearer new');
 
     sub.dispose();
+    vi.useRealTimers();
+  });
+
+  it('re-keys on the sanitized identity so Update Auth cannot orphan an engine', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+
+    const url = 'http://identity-sanitize:8000';
+    const previous = { Authorization: 'tok-old' };
+    const engine = getMetricsEngine(url, previous);
+
+    // Update Auth merges the RAW settings headers in, but `Connection` is a
+    // forbidden header that never reaches the wire — so the dashboard and
+    // Deep-Dive compute their lookup identity from the SANITIZED pair. Keying the
+    // re-key by the raw pair would move the engine to a fingerprint nobody looks
+    // up again: the old engine keeps polling as an orphan and the next refresh
+    // creates a second one.
+    const next = { Authorization: 'tok-new', Connection: 'keep-alive' };
+    updateMetricsEngineHeaders(url, previous, next);
+
+    expect(getMetricsEngine(url, next)).toBe(engine);
+    // The old identity is gone — nothing else resolves to this engine anymore.
+    expect(getMetricsEngine(url, previous)).not.toBe(engine);
+  });
+
+  it('moves each identity of a URL separately so no engine picks up a sibling model\'s credentials', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (url: unknown, _init?: RequestInit) =>
+      String(url).endsWith('/v1/models')
+        ? new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 })
+        : new Response(null, { status: 404 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const url = 'http://two-identities:8000';
+    // Two models, one URL, different credentials — two engines, two subscribers.
+    const headersA = { Authorization: 'tok-a', 'X-Tenant': 'a' };
+    const headersB = { Authorization: 'tok-b' };
+    const a = getMetricsEngine(url, headersA);
+    const b = getMetricsEngine(url, headersB);
+    const subA = a.subscribe(() => {});
+    const subB = b.subscribe(() => {});
+    await vi.advanceTimersByTimeAsync(16_000);
+
+    // Update Auth merges the same new key into both models. The merge is
+    // per-model, so the two identities move to DIFFERENT new header sets — one
+    // shared value would put model A's credentials on model B's engine.
+    updateMetricsEngineHeaders(url, headersA, { Authorization: 'tok-a2', 'X-Tenant': 'a' });
+    updateMetricsEngineHeaders(url, headersB, { Authorization: 'tok-b2' });
+
+    expect(getMetricsEngine(url, { Authorization: 'tok-a2', 'X-Tenant': 'a' })).toBe(a);
+    expect(getMetricsEngine(url, { Authorization: 'tok-b2' })).toBe(b);
+
+    fetchMock.mockClear();
+    await vi.advanceTimersByTimeAsync(16_000);
+    const sent = new Set(
+      fetchMock.mock.calls
+        .map(([, init]) => (init?.headers as Record<string, string> | undefined)?.Authorization)
+        .filter(Boolean)
+    );
+    expect(sent).toEqual(new Set(['tok-a2', 'tok-b2']));
+
+    subA.dispose();
+    subB.dispose();
     vi.useRealTimers();
   });
 

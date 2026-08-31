@@ -20,7 +20,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { loadPersonalityMeta, clearPersonalityCache } from './promptReplacer.js';
-import { resolveWorkspaceRelativePath, type ModelConfig } from './config.js';
+import { resolveWorkspaceRelativePath } from './config.js';
+import { readModels, writeModels } from './configStore.js';
 
 export type PersonalitySource = 'bundled' | 'global';
 
@@ -300,8 +301,7 @@ export async function migrateLegacyPersonalities(
   // the legacy file is deleted so a failed rewrite retries next activation.
   let configsUpdated = 0;
   try {
-    const config = vscode.workspace.getConfiguration('vllm-copilot');
-    const models = config.get<ModelConfig[]>('models') || [];
+    const models = readModels();
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
     let changed = false;
     for (const m of models) {
@@ -315,7 +315,7 @@ export async function migrateLegacyPersonalities(
       }
     }
     if (changed) {
-      await config.update('models', models, vscode.ConfigurationTarget.Global);
+      await writeModels(models);
     }
   } catch {
     // Best-effort: the file migration already succeeded; a config rewrite

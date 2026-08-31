@@ -6,6 +6,7 @@
 
   const vscode = acquireVsCodeApi();
   let lastData = null;
+  let lastError = '';
   let histogramTooltip = null;
 
   // ── Message handler ──────────────────────────────────────────
@@ -15,6 +16,9 @@
 
     if (data.type === 'data') {
       lastData = data.raw;
+      // Why the server looks empty. The raw payload carries no failure info, so
+      // without this an unreachable server renders as a blank panel.
+      lastError = data.error || '';
       render();
       // Reset find overlay state — innerHTML replaced all DOM nodes
       if (window._findMatches) {
@@ -22,9 +26,6 @@
         var fc = document.querySelector('.find-count');
         if (fc) fc.textContent = '';
       }
-    } else if (data.type === 'error') {
-      document.getElementById('content').innerHTML =
-        '<div class="error-msg">Error: ' + E(data.message) + '</div>';
     }
   });
 
@@ -444,7 +445,11 @@
       return;
     }
 
-    var html = '';
+    // Probe failure first: the sections below are empty on a dead server, so the
+    // banner is the only thing that explains the missing data.
+    var html = lastError
+      ? '<div class="error-msg">Error: ' + E(lastError) + '</div>'
+      : '';
 
     // ── Version Info ───────────────────────────────────────────
     {
@@ -651,6 +656,8 @@
     }
 
     document.getElementById('content').innerHTML = html;
-    document.getElementById('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    // One-shot panel: say so, since re-opening is the only way to retake it.
+    document.getElementById('lastUpdated').textContent =
+      'Snapshot ' + new Date().toLocaleTimeString() + ' · re-open to refresh';
   }
 })();

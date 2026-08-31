@@ -308,7 +308,7 @@ Since the model list is small (typically < 20 entries) and the server is local/c
 ## ✨ Named-Server Registry ("B") — deduplicate server identity & auth
 
 **Category:** Architecture / Vitamin (developer-experience, not user-facing moat)
-**Status:** Accepted for planning → full architecture & implementation plan: [server-registry.md](./server-registry.md) (draft, 2026-08-24)
+**Status:** Accepted → plan: [server-registry.md](./server-registry.md) (revision 4, 2026-08-31, code-reviewed against `836efb5`; not implemented). **Revision 4 changed the shape of the deal: pure registry, inline `serverUrl` deleted from `ModelConfig`, user settings migrated on activation without an opt-in.** The "non-breaking rules" below are superseded — read them as history.
 **Cross-note:** This *reconsiders* the per-model identity decision in [code-review.md](./code-review.md) ("Accepted product decisions: per-model server identity"). It is **not** a return to the deprecated single-global-server; it's an explicit registry of *N* named servers that models reference.
 
 **What:** Today every model entry duplicates its own `serverUrl` and `requestHeaders`. Two models on one server carry the same auth copy-pasted (e.g. the same CF-Access client-id/secret + bearer token). This introduces a real drift bug class: rotate a shared credential and every entry must be updated or it silently keeps a dead key. The display-name work (v1.33.0, `serverDisplayName`) landed as a per-model field for the same structural reason.
@@ -330,24 +330,32 @@ Proposed shape — models reference a server by id instead of copying it:
 ```
 
 **Why it's worth it:**
-- **Auth becomes a single source of truth** — rotate a key once, not N times. Kills the copy-paste drift bug class.
-- **Server identity becomes `id`, not a header-value fingerprint** — the entire `serverFingerprint`/`serverGroupKey`/identity-grouping machinery (dashboard, settings view, deep-dive, metrics engine) exists only to reconstruct "which scattered entries are the same box" from duplicated URL+headers. Under B that's a foreign-key join — simpler and more correct.
+- **Auth becomes a single source of truth** — one stored copy per server instead of one per model. (Honest caveat verified in the review: *rotation* already works today, because `Update Auth` and `Rename Server` fan out URL-wide across every model on that URL. The registry fixes ownership and settings.json hygiene, not reach — see server-registry.md §1.)
+- ~~**Server identity becomes `id`, not a header-value fingerprint**~~ — **rejected in the plan (server-registry.md §5).** The `serverFingerprint`/`serverGroupKey` machinery (dashboard grouping, settings view, deep-dive keys, metrics-engine pooling, credential isolation, usage-store keys, `buildModelId`) stays keyed on the resolved `(url, headers)` pair; the registry id is a *write target*, not an identity. So the "deletes most of the identity machinery" saving in the cost estimate below **does not materialise** — only the *computation* of the pair moves into the resolver.
 - **Future server-level knobs get a home** — TLS options, per-server poll interval, proxy settings stop needing a per-model storage debate.
 - **`serverDisplayName` migrates cleanly** onto the server record; the shipped dashboard/rename logic keeps working against the registry (~70% portable).
 
-**Non-breaking migration rules (agreed):**
-1. **Additive only** — introduce `servers[]` + optional `model.server` alongside inline `serverUrl`. Nothing existing stops parsing.
-2. **Read tolerance forever** — `getConfig()` resolves both forms indefinitely; inline entries never become invalid. Deprecate in docs, never in the parser.
-3. **Opt-in migrate command** — an explicit "Migrate servers to registry" command that fingerprints existing entries, dedupes them into `servers[]`, rewrites models to refs, shows a preview/diff, and writes once. **Never** silent auto-rewrite of user settings on activate.
+**Migration rules — superseded on 2026-08-31, kept as history.** These three "agreed" rules were
+what made the design a hybrid. Revision 4 dropped them, and that *shrank* the plan:
+
+1. ~~**Additive only**~~ → `server` is **required**; inline `serverUrl` is deleted from
+   `ModelConfig`. Two ways to name one server was the mess.
+2. ~~**Read tolerance forever**~~ → no fallback exists. The upside nobody expected: with the
+   field gone, all 135 `.serverUrl` reads become compile errors, so the silent "model vanishes
+   from a feature" failure class is caught by `tsc` instead of by a hand-written audit plus
+   tests. See [server-registry.md](./server-registry.md) §2.
+3. ~~**Opt-in migrate command, never auto-rewrite**~~ → one-shot **forced** migration at
+   activation, marker-guarded, snapshot + `Undo Server Registry Migration` command, notification
+   and output-channel log (§6). Still never from `onDidChangeConfiguration`.
 
 **Costs / open decisions:**
-- Config-layer surgery across provider request path, `vllmClient` cache, discovery, dashboard/deep-dive keys, Add flow, Update Auth (mostly *deletes*), Remove Server, Test & Refresh, autoConfig, presets, BYOK, OpenRouter branch, the three schema locations, docs, and a large share of the test suite.
-- **Lifecycle rule that must be decided:** what happens when a user deletes a server entry that models still reference? (Block, or cascade-with-confirm — must be chosen, not left implicit.)
+- Config-layer surgery across provider request path, `vllmClient` cache, discovery, dashboard/deep-dive keys, Add flow, Update Auth, Remove Server, Test & Refresh, autoConfig, presets, BYOK, OpenRouter branch, the schema artifacts, docs, and the test suite. **Revision (2026-08-31):** reviewed against the code — this is *not* "mostly deletes"; 135 raw `model.serverUrl` property accesses across 16 of the 50 files in `src/` have to become resolver reads. In the pure design the compiler lists them for you, which replaces the audit and most of the regression-test invention. There is deliberately no file-by-file list in the plan any more (the previous one went stale within a week) — see §7 for the decisions `tsc` cannot make.
+- ~~**Lifecycle rule that must be decided:** what happens when a user deletes a server entry that models still reference?~~ **Decided:** refuse while any model references the id and name the models. No cascade, and no "detach to inline" — there is nothing to detach to.
 - The rename feature shipped (v1.33.0) already solves the display-name problem, so the *remaining* justification is auth dedup + identity simplification — not renaming.
 
-**Priority:** P3 / deferred. High value, high churn. Worth doing if duplicated shared auth keeps recurring or server-level settings keep being requested; not worth it for renaming alone.
+**Priority:** P3 / deferred. High value, high churn. Worth doing if duplicated shared auth keeps recurring or server-level settings keep being requested; not worth it for renaming alone. *(Superseded 2026-08-31: decided to build the pure version — see server-registry.md.)*
 
-**Effort:** Medium. Requires SSE response parsing, new storage fields, and dashboard UI. No server-side changes needed — all data comes from the existing vLLM response.
+**Effort:** Medium-large, and it is a **single breaking release** — the pure design has no shippable intermediate state (deleting `serverUrl` and shipping the migration are one commit). Config layer + provider/discovery read path + migration + write paths + webview + both schema artifacts + docs. No server-side changes needed; all data comes from the existing vLLM responses. (This line previously claimed "Requires SSE response parsing", which was boilerplate from another idea and never applied here.)
 
 ## 🌐 Remote Model Presets — fetch `model-configs/` from the GitHub repo
 

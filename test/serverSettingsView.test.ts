@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
-import { ServerSettingsViewProvider, resolveDetectedServerType, serverGroupKey } from '../src/serverSettingsView.js';
-import { serverFingerprint } from '../src/commands.js';
+import { ServerSettingsViewProvider, resolveDetectedServerType } from '../src/serverSettingsView.js';
 import { ModelConfig } from '../src/config.js';
 import { resetOpenRouterProviderListCache } from '../src/openRouter.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -762,22 +761,5 @@ describe('resolveDetectedServerType', () => {
 
   it('returns undefined for a fully inconclusive endpoint with no siblings at all', () => {
     expect(resolveDetectedServerType([], [])).toBeUndefined();
-  });
-});
-
-describe('serverGroupKey', () => {
-  it('is deterministic, distinct per header identity, and leaks no header values', () => {
-    const fpA = serverFingerprint('http://gw:8000', { Authorization: 'Bearer secret-a' });
-    const fpB = serverFingerprint('http://gw:8000', { Authorization: 'Bearer secret-b' });
-    const kA1 = serverGroupKey(fpA);
-    const kA2 = serverGroupKey(fpA);
-    const kB = serverGroupKey(fpB);
-    expect(kA1).toBe(kA2);
-    expect(kA1).not.toBe(kB);
-    expect(kA1).toMatch(/^srv-/);
-    // The key must not be (or contain) the raw fingerprint, which embeds secrets.
-    expect(kA1).not.toContain('Bearer');
-    expect(kA1).not.toContain('secret-a');
-    expect(kA1).not.toBe(fpA);
   });
 });

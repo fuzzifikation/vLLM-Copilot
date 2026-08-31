@@ -5,14 +5,11 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getConfig, buildEndpoint, findModelConfigIndex, resolveServerConfig, toPublicModelConfig, serverFingerprint, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
-import { patchModelConfig, type ModelIdentity } from './configStore.js';
+import { getConfig, buildEndpoint, findModelConfigIndex, toPublicModelConfig, modelServerIdentity, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
+import { patchModelConfig, readModels, type ModelIdentity } from './configStore.js';
 import { detectServerTypeFromV1Models } from './runtimeLimits.js';
 import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from './openRouter.js';
 
-// Re-exported so the existing test import surface (serverSettingsView.test.ts)
-// keeps working after the helper moved to config.ts.
-export { serverGroupKey } from './config.js';
 import {
   discoverPersonalities,
   ensureGlobalPersonality,
@@ -255,13 +252,13 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       serverDisplayName?: string;
     }>();
     for (const model of config.models) {
+      // A model without a URL is unreachable and has no identity to group by.
       if (!model.serverUrl) continue;
-      const resolved = resolveServerConfig(model);
-      if (!resolved.serverUrl) continue;
-      const fp = serverFingerprint(resolved.serverUrl, resolved.requestHeaders);
+      const identity = modelServerIdentity(model);
+      const fp = identity.fingerprint;
       let existing = serverMap.get(fp);
       if (!existing) {
-        existing = { url: resolved.serverUrl, models: [], publicModels: [], requestHeaders: resolved.requestHeaders };
+        existing = { url: identity.serverUrl, models: [], publicModels: [], requestHeaders: identity.requestHeaders };
         serverMap.set(fp, existing);
       }
       existing.models.push(model);
@@ -276,7 +273,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       // Public projection: header values never reach the webview DOM.
       existing.publicModels.push({
         ...toPublicModelConfig(model, { strip: true }),
-        serverUrl: resolved.serverUrl,
+        serverUrl: identity.serverUrl,
       });
     }
     const servers: ServerGroup[] = await Promise.all(
@@ -403,8 +400,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     const targetId = msg.id || '';
     if (!targetId || !msg.serverUrl) return;
 
-    const cfg = vscode.workspace.getConfiguration('vllm-copilot');
-    const models: ModelConfig[] = cfg.get<ModelConfig[]>('models') || [];
+    const models = readModels();
     const idx = findModelConfigIndex(models, targetId, msg.serverUrl);
     if (idx < 0) return;
     const model = models[idx];

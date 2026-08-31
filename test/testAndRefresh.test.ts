@@ -1,50 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { serverFingerprint, groupModelsByServer } from '../src/commands.js';
-import { registerTestAndRefreshModelsCommand } from '../src/commands/testAndRefresh.js';
+import { groupModelsByServer, registerTestAndRefreshModelsCommand } from '../src/commands/testAndRefresh.js';
 import * as diagnostics from '../src/diagnostics.js';
 import type { ModelConfig } from '../src/config.js';
 
-describe('serverFingerprint', () => {
-  it('produces same fingerprint for same URL + headers', () => {
-    const a = serverFingerprint('http://host:8000', { Authorization: 'Bearer x', 'X-Custom': 'val' });
-    const b = serverFingerprint('http://host:8000', { 'X-Custom': 'val', Authorization: 'Bearer x' });
-    expect(a).toBe(b);
-  });
-
-  it('differs when URL changes', () => {
-    const a = serverFingerprint('http://a:8000', {});
-    const b = serverFingerprint('http://b:8000', {});
-    expect(a).not.toBe(b);
-  });
-
-  it('differs when headers change', () => {
-    const a = serverFingerprint('http://host:8000', { Authorization: 'Bearer x' });
-    const b = serverFingerprint('http://host:8000', { Authorization: 'Bearer y' });
-    expect(a).not.toBe(b);
-  });
-
-  it('stably serialises empty headers', () => {
-    const a = serverFingerprint('http://host:8000', {});
-    const b = serverFingerprint('http://host:8000', {});
-    expect(a).toBe(b);
-  });
-});
-
 describe('groupModelsByServer', () => {
-  // Mock helpers passed as arguments.
-  const resolveServer = (m: ModelConfig) => ({
-    serverUrl: (m.serverUrl || '').replace(/\/+$/, ''),
-    requestHeaders: (m as any)._headers ?? {},
-  });
-  const resolveId = (m: ModelConfig) => m.id;
-
   it('groups models sharing the same URL and headers', () => {
     const models: ModelConfig[] = [
       { id: 'm1', serverUrl: 'http://s:8000' },
       { id: 'm2', serverUrl: 'http://s:8000' },
     ];
-    const groups = groupModelsByServer(models, resolveServer, resolveId);
+    const groups = groupModelsByServer(models);
     expect(groups).toHaveLength(1);
     expect(groups[0].models).toHaveLength(2);
   });
@@ -54,30 +20,29 @@ describe('groupModelsByServer', () => {
       { id: 'm1', serverUrl: 'http://a:8000' },
       { id: 'm2', serverUrl: 'http://b:8000' },
     ];
-    const groups = groupModelsByServer(models, resolveServer, resolveId);
+    const groups = groupModelsByServer(models);
     expect(groups).toHaveLength(2);
   });
 
-  it('separates models with same URL but different headers', () => {
+  it('separates models on one URL that use different headers', () => {
     const models: ModelConfig[] = [
-      { id: 'm1', serverUrl: 'http://s:8000', _headers: { 'X-Key': 'a' } },
-      { id: 'm2', serverUrl: 'http://s:8000', _headers: { 'X-Key': 'b' } },
-    ] as any;
-    const groups = groupModelsByServer(models, resolveServer, resolveId);
+      { id: 'm1', serverUrl: 'http://s:8000', requestHeaders: { 'X-Key': 'a' } },
+      { id: 'm2', serverUrl: 'http://s:8000', requestHeaders: { 'X-Key': 'b' } },
+    ];
+    const groups = groupModelsByServer(models);
     expect(groups).toHaveLength(2);
   });
 
-  it('normalises URL differences via the resolver (trailing slash)', () => {
-    const resolveServerStrip = (m: ModelConfig) => ({
-      serverUrl: (m.serverUrl || '').replace(/\/+$/, ''),
-      requestHeaders: {},
-    });
+  it('groups URL spellings of one server together and probes the canonical form', () => {
     const models: ModelConfig[] = [
       { id: 'a', serverUrl: 'http://s:8000' },
-      { id: 'b', serverUrl: 'http://s:8000/' },
+      { id: 'b', serverUrl: 'http://s:8000/v1/' },
     ];
-    const groups = groupModelsByServer(models, resolveServerStrip, resolveId);
+    const groups = groupModelsByServer(models);
     expect(groups).toHaveLength(1);
+    // The group carries the URL the probe fetches through — canonical, so the
+    // caller doesn't have to normalize again.
+    expect(groups[0].serverUrl).toBe('http://s:8000');
   });
 
   it('gives each model without a serverUrl its own group', () => {
@@ -85,7 +50,7 @@ describe('groupModelsByServer', () => {
       { id: 'no-url-1' },
       { id: 'no-url-2' },
     ];
-    const groups = groupModelsByServer(models, resolveServer, resolveId);
+    const groups = groupModelsByServer(models);
     expect(groups).toHaveLength(2);
     for (const g of groups) {
       expect(g.serverUrl).toBe('');
@@ -99,7 +64,7 @@ describe('groupModelsByServer', () => {
       { id: 'no-url' },
       { id: 'm2', serverUrl: 'http://s:8000' },
     ];
-    const groups = groupModelsByServer(models, resolveServer, resolveId);
+    const groups = groupModelsByServer(models);
     // Two groups: one for the server, one for the serverless model
     const serverGroup = groups.find(g => g.serverUrl !== '');
     const noUrlGroup = groups.find(g => g.serverUrl === '');
