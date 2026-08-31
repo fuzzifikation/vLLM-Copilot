@@ -895,7 +895,6 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
           if (effectiveOutput === undefined || providerCap < effectiveOutput) effectiveOutput = providerCap;
         }
       }
-      const clamped = clampCauses.length > 0;
       items.push(new OpenRouterModelTreeItem(serverUrl, modelId, label, providerLabel, fp, configuredOutput, effectiveOutput, clampCauses));
     }
     return items;

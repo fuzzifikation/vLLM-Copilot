@@ -84,7 +84,6 @@ export function registerAutoConfigureModelCommand(
       // No args — show QuickPick to select a model
       const items = existing.map((m, idx) => {
         const label = m.displayName || resolveVllmModelId(m);
-        const server = m.serverUrl ? ` (${normalizeServerUrl(m.serverUrl)})` : '';
         return {
           label,
           description: `#${idx + 1}`,

@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import {
   resolveVllmModelId,
-  resolveOverrideForModel,
   resolveServerConfig,
   resolveModelSettings,
   resolveServerType,
