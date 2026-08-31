@@ -232,7 +232,7 @@ What follows are only the decisions the compiler cannot make for you.
 | `src/serverRegistry.ts` **(new)** | `ServerEntry`, `indexServers()`, `resolveServer()`, id-slug generator, the pure `planRegistryMigration()`, `toPublicServerEntry()` (credential-stripped webview projection, mirrors `toPublicModelConfig(..., {strip:true})`). |
 | `src/config.ts` | `VllmConfig.servers` + `getConfig()`; `resolveServerConfig(model, servers)` returning `EffectiveServer` or undefined; `sanitizeRequestHeaders` exported; `findModelConfigIndex`/`findModelConfig`/`resolveOverrideForModel` take `servers` and compare the **resolved** URL (callers that only know a URL — the usage and dashboard lookups — still need it); `validateConfig` gains unknown-id, duplicate-id and unresolvable-ref warnings and loses the "has no serverUrl" branch; `CLEARABLE_ON_EMPTY` drops `serverDisplayName` and `serverType`. |
 | `src/configStore.ts` | **`ModelIdentity` becomes `{ id, server }`** and `assertValidIdentity` requires a non-blank `server`. Purity removes a hazard here: identity is always complete now, so the append-on-no-match path can no longer materialise a stray inline entry that outranks the registry — appending means what it says, "a new model on a known server". Replace-mode preserve list drops the two server fields, keeps `systemMessageReplacementsFile`. |
-| `src/commands.ts` | Four direct `config.update('models', ...)` writers (Update Auth, Rename Server, Remove Server, Remove Model) plus `personalityStore.ts` write whole arrays: they must carry `server` through untouched. `resetUsage` scope and usage lookups keep taking the resolved URL. |
+| `src/commands.ts` | Update Auth, Rename Server, Remove Server and Remove Model write through `writeModels` (see §15) and must carry `server` through untouched. `resetUsage` scope and usage lookups keep taking the resolved URL. |
 | `src/dashboard.ts` | The grouping loop keeps its shape (it still iterates models, now resolving each); **registry entries with no models are appended in a second pass**, which is why an empty-server node costs roughly 15 lines instead of a restructure. Node label from `EffectiveServer.displayName`. |
 | `src/serverSettingsView.ts` (+ `resources/serverSettings.js`) | Its `affectsConfiguration('vllm-copilot.models')` listener is the one listener that genuinely must widen to `servers` — the extension's blanket `vllm-copilot` listener already covers the provider and dashboard caches. Server card edits **display name and type** only; auth stays in the native `promptForServerAuth` flow, so no credential value ever enters webview state. |
 | `src/commands/presets.ts` | `PresetConfig` already omits `serverUrl`, `requestHeaders`, `serverType`, `serverDisplayName`; it gains `server` in the same `Omit` list and `PRESET_CONFIG_KEYS` stays closed. Presets describe model facts and cannot name a server — a preset file carrying one is rejected by the existing allow-list, remote presets included. |
@@ -364,3 +364,31 @@ the code back to match them:
    wrong per §5; correct it so that idea's cost estimate is not reused.
 5. **`configSchemaTool.ts` GUIDE, `package.json` tool `modelDescription`, README,
    configuration-reference.md** — all document `serverUrl` on the model as required.
+
+---
+
+## 15. Landed ahead of this change
+
+Behaviour-preserving refactors that are already committed, each green on its own. They exist to
+shrink the breaking commit, not to soften it.
+
+- **Server identity has one formula.** `serverIdentity()` / `modelServerIdentity()` in
+  `src/config.ts` return `{ serverUrl, requestHeaders, fingerprint, groupKey }`, and
+  `resolveServerConfig()` delegates to the same function, so the request path and every identity
+  key are computed from the same sanitised pair. Consumers moved onto it: the `vllmMetrics` engine
+  registry, dashboard grouping, the server settings projection, the deep-dive panel key and the
+  auto-configure sibling check. This also removed a live bug — Update Auth re-keyed the metrics
+  engine with *unsanitized* headers while every lookup uses sanitized ones, so a header like
+  `Connection` orphaned the engine's poller and let a second engine appear on the next refresh.
+- **One write path.** `readModels()` / `writeModels()` in `src/configStore.ts`; `writeModels` is
+  the only `update('models', ...)` in `src/`. §6's ordering rule and its "marker only after every
+  write succeeded" rule go there, where they can be enforced — not across nine call sites.
+  (`config.ts` still reads the array itself: importing `configStore` there would be a cycle.)
+- **`test/factories.ts`.** `makeModelConfig()` fills in the fields a model entry demands, so
+  fixtures that do not care about the server stop naming one.
+
+Not done in advance, deliberately: routing the direct `serverUrl` / `requestHeaders` / `serverType`
+/ `serverDisplayName` reads through `resolveServerConfig()`. A meaningful share of them must keep
+the *declared* value (write-back fan-out, the settings editor), and they can only be classified
+reliably once `ModelConfig` actually loses the fields — so that rewrite belongs here, not in a
+separate commit that would have to be partly undone.
