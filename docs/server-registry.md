@@ -186,11 +186,29 @@ including the globalState marker idiom and the plan-then-dumb-apply structure �
    `config.update()` has no multi-key transaction, so "atomic" is not on the table; this order
    means an interrupt leaves models pointing at entries that already exist rather than at
    nothing.
-6. Set the marker. Post one info notification — *"Adopted N servers from your model settings
-   (Show / Undo)"* — and log full before/after JSON to the output channel.
+6. Set the marker **only if both writes succeeded**. If a write throws (invalid `settings.json`),
+   leave the marker unset so the next activation retries — the same handling
+   [outputLengthMigration.ts](../src/outputLengthMigration.ts) already uses. Post one info
+   notification — *"Adopted N servers from your model settings (Show / Undo)"* — and log full
+   before/after JSON to the output channel.
 7. `Undo Server Registry Migration` (palette) restores the snapshot and marks the migration
    reverted so it does not immediately re-run. The snapshot *is* the rollback story: users'
    settings.json is usually not under version control, so "restore via git" is not one.
+
+**Two rules the steps do not make obvious, now settled:**
+
+- **The migration is a pure function of the `models` array: one entry per distinct
+  `(fingerprint)` group present in the settings, no others.** So an OpenRouter entry is created
+  only if some model actually points at the OpenRouter endpoint — a user who never used it does not
+  get an unknown server with an empty key. This also means no speculative "default local server"
+  entry, and no second code path for any provider (§3).
+- **Byte-for-byte preservation of `settings.json` is not the goal and was never available.** All
+  nine existing write sites (`commands.ts` ×4, `configStore.ts` ×4, `personalityStore.ts`) already
+  hand `config.update()` a whole array, so formatting inside these keys is already whatever VS Code
+  re-serialises it to; `Update Auth` changes one header and rewrites the array today. The bar is
+  therefore *semantic* equality — same resolved servers, same models, nothing added or reordered
+  that the change does not require. Never touch `settings.json` through `fs` to "preserve
+  formatting": that would fight VS Code's own writer for a benefit the user cannot see.
 
 **Ordering constraint:** this must run *before* `outputLengthMigration` in `activate()`, because
 that one identifies models by `{ id, serverUrl }` and patches through `patchModelConfig`. Its
@@ -258,9 +276,11 @@ What follows are only the decisions the compiler cannot make for you.
 ## 10. Testing
 
 - **Migration** (the riskiest new code): golden tests for single model; N models on one server;
-  same URL two credentials producing two entries; OpenRouter models; empty or absent `models`
-  (marker set, nothing written); a model missing `serverUrl` (reported, not invented); marker
-  idempotency; undo restores both arrays; servers-before-models write order asserted.
+  same URL two credentials producing two entries; OpenRouter models; OpenRouter models **absent**
+  (no OpenRouter entry is created); empty or absent `models` (marker set, nothing written); a model
+  missing `serverUrl` (reported, not invented); marker idempotency; **a throwing `config.update()`
+  leaves the marker unset and the settings untouched**; undo restores both arrays;
+  servers-before-models write order asserted.
 - **Resolver matrix**: ref found; unknown ref (unreachable plus warning); omitted `serverType`
   resolves to vllm; whitespace `displayName` falls back to the URL; duplicate ids warned.
 - **Identity freeze**: existing dashboard grouping, per-credential engine and usage-store tests
@@ -274,11 +294,19 @@ What follows are only the decisions the compiler cannot make for you.
 
 ---
 
-## 11. Open questions
+## 11. Questions that are now closed
 
-1. Dashboard placement of empty servers: top-level node, or one collapsible "Servers without
-   models" group. Cosmetic; decide while building §9.3.
-2. Whether `Add Models…` should also be a palette command for keyboard users.
+1. **May the migration reformat `settings.json`?** It already does, unavoidably — see §6. Semantic
+   equality is the bar; the golden tests in §10 and the snapshot/undo pair are how it is checked.
+2. **Does an OpenRouter entry appear before the user adds an OpenRouter model?** No — the migration
+   creates entries only from models that exist (§6).
+3. **Where do zero-model servers appear in the dashboard?** As ordinary top-level server nodes,
+   sorted after every node that has models. A separate collapsible "Servers without models" group
+   would need a new node type for no gain and would hide the row the user needs: the node already
+   carries *Update Auth / Rename / Remove / Add Models*, which is exactly how you fix the state.
+4. **Is `Add Models from this server` also a palette command?** It already is —
+   `vllm-copilot.addServerModel` ("Add or Reconfigure Server/Model") is contributed today and the
+   dashboard node just invokes it. Nothing to build.
 
 Everything revisions 1–3 deferred (server-removal semantics, inline-vs-ref precedence, how long
 `serverDisplayName` lives) is either answered by this design or deleted along with the inline form.
