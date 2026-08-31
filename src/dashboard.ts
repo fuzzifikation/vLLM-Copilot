@@ -1203,7 +1203,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         ));
       }
     } else {
-      const models = this.readConfiguredModels();
+      const models = readModels();
       const rates = findModelCost(models, e.serverUrl, e.modelId);
       const requestCounts: UsageCounts = {
         prompt: e.promptTokens,
@@ -1241,7 +1241,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
 
   /** Children of the Token Usage node: one collapsible node per model. */
   private getTokenUsageChildren(e: TokenUsageTreeItem): ModelUsageTreeItem[] {
-    const models = this.readConfiguredModels();
+    const models = readModels();
     const usage = getServerUsage(e.serverUrl);
     // Union of models with any today or all-time usage (a model used yesterday
     // still needs its Overall row visible).
@@ -1280,18 +1280,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     ];
   }
 
-  /** Read the configured model entries (sync settings read) for cost lookups. */
-  private readConfiguredModels(): ModelConfig[] {
-    return readModels();
-  }
-
   /** Configured OpenRouter models for a relay server IDENTITY (URL + headers).
    *  Two identities sharing a URL have different credentials, so each model
    *  belongs to exactly one identity and appears only under its own node. */
   private getRelayModels(fp: string): ModelConfig[] {
-    return this.readConfiguredModels()
+    return readModels()
       .filter(m => m.serverType === 'openrouter')
-      .filter(m => m.serverUrl && modelServerIdentity(m).fingerprint === fp);
+      .filter(m => modelServerIdentity(m).fingerprint === fp);
   }
 
   /** The cached per-model context window for a relay model, if resolved. */

@@ -15,7 +15,7 @@
  */
 
 import * as vscode from 'vscode';
-import { buildEndpoint, normalizeServerUrl, serverIdentity, type ServerType } from './config.js';
+import { buildEndpoint, serverIdentity, type ServerType } from './config.js';
 import { buildRequestHeaders } from './fetchRetry.js';
 import { resolveRuntimeLimits } from './runtimeLimits.js';
 import {

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { ModelConfig, ServerType } from '../config.js';
 import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, toPublicModelConfig } from '../config.js';
-import { replaceModelConfig, type IdentifiedModelConfig } from '../configStore.js';
+import { replaceModelConfig, readModels, type IdentifiedModelConfig } from '../configStore.js';
 import type { VllmModel } from '../types.js';
 import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../messageConverter.js';
 import { detectServerType } from '../runtimeLimits.js';
@@ -554,7 +554,7 @@ export function registerAddServerModelCommand(
     }
     const serverUrl = normalizeServerUrl(urlInput);
 
-    const existingModels: ModelConfig[] = vscode.workspace.getConfiguration('vllm-copilot').get('models') || [];
+    const existingModels = readModels();
 
     // OpenRouter branch — onboarding for the fixed managed remote. The check is
     // exactly the host: `openrouter.ai` → OpenRouter. Everything else is a normal
