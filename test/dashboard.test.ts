@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { DashboardTreeProvider } from '../src/dashboard.js';
 import { recordRequest, resetUsageStoreForTests } from '../src/usageStore.js';
 import { normalizeServerUrl } from '../src/config.js';
+import { getMetricsEngine } from '../src/vllmMetrics.js';
 import { resetOpenRouterProviderListCache } from '../src/openRouter.js';
 
 /**
@@ -17,8 +18,8 @@ import { resetOpenRouterProviderListCache } from '../src/openRouter.js';
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-/** Fetch stub that makes every endpoint offline (health check fails). */
-const offlineFetch = vi.fn(async () => new Response(null, { status: 0 }));
+/** Fetch stub that makes every endpoint unreachable (no answer at all). */
+const offlineFetch = vi.fn(async () => { throw new TypeError('fetch failed'); });
 
 /** Fetch stub that serves a reachable vLLM server with one loaded model. */
 const onlineFetch = vi.fn(async (url: unknown) => {
@@ -200,6 +201,65 @@ describe('DashboardTreeProvider', () => {
 
     const labels = await rootLabels(provider);
     expect(labels.filter(l => l === 's:8000')).toHaveLength(1);
+  });
+
+  it('a rebuilt subscription shows the reload state, not the retired identity\'s readings', async () => {
+    // Teardown-then-rebuild is what a settings change does. Between the two the
+    // view must never present the OLD identity's numbers as if they were the
+    // new one's — and it must say so immediately rather than waiting for the
+    // first cycle to finish (which is up to the 5s timeout when the server is
+    // unreachable).
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+    provider.setVisible(true);
+    await settle();
+    const before = (await provider.getChildren()).find(c => (c as any).label === 's:8000');
+    expect(await provider.getChildren(before as any)).not.toHaveLength(1); // real metrics, not one error row
+
+    // Same URL, new credentials = a new identity. Nothing answers it yet.
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1', requestHeaders: { Authorization: '******' } }],
+    };
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+    provider.setVisible(false);
+    provider.setVisible(true);
+    await settle();
+
+    const after = (await provider.getChildren()).find(c => (c as any).label === 's:8000');
+    expect(after).toBeDefined();
+    const children = await provider.getChildren(after as any);
+    expect((children[0] as any).description).toBe('Loading…');
+  });
+
+  it('a retired identity releases its engine instead of keeping it warm', async () => {
+    // The engine is reference-counted, so with the dashboard as its only viewer
+    // a rebuild must dispose the old engine AND drop it from the registry —
+    // otherwise it polls a no-longer-configured identity forever in the
+    // background and hands its stale cache to whatever comes next.
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://retired:8000', vllmModelId: 'm1' }],
+    };
+    vi.stubGlobal('fetch', onlineFetch);
+    provider.setVisible(true);
+    await settle();
+
+    const first = getMetricsEngine('http://retired:8000', {}, 'vllm', ['m1']);
+    expect(first.getCachedAggregated()?.online).toBe(true);
+
+    (vscode as any).workspace._mockConfig = {
+      models: [{ id: 'm1', serverUrl: 'http://retired:8000', vllmModelId: 'm1', requestHeaders: { Authorization: '******' } }],
+    };
+    provider.setVisible(false);
+    provider.setVisible(true);
+    await settle();
+
+    // The old identity's slot is empty: a lookup now builds a fresh engine with
+    // no cached readings and no poller.
+    const reopened = getMetricsEngine('http://retired:8000', {}, 'vllm', ['m1']);
+    expect(reopened).not.toBe(first);
+    expect(reopened.getCachedAggregated()).toBeNull();
   });
 
   it('treats two header identities on one URL as separate server nodes', async () => {

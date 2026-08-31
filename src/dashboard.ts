@@ -522,6 +522,12 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
           dispose: sub.dispose,
         });
       }
+      // Repaint once the nodes exist. fireTreeUpdate() coalesces, so this is
+      // usually folded into the repaint the caller already scheduled — but if
+      // getConfig() resolves later than that microtask, the earlier repaint drew
+      // an empty list and nothing else would repaint until a cycle COMPLETES (up
+      // to the 5s timeout when a server is down).
+      this.fireTreeUpdate();
     } catch (err) {
       this.outputChannel.appendLine(`[DASHBOARD] refreshSubscriptions failed: ${err instanceof Error ? err.message : String(err)}`);
     }
