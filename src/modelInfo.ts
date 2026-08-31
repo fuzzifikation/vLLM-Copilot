@@ -356,7 +356,7 @@ export function buildModelInfo(
 
 /** Budget provenance for an offline row (see {@link buildOfflineModelInfo}). */
 export interface OfflineBudgetInfo {
-  /** What the server last reported when it was reachable, if ever. */
+  /** What the server last reported when it was reachable this session, if ever. */
   lastKnown?: KnownBudget;
   /** The user-configured input clamp (`maxInputTokens`), if any. */
   configuredInputTokens?: number;
@@ -408,19 +408,19 @@ export function buildOfflineModelInfo(
   if (knownLen !== undefined && knownOut !== undefined && knownLen >= 2) {
     window = knownLen;
     output = Math.max(1, Math.min(knownOut, window - 1));
-    offlineText = `Offline — ${budget.reason} The budget shown is from the last successful connection and may be stale.`;
+    offlineText = `Offline: ${budget.reason}. The budget shown is from the last successful connection this session and may be stale.`;
   } else {
-    // Never reached (or the stored entry was malformed): advertise ONLY what
-    // the user/preset actually configured. The built-in output default is off
-    // limits — presenting it would be a fabricated budget.
+    // Never reached this session: advertise ONLY what the user/preset
+    // actually configured. The built-in output default is off limits:
+    // presenting it would be a fabricated budget.
     const configuredOut = positive(budget.configuredOutputTokens)
       ?? positive(resolveOutputBudgetScalar(override?.maxOutputTokens));
     const configuredIn = positive(budget.configuredInputTokens);
     window = (configuredIn ?? 1) + (configuredOut ?? 1);
     output = configuredOut ?? 1;
     offlineText = configuredIn !== undefined || configuredOut !== undefined
-      ? `Offline — ${budget.reason} The server was never reached; the budget reflects only your configured limits (anything unconfigured is a labeled 1-token placeholder).`
-      : `Offline — ${budget.reason} The server was never reached and no limits are configured, so the budget is 1-token placeholders until it answers once.`;
+      ? `Offline: ${budget.reason}. The server has not answered this session; the budget reflects only your configured limits (anything unconfigured is a labeled 1-token placeholder).`
+      : `Offline: ${budget.reason}. The server has not answered this session and no limits are configured, so the budget is 1-token placeholders until it answers once.`;
   }
 
   const row = buildModelInfo(

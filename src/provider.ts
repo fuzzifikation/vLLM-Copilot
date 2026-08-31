@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { VllmClient } from './vllmClient.js';
 import { SystemMessagePipeline } from './provider/systemMessagePipeline.js';
 import { discoverModels } from './provider/discovery.js';
-import { createBudgetLedger, type BudgetLedger } from './provider/budgetLedger.js';
+import { createBudgetLedger } from './provider/budgetLedger.js';
 import { runChatResponse } from './provider/streamOrchestrator.js';
 import type { ProviderClient } from './provider/contracts.js';
 import { resolveOverrideForModel, resolveModelSettings } from './config.js';
@@ -63,17 +63,17 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
   private static readonly OFFLINE_RETRY_COOLDOWN_MS = 30_000;
 
   /**
-   * A single shared discovery pass. Concurrent calls JOIN the running pass
-   * instead of starting duplicate probe storms. The pass is tagged with the
-   * generation it started for: callers never join an obsolete pass (a
-   * mid-flight invalidation must not make a fresh resolve wait out the old
-   * pass's probes). Resolves with the pass's starting generation so waiters
-   * can tell whether its result still applies.
+   * The discovery pass currently running, if any. Concurrent calls JOIN it
+   * instead of starting duplicate probe storms. Joining is unconditional: if
+   * the running pass was invalidated mid-flight, its result is discarded by
+   * the generation guard and the caller loops into a fresh pass. Resolves
+   * with the generation the pass started for, so waiters can tell whether
+   * its result still applies.
    */
-  private discoveryRun: { generation: number; promise: Promise<number> } | null = null;
+  private discoveryRun: Promise<number> | undefined;
 
-  /** Last-known-good budgets for honest offline rows during outages. Lazy: reads globalState once. */
-  private budgetLedgerInstance: BudgetLedger | undefined;
+  /** Last-known-good budgets for honest offline rows during outages. Session memory only. */
+  private readonly budgetLedger = createBudgetLedger();
 
   /** Instance-owned system-message pipeline (replacements + capture). */
   private readonly systemMessages: SystemMessagePipeline;
@@ -94,14 +94,6 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
 
   dispose(): void {
     this._onDidChangeLanguageModelChatInformation.dispose();
-  }
-
-  /** Lazy so construction never touches globalState; degrades to in-memory without one. */
-  private getBudgetLedger(): BudgetLedger {
-    if (!this.budgetLedgerInstance) {
-      this.budgetLedgerInstance = createBudgetLedger(this.context.globalState);
-    }
-    return this.budgetLedgerInstance;
   }
 
   /**
@@ -223,9 +215,14 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
   }
 
   /**
-   * Join the in-flight discovery pass or start one. Exactly one pass runs at
+   * Join the in-flight discovery pass or start one. At most one pass runs at
    * a time; its result is cached only if the generation it started with is
    * still current when it finishes. Resolves with that starting generation.
+   *
+   * Joining is unconditional: if the running pass was invalidated mid-flight,
+   * its result is discarded by the generation guard below and the caller
+   * loops into a fresh pass. A stale join costs waiting out one obsolete
+   * probe; tracking per-generation passes to refuse it is not worth it.
    *
    * @param rejoin - true when the caller already waited behind one pass and
    *   is looping because the generation moved. Only re-entries may converge
@@ -242,11 +239,8 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       && this.cachedGeneration === this.modelCacheGeneration) {
       return Promise.resolve(this.modelCacheGeneration);
     }
-    // Only join a pass started for the CURRENT generation — an invalidated
-    // in-flight pass must never make a fresh resolve wait for a config that
-    // no longer exists.
-    if (this.discoveryRun && this.discoveryRun.generation === this.modelCacheGeneration) {
-      return this.discoveryRun.promise;
+    if (this.discoveryRun) {
+      return this.discoveryRun;
     }
     const generation = this.modelCacheGeneration;
     const run = (async (): Promise<number> => {
@@ -275,7 +269,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         (modelId, contextWindow) => contextWindows.set(modelId, contextWindow),
         this.lastSelectedMode,
         this.lastSelectedLength,
-        this.getBudgetLedger(),
+        this.budgetLedger,
       );
       if (generation === this.modelCacheGeneration) {
         this.cachedModels = models;
@@ -290,11 +284,11 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       }
       return generation;
     })().finally(() => {
-      // Only clear the slot if it still holds OUR pass — an abandoned obsolete
-      // pass settling must not evict a newer one.
-      if (this.discoveryRun?.promise === run) this.discoveryRun = null;
+      // A new pass can only start once this slot is empty, so the slot always
+      // holds the pass that is actually running.
+      this.discoveryRun = undefined;
     });
-    this.discoveryRun = { generation, promise: run };
+    this.discoveryRun = run;
     return run;
   }
 

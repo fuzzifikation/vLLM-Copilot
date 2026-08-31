@@ -95,10 +95,12 @@ export async function discoverModels(
     // Picker id — matches buildModelInfo's derivation so provider-tracked mode
     // selections keyed by model.id resolve to the right override.
     const presetId = override.id || buildModelId(serverConfig.serverUrl, vllmModelId);
-  // Ledger identity — the REAL one (server + wire id), not the picker id, so a
-  // repointed or shared id can never graft one server's budget onto another
-  // target's offline row (globalState is shared across workspaces).
-  const identity = ledgerKey(serverConfig.serverUrl, vllmModelId);
+    // Ledger identity: the REAL one (server + wire id), not the picker id, so
+    // a repointed or shared id can never graft one server's budget onto
+    // another target's offline row.
+    const identity = ledgerKey(serverConfig.serverUrl, vllmModelId);
+    // Legacy output-budget chain (mode > defaultParams > vector head / scalar),
+    // clamped below. Used as the advertised budget ONLY while no length pick
     // exists; once a pick exists the pick wins — even over a per-mode
     // `max_tokens` — and the advertised budget follows the pick.
     const selectedMode = selectedModeByModel?.get(presetId);

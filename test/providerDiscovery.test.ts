@@ -397,10 +397,12 @@ describe('self-healing after an outage', () => {
     expect(client.getConfigCached).toHaveBeenCalledTimes(1);
   });
 
-  it('a resolve after invalidation never waits behind the obsolete in-flight pass', async () => {
-    // clearCache() mid-probe bumps the generation: a fresh resolve must start
-    // its OWN probe immediately instead of joining (and waiting behind) the
-    // obsolete pass — whose result would be discarded anyway.
+  it('a resolve during an invalidated in-flight pass joins it, then re-probes fresh', async () => {
+    // clearCache() mid-probe bumps the generation. A fresh resolve JOINS the
+    // in-flight pass rather than starting a duplicate wave; the obsolete
+    // result is discarded by the generation guard and each waiter loops into
+    // a fresh pass (or converges on its published cache), so no call can
+    // return the obsolete list.
     let release: () => void = () => {};
     const gate = new Promise<void>(resolve => { release = resolve; });
     const client = fakeClient({
@@ -416,13 +418,14 @@ describe('self-healing after an outage', () => {
     provider.clearCache(); // settings change / Test & Refresh mid-probe
     const p2 = provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
     await new Promise(resolve => setImmediate(resolve));
-    expect(client.getModelContextWindow).toHaveBeenCalledTimes(2); // fresh pass, no stale join
+    expect(client.getModelContextWindow).toHaveBeenCalledTimes(1); // joined, no duplicate wave
 
     release();
     const [r1, r2] = await Promise.all([p1, p2]);
     expect(r1).toHaveLength(1);
     expect(r2).toHaveLength(1);
-    // The abandoned pass converges on the published result — no third wave.
+    // One obsolete pass + one fresh pass; the looping rejoin converges on the
+    // published cache instead of firing a third wave.
     expect(client.getModelContextWindow).toHaveBeenCalledTimes(2);
   });
 

@@ -264,20 +264,9 @@ describe('discoverModels', () => {
 });
 
 describe('discoverModels — offline budgets (ledger)', () => {
-  function makeLedgerMemento() {
-    const store: Record<string, unknown> = {};
-    const memento = {
-      keys: () => Object.keys(store),
-      get: (key: string) => store[key],
-      update: async (key: string, value: unknown) => { store[key] = value; },
-    } as unknown as vscode.Memento;
-    return { memento, store };
-  }
-
   it('records healthy budgets and serves them on a later outage', async () => {
     const output = makeOutput();
-    const { memento, store } = makeLedgerMemento();
-    const ledger = createBudgetLedger(memento);
+    const ledger = createBudgetLedger();
 
     const pass1 = await discoverModels(
       [{ id: 'm1', serverUrl: server, family: 'test-family' }],
@@ -285,7 +274,6 @@ describe('discoverModels — offline budgets (ledger)', () => {
       output, undefined, undefined, undefined, ledger,
     );
     expect(pass1.failures).toBe(0);
-    expect(store['vllm-copilot.lastKnownBudgets']).toBeDefined();
 
     const pass2 = await discoverModels(
       [{ id: 'm1', serverUrl: server, family: 'test-family' }],
@@ -301,12 +289,11 @@ describe('discoverModels — offline budgets (ledger)', () => {
   });
 
   it('a budget recorded for one server never grafts onto a different server sharing the picker id', async () => {
-    // globalState is shared across workspaces and picker ids are user-chosen:
-    // identity is (serverUrl, wire id), so an unrelated 'm1' on another dead
-    // server gets honest placeholders, not a borrowed budget.
+    // Picker ids are user-chosen and identity is (serverUrl, wire id), so an
+    // unrelated 'm1' on another dead server gets honest placeholders, not a
+    // borrowed budget.
     const output = makeOutput();
-    const { memento } = makeLedgerMemento();
-    const ledger = createBudgetLedger(memento);
+    const ledger = createBudgetLedger();
 
     await discoverModels(
       [{ id: 'm1', serverUrl: server, family: 'test-family' }],
@@ -320,7 +307,7 @@ describe('discoverModels — offline budgets (ledger)', () => {
       output, undefined, undefined, undefined, ledger,
     );
     const row = stranger.models[0] as typeof stranger.models[0] & { warningText?: Record<string, string> };
-    expect(row.warningText?.offline).toContain('never reached');
+    expect(row.warningText?.offline).toContain('not answered this session');
     expect(row.maxInputTokens).toBe(1);
     expect(row.maxOutputTokens).toBe(1);
   });
@@ -330,8 +317,7 @@ describe('discoverModels — offline budgets (ledger)', () => {
     // must be re-applied at reconstruction — a clamped 1000 must not silently
     // grow back to window−output.
     const output = makeOutput();
-    const { memento } = makeLedgerMemento();
-    const ledger = createBudgetLedger(memento);
+    const ledger = createBudgetLedger();
     const override = { id: 'm1', serverUrl: server, family: 'test-family', maxInputTokens: 1000 };
 
     const healthy = await discoverModels(
@@ -369,8 +355,7 @@ describe('discoverModels — offline budgets (ledger)', () => {
     // offer picks against a stale/placeholder ceiling; the mode dropdown
     // selects behavior, not reserved budget, and stays.
     const output = makeOutput();
-    const { memento } = makeLedgerMemento();
-    const ledger = createBudgetLedger(memento);
+    const ledger = createBudgetLedger();
     const override = {
       id: 'm1', serverUrl: server, family: 'test-family',
       maxOutputTokens: [8192, 4096, 2048],
