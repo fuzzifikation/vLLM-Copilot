@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as vscode from 'vscode';
-import { getConfig, buildEndpoint, normalizeServerUrl, resolveServerConfig, serverIdentity, modelServerIdentity } from '../src/config.js';
+import { getConfig, buildEndpoint, normalizeServerUrl, resolveServerConfig, serverIdentity, modelServerIdentity, serverFingerprint, serverGroupKey } from '../src/config.js';
 
 /** Minimal fake ExtensionContext for config tests. */
 function makeContext(): any {
@@ -99,6 +99,8 @@ describe('serverIdentity', () => {
     const resolved = resolveServerConfig(m);
     expect(identity.serverUrl).toBe(resolved.serverUrl);
     expect(identity.requestHeaders).toEqual(resolved.requestHeaders);
+    // The hash is of THAT pair — so a server is one identity everywhere.
+    expect(identity.fingerprint).toBe(serverFingerprint(resolved.serverUrl, resolved.requestHeaders));
   });
 
   it('is the same identity from a bare URL + headers as from a model', () => {
@@ -117,12 +119,28 @@ describe('serverIdentity', () => {
     const a = modelServerIdentity(model({ requestHeaders: { 'X-A': '1', 'X-B': '2' } }));
     const b = modelServerIdentity(model({ serverUrl: 'http://gw:8000/v1/', requestHeaders: { 'X-B': '2', 'X-A': '1' } }));
     expect(a.fingerprint).toBe(b.fingerprint);
-    expect(a.groupKey).not.toBe(a.fingerprint);
   });
 
   it('is empty for a model without a server URL', () => {
     const identity = modelServerIdentity(model({ serverUrl: undefined }));
     expect(identity.serverUrl).toBe('');
     expect(identity.requestHeaders).toEqual({});
+  });
+});
+
+describe('serverGroupKey', () => {
+  it('is deterministic, distinct per header identity, and leaks no header values', () => {
+    const fpA = serverFingerprint('http://gw:8000', { Authorization: 'Bearer secret-a' });
+    const fpB = serverFingerprint('http://gw:8000', { Authorization: 'Bearer secret-b' });
+    const kA1 = serverGroupKey(fpA);
+    const kA2 = serverGroupKey(fpA);
+    const kB = serverGroupKey(fpB);
+    expect(kA1).toBe(kA2);
+    expect(kA1).not.toBe(kB);
+    expect(kA1).toMatch(/^srv-/);
+    // The key must not be (or contain) the raw fingerprint, which embeds secrets.
+    expect(kA1).not.toContain('Bearer');
+    expect(kA1).not.toContain('secret-a');
+    expect(kA1).not.toBe(fpA);
   });
 });

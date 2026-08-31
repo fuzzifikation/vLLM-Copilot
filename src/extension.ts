@@ -221,7 +221,14 @@ export async function activate(context: vscode.ExtensionContext) {
         // for programmatic/string invocations.
         const fromTreeItem = typeof arg !== 'string' && arg?.requestHeaders;
         const models = readModels();
-        const firstModel = models.find(m => m.serverUrl === serverUrl);
+        // A hand-typed URL may be spelled differently than the stored one
+        // (`http://host:8000/v1` vs `http://host:8000`), so every lookup below
+        // compares NORMALIZED urls and shares one matcher — backend type,
+        // credentials and display name must come from the same set of models.
+        const normalizedArg = normalizeServerUrl(serverUrl);
+        const sameServer = (m: { serverUrl?: string }) =>
+          !!m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedArg;
+        const firstModel = models.find(sameServer);
         const serverType = fromTreeItem
           ? (arg.serverType ?? 'vllm')
           : resolveServerType(firstModel);
@@ -236,20 +243,18 @@ export async function activate(context: vscode.ExtensionContext) {
         }
         const headers = fromTreeItem
           ? arg.requestHeaders
-          : (firstModel ? (resolveServerConfig(firstModel).requestHeaders ?? {}) : {});
+          : (firstModel ? resolveServerConfig(firstModel).requestHeaders : {});
         // Display name: carried on the tree item when present; otherwise look
         // it up (first non-empty, trimmed, never OpenRouter) from the models on
         // this URL — covers string AND bare-object programmatic invocations.
-        const normalizedArg = normalizeServerUrl(serverUrl);
         const carried = typeof arg === 'object' && typeof arg?.serverDisplayName === 'string'
           ? arg.serverDisplayName.trim()
           : undefined;
-        const displayName = carried || models.find((m: any) =>
-              m.serverUrl
-              && normalizeServerUrl(m.serverUrl) === normalizedArg
-              && m.serverType !== 'openrouter'
-              && m.serverDisplayName?.trim()
-            )?.serverDisplayName?.trim();
+        const displayName = carried || models.find(m =>
+            sameServer(m)
+            && m.serverType !== 'openrouter'
+            && m.serverDisplayName?.trim()
+          )?.serverDisplayName?.trim();
         openDeepDive(serverUrl, headers, serverType, context, outputChannel, displayName);
       }),
     );

@@ -4,7 +4,7 @@
  */
 
 import * as vscode from 'vscode';
-import { getConfig, resolveServerConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, modelServerIdentity, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
+import { getConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, modelServerIdentity, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
 import { readModels } from './configStore.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from './openRouter.js';
@@ -481,9 +481,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         serverDisplayName?: string;
       }>();
       for (const model of config.models) {
+        // A model without a URL is unreachable and has no identity to group by.
         if (!model.serverUrl) continue;
         const identity = modelServerIdentity(model);
-        if (!identity.serverUrl) continue;
         const fp = identity.fingerprint;
         let group = identityMap.get(fp);
         if (!group) {
@@ -1291,10 +1291,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
   private getRelayModels(fp: string): ModelConfig[] {
     return this.readConfiguredModels()
       .filter(m => m.serverType === 'openrouter')
-      .filter(m => {
-        const identity = modelServerIdentity(m);
-        return !!identity.serverUrl && identity.fingerprint === fp;
-      });
+      .filter(m => m.serverUrl && modelServerIdentity(m).fingerprint === fp);
   }
 
   /** The cached per-model context window for a relay model, if resolved. */

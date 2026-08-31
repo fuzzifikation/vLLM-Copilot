@@ -288,14 +288,18 @@ export function registerUpdateServerAuthCommand(
     const normalizedUrl = normalizeServerUrl(serverUrl);
     let matched = 0;
     let updated = 0;
-    let mergedHeaders: Record<string, string> | undefined;
+    // Header transitions per CHANGED model, so each server identity moves to its
+    // own new headers. Merge is per-model, so models that already differ on this
+    // URL still differ afterwards — one shared "new headers" value would push
+    // model A's credentials into model B's engine (and its open Deep-Dive).
+    const transitions: Array<{ previous: Record<string, string> | undefined; next: Record<string, string> }> = [];
     const updatedModels = existing.map(m => {
       if (m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl) {
         matched++;
         const nextHeaders = mergeAuthHeaders(m.requestHeaders, combinedHeaders);
-        if (nextHeaders === m.requestHeaders) return m; // no-op — nothing changed
-        if (mergedHeaders === undefined) mergedHeaders = nextHeaders;
+        if (!nextHeaders || nextHeaders === m.requestHeaders) return m; // no-op
         updated++;
+        transitions.push({ previous: m.requestHeaders, next: nextHeaders });
         return { ...m, requestHeaders: nextHeaders };
       }
       return m;
@@ -313,10 +317,12 @@ export function registerUpdateServerAuthCommand(
 
     await writeModels(updatedModels);
     _provider.clearCache();
-    // Push merged headers to the metrics engine so open deep-dive uses fresh auth.
-    // Update-if-present only: Update Auth must not create a zero-subscriber
-    // engine (an engine only exists when a dashboard/deep-dive is subscribed).
-    updateMetricsEngineHeaders(serverUrl, mergedHeaders ?? {});
+    // Push each changed identity's headers to its metrics engine so an open
+    // deep-dive uses fresh auth. Update-if-present only: Update Auth must not
+    // create a zero-subscriber engine (an engine only exists when a
+    // dashboard/deep-dive is subscribed). Repeating a transition is a no-op, so
+    // models that shared an identity need no de-duplication here.
+    for (const t of transitions) updateMetricsEngineHeaders(serverUrl, t.previous, t.next);
     outputChannel.appendLine(`[INFO] Updated auth for ${updated} model(s) on ${serverUrl}.`);
     vscode.window.showInformationMessage(`Updated auth for ${updated} model(s) on ${serverUrl}.`);
   });

@@ -716,35 +716,41 @@ export function getMetricsEngine(
 }
 
 /**
- * Update request headers on existing metrics engines for this server, if any.
+ * Move one metrics engine onto its new identity after Update Auth, if it exists.
  * Unlike {@link getMetricsEngine}, this never creates an engine — it exists so
- * header-only updates (e.g. Update Auth) don't leak a zero-subscriber registry
- * entry. No-op when no engine exists.
+ * header-only updates don't leak a zero-subscriber registry entry. No-op when no
+ * engine is registered under the PREVIOUS identity.
  *
- * Update Auth converges ALL models on a URL to the same headers, so every
- * engine registered for that URL is updated in place and re-keyed to the new
- * identity. (Two pre-update identities on one URL become one identity.)
+ * The caller passes the headers of a single model (before → after), because
+ * Update Auth MERGES into each model's existing headers: models on one URL that
+ * already differ keep differing, so each changed identity gets its own call.
+ * Stamping one model's headers on every engine of the URL would hand model A's
+ * credentials to model B's open Deep-Dive.
+ *
+ * When the transition lands on an identity another engine already owns (two
+ * identities converging on one credential set), the existing engine wins and this
+ * one is left unregistered: its open views keep their subscription and refresh
+ * with the new auth, and it retires itself when the last of them unsubscribes.
  *
  * @param serverUrl - The vLLM server URL (canonicalized internally)
- * @param requestHeaders - New auth/routing headers (sanitized, as at request time)
+ * @param previousHeaders - The model's headers before the update (its old identity)
+ * @param nextHeaders - Its new headers (sanitized internally, as at request time)
  */
-export function updateMetricsEngineHeaders(serverUrl: string, requestHeaders: Record<string, string>): void {
-  const identity = serverIdentity(serverUrl, requestHeaders);
-  const canonical = identity.serverUrl;
+export function updateMetricsEngineHeaders(
+  serverUrl: string,
+  previousHeaders: Record<string, string> | undefined,
+  nextHeaders: Record<string, string>,
+): void {
+  const oldKey = serverIdentity(serverUrl, previousHeaders).fingerprint;
+  const engine = engineRegistry.get(oldKey);
+  if (!engine) return;
+  const identity = serverIdentity(serverUrl, nextHeaders);
+  engine.setHeaders(identity.requestHeaders);
   const newKey = identity.fingerprint;
-  // Collect first — we mutate the map while iterating.
-  const targets: Array<[string, ServerMetricsEngine]> = [];
-  for (const [key, engine] of engineRegistry) {
-    if (normalizeServerUrl(engine.getServerUrl()) === canonical) targets.push([key, engine]);
-  }
-  for (const [oldKey, engine] of targets) {
-    engine.setHeaders(identity.requestHeaders);
-    engine.setRegistryKey(newKey);
-    if (oldKey !== newKey) {
-      engineRegistry.delete(oldKey);
-      engineRegistry.set(newKey, engine);
-    }
-  }
+  if (oldKey === newKey) return;
+  engineRegistry.delete(oldKey);
+  engine.setRegistryKey(newKey);
+  if (!engineRegistry.has(newKey)) engineRegistry.set(newKey, engine);
 }
 
 // ─── Unified Fetch ──────────────────────────────────────────────────

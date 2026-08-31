@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { getMetricsEngine } from './vllmMetrics.js';
 import type { ServerRawData } from './vllmMetrics.js';
-import { normalizeServerUrl, serverIdentity, type ServerType } from './config.js';
+import { normalizeServerUrl, serverGroupKey, serverIdentity, type ServerType } from './config.js';
 
 interface ReadyMessage {
   type: 'ready';
@@ -44,7 +44,7 @@ export function openDeepDive(
   // so `http://host:8000`, `http://host:8000/`, and `http://host:8000/v1` share
   // one panel — matching the metrics engine — while two identities on one URL
   // (different per-model credentials) get separate panels with their own auth.
-  const panelKey = serverIdentity(serverUrl, requestHeaders).groupKey;
+  const panelKey = serverGroupKey(serverIdentity(serverUrl, requestHeaders).fingerprint);
   // If a panel for this server is already open, reveal it. Update the title as
   // well — the title is only set at creation, so a rename while the panel stays
   // open (retainContextWhenHidden) would otherwise show the stale label.

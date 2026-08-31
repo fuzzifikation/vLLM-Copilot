@@ -373,13 +373,19 @@ Behaviour-preserving refactors that are already committed, each green on its own
 shrink the breaking commit, not to soften it.
 
 - **Server identity has one formula.** `serverIdentity()` / `modelServerIdentity()` in
-  `src/config.ts` return `{ serverUrl, requestHeaders, fingerprint, groupKey }`, and
+  `src/config.ts` return `{ serverUrl, requestHeaders, fingerprint }`, and
   `resolveServerConfig()` delegates to the same function, so the request path and every identity
   key are computed from the same sanitised pair. Consumers moved onto it: the `vllmMetrics` engine
   registry, dashboard grouping, the server settings projection, the deep-dive panel key and the
   auto-configure sibling check. This also removed a live bug — Update Auth re-keyed the metrics
   engine with *unsanitized* headers while every lookup uses sanitized ones, so a header like
   `Connection` orphaned the engine's poller and let a second engine appear on the next refresh.
+- **Update Auth moves one identity at a time.** `updateMetricsEngineHeaders(url, previous, next)`
+  re-keys the engine of *that* model's old identity. It used to take only the new headers and stamp
+  them on every engine of the URL — but the header merge is per-model, so models that already
+  differed stay different: one model's new credentials landed on a sibling's engine (and on its open
+  Deep-Dive). Transitions that repeat are no-ops, and a transition onto an identity another engine
+  already owns leaves that engine in place rather than displacing it.
 - **One write path.** `readModels()` / `writeModels()` in `src/configStore.ts`; `writeModels` is
   the only `update('models', ...)` in `src/`. §6's ordering rule and its "marker only after every
   write succeeded" rule go there, where they can be enforced — not across nine call sites.

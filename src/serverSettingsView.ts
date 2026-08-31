@@ -10,9 +10,6 @@ import { patchModelConfig, readModels, type ModelIdentity } from './configStore.
 import { detectServerTypeFromV1Models } from './runtimeLimits.js';
 import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from './openRouter.js';
 
-// Re-exported so the existing test import surface (serverSettingsView.test.ts)
-// keeps working after the helper moved to config.ts.
-export { serverGroupKey } from './config.js';
 import {
   discoverPersonalities,
   ensureGlobalPersonality,
@@ -255,9 +252,9 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       serverDisplayName?: string;
     }>();
     for (const model of config.models) {
+      // A model without a URL is unreachable and has no identity to group by.
       if (!model.serverUrl) continue;
       const identity = modelServerIdentity(model);
-      if (!identity.serverUrl) continue;
       const fp = identity.fingerprint;
       let existing = serverMap.get(fp);
       if (!existing) {

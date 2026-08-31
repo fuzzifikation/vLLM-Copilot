@@ -950,7 +950,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
 
     const url = 'http://header-update:8000';
     // No engine exists yet — update-if-present is a strict no-op.
-    updateMetricsEngineHeaders(url, { Authorization: 'Bearer new' });
+    updateMetricsEngineHeaders(url, { Authorization: 'Bearer old' }, { Authorization: 'Bearer new' });
     expect(fetchMock).not.toHaveBeenCalled();
 
     // Create an engine, subscribe (starts polling), then update headers.
@@ -958,7 +958,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     const sub = engine.subscribe(() => {});
     await vi.advanceTimersByTimeAsync(16_000);
 
-    updateMetricsEngineHeaders(url, { Authorization: 'Bearer new' });
+    updateMetricsEngineHeaders(url, { Authorization: 'Bearer old' }, { Authorization: 'Bearer new' });
     // The registry still holds the SAME engine, re-keyed under the NEW identity
     // (looked up with the new headers, not a fresh one)…
     expect(getMetricsEngine(url, { Authorization: 'Bearer new' })).toBe(engine);
@@ -974,11 +974,12 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     vi.useRealTimers();
   });
 
-  it('re-keys engines on the sanitized identity so Update Auth cannot orphan an engine', () => {
+  it('re-keys on the sanitized identity so Update Auth cannot orphan an engine', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 0 })));
 
     const url = 'http://identity-sanitize:8000';
-    const engine = getMetricsEngine(url, { Authorization: '******' });
+    const previous = { Authorization: 'tok-old' };
+    const engine = getMetricsEngine(url, previous);
 
     // Update Auth merges the RAW settings headers in, but `Connection` is a
     // forbidden header that never reaches the wire — so the dashboard and
@@ -986,10 +987,54 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     // re-key by the raw pair would move the engine to a fingerprint nobody looks
     // up again: the old engine keeps polling as an orphan and the next refresh
     // creates a second one.
-    const headers = { Authorization: '******', Connection: 'keep-alive' };
-    updateMetricsEngineHeaders(url, headers);
+    const next = { Authorization: 'tok-new', Connection: 'keep-alive' };
+    updateMetricsEngineHeaders(url, previous, next);
 
-    expect(getMetricsEngine(url, headers)).toBe(engine);
+    expect(getMetricsEngine(url, next)).toBe(engine);
+    // The old identity is gone — nothing else resolves to this engine anymore.
+    expect(getMetricsEngine(url, previous)).not.toBe(engine);
+  });
+
+  it('moves each identity of a URL separately so no engine picks up a sibling model\'s credentials', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (url: unknown, _init?: RequestInit) =>
+      String(url).endsWith('/v1/models')
+        ? new Response(JSON.stringify({ data: [{ id: 'm1' }] }), { status: 200 })
+        : new Response(null, { status: 404 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const url = 'http://two-identities:8000';
+    // Two models, one URL, different credentials — two engines, two subscribers.
+    const headersA = { Authorization: 'tok-a', 'X-Tenant': 'a' };
+    const headersB = { Authorization: 'tok-b' };
+    const a = getMetricsEngine(url, headersA);
+    const b = getMetricsEngine(url, headersB);
+    const subA = a.subscribe(() => {});
+    const subB = b.subscribe(() => {});
+    await vi.advanceTimersByTimeAsync(16_000);
+
+    // Update Auth merges the same new key into both models. The merge is
+    // per-model, so the two identities move to DIFFERENT new header sets — one
+    // shared value would put model A's credentials on model B's engine.
+    updateMetricsEngineHeaders(url, headersA, { Authorization: 'tok-a2', 'X-Tenant': 'a' });
+    updateMetricsEngineHeaders(url, headersB, { Authorization: 'tok-b2' });
+
+    expect(getMetricsEngine(url, { Authorization: 'tok-a2', 'X-Tenant': 'a' })).toBe(a);
+    expect(getMetricsEngine(url, { Authorization: 'tok-b2' })).toBe(b);
+
+    fetchMock.mockClear();
+    await vi.advanceTimersByTimeAsync(16_000);
+    const sent = new Set(
+      fetchMock.mock.calls
+        .map(([, init]) => (init?.headers as Record<string, string> | undefined)?.Authorization)
+        .filter(Boolean)
+    );
+    expect(sent).toEqual(new Set(['tok-a2', 'tok-b2']));
+
+    subA.dispose();
+    subB.dispose();
+    vi.useRealTimers();
   });
 
   it('keys engines by identity so different credentials on one URL stay separate', async () => {

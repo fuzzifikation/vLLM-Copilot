@@ -483,7 +483,7 @@ export function serverGroupKey(fingerprint: string): string {
 
 /**
  * THE server-identity computation: normalized URL + sanitized headers, plus the
- * fingerprint and non-reversible group key derived from exactly that pair.
+ * fingerprint derived from exactly that pair.
  *
  * `serverFingerprint` is identity-bearing (dashboard grouping, metrics-engine
  * registry, Deep-Dive panel keys, usage-store keys) while `resolveServerConfig`
@@ -491,6 +491,9 @@ export function serverGroupKey(fingerprint: string): string {
  * different identity for the same server, and the same box then exists twice: two
  * dashboard nodes, or an engine re-keyed under a fingerprint nobody looks up again.
  * Never pair `serverFingerprint` with un-sanitized headers — call this.
+ *
+ * The fingerprint embeds header values, so surfaces that must not reveal them
+ * (webview DOM, tree item ids) hash it further with {@link serverGroupKey}.
  */
 export function serverIdentity(
   url: string | undefined,
@@ -499,12 +502,10 @@ export function serverIdentity(
   serverUrl: string;
   requestHeaders: Record<string, string>;
   fingerprint: string;
-  groupKey: string;
 } {
   const serverUrl = url ? normalizeServerUrl(url) : '';
   const requestHeaders = sanitizeRequestHeaders(headers ?? {});
-  const fingerprint = serverFingerprint(serverUrl, requestHeaders);
-  return { serverUrl, requestHeaders, fingerprint, groupKey: serverGroupKey(fingerprint) };
+  return { serverUrl, requestHeaders, fingerprint: serverFingerprint(serverUrl, requestHeaders) };
 }
 
 /** Server identity of a model's own server fields. See {@link serverIdentity}. */
