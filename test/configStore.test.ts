@@ -671,8 +671,11 @@ describe('readModels / writeModels (single settings access path)', () => {
   });
 
   it('writes the complete array to the Global target', async () => {
-    const models = [{ id: 'a', serverUrl: 'http://a:8000' }, { id: 'b', serverUrl: 'http://b:8000' }];
-    await writeModels(models as ModelConfig[]);
+    const models = [
+      makeModelConfig({ id: 'a', serverUrl: 'http://a:8000' }),
+      makeModelConfig({ id: 'b', serverUrl: 'http://b:8000' }),
+    ];
+    await writeModels(models);
     expect(updateSpy).toHaveBeenCalledWith('models', models, vscode.ConfigurationTarget.Global);
   });
 

@@ -696,11 +696,8 @@ export function getMetricsEngine(
     engine.setRegistryKey(key);
     engineRegistry.set(key, engine);
   } else {
-    if (requestHeaders && Object.keys(requestHeaders).length > 0) {
-      // Update headers on re-use so auth changes propagate (same identity).
-      // Sanitized, matching what the engine would have been built with.
-      engine.setHeaders(identity.requestHeaders);
-    }
+    // Headers need no refresh: they are part of the registry key, so an engine
+    // found here already holds exactly the sanitized set this lookup describes.
     // Update backend type on re-use so a dashboard/deep-dive opened for a
     // non-vLLM server probes online via that backend's own endpoint, even if the
     // engine was first created before the type was known.
