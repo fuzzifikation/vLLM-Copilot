@@ -5,6 +5,7 @@ import { FileLogger } from './logger.js';
 import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault, ensureAgentHostModelsEnabled } from './autoConfig.js';
 import { setSessionManagerOutput } from './sessionManager.js';
 import { migrateLegacyPersonalities } from './personalityStore.js';
+import { readModels } from './configStore.js';
 import {
   registerTestAndRefreshModelsCommand,
   registerDiagnoseConnectionCommand,
@@ -219,8 +220,7 @@ export async function activate(context: vscode.ExtensionContext) {
         // several identities). Fall back to the first model pointing at the URL
         // for programmatic/string invocations.
         const fromTreeItem = typeof arg !== 'string' && arg?.requestHeaders;
-        const config = vscode.workspace.getConfiguration('vllm-copilot');
-        const models = config.get<any[]>('models') || [];
+        const models = readModels();
         const firstModel = models.find(m => m.serverUrl === serverUrl);
         const serverType = fromTreeItem
           ? (arg.serverType ?? 'vllm')

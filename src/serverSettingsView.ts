@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { getConfig, buildEndpoint, findModelConfigIndex, toPublicModelConfig, modelServerIdentity, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
-import { patchModelConfig, type ModelIdentity } from './configStore.js';
+import { patchModelConfig, readModels, type ModelIdentity } from './configStore.js';
 import { detectServerTypeFromV1Models } from './runtimeLimits.js';
 import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from './openRouter.js';
 
@@ -403,8 +403,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     const targetId = msg.id || '';
     if (!targetId || !msg.serverUrl) return;
 
-    const cfg = vscode.workspace.getConfiguration('vllm-copilot');
-    const models: ModelConfig[] = cfg.get<ModelConfig[]>('models') || [];
+    const models = readModels();
     const idx = findModelConfigIndex(models, targetId, msg.serverUrl);
     if (idx < 0) return;
     const model = models[idx];

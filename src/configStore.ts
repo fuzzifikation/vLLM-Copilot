@@ -3,6 +3,35 @@ import type { ModelConfig } from './config.js';
 import { buildModelId, findModelConfigIndex, normalizeModelEntry, resolveConfigId } from './config.js';
 
 /**
+ * Read the raw `vllm-copilot.models` array exactly as stored.
+ *
+ * Nothing here normalizes entries — callers that need effective values go through
+ * `getConfig` / `resolveServerConfig`. `config.ts` reads the section itself instead
+ * of calling here, to avoid a config ↔ configStore import cycle.
+ */
+export function readModels(): ModelConfig[] {
+  return vscode.workspace.getConfiguration('vllm-copilot').get<ModelConfig[]>('models') || [];
+}
+
+/**
+ * The ONLY writer of the `vllm-copilot.models` setting, and always whole-array: the
+ * setting is one array item, so there is no per-entry update. Callers read with
+ * {@link readModels}, map over it, and hand back the complete new array.
+ *
+ * Errors propagate on purpose — a caller that must not report success after a failed
+ * write depends on the rejection reaching it.
+ *
+ * This is the single home for write semantics: the server-registry migration needs
+ * servers-before-models ordering plus "set the completion marker only after every
+ * write succeeded" (the rule `outputLengthMigration` already follows), and one place
+ * to put both.
+ */
+export async function writeModels(models: ModelConfig[]): Promise<void> {
+  const config = vscode.workspace.getConfiguration('vllm-copilot');
+  await config.update('models', models, vscode.ConfigurationTarget.Global);
+}
+
+/**
  * Result of a store write. `model` is the entry exactly as persisted.
  */
 export interface SaveModelResult {
@@ -66,8 +95,7 @@ export async function replaceModelConfig(entry: IdentifiedModelConfig): Promise<
   const clean = stripUndefined(entry as unknown as Record<string, unknown>) as unknown as IdentifiedModelConfig;
   const configId = assertValidIdentity(resolveConfigId(clean), clean.serverUrl);
 
-  const config = vscode.workspace.getConfiguration('vllm-copilot');
-  const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+  const existing = readModels();
   const useIdx = findModelConfigIndex(existing, configId, clean.serverUrl);
 
   if (useIdx >= 0) {
@@ -84,12 +112,12 @@ export async function replaceModelConfig(entry: IdentifiedModelConfig): Promise<
     };
     const next = existing.slice();
     next[useIdx] = normalizeModelEntry(merged);
-    await config.update('models', next, vscode.ConfigurationTarget.Global);
+    await writeModels(next);
     return { model: next[useIdx], created: false };
   }
 
   const next = existing.concat(normalizeModelEntry({ ...clean }));
-  await config.update('models', next, vscode.ConfigurationTarget.Global);
+  await writeModels(next);
   return { model: next[next.length - 1], created: true };
 }
 
@@ -153,14 +181,13 @@ export async function patchModelConfig(
   delete clean.id;
   delete clean.serverUrl;
 
-  const config = vscode.workspace.getConfiguration('vllm-copilot');
-  const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+  const existing = readModels();
   const useIdx = findModelConfigIndex(existing, configId, identity.serverUrl);
 
   if (useIdx >= 0) {
     const next = existing.slice();
     next[useIdx] = normalizeModelEntry({ ...existing[useIdx], ...clean } as ModelConfig);
-    await config.update('models', next, vscode.ConfigurationTarget.Global);
+    await writeModels(next);
     return { model: next[useIdx], created: false };
   }
 
@@ -172,6 +199,6 @@ export async function patchModelConfig(
     serverUrl: identity.serverUrl,
   });
   const next = existing.concat(entry);
-  await config.update('models', next, vscode.ConfigurationTarget.Global);
+  await writeModels(next);
   return { model: entry, created: true };
 }

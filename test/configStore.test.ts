@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { replaceModelConfig, patchModelConfig, type IdentifiedModelConfig, type ModelIdentity } from '../src/configStore.js';
+import { replaceModelConfig, patchModelConfig, readModels, writeModels, type IdentifiedModelConfig, type ModelIdentity } from '../src/configStore.js';
 import { ModelConfig } from '../src/config.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -647,5 +647,52 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
       patchModelConfig(identity({ id: '   ' }), { displayName: 'X' }),
     ).rejects.toThrow(/identity/);
     expect(updateSpy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `readModels` / `writeModels` are the only door to the `vllm-copilot.models`
+ * setting, so the rules the server-registry migration depends on are pinned here:
+ * whole-array write to the Global target, and a failed write that rejects instead
+ * of silently reporting success.
+ */
+describe('readModels / writeModels (single settings access path)', () => {
+  let existingConfig: ModelConfig[];
+  let updateSpy: ReturnType<typeof vi.fn>;
+
+  const mockWorkspace = () => (vscode as any).workspace as { _mockConfig: any };
+
+  beforeEach(() => {
+    existingConfig = [];
+    updateSpy = vi.fn().mockResolvedValue(undefined);
+    mockWorkspace()._mockConfig = {
+      get: (key: string) => (key === 'models' ? existingConfig : undefined),
+      update: updateSpy,
+      inspect: () => undefined,
+    };
+  });
+
+  afterEach(() => {
+    mockWorkspace()._mockConfig = {};
+  });
+
+  it('writes the complete array to the Global target', async () => {
+    const models = [{ id: 'a', serverUrl: 'http://a:8000' }, { id: 'b', serverUrl: 'http://b:8000' }];
+    await writeModels(models as ModelConfig[]);
+    expect(updateSpy).toHaveBeenCalledWith('models', models, vscode.ConfigurationTarget.Global);
+  });
+
+  it('rejects when the settings write fails, so a caller cannot report success', async () => {
+    updateSpy.mockRejectedValueOnce(new Error('Settings file is read-only'));
+    await expect(writeModels([])).rejects.toThrow('read-only');
+  });
+
+  it('reads an unset setting as an empty array', () => {
+    mockWorkspace()._mockConfig = { get: () => undefined, update: updateSpy, inspect: () => undefined };
+    expect(readModels()).toEqual([]);
+  });
+
+  it('reads the stored array without normalizing entries', () => {
+    expect(readModels()).toBe(existingConfig);
   });
 });

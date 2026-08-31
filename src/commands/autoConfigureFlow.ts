@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from '../config.js';
 import { resolveConfigId, resolveVllmModelId, normalizeServerUrl, buildModelId, modelServerIdentity } from '../config.js';
-import { replaceModelConfig, type IdentifiedModelConfig } from '../configStore.js';
+import { replaceModelConfig, readModels, type IdentifiedModelConfig } from '../configStore.js';
 import { resolveModelConfigForAddSafely } from './hfDiscovery.js';
 import { confirmAndSaveAddedModel, type ClearCacheProvider } from './addServerFlow.js';
 
@@ -16,8 +16,7 @@ export function registerAutoConfigureModelCommand(
   output: vscode.OutputChannel
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { serverUrl?: string; id?: string; identityModelId?: string }) => {
-    const config = vscode.workspace.getConfiguration('vllm-copilot');
-    const existing: ModelConfig[] = config.get<ModelConfig[]>('models') || [];
+    const existing = readModels();
     if (existing.length === 0) {
       output.appendLine('[INFO] Auto-configure cancelled — no models configured.');
       vscode.window.showInformationMessage('No models configured. Use "Add vLLM Server & Model" first.');

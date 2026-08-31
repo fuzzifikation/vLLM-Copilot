@@ -5,6 +5,7 @@
 
 import * as vscode from 'vscode';
 import { getConfig, resolveServerConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, modelServerIdentity, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
+import { readModels } from './configStore.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from './openRouter.js';
 import {
@@ -1281,7 +1282,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
 
   /** Read the configured model entries (sync settings read) for cost lookups. */
   private readConfiguredModels(): ModelConfig[] {
-    return vscode.workspace.getConfiguration('vllm-copilot').get<ModelConfig[]>('models') || [];
+    return readModels();
   }
 
   /** Configured OpenRouter models for a relay server IDENTITY (URL + headers).
