@@ -225,11 +225,24 @@ describe('loadReplacements — path resolution', () => {
       systemMessageReplacementsFile: '.vllm/repl.json',
     });
 
-    expect(rules).toHaveLength(1);
+    // Personality rules first; the bundled shared boilerplate removals append to
+    // every active personality (6 rules in prompt-replacements-common.json).
+    expect(rules).toHaveLength(7);
     expect(rules[0]).toEqual({ find: 'a', replace: 'b' });
+    expect(rules[1]?.ruleName).toBe('Remove SafetyRules block (common variant)');
+    expect(rules.slice(1).every(r => r.replace === '')).toBe(true);
   });
 
-  it('returns [] (with a warning) when the relative file is missing', async () => {
+  it('returns [] when no personality is set (Default keeps the vanilla prompt untouched)', async () => {
+    const { pipeline } = makePipeline();
+    expect(await pipeline.loadReplacements(undefined)).toEqual([]);
+    expect(await pipeline.loadReplacements({ id: 'm', serverUrl: 'http://x' })).toEqual([]);
+    expect(await pipeline.loadReplacements({ id: 'm', serverUrl: 'http://x', systemMessageReplacementsFile: '  ' })).toEqual([]);
+  });
+
+  it('returns [] (with a warning, and WITHOUT appending shared rules) when the relative file is missing', async () => {
+    // A stale personality path must NOT degrade into "shared rules only" — that
+    // would silently alter the prompt of a user whose personality is broken.
     const { pipeline } = makePipeline();
     (vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: dir } }];
 

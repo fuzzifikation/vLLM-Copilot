@@ -192,6 +192,8 @@ Personalities replace Copilot's ~21KB system-prompt boilerplate with something u
 
 The bundled presets are: **Raw (Model Natural)** (strips the boilerplate, no persona), **Supportive Mentor**, **Critical Senior Dev**, **Sarcastic Robot**, and **Spartan** (minimalist, saves tokens). Each is described in the [README](../README.md#personalities--system-prompts).
 
+Personality files carry only the voice; the boilerplate stripping (safety rules, "your name is GitHub Copilot") lives in one shared file that is appended automatically for every active personality - personality files or your own replacement file alike. **Default** stays completely untouched. When a personality is set, one repair fixes all personalities.
+
 Bundled presets are extension-owned and re-synced on every apply, so edits to a bundled preset get clobbered. Custom behavior belongs in your own replacement file or a user-created personality. Details: **[Custom System Prompt / Personality Presets](custom-system-prompt.md)**.
 
 ### Hidden system instructions (capture & replace)

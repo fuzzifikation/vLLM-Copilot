@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Personality presets got slimmer.** The boilerplate stripping (safety rules, "your name is GitHub Copilot" identity) now lives in one shared file instead of a copy inside each preset, applied automatically to every personality, custom replacement files included. Behavior is unchanged; **Default** stays vanilla. When Microsoft edits its boilerplate, one fix now covers every personality.
+
 ### Changed
 
 - **The model picker now shows only what actually works.** An unreachable server, or a model the server does not currently serve (swap, unload), drops the model from the picker entirely instead of leaving a dead entry: settings remain your configured inventory, the picker is the live one. When the server comes back or starts serving the model again, it reappears on its own, no reload, no manual refresh. Budgets are still never fabricated.

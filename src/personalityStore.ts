@@ -19,7 +19,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { loadPersonalityMeta, clearPersonalityCache } from './promptReplacer.js';
+import { loadPersonalityMeta, clearPersonalityCache, COMMON_REPLACEMENTS_FILENAME } from './promptReplacer.js';
 import { resolveWorkspaceRelativePath } from './config.js';
 import { readModels, writeModels } from './configStore.js';
 
@@ -121,6 +121,10 @@ async function scanPersonalityDir(dir: string, source: PersonalitySource): Promi
 
   for (const name of names) {
     if (!name.endsWith('.json')) continue;
+    // The shared rules file is extension infrastructure applied on top of every
+    // personality — it is never a selectable personality itself (both the
+    // bundled and any stray global copy are skipped here).
+    if (name === COMMON_REPLACEMENTS_FILENAME) continue;
 
     const filePath = path.join(dir, name);
     const meta = await loadPersonalityMeta(filePath); // null on unreadable/legacy files

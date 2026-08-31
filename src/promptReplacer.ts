@@ -15,6 +15,28 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+// ── Shared (common) replacements ─────────────────────────────────────
+
+/**
+ * File name of the personality-neutral replacement rules that ship with the
+ * extension. Applied automatically after the selected personality's rules for
+ * every model that has a personality (Default = none selected = untouched).
+ * Not a personality itself: excluded from discovery and never copied to global
+ * storage — it is extension-owned infrastructure that updates with the VSIX.
+ */
+export const COMMON_REPLACEMENTS_FILENAME = 'prompt-replacements-common.json';
+
+/**
+ * Absolute path to the bundled common replacements file, resolved relative to
+ * this module: `out/` in the shipped extension and `src/` under tests — both
+ * one level below the root that contains `prompt-replacements/`.
+ */
+export function getBundledCommonReplacementsPath(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(here, '..', 'prompt-replacements', COMMON_REPLACEMENTS_FILENAME);
+}
 
 // ── Module-level cache ───────────────────────────────────────────────
 // Keyed by resolved absolute path, revalidated by mtime+size so edits to global

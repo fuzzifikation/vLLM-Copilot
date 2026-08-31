@@ -3,7 +3,12 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { resolveOverrideForModel, resolveWorkspaceRelativePath, type VllmConfig, type ModelConfig } from '../config.js';
 import { messageToText } from '../messageConverter.js';
-import { loadPromptReplacements, applyPromptReplacements, type PromptReplacement } from '../promptReplacer.js';
+import {
+  loadPromptReplacements,
+  applyPromptReplacements,
+  getBundledCommonReplacementsPath,
+  type PromptReplacement,
+} from '../promptReplacer.js';
 
 /**
  * Capture entry for a single system message, written to .vllm/system-messages.json.
@@ -161,9 +166,18 @@ export class SystemMessagePipeline {
         return [];
       }
 
-      const replacements = await loadPromptReplacements(replacementsFile);
+      const personaRules = await loadPromptReplacements(replacementsFile);
+      // Shared boilerplate removals append to EVERY active personality (Default —
+      // no replacements file — never reaches this code path, so the vanilla prompt
+      // stays untouched). Order is load-bearing: persona rules run FIRST, because
+      // persona replace-rules anchor on text that the shared remove-rules delete
+      // (e.g. the short/impersonal line also lives inside the safety blocks).
+      const commonRules = await loadPromptReplacements(getBundledCommonReplacementsPath());
+      const replacements = [...personaRules, ...commonRules];
       if (replacements.length > 0) {
-        this.output.appendLine(`[INFO] Loaded ${replacements.length} replacement rule(s) from ${replacementsFile}`);
+        this.output.appendLine(
+          `[INFO] Loaded ${personaRules.length} personality + ${commonRules.length} shared replacement rule(s) from ${replacementsFile}`
+        );
       }
       return replacements;
     } catch (err) {

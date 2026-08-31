@@ -304,8 +304,9 @@ Watched files (OpenAI-family agent prompt + shared base components, matching wha
 - `src/promptReplacer.ts` — load + apply replacements, exact substring match, `ApplyResult` with `matchedRuleNames`
 - `src/config.ts` — `systemMessageReplacementsFile` on `ModelConfig`
 - `package.json` — schema for `systemMessageReplacementsFile`
-- `prompt-replacements/prompt-replacements-raw.json` — Raw (Model Natural): strips SafetyRules + identity rules, no injected persona
-- `prompt-replacements/*.json`: personality presets (Raw (Model Natural), Supportive Mentor, Critical Senior Dev, Sarcastic Robot, Spartan)
+- `prompt-replacements/prompt-replacements-common.json` — **shared boilerplate removal** (6 rules: SafetyRules/Legacy/Gpt5 variants + three Copilot-identity-rule variants). Appended automatically after the personality's own rules for every active personality (any `systemMessageReplacementsFile`, including custom files); never listed in the picker, never copied to global storage, extension-owned.
+- `prompt-replacements/*.json`: personality presets (Raw (Model Natural), Supportive Mentor, Critical Senior Dev, Sarcastic Robot, Spartan) — **voice only** (identity swap, core principles, tail reinforcement). The removal rules they used to duplicate now live once, in the common file.
+- **Merge order is load-bearing: persona first, then common.** Persona replace-rules anchor on text that the common remove-rules delete (the short/impersonal line also lives inside the safety blocks); reversing the order silently kills those replacements. Pinned by the chain test in `test/promptReplacer.test.ts`.
 - `src/provider/systemMessagePipeline.ts` — `SystemMessagePipeline.processSystemMessages()` unified pipeline (capture + replace in one pass)
 - `src/messageConverter.ts` — simplified, no replacement logic (pure conversion only)
 - Replacements are applied to a **clone** of the system messages — VS Code's original messages are never mutated

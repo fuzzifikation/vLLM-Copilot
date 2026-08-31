@@ -382,7 +382,9 @@ Then set `systemMessageReplacementsFile` on the model entry to point to this fil
 
 ## Personality Presets
 
-The extension ships with four pre-built replacement files that transform Copilot's personality. Each preset removes safety boilerplate, identity rules, and generic fluff — then injects distinct behavioral instructions. Pick one, point your model at it:
+The extension ships with five pre-built personality presets. Pick one, point your model at it:
+
+Each preset file contains only its **voice** (identity, behavioral principles, tone reinforcement). The personality-neutral part - stripping Copilot's safety boilerplate and "your name is GitHub Copilot" identity rules - lives in one shared file, `prompt-replacements/prompt-replacements-common.json`, which is applied automatically **after** the chosen personality's rules whenever any personality is active (including your own custom replacement files). **Default (no personality)** applies nothing: the vanilla prompt stays untouched. The shared file is extension-owned infrastructure: it never appears in the picker and is never copied to global storage.
 
 | Preset | File | Personality |
 |--------|------|-------------|
@@ -409,7 +411,7 @@ Or set the path manually on the model entry:
 
 Relative paths resolve against the **workspace root**; absolute paths (like the global storage path the picker writes) work from any workspace.
 
-**Want to customize a preset?** Bundled presets are **extension-owned and re-synced on every apply** — editing the global copy of a bundled preset gets clobbered the next time you re-apply it. Put custom behavior in your own replacement file via `systemMessageReplacementsFile` (relative `.vllm/` paths still work) or a user-created personality in global storage. See [System Message Replacements](#system-message-replacements).
+**Want to customize a preset?** Bundled presets are **extension-owned and re-synced on every apply** — editing the global copy of a bundled preset gets clobbered the next time you re-apply it. Put custom behavior in your own replacement file via `systemMessageReplacementsFile` (relative `.vllm/` paths still work) or a user-created personality in global storage. Custom files also receive the shared boilerplate removals appended after their own rules; those rules only delete Microsoft boilerplate and never inject text. See [System Message Replacements](#system-message-replacements).
 
 ---
 

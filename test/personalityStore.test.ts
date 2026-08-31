@@ -13,6 +13,7 @@ import {
   getGlobalPersonalitiesDir,
   migrateLegacyPersonalities,
 } from '../src/personalityStore.js';
+import { COMMON_REPLACEMENTS_FILENAME } from '../src/promptReplacer.js';
 
 const fsMock = vi.hoisted(() => {
   const files = new Map<string, string>();
@@ -149,6 +150,21 @@ describe('personalityStore', () => {
 
       const found = await discoverPersonalities(context);
       expect(found).toEqual([]);
+    });
+
+    it('never lists the shared common-replacements file as a personality', async () => {
+      const bundled = path.join(EXT, 'prompt-replacements');
+      const globalDir = getGlobalPersonalitiesDir(context);
+
+      fsMock.dirContents[bundled] = [COMMON_REPLACEMENTS_FILENAME, 'prompt-replacements-spartan.json'];
+      fsMock.files.set(path.join(bundled, COMMON_REPLACEMENTS_FILENAME), personality('Shared Boilerplate Removal', 'infrastructure'));
+      fsMock.files.set(path.join(bundled, 'prompt-replacements-spartan.json'), personality('Spartan', 'bundled'));
+      // A stray global copy of the shared file must be skipped too.
+      fsMock.dirContents[globalDir] = [COMMON_REPLACEMENTS_FILENAME];
+      fsMock.files.set(path.join(globalDir, COMMON_REPLACEMENTS_FILENAME), personality('Shared Boilerplate Removal', 'stray copy'));
+
+      const found = await discoverPersonalities(context);
+      expect(found.map(p => p.name)).toEqual(['Spartan']);
     });
   });
 
