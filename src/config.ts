@@ -447,10 +447,9 @@ export function resolveOverrideForModel(
 export function resolveServerConfig(
   override: ModelConfig | undefined
 ): { serverUrl: string; requestHeaders: Record<string, string> } {
-  return {
-    serverUrl: override?.serverUrl ? normalizeServerUrl(override.serverUrl) : '',
-    requestHeaders: override?.requestHeaders ? sanitizeRequestHeaders(override.requestHeaders) : {},
-  };
+  // Delegates so the request path and every identity key are computed identically.
+  const { serverUrl, requestHeaders } = serverIdentity(override?.serverUrl, override?.requestHeaders);
+  return { serverUrl, requestHeaders };
 }
 
 /**
@@ -480,6 +479,37 @@ export function serverFingerprint(url: string, headers: Record<string, string>):
  */
 export function serverGroupKey(fingerprint: string): string {
   return 'srv-' + createHash('sha256').update(fingerprint).digest('hex');
+}
+
+/**
+ * THE server-identity computation: normalized URL + sanitized headers, plus the
+ * fingerprint and non-reversible group key derived from exactly that pair.
+ *
+ * `serverFingerprint` is identity-bearing (dashboard grouping, metrics-engine
+ * registry, Deep-Dive panel keys, usage-store keys) while `resolveServerConfig`
+ * sanitizes headers. Any caller that instead fingerprints the RAW headers derives a
+ * different identity for the same server, and the same box then exists twice: two
+ * dashboard nodes, or an engine re-keyed under a fingerprint nobody looks up again.
+ * Never pair `serverFingerprint` with un-sanitized headers — call this.
+ */
+export function serverIdentity(
+  url: string | undefined,
+  headers: Record<string, string> | undefined
+): {
+  serverUrl: string;
+  requestHeaders: Record<string, string>;
+  fingerprint: string;
+  groupKey: string;
+} {
+  const serverUrl = url ? normalizeServerUrl(url) : '';
+  const requestHeaders = sanitizeRequestHeaders(headers ?? {});
+  const fingerprint = serverFingerprint(serverUrl, requestHeaders);
+  return { serverUrl, requestHeaders, fingerprint, groupKey: serverGroupKey(fingerprint) };
+}
+
+/** Server identity of a model's own server fields. See {@link serverIdentity}. */
+export function modelServerIdentity(model: ModelConfig | undefined): ReturnType<typeof serverIdentity> {
+  return serverIdentity(model?.serverUrl, model?.requestHeaders);
 }
 
 /**

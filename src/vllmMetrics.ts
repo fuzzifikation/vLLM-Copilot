@@ -15,7 +15,7 @@
  */
 
 import * as vscode from 'vscode';
-import { buildEndpoint, normalizeServerUrl, serverFingerprint, type ServerType } from './config.js';
+import { buildEndpoint, normalizeServerUrl, serverIdentity, type ServerType } from './config.js';
 import { buildRequestHeaders } from './fetchRetry.js';
 import { resolveRuntimeLimits } from './runtimeLimits.js';
 import {
@@ -687,17 +687,19 @@ export function getMetricsEngine(
   // engine, plus the header fingerprint so different credential sets on one URL
   // stay separate. The engine stores the canonical URL for fetching; the key is
   // its registry identity.
-  const canonical = normalizeServerUrl(serverUrl);
-  const key = serverFingerprint(canonical, requestHeaders ?? {});
+  const identity = serverIdentity(serverUrl, requestHeaders);
+  const canonical = identity.serverUrl;
+  const key = identity.fingerprint;
   let engine = engineRegistry.get(key);
   if (!engine) {
-    engine = new ServerMetricsEngine(canonical, requestHeaders ?? {}, serverType, modelIds, output);
+    engine = new ServerMetricsEngine(canonical, identity.requestHeaders, serverType, modelIds, output);
     engine.setRegistryKey(key);
     engineRegistry.set(key, engine);
   } else {
     if (requestHeaders && Object.keys(requestHeaders).length > 0) {
-      // Update headers on re-use so auth changes propagate (same identity)
-      engine.setHeaders(requestHeaders);
+      // Update headers on re-use so auth changes propagate (same identity).
+      // Sanitized, matching what the engine would have been built with.
+      engine.setHeaders(identity.requestHeaders);
     }
     // Update backend type on re-use so a dashboard/deep-dive opened for a
     // non-vLLM server probes online via that backend's own endpoint, even if the
@@ -724,18 +726,19 @@ export function getMetricsEngine(
  * identity. (Two pre-update identities on one URL become one identity.)
  *
  * @param serverUrl - The vLLM server URL (canonicalized internally)
- * @param requestHeaders - New auth/routing headers
+ * @param requestHeaders - New auth/routing headers (sanitized, as at request time)
  */
 export function updateMetricsEngineHeaders(serverUrl: string, requestHeaders: Record<string, string>): void {
-  const canonical = normalizeServerUrl(serverUrl);
-  const newKey = serverFingerprint(canonical, requestHeaders ?? {});
+  const identity = serverIdentity(serverUrl, requestHeaders);
+  const canonical = identity.serverUrl;
+  const newKey = identity.fingerprint;
   // Collect first — we mutate the map while iterating.
   const targets: Array<[string, ServerMetricsEngine]> = [];
   for (const [key, engine] of engineRegistry) {
     if (normalizeServerUrl(engine.getServerUrl()) === canonical) targets.push([key, engine]);
   }
   for (const [oldKey, engine] of targets) {
-    engine.setHeaders(requestHeaders ?? {});
+    engine.setHeaders(identity.requestHeaders);
     engine.setRegistryKey(newKey);
     if (oldKey !== newKey) {
       engineRegistry.delete(oldKey);

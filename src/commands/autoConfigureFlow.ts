@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from '../config.js';
-import { resolveConfigId, resolveVllmModelId, normalizeServerUrl, buildModelId, serverFingerprint } from '../config.js';
+import { resolveConfigId, resolveVllmModelId, normalizeServerUrl, buildModelId, modelServerIdentity } from '../config.js';
 import { replaceModelConfig, type IdentifiedModelConfig } from '../configStore.js';
 import { resolveModelConfigForAddSafely } from './hfDiscovery.js';
 import { confirmAndSaveAddedModel, type ClearCacheProvider } from './addServerFlow.js';
@@ -40,8 +40,8 @@ export function registerAutoConfigureModelCommand(
       modelConfig = existing.find(
         m => resolveConfigId(m) === argModelId && m.serverUrl &&
              normalizeServerUrl(m.serverUrl) === argServerNorm &&
-             (!identitySibling || serverFingerprint(argServerNorm, m.requestHeaders ?? {}) ===
-               serverFingerprint(argServerNorm, identitySibling.requestHeaders ?? {}))
+             (!identitySibling || modelServerIdentity(m).fingerprint ===
+               modelServerIdentity(identitySibling).fingerprint)
       );
       vllmId = resolveVllmModelId(modelConfig) || argModelId;
 

@@ -974,6 +974,24 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     vi.useRealTimers();
   });
 
+  it('re-keys engines on the sanitized identity so Update Auth cannot orphan an engine', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 0 })));
+
+    const url = 'http://identity-sanitize:8000';
+    const engine = getMetricsEngine(url, { Authorization: '******' });
+
+    // Update Auth merges the RAW settings headers in, but `Connection` is a
+    // forbidden header that never reaches the wire — so the dashboard and
+    // Deep-Dive compute their lookup identity from the SANITIZED pair. Keying the
+    // re-key by the raw pair would move the engine to a fingerprint nobody looks
+    // up again: the old engine keeps polling as an orphan and the next refresh
+    // creates a second one.
+    const headers = { Authorization: '******', Connection: 'keep-alive' };
+    updateMetricsEngineHeaders(url, headers);
+
+    expect(getMetricsEngine(url, headers)).toBe(engine);
+  });
+
   it('keys engines by identity so different credentials on one URL stay separate', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(async (url: unknown, init?: RequestInit) => {

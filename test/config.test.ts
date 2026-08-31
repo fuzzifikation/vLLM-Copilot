@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as vscode from 'vscode';
-import { getConfig, buildEndpoint, normalizeServerUrl } from '../src/config.js';
+import { getConfig, buildEndpoint, normalizeServerUrl, resolveServerConfig, serverIdentity, modelServerIdentity } from '../src/config.js';
 
 /** Minimal fake ExtensionContext for config tests. */
 function makeContext(): any {
@@ -85,5 +85,44 @@ describe('buildEndpoint', () => {
 
   it('handles path with multiple segments', () => {
     expect(buildEndpoint('http://localhost:8000', 'v1/chat/completions')).toBe('http://localhost:8000/v1/chat/completions');
+  });
+});
+
+describe('serverIdentity', () => {
+  /** Model config carrying only the server fields identity is computed from. */
+  const model = (overrides: Record<string, unknown> = {}) =>
+    ({ id: 'm', serverUrl: 'http://gw:8000', ...overrides } as any);
+
+  it('fingerprints exactly the pair resolveServerConfig hands the request path', () => {
+    const m = model({ requestHeaders: { Authorization: 'Bearer a', Cookie: 'never-sent' } });
+    const identity = modelServerIdentity(m);
+    const resolved = resolveServerConfig(m);
+    expect(identity.serverUrl).toBe(resolved.serverUrl);
+    expect(identity.requestHeaders).toEqual(resolved.requestHeaders);
+  });
+
+  it('is the same identity from a bare URL + headers as from a model', () => {
+    const headers = { Authorization: 'Bearer a', Connection: 'keep-alive' };
+    expect(serverIdentity('http://gw:8000', headers).fingerprint)
+      .toBe(modelServerIdentity(model({ requestHeaders: headers })).fingerprint);
+  });
+
+  it('drops headers that never reach the wire so a server keeps one identity', () => {
+    const withBlocked = modelServerIdentity(model({ requestHeaders: { Authorization: 'Bearer a', Connection: 'keep-alive' } }));
+    const without = modelServerIdentity(model({ requestHeaders: { Authorization: 'Bearer a' } }));
+    expect(withBlocked.fingerprint).toBe(without.fingerprint);
+  });
+
+  it('ignores header order and URL spelling variants', () => {
+    const a = modelServerIdentity(model({ requestHeaders: { 'X-A': '1', 'X-B': '2' } }));
+    const b = modelServerIdentity(model({ serverUrl: 'http://gw:8000/v1/', requestHeaders: { 'X-B': '2', 'X-A': '1' } }));
+    expect(a.fingerprint).toBe(b.fingerprint);
+    expect(a.groupKey).not.toBe(a.fingerprint);
+  });
+
+  it('is empty for a model without a server URL', () => {
+    const identity = modelServerIdentity(model({ serverUrl: undefined }));
+    expect(identity.serverUrl).toBe('');
+    expect(identity.requestHeaders).toEqual({});
   });
 });

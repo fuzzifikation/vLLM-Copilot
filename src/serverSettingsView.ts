@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getConfig, buildEndpoint, findModelConfigIndex, resolveServerConfig, toPublicModelConfig, serverFingerprint, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
+import { getConfig, buildEndpoint, findModelConfigIndex, toPublicModelConfig, modelServerIdentity, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
 import { patchModelConfig, type ModelIdentity } from './configStore.js';
 import { detectServerTypeFromV1Models } from './runtimeLimits.js';
 import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from './openRouter.js';
@@ -256,12 +256,12 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     }>();
     for (const model of config.models) {
       if (!model.serverUrl) continue;
-      const resolved = resolveServerConfig(model);
-      if (!resolved.serverUrl) continue;
-      const fp = serverFingerprint(resolved.serverUrl, resolved.requestHeaders);
+      const identity = modelServerIdentity(model);
+      if (!identity.serverUrl) continue;
+      const fp = identity.fingerprint;
       let existing = serverMap.get(fp);
       if (!existing) {
-        existing = { url: resolved.serverUrl, models: [], publicModels: [], requestHeaders: resolved.requestHeaders };
+        existing = { url: identity.serverUrl, models: [], publicModels: [], requestHeaders: identity.requestHeaders };
         serverMap.set(fp, existing);
       }
       existing.models.push(model);
@@ -276,7 +276,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       // Public projection: header values never reach the webview DOM.
       existing.publicModels.push({
         ...toPublicModelConfig(model, { strip: true }),
-        serverUrl: resolved.serverUrl,
+        serverUrl: identity.serverUrl,
       });
     }
     const servers: ServerGroup[] = await Promise.all(

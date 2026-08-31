@@ -4,7 +4,7 @@
  */
 
 import * as vscode from 'vscode';
-import { getConfig, resolveServerConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, serverFingerprint, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
+import { getConfig, resolveServerConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, modelServerIdentity, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from './openRouter.js';
 import {
@@ -481,12 +481,12 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       }>();
       for (const model of config.models) {
         if (!model.serverUrl) continue;
-        const resolved = resolveServerConfig(model);
-        if (!resolved.serverUrl) continue;
-        const fp = serverFingerprint(resolved.serverUrl, resolved.requestHeaders);
+        const identity = modelServerIdentity(model);
+        if (!identity.serverUrl) continue;
+        const fp = identity.fingerprint;
         let group = identityMap.get(fp);
         if (!group) {
-          group = { url: resolved.serverUrl, requestHeaders: resolved.requestHeaders, modelIds: [], serverType: model.serverType };
+          group = { url: identity.serverUrl, requestHeaders: identity.requestHeaders, modelIds: [], serverType: model.serverType };
           identityMap.set(fp, group);
         }
         const wireId = model.vllmModelId ?? model.id;
@@ -1291,8 +1291,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     return this.readConfiguredModels()
       .filter(m => m.serverType === 'openrouter')
       .filter(m => {
-        const resolved = resolveServerConfig(m);
-        return !!resolved.serverUrl && serverFingerprint(resolved.serverUrl, resolved.requestHeaders) === fp;
+        const identity = modelServerIdentity(m);
+        return !!identity.serverUrl && identity.fingerprint === fp;
       });
   }
 
