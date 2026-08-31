@@ -1,6 +1,12 @@
 /**
  * vLLM Deep-Dive — editor-area webview with full server statistics.
- * Right-click server node → "vLLM Deep-Dive" → opens panel with live polling.
+ * Right-click server node → "vLLM Deep-Dive".
+ *
+ * The panel takes ONE reading when it opens and then goes quiet: almost everything
+ * it renders (server config, token totals, histograms, the raw dump) only changes
+ * when the server restarts, so a panel that kept polling would scrape a server for
+ * as long as its tab sat open. Re-invoking the command on an open panel retakes the
+ * reading — that is the refresh gesture.
  */
 
 import * as vscode from 'vscode';
@@ -14,8 +20,9 @@ interface ReadyMessage {
 
 /** Singleton — only one deep-dive panel per server at a time. The URL rides
  *  alongside so a rename can retitle every panel of that server by URL match
- *  (the map key is a one-way identity hash, not reversible to a URL). */
-const openPanels = new Map<string, { panel: vscode.WebviewPanel; url: string }>();
+ *  (the map key is a one-way identity hash, not reversible to a URL), and
+ *  `refresh` lets the command retake the reading of an already-open panel. */
+const openPanels = new Map<string, { panel: vscode.WebviewPanel; url: string; refresh: () => void }>();
 
 /**
  * Retitle every open Deep-Dive panel for a server (matched by normalized URL).
@@ -52,6 +59,7 @@ export function openDeepDive(
   if (existing) {
     existing.panel.title = `vLLM Deep-Dive: ${displayName || serverUrl}`;
     existing.panel.reveal(vscode.ViewColumn.Beside);
+    existing.refresh();
     return;
   }
 
@@ -72,58 +80,66 @@ export function openDeepDive(
 
   let isReady = false;
   let disposed = false;
-  let engineSubscription: { dispose: () => void } | undefined;
+  /** In-flight one-shot subscription, if a reading is pending. */
+  let reading: { dispose: () => void } | undefined;
 
-  /** Push raw data to the webview (safely guards disposed state). `error` is the
-   *  probe failure reason — it lives on the aggregated metrics, never in the raw
-   *  payload, so without it an unreachable server renders as a blank panel. */
+  /** `error` is the probe failure reason — it lives on the aggregated metrics,
+   *  never in the raw payload, so without it an unreachable server renders as a
+   *  blank panel. */
   function pushData(raw: ServerRawData, error?: string): void {
-    if (!isReady || disposed) return;
     panel.webview.postMessage({ type: 'data', raw, error });
   }
 
-  // Message handler — disposed when panel closes
-  const msgDisposable = panel.webview.onDidReceiveMessage(async (msg: ReadyMessage) => {
+  /** Take exactly one reading: whatever the engine already holds, plus the next
+   *  completed poll cycle — then unsubscribe again. */
+  function refresh(): void {
+    // `isReady` doubles as "the webview script is listening": a message posted
+    // before it posts `ready` is dropped and the panel would sit on "Loading…".
+    // `disposed` covers a panel closed between the webview posting `ready` and
+    // this handler running — subscribing then would leave a poller nobody owns.
+    if (!isReady || disposed) return;
+    // A re-take while one is pending (double click) replaces it, so the earlier
+    // subscription can't be orphaned by the second `subscribe`.
+    reading?.dispose();
+    reading = undefined;
+
+    const engine = getMetricsEngine(serverUrl, requestHeaders, serverType, undefined, outputChannel);
+    // Cache first so the panel paints instantly; it can still be stale (or
+    // missing), so the live cycle below is what actually refreshes the view.
+    const cached = engine.getCachedRaw();
+    if (cached) pushData(cached, offlineError(engine.getCachedAggregated()));
+
+    reading = engine.subscribe((aggregated, raw) => {
+      // One cycle only — this leaves the engine, and it stops polling once this
+      // panel was the last viewer (the engine is reference-counted).
+      reading?.dispose();
+      reading = undefined;
+      pushData(raw, offlineError(aggregated));
+    });
+    // The engine may already be polling for the dashboard, whose next tick can be
+    // a full interval away. Ask for a cycle now so re-opening really refreshes;
+    // while a cycle is already running this is a no-op and we just await it.
+    engine.pollNow();
+  }
+
+  // Message handler — disposed when panel closes. `ready` arrives on the initial
+  // load and again after a webview reload/recycle, which retakes the reading.
+  const msgDisposable = panel.webview.onDidReceiveMessage((msg: ReadyMessage) => {
     if (msg.type === 'ready') {
-      // The panel may have been closed between the webview posting `ready` and
-      // this handler running. If so, `onDidDispose` already ran with
-      // `engineSubscription === undefined` — subscribing now would create a
-      // metrics poller that is never disposed (leaks for the session).
-      if (disposed) return;
-      const engine = getMetricsEngine(serverUrl, requestHeaders, serverType, undefined, outputChannel);
-
-      // Subscribe only on the FIRST ready. A second `ready` (webview recycle /
-      // manual reload) must not orphan the first subscription: it is still live
-      // and pushes to this panel, so re-subscribing would leak the first
-      // callback forever. isReady must be set BEFORE any push — pushData guards
-      // on it.
-      if (!isReady) {
-        isReady = true;
-        engineSubscription = engine.subscribe((aggregated, raw) => {
-          pushData(raw, offlineError(aggregated));
-        });
-      }
-
-      // Push cached data immediately (may be null before the first tick
-      // completes). Runs on first ready AND re-ready (reload) so the page never
-      // sits on "Loading…" until the next engine tick.
-      const cached = engine.getCachedRaw();
-      if (cached) pushData(cached, offlineError(engine.getCachedAggregated()));
+      isReady = true;
+      refresh();
     }
   });
 
   // Single disposable handler for panel close
   panel.onDidDispose(() => {
     disposed = true;
-    if (engineSubscription) {
-      try { engineSubscription.dispose(); } catch { /* best-effort */ }
-      engineSubscription = undefined;
-    }
+    reading?.dispose();
     openPanels.delete(panelKey);
     msgDisposable.dispose();
   });
 
-  openPanels.set(panelKey, { panel, url: serverUrl });
+  openPanels.set(panelKey, { panel, url: serverUrl, refresh });
 }
 
 /** Why the probe produced nothing, or undefined when it succeeded. The message

@@ -656,6 +656,8 @@
     }
 
     document.getElementById('content').innerHTML = html;
-    document.getElementById('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    // One-shot panel: say so, since re-opening is the only way to retake it.
+    document.getElementById('lastUpdated').textContent =
+      'Snapshot ' + new Date().toLocaleTimeString() + ' · re-open to refresh';
   }
 })();

@@ -346,6 +346,9 @@ const DEFAULT_POLL_MS = 15000;
 export class ServerMetricsEngine {
   private subscriberCount = 0;
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Whether a fetch cycle is currently running — `tick()` reschedules itself in
+   *  its `finally`, so a second concurrent cycle would spawn a second timer chain. */
+  private inFlight = false;
   private _lastAggregated: ServerMetrics | null = null;
   private _lastRaw: ServerRawData | null = null;
   private _disposed = false;
@@ -422,6 +425,18 @@ export class ServerMetricsEngine {
     return { dispose: () => this.unsubscribe(callback) };
   }
 
+  /**
+   * Fetch immediately instead of waiting for the next interval, for a view that
+   * just opened and wants a current reading. Safe to call any time: the pending
+   * tick is dropped and {@link tick} reschedules itself when the cycle ends, so
+   * the server never ends up on two polling chains.
+   */
+  pollNow(): void {
+    if (this._disposed) return;
+    this.stopPolling();
+    void this.tick();
+  }
+
   /** Update request headers in-place (called by getMetricsEngine on re-use). */
   setHeaders(headers: Record<string, string>): void {
     this.requestHeaders = { ...headers };
@@ -486,7 +501,11 @@ export class ServerMetricsEngine {
 
   /** One fetch cycle: hit all endpoints, parse once, cache both views, notify. */
   private async tick(): Promise<void> {
-    if (this._disposed) return;
+    // One cycle at a time: a first `subscribe` and `pollNow` can both knock while
+    // a cycle is already running, and overlapping cycles would each schedule
+    // their own next tick (two chains polling the same server forever).
+    if (this._disposed || this.inFlight) return;
+    this.inFlight = true;
 
     try {
       const { aggregated, raw } = await fetchAllEndpoints(this.serverUrl, this.requestHeaders, this.serverType);
@@ -617,8 +636,10 @@ export class ServerMetricsEngine {
         this.accountProbeSucceeded = ok;
       }
 
-      // Notify all subscribers
-      for (const cb of this.callbacks) {
+      // Notify all subscribers over a COPY: a one-shot subscriber (the Deep-Dive
+      // panel) unsubscribes from inside its own callback, and splicing the live
+      // array mid-iteration would shift later callbacks past the cursor.
+      for (const cb of [...this.callbacks]) {
         try { cb(aggregated, raw); } catch { /* subscriber error — best-effort */ }
       }
     } catch (err) {
@@ -628,6 +649,7 @@ export class ServerMetricsEngine {
       this.output?.appendLine(`[ERROR] Metrics engine tick failed for ${this.serverUrl}: ${err instanceof Error ? err.message : String(err)}`);
       console.error('[vllm-copilot] metrics engine tick failed:', err);
     } finally {
+      this.inFlight = false;
       // Always schedule next cycle — even on error we retry
       if (!this._disposed && this.subscriberCount > 0) {
         this.pollTimer = setTimeout(() => this.tick(), getPollSettingMs());
@@ -726,8 +748,10 @@ export function getMetricsEngine(
  *
  * When the transition lands on an identity another engine already owns (two
  * identities converging on one credential set), the existing engine wins and this
- * one is left unregistered: its open views keep their subscription and refresh
- * with the new auth, and it retires itself when the last of them unsubscribes.
+ * one is left unregistered: any view still subscribed to it keeps being served
+ * (with the new auth) and it retires itself when the last of them unsubscribes.
+ * A Deep-Dive panel needs no help here — it holds no subscription between
+ * readings, so re-opening it picks the engine for the new identity.
  *
  * @param serverUrl - The vLLM server URL (canonicalized internally)
  * @param previousHeaders - The model's headers before the update (its old identity)

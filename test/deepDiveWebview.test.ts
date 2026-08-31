@@ -104,8 +104,11 @@ describe('Deep-Dive webview', () => {
     expect(content.textContent).toContain('time_to_first_token_seconds');
     // Histogram bars render as SVG rects.
     expect(doc.querySelectorAll('.histogram-bar').length).toBeGreaterThan(0);
-    // lastUpdated reflects the render.
-    expect(doc.getElementById('lastUpdated')!.textContent).toContain('Updated ');
+    // The panel states when the reading was taken and how to retake it, since it
+    // deliberately stops polling after one.
+    const status = doc.getElementById('lastUpdated')!.textContent!;
+    expect(status).toContain('Snapshot ');
+    expect(status).toContain('re-open to refresh');
   });
 
   it('escapes untrusted model ids so no markup is injected', () => {
