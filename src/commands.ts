@@ -29,7 +29,7 @@ import { isOpenRouterUrl } from './openRouter.js';
 
 // Re-export the extracted workflows so extension.ts and tests keep a single
 // stable import surface (matches the autoConfig.ts facade pattern).
-export { registerTestAndRefreshModelsCommand, serverFingerprint, groupModelsByServer } from './commands/testAndRefresh.js';
+export { registerTestAndRefreshModelsCommand, groupModelsByServer } from './commands/testAndRefresh.js';
 export { registerSetModelPersonalityCommand, personalityApplicableTo } from './commands/personality.js';
 
 /**
