@@ -344,7 +344,6 @@ const DEFAULT_POLL_MS = 15000;
  * {@link getCachedRaw}, and receive push notifications on each completed cycle.
  */
 export class ServerMetricsEngine {
-  private subscriberCount = 0;
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
   /** Whether a fetch cycle is currently running — `tick()` reschedules itself in
    *  its `finally`, so a second concurrent cycle would spawn a second timer chain. */
@@ -417,10 +416,11 @@ export class ServerMetricsEngine {
    */
   subscribe(callback: (aggregated: ServerMetrics, raw: ServerRawData) => void): { dispose: () => void } {
     this.callbacks.push(callback);
-    this.subscriberCount++;
-    if (this.subscriberCount === 1) {
+    // The callback list IS the reference count — a separate counter can drift if
+    // a disposable is disposed twice and then kill a subscriber still watching.
+    if (this.callbacks.length === 1) {
       // First subscriber — start polling immediately
-      this.tick();
+      void this.tick();
     }
     return { dispose: () => this.unsubscribe(callback) };
   }
@@ -475,7 +475,6 @@ export class ServerMetricsEngine {
 
   dispose(): void {
     this._disposed = true;
-    this.subscriberCount = 0;
     this.callbacks = [];
     this.stopPolling();
     // Prevent registry from returning this disposed zombie. The registry is
@@ -487,9 +486,12 @@ export class ServerMetricsEngine {
 
   private unsubscribe(callback: (aggregated: ServerMetrics, raw: ServerRawData) => void): void {
     const idx = this.callbacks.indexOf(callback);
-    if (idx >= 0) this.callbacks.splice(idx, 1);
-    this.subscriberCount--;
-    if (this.subscriberCount <= 0) {
+    // Idempotent: a second dispose of the SAME subscription must not be counted
+    // against the others, or it would tear the engine down under a viewer that is
+    // still watching.
+    if (idx < 0) return;
+    this.callbacks.splice(idx, 1);
+    if (this.callbacks.length === 0) {
       // Last subscriber left: release the engine entirely. This stops polling
       // AND removes it from the registry (via dispose), so a server whose
       // dashboard/deep-dive views are all closed stops being scraped and is
@@ -651,7 +653,7 @@ export class ServerMetricsEngine {
     } finally {
       this.inFlight = false;
       // Always schedule next cycle — even on error we retry
-      if (!this._disposed && this.subscriberCount > 0) {
+      if (!this._disposed && this.callbacks.length > 0) {
         this.pollTimer = setTimeout(() => this.tick(), getPollSettingMs());
       }
     }
@@ -820,9 +822,9 @@ async function fetchAllEndpoints(
     ? await Promise.all([
         safeFetch(buildEndpoint(baseUrl, 'health'), { signal: controller.signal, headers }),
         safeFetch(buildEndpoint(baseUrl, 'v1/models'), { signal: controller.signal, headers }),
-        safeFetch(buildEndpoint(baseUrl, 'version'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
-        safeFetch(buildEndpoint(baseUrl, 'metrics'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
-        safeFetch(buildEndpoint(baseUrl, 'load'), { signal: controller.signal, headers }).then(r => r.ok ? r.text() : ''),
+        safeFetch(buildEndpoint(baseUrl, 'version'), { signal: controller.signal, headers }).then(r => r?.ok ? r.text() : ''),
+        safeFetch(buildEndpoint(baseUrl, 'metrics'), { signal: controller.signal, headers }).then(r => r?.ok ? r.text() : ''),
+        safeFetch(buildEndpoint(baseUrl, 'load'), { signal: controller.signal, headers }).then(r => r?.ok ? r.text() : ''),
       ])
     : await Promise.all([
         Promise.resolve(new Response(null, { status: 404 })), // no /health for non-vLLM
@@ -832,7 +834,7 @@ async function fetchAllEndpoints(
         Promise.resolve(''), // no /load
       ]);
   clearTimeout(timer);
-  const modelsText = v1ModelsRes.ok ? await v1ModelsRes.text() : '';
+  const modelsText = v1ModelsRes?.ok ? await v1ModelsRes.text() : '';
 
   // ── Shared parse helpers ──
   const parseJsonSafe = <T>(text: string): T | undefined => {
@@ -844,7 +846,7 @@ async function fetchAllEndpoints(
   let maxModelLen: number | null = null;
   let parsedModels: Array<Record<string, unknown>> = [];
   let malformedOpenRouterCatalog = false;
-  if (serverType === 'openrouter' && v1ModelsRes.ok) {
+  if (serverType === 'openrouter' && v1ModelsRes?.ok) {
     // OpenRouter's /v1/models IS the authoritative catalog. Apply the same
     // boundary as fetchOpenRouterCatalog() to EVERY successful response,
     // including an empty body: a 200/204 that is not `{ data: [...] }` is a
@@ -895,21 +897,24 @@ async function fetchAllEndpoints(
   // every non-vLLM server appear offline — hiding the degraded notice, measured
   // throughput, Last Request, and Token Usage nodes even though chat works.
   const probeRes = isVllm ? healthRes : v1ModelsRes;
+  // `null` = the request never got an answer (unreachable / timed out), which is
+  // a different reason than "answered, but with an error status".
+  const probeOk = probeRes?.ok === true;
   // A reachable OpenRouter relay that returns a malformed catalog is NOT a
   // healthy server — report it as an error instead of an online empty catalog.
-  const online = isVllm ? probeRes.ok : (probeRes.ok && !malformedOpenRouterCatalog);
+  const online = isVllm ? probeOk : (probeOk && !malformedOpenRouterCatalog);
   const errorStr = online
     ? undefined
     : malformedOpenRouterCatalog
       ? `OpenRouter /v1/models returned a malformed catalog (expected { data: [...] })`
-      : probeRes.status === 0
+      : !probeRes
         ? 'Cannot connect'
         : isVllm
           ? `Health check failed: ${probeRes.status}`
           : `${serverType} /v1/models failed: ${probeRes.status}`;
 
   // ── Health body (for deep-dive) ──
-  const healthBody = online && healthRes.ok ? await healthRes.text() : undefined;
+  const healthBody = online && healthRes?.ok ? await healthRes.text() : undefined;
 
   // ── OpenRouter relay: account/key health + budget (awaited here so the
   // ── endpoint fetches above ran in parallel — never a serial stall). The probes
@@ -949,7 +954,7 @@ async function fetchAllEndpoints(
       http: {},
     },
   };
-  if (online) {
+  if (online && healthRes) {
     raw.healthStatus = healthRes.status;
     if (healthBody) raw.healthBody = healthBody;
     if (parsedVersion) raw.version = parsedVersion;
@@ -962,10 +967,17 @@ async function fetchAllEndpoints(
   return { aggregated: serverMetrics, raw };
 }
 
-/** Fetch wrapper that never throws — returns a Response with status 0 on failure. */
-async function safeFetch(url: string, options: RequestInit): Promise<Response> {
+/**
+ * Fetch wrapper that never throws — returns `null` when the request itself
+ * failed (unreachable, refused, aborted by the cycle timeout). `null` is
+ * distinct from "answered with an error status", which stays a real Response.
+ * (A synthetic `new Response(null, {status: 0})` is NOT constructible — the
+ * Response constructor requires 200..599 — so a status-0 sentinel would throw
+ * right back out of the catch and take the whole cycle down with it.)
+ */
+async function safeFetch(url: string, options: RequestInit): Promise<Response | null> {
   try { return await fetch(url, options); }
-  catch { return new Response(null, { status: 0 }); }
+  catch { return null; }
 }
 
 /** Build an empty/error ServerMetrics. */

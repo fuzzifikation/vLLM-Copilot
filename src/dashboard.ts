@@ -1336,11 +1336,6 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     };
   }
 
-  async refresh(): Promise<void> {
-    await this.refreshSubscriptions();
-    this._onDidChangeTreeData.fire();
-  }
-
   dispose(): void {
     this.visible = false;
     this.disposeSubscriptions();

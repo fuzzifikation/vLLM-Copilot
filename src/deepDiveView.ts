@@ -109,13 +109,16 @@ export function openDeepDive(
     const cached = engine.getCachedRaw();
     if (cached) pushData(cached, offlineError(engine.getCachedAggregated()));
 
-    reading = engine.subscribe((aggregated, raw) => {
+    // The callback disposes its OWN subscription, never whatever `reading` holds
+    // at the time — a re-take may already have replaced it.
+    const sub = engine.subscribe((aggregated, raw) => {
       // One cycle only — this leaves the engine, and it stops polling once this
       // panel was the last viewer (the engine is reference-counted).
-      reading?.dispose();
-      reading = undefined;
+      sub.dispose();
+      if (reading === sub) reading = undefined;
       pushData(raw, offlineError(aggregated));
     });
+    reading = sub;
     // The engine may already be polling for the dashboard, whose next tick can be
     // a full interval away. Ask for a cycle now so re-opening really refreshes;
     // while a cycle is already running this is a no-op and we just await it.

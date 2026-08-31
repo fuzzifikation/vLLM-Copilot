@@ -14,6 +14,7 @@ import {
   ServerMetricsEngine,
   type ModelAccumulator,
   type RawMetricEntry,
+  type ServerMetrics,
   type ServerRawData,
 } from '../src/vllmMetrics.js';
 import { resetOpenRouterProviderListCache } from '../src/openRouter.js';
@@ -919,7 +920,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
   it('releases the engine from the registry when the last subscriber unsubscribes', () => {
     // fetch resolves offline (status 0) so tick() completes quickly without
     // hanging on a real server.
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 0 })));
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
 
     const url = 'http://registry-test:8000';
     const first = getMetricsEngine(url);
@@ -935,6 +936,130 @@ describe('ServerMetricsEngine registry lifecycle', () => {
     expect(after).not.toBe(first);
     expect(after.getCachedRaw()).toBeNull();
     expect(after.getCachedAggregated()).toBeNull();
+  });
+
+  it('reports an unreachable server instead of silently never notifying', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+
+    const engine = getMetricsEngine('http://unreachable:8000');
+    const seen: ServerMetrics[] = [];
+    const sub = engine.subscribe(m => { seen.push(m); });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // A failed request must still be a READING: a dashboard that never hears
+    // back keeps showing "Loading…" forever, and a one-shot Deep-Dive panel
+    // closes with "No data" instead of the reason.
+    expect(seen).toHaveLength(1);
+    expect(seen[0].online).toBe(false);
+    expect(seen[0].error).toBe('Cannot connect');
+
+    sub.dispose();
+    vi.useRealTimers();
+  });
+
+  it('pollNow takes a cycle immediately and leaves a single polling chain', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+
+    let cycles = 0;
+    const engine = getMetricsEngine('http://poll-now:8000');
+    const sub = engine.subscribe(() => { cycles++; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cycles).toBe(1);
+
+    // A view that just opened wants a current reading, not one up to an
+    // interval old.
+    engine.pollNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cycles).toBe(2);
+
+    // Still exactly ONE chain: every interval advances by one cycle. Two chains
+    // (the dropped timer plus the new one) would advance by two.
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(cycles).toBe(3);
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(cycles).toBe(4);
+
+    sub.dispose();
+    vi.useRealTimers();
+  });
+
+  it('ignores pollNow while a cycle is in flight instead of overlapping cycles', async () => {
+    vi.useFakeTimers();
+    let release: () => void = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      await gate;
+      throw new TypeError('fetch failed');
+    }));
+
+    let cycles = 0;
+    const engine = getMetricsEngine('http://reentrant:8000');
+    const sub = engine.subscribe(() => { cycles++; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cycles).toBe(0); // cycle 1 is stuck on the gate
+
+    engine.pollNow();
+    engine.pollNow();
+    await vi.advanceTimersByTimeAsync(0);
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    // Overlapping cycles would notify twice for this one round of fetches.
+    expect(cycles).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(16_000);
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(cycles).toBe(3); // one cycle per interval — not two
+
+    sub.dispose();
+    vi.useRealTimers();
+  });
+
+  it('notifies every subscriber even when one leaves from inside its own callback', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+
+    const engine = getMetricsEngine('http://one-shot:8000');
+    const seen: string[] = [];
+    // The Deep-Dive pattern: unsubscribe inside the callback. Splicing the live
+    // array mid-iteration would shift the watcher past the cursor.
+    const oneShot = engine.subscribe(() => { seen.push('panel'); oneShot.dispose(); });
+    const watcher = engine.subscribe(() => { seen.push('dashboard'); });
+
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(seen).toEqual(['panel', 'dashboard', 'dashboard']);
+
+    watcher.dispose();
+    vi.useRealTimers();
+  });
+
+  it('a doubly-disposed subscription never releases another viewer\'s engine', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+
+    const url = 'http://double-dispose:8000';
+    const engine = getMetricsEngine(url);
+    let panel = 0;
+    let dashboard = 0;
+    const panelSub = engine.subscribe(() => { panel++; });
+    const dashboardSub = engine.subscribe(() => { dashboard++; });
+    await vi.advanceTimersByTimeAsync(0); // let cycle 1 land for both viewers
+
+    panelSub.dispose();
+    panelSub.dispose(); // the same disposable, disposed twice
+
+    await vi.advanceTimersByTimeAsync(16_000);
+    // Counting the second dispose against the remaining viewer would have
+    // disposed the engine: the dashboard would freeze and the registry entry
+    // would be gone.
+    expect(dashboard).toBe(2);
+    expect(panel).toBe(1);
+    expect(getMetricsEngine(url)).toBe(engine);
+
+    dashboardSub.dispose();
+    vi.useRealTimers();
   });
 
   it('updateMetricsEngineHeaders updates an existing engine but never creates one', async () => {
@@ -975,7 +1100,7 @@ describe('ServerMetricsEngine registry lifecycle', () => {
   });
 
   it('re-keys on the sanitized identity so Update Auth cannot orphan an engine', () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 0 })));
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
 
     const url = 'http://identity-sanitize:8000';
     const previous = { Authorization: 'tok-old' };
