@@ -3,7 +3,7 @@
  * Covers discovery (bundled + global, deduped by name),
  * materialization into global storage, and active-personality resolution.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
@@ -11,7 +11,7 @@ import {
   ensureGlobalPersonality,
   resolveActivePersonality,
   getGlobalPersonalitiesDir,
-  migrateLegacyPersonalities,
+  syncBundledPersonalities,
 } from '../src/personalityStore.js';
 import { COMMON_REPLACEMENTS_FILENAME } from '../src/promptReplacer.js';
 
@@ -302,110 +302,58 @@ describe('personalityStore', () => {
     });
   });
 
-  describe('migrateLegacyPersonalities', () => {
-    afterEach(() => {
-      (vscode.workspace as any)._mockConfig = {};
-    });
-
-    it('is a no-op when no legacy global copy exists', async () => {
-      const result = await migrateLegacyPersonalities(context);
-      expect(result).toEqual({ migrated: false, configsUpdated: 0 });
-      expect(fsMock.files.size).toBe(0);
-    });
-
-    it('does not delete a legacy-array user file at the legacy path', async () => {
+  describe('syncBundledPersonalities', () => {
+    it('refreshes stale global copies of bundled presets', async () => {
       const bundled = path.join(EXT, 'prompt-replacements');
-      const bundledFile = path.join(bundled, 'prompt-replacements-supportive-mentor.json');
-      fsMock.files.set(bundledFile, personality('Supportive Mentor', 'bundled'));
-
       const globalDir = getGlobalPersonalitiesDir(context);
-      const legacyFile = path.join(globalDir, 'prompt-replacements-tough-love.json');
-      const userLegacyArray = JSON.stringify([{ find: 'a', replace: 'b' }]);
-      fsMock.files.set(legacyFile, userLegacyArray);
 
-      const result = await migrateLegacyPersonalities(context);
-      expect(result).toEqual({ migrated: false, configsUpdated: 0 });
-      // User data preserved — no new file, no deletion, no config rewrite.
-      expect(fsMock.files.get(legacyFile)).toBe(userLegacyArray);
-      expect(fsMock.files.has(path.join(globalDir, 'prompt-replacements-supportive-mentor.json'))).toBe(false);
+      fsMock.files.set(path.join(bundled, 'prompt-replacements-sarcastic-robot.json'), personality('Sarcastic Robot', 'v2 bundled'));
+      fsMock.dirContents[globalDir] = ['prompt-replacements-sarcastic-robot.json'];
+      const globalFile = path.join(globalDir, 'prompt-replacements-sarcastic-robot.json');
+      fsMock.files.set(globalFile, personality('Sarcastic Robot', 'v1 stale copy'));
+
+      const result = await syncBundledPersonalities(context);
+
+      expect(result).toEqual({ updated: ['prompt-replacements-sarcastic-robot.json'] });
+      expect(fsMock.files.get(globalFile)).toBe(personality('Sarcastic Robot', 'v2 bundled'));
     });
 
-    it('does not delete a differently-named personality at the legacy path', async () => {
+    it('never touches user-created personalities or already-current files', async () => {
       const bundled = path.join(EXT, 'prompt-replacements');
-      const bundledFile = path.join(bundled, 'prompt-replacements-supportive-mentor.json');
-      fsMock.files.set(bundledFile, personality('Supportive Mentor', 'bundled'));
-
       const globalDir = getGlobalPersonalitiesDir(context);
-      const legacyFile = path.join(globalDir, 'prompt-replacements-tough-love.json');
-      fsMock.files.set(legacyFile, personality('My Custom Thing', 'user-made'));
 
-      const result = await migrateLegacyPersonalities(context);
-      expect(result).toEqual({ migrated: false, configsUpdated: 0 });
-      expect(fsMock.files.has(legacyFile)).toBe(true);
-      expect(fsMock.files.has(path.join(globalDir, 'prompt-replacements-supportive-mentor.json'))).toBe(false);
+      fsMock.files.set(path.join(bundled, 'prompt-replacements-spartan.json'), personality('Spartan', 'bundled'));
+      fsMock.dirContents[globalDir] = ['prompt-replacements-spartan.json', 'my-thing.json'];
+      const currentFile = path.join(globalDir, 'prompt-replacements-spartan.json');
+      const userFile = path.join(globalDir, 'my-thing.json');
+      fsMock.files.set(currentFile, personality('Spartan', 'bundled')); // identical
+      fsMock.files.set(userFile, personality('My Thing', 'user edits, hands off'));
+
+      const result = await syncBundledPersonalities(context);
+
+      expect(result).toEqual({ updated: [] });
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+      expect(fsMock.files.get(userFile)).toBe(personality('My Thing', 'user edits, hands off'));
     });
 
-    it('replaces a stale global Tough Love copy and rewrites model configs', async () => {
-      const bundled = path.join(EXT, 'prompt-replacements');
-      const bundledFile = path.join(bundled, 'prompt-replacements-supportive-mentor.json');
-      fsMock.files.set(bundledFile, personality('Supportive Mentor', 'bundled'));
-
-      const globalDir = getGlobalPersonalitiesDir(context);
-      const legacyFile = path.join(globalDir, 'prompt-replacements-tough-love.json');
-      fsMock.files.set(legacyFile, personality('Tough Love', 'user-edited'));
-
-      const models: any[] = [{
-        id: 'm1',
-        serverUrl: 'http://localhost:8000',
-        systemMessageReplacementsFile: legacyFile,
-      }];
-      const updateSpy = vi.fn().mockResolvedValue(undefined);
-      (vscode.workspace as any)._mockConfig = {
-        get: (key: string) => (key === 'models' ? models : undefined),
-        update: updateSpy,
-        inspect: () => undefined,
-      };
-
-      const result = await migrateLegacyPersonalities(context);
-
-      expect(result).toEqual({ migrated: true, configsUpdated: 1 });
-      // Legacy file removed; new file materialized from the bundled content.
-      expect(fsMock.files.has(legacyFile)).toBe(false);
-      const newFile = path.join(globalDir, 'prompt-replacements-supportive-mentor.json');
-      expect(fsMock.files.get(newFile)).toBe(personality('Supportive Mentor', 'bundled'));
-      // Model config rewritten to the new path.
-      expect(models[0].systemMessageReplacementsFile).toBe(newFile);
-      expect(updateSpy).toHaveBeenCalledWith('models', models, vscode.ConfigurationTarget.Global);
+    it('is a no-op when the global personalities dir is empty', async () => {
+      const result = await syncBundledPersonalities(context);
+      expect(result).toEqual({ updated: [] });
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
     });
 
-    it('migrates the file but leaves unrelated model configs untouched', async () => {
+    it('leaves a bundled-basename workspace .vllm file untouched (not global storage)', async () => {
+      // Sync only ever looks at global storage; legacy workspace copies are
+      // user-owned custom files by policy.
       const bundled = path.join(EXT, 'prompt-replacements');
-      const bundledFile = path.join(bundled, 'prompt-replacements-supportive-mentor.json');
-      fsMock.files.set(bundledFile, personality('Supportive Mentor', 'bundled'));
+      fsMock.files.set(path.join(bundled, 'prompt-replacements-spartan.json'), personality('Spartan', 'bundled v2'));
+      const wsCopy = path.join(WS, '.vllm', 'prompt-replacements-spartan.json');
+      fsMock.files.set(wsCopy, personality('Spartan', 'old workspace copy'));
 
-      const globalDir = getGlobalPersonalitiesDir(context);
-      const legacyFile = path.join(globalDir, 'prompt-replacements-tough-love.json');
-      fsMock.files.set(legacyFile, personality('Tough Love', 'user-edited'));
+      const result = await syncBundledPersonalities(context);
 
-      const custom = path.join(WS, '.vllm', 'custom.json');
-      const models: any[] = [
-        { id: 'm1', serverUrl: 'http://localhost:8000', systemMessageReplacementsFile: custom },
-        { id: 'm2', serverUrl: 'http://localhost:8001' },
-      ];
-      const updateSpy = vi.fn().mockResolvedValue(undefined);
-      (vscode.workspace as any)._mockConfig = {
-        get: (key: string) => (key === 'models' ? models : undefined),
-        update: updateSpy,
-        inspect: () => undefined,
-      };
-
-      const result = await migrateLegacyPersonalities(context);
-
-      expect(result).toEqual({ migrated: true, configsUpdated: 0 });
-      expect(fsMock.files.has(legacyFile)).toBe(false);
-      expect(fsMock.files.has(path.join(globalDir, 'prompt-replacements-supportive-mentor.json'))).toBe(true);
-      // No model pointed at the legacy path → no config rewrite.
-      expect(updateSpy).not.toHaveBeenCalled();
+      expect(result).toEqual({ updated: [] });
+      expect(fsMock.files.get(wsCopy)).toBe(personality('Spartan', 'old workspace copy'));
     });
   });
 });

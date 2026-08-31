@@ -21,7 +21,6 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { loadPersonalityMeta, clearPersonalityCache, COMMON_REPLACEMENTS_FILENAME } from './promptReplacer.js';
 import { resolveWorkspaceRelativePath } from './config.js';
-import { readModels, writeModels } from './configStore.js';
 
 export type PersonalitySource = 'bundled' | 'global';
 
@@ -35,16 +34,6 @@ export interface PersonalityEntry {
 
 /** Subdirectory of global storage that holds user personalities. */
 const PERSONALITIES_DIR = 'personalities';
-
-/**
- * Legacy bundled preset file name before the "Tough Love" → "Supportive Mentor"
- * rename. A stale global copy of this file is migrated on activation.
- */
-const LEGACY_TOUGH_LOVE_FILE = 'prompt-replacements-tough-love.json';
-/** Legacy bundled preset display name (matches its `meta.name`). */
-const LEGACY_TOUGH_LOVE_NAME = 'Tough Love';
-/** New bundled preset file name. */
-const SUPPORTIVE_MENTOR_FILE = 'prompt-replacements-supportive-mentor.json';
 
 /**
  * Curated display order for the bundled presets, by personality name.
@@ -71,8 +60,8 @@ export function getGlobalPersonalitiesDir(context: vscode.ExtensionContext): str
  *
  * Precedence on name collision: **global > bundled**. A user-owned copy (global)
  * wins over the shipped preset — it is the one that is actually referenced by a
- * stored `systemMessageReplacementsFile`, so showing the bundled twin would offer
- * a phantom second "Tough Love" that resolves to the same file.
+ * stored `systemMessageReplacementsFile`, so showing the bundled twin would
+ * offer a phantom second entry that resolves to the same file.
  */
 export async function discoverPersonalities(
   context: vscode.ExtensionContext
@@ -251,83 +240,63 @@ async function writePersonalityAtomically(dest: string, content: string): Promis
 }
 
 /**
- * One-time migration for the "Tough Love" → "Supportive Mentor" rename.
+ * Re-sync stale global copies of **bundled** presets with the files shipped in
+ * this extension version, at activation.
  *
- * Users who applied the old bundled preset have a global copy at
- * `personalities/prompt-replacements-tough-love.json` whose `meta.name` still
- * says "Tough Love". Once the bundled file was renamed, that stale global copy
- * would otherwise surface as a phantom *user-created* personality (no bundled
- * twin → never clobbered, never re-synced) next to the new bundled
- * "Supportive Mentor" in the picker.
+ * Why this exists: applying a personality copies the bundled file into global
+ * storage and stores that absolute path in `systemMessageReplacementsFile`.
+ * The copy was only ever refreshed when the user re-applied the personality
+ * (`ensureGlobalPersonality`), so after an extension upgrade that changed a
+ * bundled preset, existing models kept applying the *old* rules forever —
+ * silently, with no way for the user to notice short of re-selecting.
  *
- * Migration (idempotent — a no-op when the legacy copy is absent):
- *   1. Confirm the legacy file is genuinely the stale bundled copy (meta.name
- *      is "Tough Love") — never delete a user file that happens to share the
- *      name (e.g. a legacy-array replacement file, which has no meta block).
- *   2. Materialize the new bundled "Supportive Mentor" file into global storage
- *      (bundled content is authoritative, matching {@link ensureGlobalPersonality}).
- *   3. Rewrite any model config whose `systemMessageReplacementsFile` resolves
- *      to the legacy global path so it points at the new file — otherwise the
- *      model would silently lose its personality on the next request. This runs
- *      BEFORE the legacy file is deleted: if the rewrite fails, the legacy file
- *      is still present and the migration self-heals on the next activation.
- *   4. Delete the stale legacy global copy.
+ * Policy (matches {@link ensureGlobalPersonality}): bundled presets are
+ * extension-owned. A global file whose basename has a bundled twin is our
+ * file, and the shipped content is authoritative. User-created personalities
+ * (no bundled twin, their own filenames) are never touched, nor are workspace
+ * `.vllm/` custom replacement files.
  *
- * Returns counts so the caller can log what happened. Never throws on config
- * rewrite failure (best-effort); the file migration is the critical part.
+ * Idempotent: files already identical are skipped, no cache clear, no write.
+ * Returns the basenames that were refreshed so the caller can log.
  */
-export async function migrateLegacyPersonalities(
+export async function syncBundledPersonalities(
   context: vscode.ExtensionContext
-): Promise<{ migrated: boolean; configsUpdated: number }> {
+): Promise<{ updated: string[] }> {
   const dir = getGlobalPersonalitiesDir(context);
-  const legacyPath = path.join(dir, LEGACY_TOUGH_LOVE_FILE);
-  const newPath = path.join(dir, SUPPORTIVE_MENTOR_FILE);
+  const bundledDir = path.join(context.extensionUri.fsPath, 'prompt-replacements');
 
-  // Only migrate if the legacy file is the genuine stale bundled copy. A
-  // legacy-array-format file (no meta) or a differently-named personality at
-  // this path is user data — leave it untouched.
-  const legacyMeta = await loadPersonalityMeta(legacyPath);
-  if (!legacyMeta || legacyMeta.name !== LEGACY_TOUGH_LOVE_NAME) {
-    return { migrated: false, configsUpdated: 0 };
-  }
-
-  // Bundled content is authoritative (extension owns bundled presets).
-  const bundledSource = path.join(
-    context.extensionUri.fsPath,
-    'prompt-replacements',
-    SUPPORTIVE_MENTOR_FILE
-  );
-  const content = await fs.readFile(bundledSource, 'utf-8');
-  await fs.mkdir(dir, { recursive: true });
-  await writePersonalityAtomically(newPath, content);
-
-  // Rewrite model configs that pointed at the legacy global path. Runs before
-  // the legacy file is deleted so a failed rewrite retries next activation.
-  let configsUpdated = 0;
+  let names: string[];
   try {
-    const models = readModels();
-    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
-    let changed = false;
-    for (const m of models) {
-      const ref = (m.systemMessageReplacementsFile || '').trim();
-      if (!ref) continue;
-      const abs = path.isAbsolute(ref) ? path.resolve(ref) : path.resolve(root, ref);
-      if (abs === path.resolve(legacyPath)) {
-        m.systemMessageReplacementsFile = newPath;
-        changed = true;
-        configsUpdated++;
-      }
-    }
-    if (changed) {
-      await writeModels(models);
-    }
+    names = await fs.readdir(dir);
   } catch {
-    // Best-effort: the file migration already succeeded; a config rewrite
-    // failure must not fail activation.
+    return { updated: [] }; // no global personalities yet
   }
 
-  // Delete the stale legacy copy last.
-  await fs.unlink(legacyPath);
+  const updated: string[] = [];
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    if (name === COMMON_REPLACEMENTS_FILENAME) continue;
 
-  return { migrated: true, configsUpdated };
+    // Only files with a bundled twin are extension-owned; anything else is
+    // a user-created personality and stays exactly as the user left it.
+    let bundledContent: string;
+    try {
+      bundledContent = await fs.readFile(path.join(bundledDir, name), 'utf-8');
+    } catch {
+      continue;
+    }
+
+    const dest = path.join(dir, name);
+    let current: string;
+    try {
+      current = await fs.readFile(dest, 'utf-8');
+    } catch {
+      continue;
+    }
+    if (current === bundledContent) continue;
+
+    await writePersonalityAtomically(dest, bundledContent);
+    updated.push(name);
+  }
+  return { updated };
 }

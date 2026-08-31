@@ -4,7 +4,7 @@ import { getConfig, validateConfig, resolveServerConfig, resolveServerType, norm
 import { FileLogger } from './logger.js';
 import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault, ensureAgentHostModelsEnabled } from './autoConfig.js';
 import { setSessionManagerOutput } from './sessionManager.js';
-import { migrateLegacyPersonalities } from './personalityStore.js';
+import { syncBundledPersonalities } from './personalityStore.js';
 import { readModels } from './configStore.js';
 import {
   registerTestAndRefreshModelsCommand,
@@ -133,18 +133,21 @@ export async function activate(context: vscode.ExtensionContext) {
       outputChannel.appendLine(`[WARN] Config: ${w}`);
     }
 
-    // One-time migration: "Tough Love" → "Supportive Mentor" personality rename.
-    // Replaces any stale global copy and rewrites model configs that referenced it.
+    // Heal stale global copies of bundled presets. Personalities are copied to
+    // global storage when applied and referenced by absolute path from there;
+    // without this sync, models kept the rules from whenever the personality
+    // was last re-applied, so preset updates (e.g. Agents-window rules) never
+    // reached existing users until manual re-selection.
     try {
-      const { migrated, configsUpdated } = await migrateLegacyPersonalities(context);
-      if (migrated) {
+      const { updated } = await syncBundledPersonalities(context);
+      if (updated.length > 0) {
         outputChannel.appendLine(
-          `[INFO] Migrated legacy "Tough Love" personality to "Supportive Mentor" (${configsUpdated} model config(s) updated)`
+          `[INFO] Refreshed ${updated.length} out-of-date personality preset(s) in global storage: ${updated.join(', ')}`
         );
       }
     } catch (err) {
       outputChannel.appendLine(
-        `[WARN] Personality migration failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`
+        `[WARN] Personality preset sync failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`
       );
     }
 

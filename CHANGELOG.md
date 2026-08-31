@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.35.2
 
 ### Added
 
@@ -11,11 +11,10 @@
 
 - **The model picker now shows only what actually works.** An unreachable server, or a model the server does not currently serve (swap, unload), drops the model from the picker entirely instead of leaving a dead entry: settings remain your configured inventory, the picker is the live one. When the server comes back or starts serving the model again, it reappears on its own, no reload, no manual refresh. Budgets are still never fabricated.
 
-## v1.35.2-rc0
-
 ### Fixed
 
-- **Consistent "Output Length" label** — the config-schema tool's AI guide and the Model Settings hint still quoted the old lowercase picker label; both now match the actual dropdown.
+- **Personality updates now reach models that already have one.** Applying a personality copies the preset into extension storage, and that copy was only refreshed by re-selecting the personality. After an update that changed a preset (like the Agents-window rules above), existing models kept applying the stale rules until you re-picked it. Bundled presets are now re-synced on extension startup; user-created personalities are never touched.
+- **Consistent "Output Length" label**: the config-schema tool's AI guide and the Model Settings hint still quoted the old lowercase picker label; both now match the actual dropdown.
 
 ## v1.35.1
 
