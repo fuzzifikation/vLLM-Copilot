@@ -1,6 +1,10 @@
 # Server Registry ("B") — Architecture & Implementation Plan
 
-**Status:** Draft for review — not implemented.
+**Status:** Draft for review — not implemented. Reviewed 2026-08-31: conflict case
+tightened to a config error (§4), preview ids made user-editable (§8), Phase 0 folded
+into Phase 1 (§9), shadow-override reporting moved into the Update Auth dialog
+(§4/§7), zero-model server flow questioned (§2), server order = array order recorded
+(§6).
 **Created:** 2026-08-24
 **Idea origin:** [feature-ideas.md](./feature-ideas.md) → "Named-Server Registry"
 **Related decision:** supersedes nothing yet; reconsiders code-review.md's "Accepted product decisions: per-model server identity".
@@ -42,6 +46,11 @@ auth lives N times in settings.
    an optional display name is asked → the server is **saved to the registry**
    (`servers[]`) even with zero models. A model pick is offered immediately but is
    optional and cancellable.
+   *(Open decision, to make BEFORE Phase 3, not during: keep this zero-model flow,
+   or keep today's "server + first model together" wizard writing the server part
+   to the registry? A registry entry with no models is a new object type the
+   dashboard must render and §11 removal must cover. If "add the server now,
+   models later" is not a real workflow, drop this and Phase 3 shrinks.)*
 2. **Add models anytime** — from Model Settings: pick the server from the dropdown →
    its `/v1/models` are listed (the existing "unconfigured stub" mechanism, promoted
    from side-effect to first-class flow) → configure one or many. Also exposed as an
@@ -117,7 +126,7 @@ question about the model's reference, not about the resolved values.
 | `model.server` set, found | base = registry entry; `model.requestHeaders` **shallow-merge over** the base (model wins per key; empty string value = remove key). URL/type/displayName come from the registry. |
 | `model.server` set, NOT found | warning (validation): unknown server id. Fall back to inline `serverUrl` if present, else unreachable (today's missing-serverUrl path). |
 | `model.server` unset | exactly today's inline behavior. |
-| `model.server` AND `model.serverUrl` both set | `server` wins for URL/type/displayName; validation warns about the ignored `serverUrl`; migrate command cleans these up. |
+| `model.server` AND `model.serverUrl` both set | **config error**: the model is unreachable and validation names both fields. There is no silent precedence to honor forever: the migrate command is the only legitimate producer of refs, and nobody should ship a hand-edited conflict. Migrate cleans up any it creates. |
 
 Rationale for header **merge** (not replace): matches Update Auth's mental model
 ("add one proxy header without re-entering auth"). Removing a registry header for one
@@ -131,9 +140,10 @@ be dropped even when the base alone would have kept it inert.
 **Override philosophy:** overrides exist for *extra* per-model headers (proxy routing,
 tenant tags) — duplicating credentials there defeats the registry. Precedence stays
 absolute (**override wins, silently**) and v1 adds NO drift-detector warnings:
-instead, Update Auth logs — informationally, per rotation — which referencing models
-carry an override shadowing the rotated key, so divergence is surfaced where it
-matters (at the write), not nagged about at every startup.
+instead, the Update Auth confirmation dialog LISTS any referencing models whose
+override shadows the rotated key (one line each; they are already computed for the
+target list), so divergence is surfaced at the write, where a decision is possible,
+not buried in a log nobody reads at the moment it matters.
 
 `displayName` resolution order (for labels): registry displayName → model
 `serverDisplayName` (legacy/override) → `shortUrl(url)`. Whitespace-only values are
@@ -179,7 +189,7 @@ form so they are temporary by construction.
 | `src/config.ts` | `VllmConfig.servers?`; `getConfig()` reads `servers`; extend `resolveServerConfig(model, servers?)` to delegate to the resolver when servers are provided (legacy signature still works); `findModelConfigIndex` resolves effective URL via servers before matching; validation warns on unknown/duplicate ids, conflicting `serverUrl`+`server`. |
 | `src/configStore.ts` | patch/replace/remove match on the model's **effective** URL — the matcher resolves it via the registry internally; no `ModelIdentity` shape change; **replace-mode preserve list grows: `server`** (presets/Auto-Configure must not detach a model from its server), keeping `serverDisplayName` preservation during the transition. |
 | `src/provider/requestBuilder.ts`, `chatTransport.ts`, `discovery.ts` | Pass `config.servers` into `resolveServerConfig`; otherwise untouched (they consume the resolved pair). |
-| `src/dashboard.ts` | Grouping loop uses resolver; **listen also on `vllm-copilot.servers` changes**; list registry-only servers (Phase 3) with "Add Models…" child; Rename Server target becomes registry-aware (§7). |
+| `src/dashboard.ts` | Grouping loop uses resolver; **listen also on `vllm-copilot.servers` changes**; list registry-only servers (Phase 3) with "Add Models…" child; Rename Server target becomes registry-aware (§7). **Server order = array order of `servers[]`** (one line in `getChildren`): keeps the door open for drag-reorder later, so do not introduce an alphabetical sort. |
 | `src/serverSettingsView.ts` (+ `resources/serverSettings.js`) | Group via resolver; **config listener extended to `servers`**; server dropdown lists registry entries (label = displayName); server-level edit card (name/type/auth) writing to `servers[]`; webview messages carry `serverKey` alongside url; `selServerUrl()` becomes "effective URL of selection". |
 | `src/commands.ts` | Rename Server / Update Auth derive write targets from group members (refs → registry entries, inline → fan-out); Update Auth rotates the owning layer only and logs overrides shadowing a rotated key. Remove Model unchanged (matcher resolves effective URL). Remove Server: **deferred** (§11) — Phase 2 ships it operating on models only, leaving the registry entry intact, with a note in the confirmation dialog. |
 | `src/commands/addServerFlow.ts` | Phase 3: saves a registry entry first-class; model pick optional; OpenRouter branch stores its fixed endpoint as a registry entry too. |
@@ -211,8 +221,9 @@ configuration key.
    wrote to *both* layers — rejected because it would pin rotated credentials into
    model overrides, after which registry-side rotation could never reach that model.
    If a member's override shadows a rotated key, it is left as-is (override wins) and
-   named in the output log. Engine header push (`updateMetricsEngineHeaders`)
-   receives each group's *effective* headers, computed via §4.
+   LISTED in the confirmation dialog (§4), not merely logged. Engine header push
+   (`updateMetricsEngineHeaders`) receives each group's *effective* headers, computed
+   via §4.
 5. **Model Settings save** — unchanged contract (`patchModelConfig`), plus: editing the
    server card writes the registry entry; changing the model's server dropdown writes
    `model.server`.
@@ -230,14 +241,16 @@ Algorithm:
 
 1. Read `models`; group by existing `serverFingerprint(normalizedUrl, headers)`
    (same-URL-different-auth ⇒ separate entries — preserves today's semantics).
-2. For each group: propose `id` (host slug, de-duplicated), `displayName` =
-   first non-empty member `serverDisplayName`, `serverType` = group's type,
-   `requestHeaders` = group headers (omitted when empty).
-3. Preview step: modal summary listing each proposed server entry and affected model
-   count, plus full JSON diff in the output channel. The modal offers **Copy backup** —
-   the complete pre-migration `models` array as JSON to the clipboard. This is the
-   primary rollback path: users' `settings.json` is typically NOT under version
-   control, so "restore via git" is not a real story. Confirm required.
+2. For each group: propose `id` (host slug). The preview step (3) presents every
+   proposed id in an EDITABLE input, defaulted to the slug: ids are user-facing
+   (§3), and letting the user name them at preview removes any need for
+   de-duplication suffix machinery. Uniqueness is validated at confirm.
+3. Preview step: modal listing each proposed server entry (id editable) and affected
+   model count, plus full JSON diff in the output channel. The modal offers
+   **Copy backup** — the complete pre-migration `models` array as JSON to the
+   clipboard. This is the primary rollback path: users' `settings.json` is
+   typically NOT under version control, so "restore via git" is not a real story.
+   Confirm required.
 4. Single atomic write: `servers` = existing ∪ proposed; each member model gains
    `"server": "<id>"` and drops `serverUrl`, `requestHeaders` (identical to the group),
    and `serverDisplayName` (moved up). Models whose headers differed are simply members
@@ -248,16 +261,14 @@ Algorithm:
 
 ## 9. Implementation Phases (each ends green: compile + full suite)
 
-**Phase 0 — Audit (first day of Phase 1, not a separate phase).** The existing suite
-already pins the grouping/engine-pooling invariants (dashboard identity-split tests,
-per-credential engine tests). Verify coverage, add tests only for real gaps — writing
-a parallel "freeze" suite would duplicate what CI already enforces.
-
 **Phase 1 — Core read path (invisible).** `serverRegistry.ts`, `getConfig().servers`,
 resolver wired into all 8 `resolveServerConfig` call sites + `findModelConfigIndex`;
-validation warnings; config listeners extended to `servers`. Hand-written registry
-configs work end-to-end; zero UI change. Existing tests pass unmodified — that IS the
-acceptance gate for non-breakage.
+validation warnings; config listeners extended to `servers`. Includes the audit the
+old draft called "Phase 0": the existing suite already pins the grouping/engine-pooling
+invariants (dashboard identity-split tests, per-credential engine tests), so verify
+coverage and add tests only for real gaps — a parallel "freeze" suite would duplicate
+what CI enforces. Hand-written registry configs work end-to-end; zero UI change.
+Existing tests pass unmodified — that IS the acceptance gate for non-breakage.
 
 **Phase 2 — Write paths.** Migrate command; Rename/Update Auth/Remove Server
 registry-awareness; configStore identity + preserve-list (`server`). Full test matrix
@@ -316,7 +327,7 @@ Phases 1–2 are independently shippable; Phase 3 may ship in one or two release
 
 | Risk | Mitigation |
 |---|---|
-| Identity tuple `(id, serverUrl)` breaks when `serverUrl` moves to the registry | `findModelConfigIndex`/store resolve **effective** URL via the registry inside the matcher — no identity-shape change. Covered in Phase 2 tests. |
+| **`findModelConfigIndex`/store resolve effective URLs through the registry — the ONE place the registry stops being additive and changes what existing writes MEAN. A resolver bug here can silently rewrite the WRONG model. This is Phase 2's real gate.** | Resolve **effective** URL inside the matcher; Phase 2 golden tests cover it; treat as above the preserve-list tests in priority. |
 | Stale caches miss `servers[]` edits | All `servers[]` writers call `clearCache()` (existing convention); listeners watch the new key. |
 | Partial adoption confusion (some models inline, some referenced, same box) | Supported; server actions always list their concrete targets; migrate converges. |
 | Presets silently detaching models from servers | Preserve-list extension + regression tests (Phase 2 gate). |
