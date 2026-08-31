@@ -65,9 +65,9 @@ const WATCHED_FILES = [
 const BASELINE = {
   'safetyRules.tsx': '7ecef64b69f9b3d69b90ca09a6b6ea186af08e88',
   'copilotIdentity.tsx': '5a25066c49f5878ea09ea8e22cadeb7a3d038edc',
-  'agentPrompt.tsx': '06e5e9e3ec095554b919d99ee391679683d812d8',
+  'agentPrompt.tsx': 'ef7f92fedb3844189167ba31413f04be8c5c632e',
   'defaultAgentInstructions.tsx': '782f35c152f37d83f52c44b223f99c4f93309d67',
-  'openai/defaultOpenAIPrompt.tsx': '3ea3f64a6073835f61e83270c39ba61cf6de20dc',
+  'openai/defaultOpenAIPrompt.tsx': '4fbcbe0d95691a8d0ee9c96673bfeae87981f703',
   'promptVariablesService.ts': 'c2b23c9fb3c3b193a8179b04de3f34d20dbfd46a',
 };
 /*baseline:end*/
@@ -234,7 +234,11 @@ async function main() {
   }
 
   // 5. Optional: pin the current SHAs as the new baseline (after manual review).
-  if (updateBaseline && problems === 0) {
+  // SHA drift itself must NOT block re-pinning: clearing drifted SHAs is the
+  // entire purpose of this flag (the old `problems === 0` gate could only ever
+  // fire when nothing had changed, i.e. never). Dead rules or missing files DO
+  // block: those are real breakage to fix before re-baselining.
+  if (updateBaseline && deadRules === 0 && missingFiles.length === 0) {
     const newMap = {};
     for (const f of fetched) if (!f.missing && f.sha) newMap[f.label] = f.sha;
     const block = Object.entries(newMap)
