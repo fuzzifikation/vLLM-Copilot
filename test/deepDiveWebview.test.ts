@@ -119,15 +119,27 @@ describe('Deep-Dive webview', () => {
     expect(content.textContent).toContain('evil<img');
   });
 
-  it('renders an escaped error message', () => {
+  it('shows an escaped probe error alongside the data', () => {
     const { dom } = loadDeepDive();
-    send(dom, { type: 'error', message: '<script>window.__pwned=1</script> boom' });
+    send(dom, { type: 'data', raw: makeRawData(), error: '<script>window.__pwned=1</script> boom' });
 
     const content = dom.window.document.getElementById('content')!;
-    expect(content.querySelector('.error-msg')).not.toBeNull();
+    const banner = content.querySelector('.error-msg');
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toContain('boom');
+    // The banner explains a failed probe; data that did arrive stays visible.
+    expect(content.textContent).toContain('Version Info');
     expect(content.querySelector('script')).toBeNull();
     expect((globalThis as any).__pwned).toBeUndefined();
-    expect(content.textContent).toContain('boom');
+  });
+
+  it('clears the probe error once a later tick succeeds', () => {
+    const { dom } = loadDeepDive();
+    send(dom, { type: 'data', raw: makeRawData(), error: 'Cannot connect' });
+    expect(dom.window.document.querySelector('.error-msg')).not.toBeNull();
+
+    send(dom, { type: 'data', raw: makeRawData() });
+    expect(dom.window.document.querySelector('.error-msg')).toBeNull();
   });
 
   it('Ctrl+F overlay highlights matches and navigates them', async () => {

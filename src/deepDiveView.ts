@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import { getMetricsEngine } from './vllmMetrics.js';
-import type { ServerRawData } from './vllmMetrics.js';
+import type { ServerRawData, ServerMetrics } from './vllmMetrics.js';
 import { normalizeServerUrl, serverGroupKey, serverIdentity, type ServerType } from './config.js';
 
 interface ReadyMessage {
@@ -74,15 +74,12 @@ export function openDeepDive(
   let disposed = false;
   let engineSubscription: { dispose: () => void } | undefined;
 
-  /** Push raw data to the webview (safely guards disposed state). */
-  function pushData(raw: ServerRawData): void {
+  /** Push raw data to the webview (safely guards disposed state). `error` is the
+   *  probe failure reason — it lives on the aggregated metrics, never in the raw
+   *  payload, so without it an unreachable server renders as a blank panel. */
+  function pushData(raw: ServerRawData, error?: string): void {
     if (!isReady || disposed) return;
-    panel.webview.postMessage({ type: 'data', raw });
-  }
-
-  function pushError(message: string): void {
-    if (!isReady || disposed) return;
-    panel.webview.postMessage({ type: 'error', message });
+    panel.webview.postMessage({ type: 'data', raw, error });
   }
 
   // Message handler — disposed when panel closes
@@ -102,8 +99,8 @@ export function openDeepDive(
       // on it.
       if (!isReady) {
         isReady = true;
-        engineSubscription = engine.subscribe((_aggregated, raw) => {
-          pushData(raw);
+        engineSubscription = engine.subscribe((aggregated, raw) => {
+          pushData(raw, offlineError(aggregated));
         });
       }
 
@@ -111,7 +108,7 @@ export function openDeepDive(
       // completes). Runs on first ready AND re-ready (reload) so the page never
       // sits on "Loading…" until the next engine tick.
       const cached = engine.getCachedRaw();
-      if (cached) pushData(cached);
+      if (cached) pushData(cached, offlineError(engine.getCachedAggregated()));
     }
   });
 
@@ -127,6 +124,12 @@ export function openDeepDive(
   });
 
   openPanels.set(panelKey, { panel, url: serverUrl });
+}
+
+/** Why the probe produced nothing, or undefined when it succeeded. The message
+ *  (e.g. "Health check failed: 500") exists only on the aggregated metrics. */
+function offlineError(metrics: ServerMetrics | null): string | undefined {
+  return metrics && !metrics.online ? metrics.error : undefined;
 }
 
 function buildHtml(webview: vscode.Webview, scriptUri: vscode.Uri, styleUri: vscode.Uri): string {
