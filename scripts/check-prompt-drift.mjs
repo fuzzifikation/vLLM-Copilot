@@ -26,6 +26,17 @@
  * fires is a fresh `systemMessageCapture` run in VS Code and checking the rendered
  * system messages in .vllm/system-messages.json.
  *
+ * TWO SOURCES, by rule scope:
+ *   - classic rules (default): matched against the live microsoft/vscode prompt
+ *     sources above.
+ *   - rules marked `"scope": "cli"` (Agents-window / Copilot CLI runtime): the CLI
+ *     prompt source is NOT public (the github/copilot-cli repo ships a compiled
+ *     binary), so these are matched against the checked-in anchor-region reference
+ *     instead. When the Agents-window personalities act weird: enable
+ *     `vllm-copilot.systemMessageCapture`, run one Agents-window turn, re-run
+ *     `node scripts/extract-cli-reference.mjs <capture>` and `git diff` the
+ *     reference — that is the CLI-side drift detection.
+ *
  * Usage:
  *   npm run check:prompt-drift            # check (exit 1 on drift/failure)
  *   node scripts/check-prompt-drift.mjs --update-baseline   # pin current SHAs after a manual review
@@ -39,6 +50,7 @@ import { createRequire } from 'node:module';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const REPL_DIR = path.join(ROOT, 'prompt-replacements');
+const CLI_REFERENCE = path.join(ROOT, 'scripts', 'cli-prompt-reference.txt');
 const THIS_FILE = fileURLToPath(import.meta.url);
 
 const { parse } = createRequire(import.meta.url)('@babel/parser');
@@ -136,7 +148,7 @@ function loadPresetFinds() {
       const key = collapse(r.find);
       if (seen.has(key)) continue;
       seen.add(key);
-      finds.push({ ruleName: r.ruleName || '(unnamed)', find: r.find, file });
+      finds.push({ ruleName: r.ruleName || '(unnamed)', find: r.find, file, scope: r.scope === 'cli' ? 'cli' : 'classic' });
     }
   }
   return finds;
@@ -186,6 +198,7 @@ async function main() {
   let deadRules = 0;
   const lines = [];
   for (const f of finds) {
+    if (f.scope === 'cli') continue; // CLI-scoped rules are matched in step 3b
     const key = collapse(f.find);
     const matchedIn = [...canonical.entries()].filter(([, text]) => text.includes(key)).map(([label]) => label);
     if (matchedIn.length) {
@@ -197,6 +210,32 @@ async function main() {
     }
   }
 
+  // 3b. CLI-scoped rules: matched against the local anchor-region reference (see header).
+  const cliFinds = finds.filter((f) => f.scope === 'cli');
+  let cliRefMissing = false;
+  if (cliFinds.length) {
+    let refText = null;
+    try {
+      refText = readFileSync(CLI_REFERENCE, 'utf8');
+    } catch {
+      cliRefMissing = true;
+    }
+    for (const f of cliFinds) {
+      if (cliRefMissing) {
+        lines.push(`  [SKIP] ${f.ruleName}  -- CLI reference missing (run scripts/extract-cli-reference.mjs)`);
+        continue;
+      }
+      if (refText.includes(f.find)) {
+        lines.push(`  [OK]   ${f.ruleName}  (cli-ref)`);
+      } else {
+        deadRules++;
+        lines.push(`  [DEAD] ${f.ruleName}  -- NOT FOUND in CLI reference`);
+        lines.push(`      If a fresh capture still lacks this text, Microsoft changed the CLI prompt.`);
+        lines.push(`      find: ${JSON.stringify(f.find.length > 120 ? f.find.slice(0, 120) + '...' : f.find)}`);
+      }
+    }
+  }
+
   // 4. SHA canary: did any watched file change since the baseline?
   const changedFiles = fetched.filter((f) => !f.missing && f.sha && BASELINE[f.label] && BASELINE[f.label] !== f.sha);
   const missingFiles = fetched.filter((f) => f.missing);
@@ -204,7 +243,7 @@ async function main() {
   // ── Output ────────────────────────────────────────────────────────
   const date = new Date().toISOString().slice(0, 10);
   console.log(`\n[Prompt drift canary - ${date}]`);
-  console.log('Watched source: microsoft/vscode (main)\n');
+  console.log(`Watched source: microsoft/vscode (main) + ${path.relative(ROOT, CLI_REFERENCE)} for CLI-scoped rules\n`);
 
   console.log(`RULES (${finds.length} distinct find strings across ${readdirSorted(REPL_DIR).filter(f => f.endsWith('.json')).length} files):`);
   console.log(lines.join('\n') || '  (none)');
@@ -224,7 +263,7 @@ async function main() {
     for (const p of parseFailures) console.log(`  [SKIP] ${p}`);
   }
 
-  const problems = deadRules + changedFiles.length + missingFiles.length;
+  const problems = deadRules + changedFiles.length + missingFiles.length + (cliRefMissing && cliFinds.length ? 1 : 0);
   console.log(`\nResult: ${deadRules} dead rule(s), ${changedFiles.length} changed file(s), ${missingFiles.length} missing file(s).`);
   if (problems === 0) {
     console.log('All good - presets match the current Microsoft prompt source.');

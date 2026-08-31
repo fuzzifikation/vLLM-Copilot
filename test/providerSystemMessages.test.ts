@@ -225,12 +225,20 @@ describe('loadReplacements — path resolution', () => {
       systemMessageReplacementsFile: '.vllm/repl.json',
     });
 
-    // Personality rules first; the bundled shared boilerplate removals append to
-    // every active personality (6 rules in prompt-replacements-common.json).
-    expect(rules).toHaveLength(7);
+    // Personality rules first; the bundled shared rules append to every active
+    // personality (prompt-replacements-common.json: 6 classic removals + 5 CLI rules).
+    expect(rules).toHaveLength(12);
     expect(rules[0]).toEqual({ find: 'a', replace: 'b' });
     expect(rules[1]?.ruleName).toBe('Remove SafetyRules block (common variant)');
-    expect(rules.slice(1).every(r => r.replace === '')).toBe(true);
+    // The 6 classic removals are delete-only; the 5 CLI rules follow and rewrite.
+    expect(rules.slice(1, 7).every(r => r.replace === '')).toBe(true);
+    expect(rules.slice(7).map(r => r.ruleName)).toEqual([
+      'Rewrite code-change rules (CLI)',
+      'Replace prohibited actions with user-owned security protocol (CLI)',
+      'Remove Copilot co-author trailer (CLI)',
+      'Fix gh CLI shell assumption (CLI)',
+      'Remove CLI identity re-registration (CLI)',
+    ]);
   });
 
   it('returns [] when no personality is set (Default keeps the vanilla prompt untouched)', async () => {

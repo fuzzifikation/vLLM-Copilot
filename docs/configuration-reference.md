@@ -386,6 +386,8 @@ The extension ships with five pre-built personality presets. Pick one, point you
 
 Each preset file contains only its **voice** (identity, behavioral principles, tone reinforcement). The personality-neutral part - stripping Copilot's safety boilerplate and "your name is GitHub Copilot" identity rules - lives in one shared file, `prompt-replacements/prompt-replacements-common.json`, which is applied automatically **after** the chosen personality's rules whenever any personality is active (including your own custom replacement files). **Default (no personality)** applies nothing: the vanilla prompt stays untouched. The shared file is extension-owned infrastructure: it never appears in the picker and is never copied to global storage.
 
+Personalities apply in the **Agents window** too: the shared file and preset files carry additional rules scoped to the Agents-window (Copilot CLI runtime) prompt, replacing its `prohibited_actions` block with the user-owned security protocol and applying the persona's voice there as well. See [Agents window](./agents-window.md#personalities-work-there-too).
+
 | Preset | File | Personality |
 |--------|------|-------------|
 | **Supportive Mentor** | `prompt-replacements/prompt-replacements-supportive-mentor.json` | Patient mentor who builds better engineers. High standards, honest feedback, explains the why, celebrates progress. Invested in you, not just your code. |

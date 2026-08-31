@@ -61,6 +61,16 @@ Rules the bootstrap follows:
 
 ![vLLM-Copilot models in the Agents window picker](images/Agents-Window.png)
 
+## Personalities work there too
+
+The Agents window ships its own system prompt (the Copilot CLI runtime prompt,
+a different text from classic chat). Your configured **personality preset**
+applies there as well: the model gets your persona's voice, the safety block is
+replaced by the user-owned security protocol (risks are surfaced to you, you
+decide), and the "Co-authored-by: Copilot" commit trailer instruction is
+removed. **Default** (no personality) leaves that prompt untouched, as always.
+See [Personalities](./custom-system-prompt.md) for the replacement mechanics.
+
 ## Fine print
 
 - **Experimental.** Microsoft documents both settings as experimental;

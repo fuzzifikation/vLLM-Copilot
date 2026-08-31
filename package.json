@@ -484,6 +484,8 @@
     "license:check": "license-checker-rseidelsohn --production --excludePrivatePackages --onlyAllow \"MIT;ISC;Apache-2.0;BSD-2-Clause;BSD-3-Clause;CC0-1.0;CC-BY-3.0;BlueOak-1.0.0\"",
     "license:notices": "node scripts/generate-notices.mjs",
     "check:prompt-drift": "node scripts/check-prompt-drift.mjs",
+    "check:cli-rules": "node scripts/check-cli-rules.mjs",
+    "extract:cli-reference": "node scripts/extract-cli-reference.mjs",
     "gen:presets": "node scripts/gen-preset-index.mjs",
     "build": "npm run license:check && npm run compile && npm run test:typecheck && npm test && npm run test:coverage && npx @vscode/vsce package"
   },

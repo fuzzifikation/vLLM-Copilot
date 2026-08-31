@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Personalities now work in the Agents window.** Presets previously matched only the classic chat prompt; the Agents window ships different text. Your configured personality now applies there too: persona voice, the `prohibited_actions` block replaced by a user-owned security protocol (the model surfaces concrete risks, you decide, no silent refusals), and no self-assigned "Co-authored-by: Copilot" commit trailer. **Raw (Model Natural)** strips the assigned assistant identity on both surfaces instead, classic opener included: no identity, model as trained. **Default** leaves prompts untouched.
 - **Personality presets got slimmer.** The boilerplate stripping (safety rules, "your name is GitHub Copilot" identity) now lives in one shared file instead of a copy inside each preset, applied automatically to every personality, custom replacement files included. Behavior is unchanged; **Default** stays vanilla. When Microsoft edits its boilerplate, one fix now covers every personality.
 
 ### Changed

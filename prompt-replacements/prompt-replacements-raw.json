@@ -13,6 +13,23 @@
       "ruleName": "Remove standalone short/impersonal instruction",
       "find": "Keep your answers short and impersonal.",
       "replace": ""
+    },
+    {
+      "ruleName": "Remove assistant identity line",
+      "find": "You are an expert AI programming assistant, working with a user in the VS Code editor.",
+      "replace": ""
+    },
+    {
+      "ruleName": "Remove CLI tone instruction (CLI)",
+      "scope": "cli",
+      "find": "Respond concisely to the user, but be thorough in your work.",
+      "replace": ""
+    },
+    {
+      "ruleName": "Remove CLI identity opener (CLI)",
+      "scope": "cli",
+      "find": "You are an AI assistant using Copilot CLI runtime in VS Code. You help users with software engineering tasks.",
+      "replace": ""
     }
   ]
 }
