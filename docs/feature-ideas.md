@@ -345,7 +345,8 @@ what made the design a hybrid. Revision 4 dropped them, and that *shrank* the pl
    from a feature" failure class is caught by `tsc` instead of by a hand-written audit plus
    tests. See [server-registry.md](./server-registry.md) §2.
 3. ~~**Opt-in migrate command, never auto-rewrite**~~ → one-shot **forced** migration at
-   activation, marker-guarded, snapshot + `Undo Server Registry Migration` command, notification
+   activation, marker-guarded, forensic pre-write snapshot (no Undo command — restoring the legacy
+   shape would produce settings the current version cannot use), notification
    and output-channel log (§6). Still never from `onDidChangeConfiguration`.
 
 **Costs / open decisions:**

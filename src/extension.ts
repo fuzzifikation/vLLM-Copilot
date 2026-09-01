@@ -24,7 +24,7 @@ import {
 import { setExtensionVersion } from './diagnostics.js';
 import { initUsageStore } from './usageStore.js';
 import { maybeOfferOutputLengthMigration } from './outputLengthMigration.js';
-import { maybeRunServerRegistryMigration, registerUndoServerRegistryMigration } from './serverRegistryMigration.js';
+import { maybeRunServerRegistryMigration } from './serverRegistryMigration.js';
 import { DashboardTreeProvider } from './dashboard.js';
 import { ServerSettingsViewProvider } from './serverSettingsView.js';
 import { openDeepDive } from './deepDiveView.js';
@@ -129,7 +129,6 @@ export async function activate(context: vscode.ExtensionContext) {
     // into vllm-copilot.servers and rewrites models to { server } refs. Must
     // complete before the output-length offer below, which identifies models by
     // { id, serverUrl } — that key no longer exists after the rewrite.
-    context.subscriptions.push(registerUndoServerRegistryMigration(context, outputChannel));
     await maybeRunServerRegistryMigration(context, outputChannel);
 
     // One-time activation summary

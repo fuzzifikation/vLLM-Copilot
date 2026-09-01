@@ -496,6 +496,7 @@
       const sv = S.servers.find(s => s.key === S.selServer);
       vscode.postMessage({
         type: 'autoConfigure',
+        server: selServerId(),
         serverUrl: selServerUrl(),
         id: S.selModel,
         identityModelId: sv && sv.models && sv.models[0] ? configKey(sv.models[0]) : undefined,

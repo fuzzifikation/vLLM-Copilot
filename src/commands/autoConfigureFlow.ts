@@ -16,7 +16,7 @@ export function registerAutoConfigureModelCommand(
   provider: ClearCacheProvider,
   output: vscode.OutputChannel
 ): vscode.Disposable {
-  return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { serverUrl?: string; id?: string; identityModelId?: string }) => {
+  return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { server?: string; serverUrl?: string; id?: string; identityModelId?: string }) => {
     const existing = readModels();
     if (existing.length === 0) {
       output.appendLine('[INFO] Auto-configure cancelled — no models configured.');
@@ -30,9 +30,16 @@ export function registerAutoConfigureModelCommand(
     let vllmId: string;
     const argServerUrl = arg?.serverUrl;
     const argModelId = arg?.id;
+    // The webview posts the selected group's registry entry id. Trust it over URL
+    // matching: a group can have ZERO configured models (its last one removed, or
+    // a hand-added entry), and falling back to "any model on this URL" would
+    // anchor on a DIFFERENT identity's credentials when one URL hosts several.
+    // URL matching stays as the fallback for callers that pass only a URL.
+    const argEntry = arg?.server ? resolveServer(arg.server, servers) : undefined;
+    const argServerNorm =
+      argEntry?.serverUrl ?? (argServerUrl ? normalizeServerUrl(argServerUrl) : undefined);
 
-    if (argServerUrl && argModelId) {
-      const argServerNorm = normalizeServerUrl(argServerUrl);
+    if (argServerNorm && argModelId) {
       const urlOf = (m: ModelConfig): string | undefined => resolveServer(m.server, servers)?.serverUrl;
       const identitySibling = arg.identityModelId
         ? existing.find(m => resolveConfigId(m) === arg.identityModelId && urlOf(m) === argServerNorm)
@@ -50,12 +57,14 @@ export function registerAutoConfigureModelCommand(
       if (!modelConfig) {
         // Unconfigured model: the server reports it but settings has no entry
         // (Server Settings lists server-reported models even when unconfigured).
-        // Auto-configure it as a NEW model — reuse the sibling's registry entry:
-        // same URL means the same server connection, so the entry id is shared
-        // rather than duplicated. The sibling is guaranteed to exist: the server
-        // group only appears in the webview because it has a configured model.
+        // Auto-configure it as a NEW model — reuse the identity's registry entry
+        // so the entry id is shared, not duplicated. Anchor order: the selected
+        // entry (argEntry) > the identity sibling's entry > any model on the
+        // URL. The last fallback is best-effort: the group may have no model at
+        // all, in which case discovery runs headerless.
         const sibling = identitySibling ?? existing.find(m => urlOf(m) === argServerNorm);
-        const siblingServer = sibling ? resolveServer(sibling.server, servers) : undefined;
+        const siblingServer =
+          argEntry ?? (sibling ? resolveServer(sibling.server, servers) : undefined);
         const serverUrl = siblingServer?.serverUrl ?? argServerNorm;
         const discoveryResult = await resolveModelConfigForAddSafely(
           output, context, vllmId, serverUrl, siblingServer?.requestHeaders,
@@ -66,9 +75,10 @@ export function registerAutoConfigureModelCommand(
           return;
         }
 
-        // Same fingerprint → same entry: when the sibling's entry exists this
-        // returns its id; only a dangling sibling ref creates a new entry.
-        const serverId = await ensureServerEntry({
+        // Same fingerprint → same entry: when the identity's entry exists this
+        // returns its id; only a dangling ref (or no anchor at all) creates a
+        // new entry — track it so an abandoned confirm rolls it back.
+        const { id: serverId, created } = await ensureServerEntry({
           serverUrl,
           requestHeaders: siblingServer?.requestHeaders,
           serverType: siblingServer?.serverType,
@@ -84,7 +94,7 @@ export function registerAutoConfigureModelCommand(
         }
         await confirmAndSaveAddedModel(
           newConfig, vllmId, serverUrl, discoveryResult.summary.join('\n'), output,
-          () => provider.clearCache(), discoveryResult.presetFile
+          () => provider.clearCache(), discoveryResult.presetFile, created ? serverId : undefined
         );
         return;
       }

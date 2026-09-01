@@ -1,14 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as vscode from 'vscode';
-import {
-  maybeRunServerRegistryMigration,
-  registerUndoServerRegistryMigration,
-} from '../src/serverRegistryMigration.js';
+import { maybeRunServerRegistryMigration } from '../src/serverRegistryMigration.js';
 import type { LegacyModelConfig } from '../src/registryMigration.js';
 
 const FLAG = 'vllmCopilot.serverRegistryMigration.v1';
 const SNAPSHOT = 'vllmCopilot.serverRegistryMigration.snapshot.v1';
-const UNDO_COMMAND = 'vllm-copilot.undoServerRegistryMigration';
 
 interface Settings {
   models?: LegacyModelConfig[];
@@ -74,13 +70,8 @@ function blockWrite(key: string) {
 }
 
 describe('maybeRunServerRegistryMigration', () => {
-  it('does nothing once the migration is done or reverted', async () => {
+  it('does nothing once the migration is done', async () => {
     stateStore[FLAG] = 'done';
-    await maybeRunServerRegistryMigration(context, output as never);
-    expect(writes).toHaveLength(0);
-    expect(globalStateUpdates).toHaveLength(0);
-
-    stateStore[FLAG] = 'reverted';
     await maybeRunServerRegistryMigration(context, output as never);
     expect(writes).toHaveLength(0);
     expect(globalStateUpdates).toHaveLength(0);
@@ -202,41 +193,5 @@ describe('maybeRunServerRegistryMigration', () => {
     expect(before).toBeDefined();
     expect(after).toBeDefined();
     expect(JSON.parse(after!.split('\n').slice(1).join('\n')).servers).toHaveLength(1);
-  });
-});
-
-describe('undoServerRegistryMigration command', () => {
-  it('restores both arrays from the snapshot and marks the migration reverted', async () => {
-    registerUndoServerRegistryMigration(context, output as never);
-    const originalModels = settings.models;
-    await maybeRunServerRegistryMigration(context, output as never);
-    expect(settings.servers).toBeDefined();
-
-    await (vscode.commands as any)._run(UNDO_COMMAND);
-
-    expect(writes.slice(-2).map(w => w.key)).toEqual(['servers', 'models']);
-    expect(writes[writes.length - 2].value).toEqual([]);
-    expect(writes[writes.length - 1].value).toBe(originalModels);
-    expect(stateStore[FLAG]).toBe('reverted');
-  });
-
-  it('does nothing without a snapshot', async () => {
-    registerUndoServerRegistryMigration(context, output as never);
-    await (vscode.commands as any)._run(UNDO_COMMAND);
-    expect(writes).toHaveLength(0);
-    expect(stateStore[FLAG]).toBeUndefined();
-    expect(info).toHaveBeenCalled();
-  });
-
-  it('surfaces an error and keeps going when the restore write is blocked', async () => {
-    registerUndoServerRegistryMigration(context, output as never);
-    await maybeRunServerRegistryMigration(context, output as never);
-    blockWrite('models');
-    error.mockClear();
-
-    await (vscode.commands as any)._run(UNDO_COMMAND);
-
-    expect(error).toHaveBeenCalled();
-    expect(stateStore[FLAG]).not.toBe('reverted');
   });
 });

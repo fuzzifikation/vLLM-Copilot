@@ -3,6 +3,13 @@ import { createHash } from 'node:crypto';
 import * as vscode from 'vscode';
 import type { WireStructuredOutputConfig } from './types.js';
 import { resolveOutputBudgetScalar } from './tokenBudget.js';
+import { normalizeServerUrl, sanitizeRequestHeaders, serverFingerprint } from './serverCore.js';
+import { resolveServer } from './serverRegistry.js';
+
+// The connection primitives live in serverCore.ts (leaf module) so config.ts
+// and serverRegistry.ts can share them without an import cycle — that cycle
+// used to force a duplicated resolver here. Re-exported for existing consumers.
+export { normalizeServerUrl, sanitizeRequestHeaders, serverFingerprint };
 
 export type StructuredOutputConfig = WireStructuredOutputConfig;
 
@@ -413,48 +420,14 @@ export function resolveServerConfig(
 
 /**
  * Resolve a model to its registry entry (undefined when the ref dangles).
- *
- * ⚠️ Deliberate duplicate of `resolveServer` in serverRegistry.ts: importing
- * that module here would create a `config.ts ↔ serverRegistry.ts` cycle
- * (serverRegistry uses config's normalize/sanitize/fingerprint helpers).
- * Keep the two bodies identical — change one, change both.
+ * Thin alias over `resolveServer` — the single implementation, shared with
+ * every other module through serverRegistry.ts.
  */
 function resolveServerEntry(
   model: ModelConfig,
   servers: import('./serverRegistry.js').ServerEntry[]
 ): import('./serverRegistry.js').EffectiveServer | undefined {
-  const entry = servers.find(s => s.id === model.server);
-  if (!entry) return undefined;
-  return {
-    serverUrl: normalizeServerUrl(entry.serverUrl),
-    requestHeaders: sanitizeRequestHeaders(entry.requestHeaders ?? {}),
-    serverType: entry.serverType ?? 'vllm',
-    ...(entry.displayName !== undefined ? { displayName: entry.displayName } : {}),
-  };
-}
-
-/**
- * Build a deterministic fingerprint for a server identity from its URL and auth
- * headers. Two model configs that point to the same server (same URL + same
- * headers) produce the same fingerprint and are treated as one logical server;
- * models sharing a URL but with different credentials/scopes are DIFFERENT
- * logical servers and must never share a probe, engine, or status.
- *
- * The fingerprint embeds header VALUES — never send it to an untrusted surface
- * (webview DOM, logs). Use {@link serverGroupKey} for a non-reversible key.
- */
-export function serverFingerprint(url: string, headers: Record<string, string>): string {
-  // Header names are case-folded before sorting: HTTP names are case-insensitive,
-  // so `Authorization` and `authorization` are the same header and must produce
-  // the same identity. Values keep their exact bytes (secrets are case-sensitive).
-  // Sort lexicographically — NEVER localeCompare: this feeds a
-  // server-IDENTITY fingerprint (dashboard grouping, engine registry, Deep-Dive
-  // identity). Two machines with different locales must derive the SAME key for
-  // the same server, or a model silently moves server groups between machines.
-  const sorted = Object.entries(headers)
-    .map(([name, value]) => [name.toLowerCase(), value] as const)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return JSON.stringify([url, sorted]);
+  return resolveServer(model.server, servers);
 }
 
 /**
@@ -508,70 +481,20 @@ export function modelServerIdentity(
 /**
  * Copy of a model config that is safe for non-trusted surfaces — the output
  * channel and webview state. Models carry no credentials post-registry (auth
- * lives on the server entry), so this is a plain shallow copy retained for the
- * call-site contract. Server credentials are stripped separately by
- * `toPublicServerEntry` (serverRegistry.ts).
+ * lives on the server entry), but a hand-edited settings.json can smuggle the
+ * legacy keys back in, so they are stripped here as defense in depth. Server
+ * credentials are stripped separately by `toPublicServerEntry`
+ * (serverRegistry.ts).
  */
 export function toPublicModelConfig(
   config: ModelConfig,
   _opts: { strip?: boolean } = {}
 ): ModelConfig {
-  return { ...config };
-}
-
-/**
- * Ensure the server URL has a valid scheme. If the user types `localhost:8000`
- * instead of `http://localhost:8000`, prepend a scheme so `fetch()` doesn't
- * throw `TypeError: fetch failed` on an invalid URL.
- * Heuristic: if the host includes an explicit port (e.g. `host:8000`) we
- * default to `http://` (likely a raw vLLM server); otherwise `https://`
- * (likely a reverse proxy).
- * Also strip trailing slashes and trailing `/v1` so endpoint joins don't
- * produce `//v1/...` or `/v1/v1/models`. The extension adds `/v1` itself
- * when constructing requests, so a user-provided `/v1` suffix is redundant.
- * Returns a warning string if the URL is invalid (e.g. `http://` with no host).
- */
-export function normalizeServerUrl(url: string): string {
-  if (!url) return 'http://localhost:8000';
-  let normalized = url.trim();
-  if (!normalized) return 'http://localhost:8000';
-
-  // Already has a scheme (URI schemes are case-insensitive). Canonicalize it
-  // so all downstream string operations and map keys see one spelling.
-  if (!/^https?:\/\//i.test(normalized)) {
-    // Missing scheme — detect scheme by whether the host has an explicit port.
-    // Has port (e.g. host:8000) → http:// (raw vLLM). No port → https:// (reverse proxy).
-    const hostPart = normalized.split(/[\/?]/)[0];
-    const scheme = /\:\d+$/.test(hostPart) ? 'http' : 'https';
-    normalized = `${scheme}://${normalized}`;
-  } else {
-    normalized = normalized.replace(/^https?:\/\//i, match => match.toLowerCase());
-  }
-
-  // Validate that a host is present (http:// and https:// have no host)
-  // by checking that there's at least one character after the scheme that
-  // isn't a path separator.
-  const schemeMatch = normalized.match(/^(?:https?:)\/\//);
-  if (schemeMatch) {
-    const afterScheme = normalized.slice(schemeMatch[0].length);
-    if (!afterScheme || afterScheme.startsWith('/') || afterScheme.startsWith('?')) {
-      // No host — mark URL as invalid so validateConfig can surface the warning.
-      return 'http://localhost:8000';
-    }
-  }
-
-  // Remove one or more trailing slashes, but keep scheme delimiter intact.
-  while (normalized.endsWith('/') && !normalized.endsWith('://')) {
-    normalized = normalized.slice(0, -1);
-  }
-
-  // Strip a trailing /v1 path segment. Users commonly copy the OpenAI base URL
-  // (e.g. https://api.openai.com/v1) but the extension appends /v1 itself.
-  if (normalized.endsWith('/v1')) {
-    normalized = normalized.slice(0, -3);
-  }
-
-  return normalized;
+  const { requestHeaders: _requestHeaders, apiKey: _apiKey, ...pub } = config as ModelConfig & {
+    requestHeaders?: unknown;
+    apiKey?: unknown;
+  };
+  return pub as ModelConfig;
 }
 
 /**
@@ -609,33 +532,46 @@ export function buildAuthHeaders(apiKey?: string): Record<string, string> {
 }
 
 /**
- * Sanitize custom HTTP headers by stripping blocked names, invalid characters, and CRLF values.
+ * Merge newly entered auth into a server entry's existing request headers.
  *
- * Header names are case-insensitive on the wire (RFC 7230 §3.2), so two entries
- * that differ only in spelling (`authorization` / `Authorization`) are ONE header.
- * The last occurrence wins — the earlier spelling is dropped, so the request (and
- * the identity fingerprint) never carries two spellings of the same header.
- * The surviving spelling is preserved as written.
+ * Updating auth must NEVER wipe a field the user didn't touch. Replacing the
+ * whole requestHeaders object meant rotating the API key silently deleted any
+ * existing custom headers (e.g. CF-Access proxy headers) — the same class of
+ * silent data loss as the focus-loss bug. Merge semantics: a non-empty key sets
+ * Authorization, entered headers merge on top, and anything left empty keeps the
+ * existing value. Returns the SAME reference when nothing changes so callers can
+ * detect a no-op (clearing auth entirely is done by editing settings.json).
  */
-export function sanitizeRequestHeaders(headers: Record<string, string>): Record<string, string> {
-  const blockedHeaders = new Set([
-    'host', 'origin', 'cookie', 'connection', 'content-length',
-    'transfer-encoding', 'upgrade', 'te', 'trailer',
-  ]);
-  const headerNameRe = /^[a-zA-Z0-9!#$%&'*+.^_`|~-]+$/;
-  const sanitized: Record<string, string> = {};
-  const spellingByLower = new Map<string, string>();
-  for (const [key, value] of Object.entries(headers)) {
-    if (blockedHeaders.has(key.toLowerCase())) continue;
-    if (!headerNameRe.test(key)) continue;
-    if (/\r|\n/.test(value)) continue;
-    const lower = key.toLowerCase();
-    const previous = spellingByLower.get(lower);
-    if (previous !== undefined && previous !== key) delete sanitized[previous];
-    spellingByLower.set(lower, key);
-    sanitized[key] = value;
+export function mergeAuthHeaders(
+  existing: Record<string, string> | undefined,
+  incoming: Record<string, string>,
+): Record<string, string> | undefined {
+  if (Object.keys(incoming).length === 0) return existing; // nothing entered → no-op
+  const merged: Record<string, string> = { ...(existing ?? {}) };
+  let changed = false;
+  for (const [k, v] of Object.entries(incoming)) {
+    if (merged[k] !== v) {
+      merged[k] = v;
+      changed = true;
+    }
   }
-  return sanitized;
+  return changed ? merged : existing;
+}
+
+/**
+ * Content equality for header maps — config round-trips produce fresh objects,
+ * so reference checks miss real no-ops. Case-sensitive on purpose: callers
+ * compare maps that were already sanitized (one spelling per header name).
+ */
+export function sameHeaders(
+  a: Record<string, string> | undefined,
+  b: Record<string, string> | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every(k => b[k] === a[k]);
 }
 
 /**

@@ -194,15 +194,18 @@ including the globalState marker idiom and the plan-then-dumb-apply structure �
    migration and the snapshot's eventual replacement the machine holds a second plaintext copy
    of every credential (VS Code's globalState storage) next to the one in `settings.json`. Same
    machine, same threat model, and plaintext-in-settings is an accepted project decision — this
-   just extends it, deliberately, for as long as Undo stays offered.
+   just extends it, deliberately.
 6. Set the marker **only if both writes succeeded**. If a write throws (invalid `settings.json`),
    leave the marker unset so the next activation retries — the same handling
    [outputLengthMigration.ts](../src/outputLengthMigration.ts) already uses. Post one info
-   notification — *"Adopted N servers from your model settings (Show / Undo)"* — and log full
+   notification — *"Adopted N servers from your model settings (Show servers)"* — and log full
    before/after JSON to the output channel.
-7. `Undo Server Registry Migration` (palette) restores the snapshot and marks the migration
-   reverted so it does not immediately re-run. The snapshot *is* the rollback story: users'
-   settings.json is usually not under version control, so "restore via git" is not one.
+7. There is deliberately **no Undo command**: restoring the legacy shape would leave settings this
+   version cannot use (models without `server` refs are unreachable), so an in-product "rollback"
+   would be a one-way trap dressed as an escape hatch. The snapshot stays in globalState as a
+   forensic backup for recovery of a hypothetical migration bug, not as a user-facing feature.
+   Rolling back means restoring `settings.json` by hand or staying on an older VSIX — stated in
+   the CHANGELOG.
 
 **Two rules the steps do not make obvious, now settled:**
 
@@ -268,6 +271,13 @@ What follows are only the decisions the compiler cannot make for you.
   point at Remove Model. No cascade, and no "detach to inline" because there is nothing to detach
   to. The question of what to do with a dangling ref does not arise: there is nothing to dangle to.
 - **Remove Model** — unchanged apart from identity.
+- **Add Model / Replace Config** — two write-timing rules keep the registry honest. Replacing a
+  model's config with new credentials rotates the entered auth *into* the entry the model already
+  references (Update Auth doctrine) instead of deriving a fresh entry from the new headers — a new
+  entry would change the `server` ref, make the replace match nothing and append a duplicate
+  model. And an entry *created* by the add flow is rolled back if the model is never saved
+  (confirm dismissed or "Copy JSON"): no orphaned entry with live credentials may survive an
+  abandoned flow. Entries the flow only reused are never touched.
 - **New server** — **new command** `vllm-copilot.addServer` (does not exist today): saves the
   entry even with zero models. The existing `addServerModel` flow stays as-is (URL → probe →
   pick model → save); `addServer` is the same flow minus the model pick. The Model Settings
@@ -294,7 +304,7 @@ What follows are only the decisions the compiler cannot make for you.
   same URL two credentials producing two entries; OpenRouter models; OpenRouter models **absent**
   (no OpenRouter entry is created); empty or absent `models` (marker set, nothing written); a model
   missing `serverUrl` (reported, not invented); marker idempotency; **a throwing `config.update()`
-  leaves the marker unset and the settings untouched**; undo restores both arrays;
+  leaves the marker unset and the settings untouched**;
   servers-before-models write order asserted.
 - **Resolver matrix**: ref found; unknown ref (unreachable plus warning); omitted `serverType`
   resolves to vllm; whitespace `displayName` falls back to the URL; duplicate ids warned.
@@ -317,7 +327,7 @@ What follows are only the decisions the compiler cannot make for you.
 ## 11. Closed questions
 
 1. **May the migration reformat `settings.json`?** It already does, unavoidably — see §6. Semantic
-   equality is the bar; the golden tests in §10 and the snapshot/undo pair are how it is checked.
+   equality is the bar; the golden tests in §10 are how it is checked.
 2. **Does an OpenRouter entry appear before the user adds an OpenRouter model?** No — the migration
    creates entries only from models that exist (§6).
 3. **Where do zero-model servers appear in the dashboard?** As ordinary top-level server nodes,
@@ -339,8 +349,8 @@ precedence, how long `serverDisplayName` lives) is either answered by this desig
 
 | Risk | Mitigation |
 |---|---|
-| **Silent settings rewrite on activation** — the genuinely dangerous part of this plan | One-shot marker; never on config change; snapshot written *before* the first write; `Undo` command; before/after JSON in the output channel; a visible notification naming what happened. |
-| Migration splits or duplicates what the user thinks of as "one server" | It never merges across fingerprints and never rewrites a URL, so the worst case is one extra entry to rename or delete — and `Undo` covers the whole step. |
+| **Silent settings rewrite on activation** — the genuinely dangerous part of this plan | One-shot marker; never on config change; snapshot written *before* the first write; before/after JSON in the output channel; a visible notification naming what happened. |
+| Migration splits or duplicates what the user thinks of as "one server" | It never merges across fingerprints and never rewrites a URL, so the worst case is one extra entry to rename or delete. |
 | Downgrade: an older VSIX reads migrated settings and finds models with no `serverUrl` | Accepted breaking change; stated in the CHANGELOG and in the post-migration notification. |
 | Something still reads a URL without resolving it | Deleted field, therefore compile error. That *is* the mitigation — no manual audit list exists at all. |
 | LM tool / GUIDE / presets emit the old shape | Same-commit update plus the schema test; the tool's `modelDescription` is in §7. |

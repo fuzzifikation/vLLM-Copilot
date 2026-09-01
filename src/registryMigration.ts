@@ -100,6 +100,16 @@ export function planRegistryMigration(models: LegacyModelConfig[], existing: Ser
       continue;
     }
 
+    if (/^https?:\/\/(?:$|[/?#])/i.test(serverUrl.trim())) {
+      // A scheme with no host ("http://") is a half-typed URL. normalizeServerUrl
+      // reports it via its localhost:8000 fallback sentinel, which would make the
+      // migration silently point the model at a server the user never typed —
+      // skip and report instead.
+      skipped.push({ id: model.id ?? model.vllmModelId ?? '(unnamed)', reason: `host-less serverUrl "${serverUrl}"` });
+      migrated.push(model);
+      continue;
+    }
+
     const normalizedUrl = normalizeServerUrl(serverUrl);
     const headers = sanitizeRequestHeaders(requestHeaders ?? {});
     const fingerprint = serverFingerprint(normalizedUrl, headers);

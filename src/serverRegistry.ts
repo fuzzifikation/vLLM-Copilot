@@ -4,7 +4,8 @@
  * Pure module: no vscode imports, no side effects.
  */
 
-import { type ServerType, normalizeServerUrl, sanitizeRequestHeaders, serverFingerprint } from './config.js';
+import type { ServerType } from './config.js';
+import { normalizeServerUrl, sanitizeRequestHeaders, serverFingerprint } from './serverCore.js';
 
 /** A registered server. The only place server facts live. */
 export interface ServerEntry {

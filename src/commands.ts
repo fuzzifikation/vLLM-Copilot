@@ -9,7 +9,7 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from './provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId, sanitizeRequestHeaders } from './config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders } from './config.js';
 import type { ModelConfig } from './config.js';
 import type { ServerEntry } from './serverRegistry.js';
 import { patchModelConfig, readModels, readServers, writeModels, writeServers } from './configStore.js';
@@ -210,49 +210,11 @@ export function registerCleanSessionsCommand(
 }
 
 /**
- * Merge newly entered auth into a model's existing request headers.
- *
- * Update Auth must NEVER wipe a field the user didn't touch. Replacing the whole
- * requestHeaders object meant rotating the API key silently deleted any existing
- * custom headers (e.g. CF-Access proxy headers) — the same class of silent data
- * loss as the focus-loss bug. Merge semantics: a non-empty key sets
- * Authorization, entered headers merge on top, and anything left empty keeps the
- * existing value. Returns the SAME reference when nothing changes so callers can
- * detect a no-op (clearing auth entirely is done by editing settings.json).
- * @internal Exported for testing.
+ * Header-merge helpers live in config.ts (shared with the Add Server flow, which
+ * rotates credentials on a registry entry). Re-exported for the existing
+ * command-side tests that import them from this facade.
  */
-export function mergeAuthHeaders(
-  existing: Record<string, string> | undefined,
-  incoming: Record<string, string>,
-): Record<string, string> | undefined {
-  if (Object.keys(incoming).length === 0) return existing; // nothing entered → no-op
-  const merged: Record<string, string> = { ...(existing ?? {}) };
-  let changed = false;
-  for (const [k, v] of Object.entries(incoming)) {
-    if (merged[k] !== v) {
-      merged[k] = v;
-      changed = true;
-    }
-  }
-  return changed ? merged : existing;
-}
-
-/**
- * Content equality for header maps — config round-trips produce fresh objects,
- * so reference checks miss real no-ops. Case-sensitive on purpose: callers
- * compare maps that were already sanitized (one spelling per header name).
- * @internal Exported for testing.
- */
-export function sameHeaders(
-  a: Record<string, string> | undefined,
-  b: Record<string, string> | undefined,
-): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  const keys = Object.keys(a);
-  if (keys.length !== Object.keys(b).length) return false;
-  return keys.every(k => b[k] === a[k]);
-}
+export { mergeAuthHeaders, sameHeaders };
 
 /**
  * Update auth (API key + request headers) for all models on a server.
@@ -549,6 +511,19 @@ export function registerRemoveServerCommand(
     const stillThere = currentServers.filter(s => entryIds.has(s.id));
     if (stillThere.length === 0) {
       vscode.window.showInformationMessage(`Server ${serverUrl} was already removed.`);
+      return;
+    }
+    // References re-checked too: a concurrent Add flow may have pointed a model
+    // at one of these entries while the confirm dialog was open.
+    const nowReferencing = readModels().filter(m => entryIds.has(m.server));
+    if (nowReferencing.length > 0) {
+      const names = nowReferencing.map(m => m.displayName || m.id).join(', ');
+      outputChannel.appendLine(
+        `[WARN] Remove Server aborted for ${serverUrl} — now referenced by ${nowReferencing.length} model(s): ${names}.`
+      );
+      vscode.window.showWarningMessage(
+        `Server ${serverUrl} is now used by ${nowReferencing.length} model(s): ${names}. Removal cancelled — remove those models first.`
+      );
       return;
     }
     await writeServers(currentServers.filter(s => !entryIds.has(s.id)));

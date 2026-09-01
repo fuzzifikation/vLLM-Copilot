@@ -4,7 +4,7 @@
  */
 
 import * as vscode from 'vscode';
-import { getConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, modelServerIdentity, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
+import { getConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, serverIdentity, modelServerIdentity, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
 import { readModels, readServers } from './configStore.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from './openRouter.js';
@@ -407,6 +407,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
    *  `setVisible(true)`) both pass the visibility check and both subscribe,
    *  double-polling the servers until the next toggle. */
   private refreshEpoch = 0;
+  /** (model id, dangling server ref) pairs already logged — dangling-ref
+   *  warnings fire once, not on every refresh. */
+  private readonly warnedUnreachableModels = new Set<string>();
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -496,7 +499,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         serverDisplayName?: string;
       }>();
       for (const entry of servers) {
-        const identity = modelServerIdentity({ id: '', server: entry.id } as ModelConfig, servers);
+        const identity = serverIdentity(entry.serverUrl, entry.requestHeaders);
         const fp = identity.fingerprint;
         let group = identityMap.get(fp);
         if (!group) {
@@ -511,8 +514,12 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       }
 
       // Report models whose server ref does not resolve so they never vanish
-      // silently from the sidebar.
+      // silently from the sidebar — once per (model, ref), since this runs on
+      // every refresh and a broken ref would otherwise spam the channel.
       for (const m of unreachable) {
+        const label = `${m.id || m.vllmModelId || '(unnamed)'}\u0000${m.server}`;
+        if (this.warnedUnreachableModels.has(label)) continue;
+        this.warnedUnreachableModels.add(label);
         this.outputChannel.appendLine(`[DASHBOARD] Model "${m.id || m.vllmModelId || '(unnamed)'}" references unknown server "${m.server}" — unreachable until fixed.`);
       }
 
@@ -760,10 +767,10 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     if (serverUrl) {
       // consumeStream writes the store keyed by the NORMALIZED server URL
       // (resolveServerConfig → normalizeServerUrl). The dashboard's serverUrl
-      // here is the raw `model.serverUrl` — a config may legally use a
-      // scheme-less, trailing-slash, or /v1 form — so normalize before the
-      // lookup, otherwise the Last Request node silently vanishes for those
-      // forms.
+      // is a registry entry's URL — usually already normalized, but hand-edited
+      // entries may legally use a scheme-less, trailing-slash, or /v1 form —
+      // so normalize before the lookup, otherwise the Last Request node
+      // silently vanishes for those forms.
       const lastRequest = getLastRequest(normalizeServerUrl(serverUrl));
       if (lastRequest) {
         items.push(new LastRequestTreeItem(
@@ -792,7 +799,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       }
 
       // Cumulative Token Usage — live via onUsageStoreDidChange (see constructor).
-      // `serverUrl` here is the raw `model.serverUrl`; the store keys by the
+      // `serverUrl` here is a registry entry's URL; the store keys by the
       // NORMALIZED URL (same as the Last Request lookup above), so normalize
       // before the read or the node silently vanishes for scheme-less/slash/v1 forms.
       const normalizedUrl = normalizeServerUrl(serverUrl);
