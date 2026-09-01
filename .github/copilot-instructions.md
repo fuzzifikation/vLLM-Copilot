@@ -48,11 +48,11 @@ These apply to any codebase.
 
 ## This Repository: vLLM-Copilot-2
 
-### Architecture: No Global Server Settings
-- **ALL servers are per-model.** Each model entry in `vllm-copilot.models` has its own `serverUrl` and `requestHeaders`.
-- **The ONLY global setting is `enableFileLogging`.**
-- There is NO global `serverUrl`, `apiKey`, `requestHeaders`, or sampling params.
-- The discovery logic must NOT probe a "global server" — it groups models by their per-model `serverUrl` and discovers from each server independently.
+### Architecture: Server Registry, Models Reference It
+- **Servers are registry entries.** The top-level `vllm-copilot.servers` setting is an explicit lookup table of server entries (`id`, `serverUrl`, optional `requestHeaders`, `serverType`, `displayName`). Each model entry in `vllm-copilot.models` has a required `id` and `server` (the registry entry's id) — models never carry URLs, auth headers, server types, or server labels.
+- **The only global settings are the `servers` registry and `enableFileLogging`.**
+- There is NO global `serverUrl`, `apiKey`, `requestHeaders`, or sampling params. The registry is not "a global server" — it is a table; nothing may resolve a server unless a model references its entry.
+- The discovery logic must NOT probe a "global server" — it groups models by their `server` reference (resolved through the registry) and discovers from each server independently.
 - `VllmConfig.serverUrl`, `VllmConfig.apiKey`, `VllmConfig.requestHeaders` are **deprecated legacy fields** kept only for one-time migration. They must not be used at runtime.
 
 ### Version Compatibility
@@ -133,7 +133,7 @@ Non-negotiable for this codebase:
 
 Things this codebase has been burned by — don't repeat:
 
-- **Global server probing at discovery.** There is no global server. Discovery groups models by per-model `serverUrl`. Do not add a "global server" fetch path.
+- **Global server probing at discovery.** There is no global server. The registry is a lookup table, not a default. Discovery groups models by their `server` reference. Do not add a "global server" fetch path.
 - **Duplicate config caching.** Only `VllmClient` caches config. Other files read through it.
 - **SSE parsing in the provider.** `streamReader.ts` owns SSE line parsing (via `eventsource-parser`); `sseParser.ts` owns JSON parsing + tool call accumulation. `provider.ts` consumes structured events.
 - **Hand-rolled SSE parsing.** The prior hand-rolled parser was replaced with `eventsource-parser` (battle-tested, used by Vercel AI SDK). Do not revert to manual line parsing.

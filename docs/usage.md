@@ -40,7 +40,7 @@ Both the **Last Request** and **Token Usage and Cost** nodes are fed by the same
 
 ### Keying
 
-Everything keys on the **normalized server URL → wire model ID** (`vllmModelId`, falling back to `id`). The same model on two servers is two distinct counters; two presets pointing at the same wire model on one server share one counter. The dashboard normalizes `model.serverUrl` before lookup (scheme-less / trailing-slash / `/v1` forms all resolve), matching the store's write key.
+Everything keys on the **normalized server URL → wire model ID** (`vllmModelId`, falling back to `id`). The same model on two servers is two distinct counters; two presets pointing at the same wire model on one server share one counter. The dashboard resolves each model's server through the registry and normalizes the resulting URL before lookup (scheme-less / trailing-slash / `/v1` forms all resolve), matching the store's write key.
 
 ### Two count planes + start timestamps
 

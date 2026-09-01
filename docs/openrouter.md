@@ -17,7 +17,7 @@ If you have OpenRouter open in a browser tab, copy the URL from the address bar.
 ## Setup
 
 1. **Server URL:** paste `https://openrouter.ai` (or any model page from the table above).
-2. **API key:** enter your key from [openrouter.ai/keys](https://openrouter.ai/keys). It is stored in the model's `requestHeaders` as `Authorization: Bearer <key>` and never leaves the extension.
+2. **API key:** enter your key from [openrouter.ai/keys](https://openrouter.ai/keys). It is stored in the server entry's `requestHeaders` as `Authorization: Bearer <your-key>` and never leaves the extension.
 3. **Pick the model:** choose from the ~415-model catalog (filter-as-you-type). The extension resolves each model's metadata from OpenRouter's **public model catalog** (`/api/v1/models`) by matching the id exactly: real context window, output ceiling, tool calling, pricing, and reasoning modes.
 
 ## Free routes and the `:free` suffix
@@ -26,27 +26,34 @@ The `:free` suffix on a model ID is a **routing variant** and its own catalog en
 
 ## Manual config
 
-Manual config works the same way. Each entry is self-contained:
+Manual config works the same way — a server entry plus a model that references it:
 
 ```json
-{
-  "serverType": "openrouter",
-  "serverUrl": "https://openrouter.ai/api",
-  "vllmModelId": "nvidia/nemotron-3.5-lightning:free",
-  "displayName": "Nemotron 3.5 Lightning (free)",
-  "requestHeaders": {
-    "Authorization": "Bearer sk-or-v1-YOUR_KEY"
+"vllm-copilot.servers": [
+  {
+    "id": "openrouter",
+    "serverType": "openrouter",
+    "serverUrl": "https://openrouter.ai/api",
+    "requestHeaders": { "Authorization": "Bearer <your-key>" }
   }
-}
+],
+"vllm-copilot.models": [
+  {
+    "id": "nemotron-free",
+    "vllmModelId": "nvidia/nemotron-3.5-lightning:free",
+    "displayName": "Nemotron 3.5 Lightning (free)",
+    "server": "openrouter"
+  }
+]
 ```
 
 ## Attribution headers (optional)
 
-OpenRouter's public [rankings](https://openrouter.ai/rankings) attribute traffic to a site/app via two headers. The extension never sends them automatically, but you can add them to the model's `requestHeaders` (the Add flow also prompts for optional custom headers):
+OpenRouter's public [rankings](https://openrouter.ai/rankings) attribute traffic to a site/app via two headers. The extension never sends them automatically, but you can add them to the server entry's `requestHeaders` (the Add flow also prompts for optional custom headers):
 
 ```json
 "requestHeaders": {
-  "Authorization": "Bearer sk-or-v1-YOUR_KEY",
+  "Authorization": "Bearer <your-key>",
   "HTTP-Referer": "https://your-app.example.com",
   "X-OpenRouter-Title": "Your App Name"
 }
