@@ -196,8 +196,11 @@ including the globalState marker idiom and the plan-then-dumb-apply structure �
 
 **Two rules the steps do not make obvious, now settled:**
 
-- **The migration is a pure function of the `models` array: one entry per distinct
-  `(fingerprint)` group present in the settings, no others.** So an OpenRouter entry is created
+- **The migration is a pure function of the `models` array plus the already-present `servers`
+  registry: one entry per distinct `(fingerprint)` group present in the settings and not already
+  in the registry, no others.** Reuse-by-fingerprint of a registry entry is what makes a retried
+  migration (step 6) converge instead of appending a duplicate; the registry is read for dedupe
+  only, never written speculatively. So an OpenRouter entry is created
   only if some model actually points at the OpenRouter endpoint — a user who never used it does not
   get an unknown server with an empty key. This also means no speculative "default local server"
   entry, and no second code path for any provider (§3).

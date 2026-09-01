@@ -26,7 +26,7 @@ describe('planRegistryMigration', () => {
     expect(plan.servers).toEqual([
       { id: 'localhost-8000', serverUrl: DEFAULT_TEST_SERVER_URL },
     ]);
-    expect(plan.models.map(m => [m.id, m.server])).toEqual([
+    expect(plan.models.map(m => [m.id, 'server' in m ? m.server : null])).toEqual([
       ['a', 'localhost-8000'],
       ['b', 'localhost-8000'],
       ['c', 'localhost-8000'],
@@ -52,7 +52,7 @@ describe('planRegistryMigration', () => {
         requestHeaders: { Authorization: 'Bearer key-two' },
       },
     ]);
-    expect(plan.models.map(m => [m.id, m.server])).toEqual([
+    expect(plan.models.map(m => [m.id, 'server' in m ? m.server : null])).toEqual([
       ['a', 'localhost-8000'],
       ['b', 'localhost-8000-2'],
     ]);
@@ -83,7 +83,7 @@ describe('planRegistryMigration', () => {
     expect(planRegistryMigration([])).toEqual({ servers: [], models: [], skipped: [] });
   });
 
-  it('skips a model with no serverUrl instead of inventing one', () => {
+  it('keeps a model with no serverUrl verbatim instead of inventing one', () => {
     const withoutUrl = makeModelConfig({ id: 'no-server' });
     delete withoutUrl.serverUrl;
     const plan = planRegistryMigration([
@@ -92,7 +92,10 @@ describe('planRegistryMigration', () => {
     ]);
 
     expect(plan.skipped).toEqual([{ id: 'no-server', reason: 'no serverUrl' }]);
-    expect(plan.models.map(m => m.id)).toEqual(['has-server']);
+    // Skipped models stay in the array, untouched and in place — never deleted.
+    expect(plan.models[0]).toBe(withoutUrl);
+    expect(plan.models.map(m => m.id)).toEqual(['no-server', 'has-server']);
+    expect('server' in plan.models[0]).toBe(false);
     expect(plan.servers).toEqual([
       { id: 'localhost-8000', serverUrl: DEFAULT_TEST_SERVER_URL },
     ]);
@@ -118,6 +121,51 @@ describe('planRegistryMigration', () => {
     expect(plan.servers).toEqual([
       { id: 'localhost-8000', serverUrl: DEFAULT_TEST_SERVER_URL, serverType: 'ollama' },
     ]);
+  });
+
+  it('reuses an existing registry entry with a matching fingerprint instead of duplicating', () => {
+    const existing = [
+      { id: 'my-box', serverUrl: DEFAULT_TEST_SERVER_URL, requestHeaders: { Authorization: 'alpha' } },
+    ];
+    const plan = planRegistryMigration(
+      [makeModelConfig({ requestHeaders: { Authorization: 'alpha' } })],
+      existing
+    );
+
+    // No new entry — the retry-after-partial-write case must converge.
+    expect(plan.servers).toEqual([]);
+    expect(plan.models).toEqual([
+      { id: 'test-model', vllmModelId: 'test-model', server: 'my-box' },
+    ]);
+  });
+
+  it('does not reuse an existing entry with a different fingerprint', () => {
+    const existing = [
+      { id: 'my-box', serverUrl: DEFAULT_TEST_SERVER_URL, requestHeaders: { Authorization: 'alpha' } },
+    ];
+    const plan = planRegistryMigration(
+      [makeModelConfig({ requestHeaders: { Authorization: 'beta' } })],
+      existing
+    );
+
+    expect(plan.servers).toEqual([
+      { id: 'localhost-8000', serverUrl: DEFAULT_TEST_SERVER_URL, requestHeaders: { Authorization: 'beta' } },
+    ]);
+    expect(plan.models[0]).toEqual({
+      id: 'test-model',
+      vllmModelId: 'test-model',
+      server: 'localhost-8000',
+    });
+  });
+
+  it('avoids id collisions with existing entries and leaves them untouched', () => {
+    const existing = [{ id: 'localhost-8000', serverUrl: 'https://elsewhere.example/v1' }];
+    const plan = planRegistryMigration([makeModelConfig()], existing);
+
+    expect(plan.servers).toEqual([
+      { id: 'localhost-8000-2', serverUrl: DEFAULT_TEST_SERVER_URL },
+    ]);
+    expect(existing[0]).toEqual({ id: 'localhost-8000', serverUrl: 'https://elsewhere.example/v1' });
   });
 
   it('produces deterministic ids — same input, same plan', () => {

@@ -215,6 +215,11 @@
         "command": "vllm-copilot.configureCost",
         "title": "Set Cost…",
         "category": "vLLM-Copilot"
+      },
+      {
+        "command": "vllm-copilot.undoServerRegistryMigration",
+        "title": "Undo Server Registry Migration",
+        "category": "vLLM-Copilot: Utilities"
       }
     ],
     "menus": {
@@ -264,6 +269,41 @@
       {
         "title": "Models",
         "properties": {
+          "vllm-copilot.servers": {
+            "type": "array",
+            "default": [],
+            "markdownDescription": "Server registry: each entry is one server (URL + auth + type), referenced by `id` from `vllm-copilot.models`. Managed via the Dashboard and the vLLM-Copilot commands; hand-editing is possible but the commands keep models and servers in sync.",
+            "items": {
+              "type": "object",
+              "required": ["id", "serverUrl"],
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "markdownDescription": "Stable identifier models reference via their `server` field (e.g. `it-server-8000`)."
+                },
+                "serverUrl": {
+                  "type": "string",
+                  "markdownDescription": "The server URL (OpenAI-compatible API)."
+                },
+                "displayName": {
+                  "type": "string",
+                  "markdownDescription": "**Optional server label** shown in the Dashboard and Model Settings instead of the raw URL."
+                },
+                "serverType": {
+                  "type": "string",
+                  "enum": ["vllm", "lmstudio", "llamacpp", "ollama", "openrouter"],
+                  "default": "vllm",
+                  "markdownDescription": "Backend serving this server's models. **Default: `vllm`.**"
+                },
+                "requestHeaders": {
+                  "type": "object",
+                  "additionalProperties": { "type": "string" },
+                  "markdownDescription": "Extra HTTP headers sent to this server (e.g. `Authorization`)."
+                }
+              }
+            }
+          },
           "vllm-copilot.models": {
             "type": "array",
             "default": [],

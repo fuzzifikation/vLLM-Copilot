@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from './config.js';
 import { buildModelId, findModelConfigIndex, normalizeModelEntry, resolveConfigId } from './config.js';
+import type { ServerEntry } from './serverRegistry.js';
 
 /**
  * Read the raw `vllm-copilot.models` array exactly as stored.
@@ -29,6 +30,24 @@ export function readModels(): ModelConfig[] {
 export async function writeModels(models: ModelConfig[]): Promise<void> {
   const config = vscode.workspace.getConfiguration('vllm-copilot');
   await config.update('models', models, vscode.ConfigurationTarget.Global);
+}
+
+/**
+ * Read the raw `vllm-copilot.servers` array exactly as stored ([] when unset).
+ * Counterpart of {@link readModels} for the server registry.
+ */
+export function readServers(): ServerEntry[] {
+  return vscode.workspace.getConfiguration('vllm-copilot').get<ServerEntry[]>('servers') || [];
+}
+
+/**
+ * The ONLY writer of the `vllm-copilot.servers` setting, whole-array like
+ * {@link writeModels}. The registry migration relies on the same error
+ * propagation so it can defer its completion marker until every write succeeded.
+ */
+export async function writeServers(servers: ServerEntry[]): Promise<void> {
+  const config = vscode.workspace.getConfiguration('vllm-copilot');
+  await config.update('servers', servers, vscode.ConfigurationTarget.Global);
 }
 
 /**

@@ -18,6 +18,7 @@ import { OPENROUTER_API_BASE } from './openRouter.js';
 import {
   type ServerEntry,
   generateServerId,
+  serverEntryFingerprint,
 } from './serverRegistry.js';
 
 /** A model config after migration — inline server fields replaced by a ref. */
@@ -30,9 +31,14 @@ export type MigratedModelConfig = Omit<ModelConfig, 'serverUrl' | 'requestHeader
 export interface MigrationPlan {
   /** New servers array to write. */
   servers: ServerEntry[];
-  /** Rewritten models array with `server` refs replacing inline server fields. */
-  models: MigratedModelConfig[];
-  /** Models that could not be migrated (no usable serverUrl). */
+  /**
+   * Models array to write, in original order: migrated entries carry a `server`
+   * ref; models with no usable `serverUrl` are kept **verbatim** (no `server`) so
+   * the migration never silently deletes user settings. Consumers narrow on
+   * `'server' in m`.
+   */
+  models: Array<MigratedModelConfig | ModelConfig>;
+  /** Models kept verbatim because they could not be migrated (no usable serverUrl). */
   skipped: Array<{ id: string; reason: string }>;
 }
 
@@ -46,24 +52,37 @@ export interface MigrationPlan {
  * - Same URL + different auth → separate entries (credential isolation preserved).
  * - displayName = first non-empty serverDisplayName among group members.
  * - serverType = the group's serverType (first defined value wins).
- * - A model with no usable serverUrl gets no entry — it's listed in `skipped`.
+ * - A model with no usable serverUrl gets no entry — it's listed in `skipped` and
+ *   kept verbatim in `models` (the migration never deletes user settings).
  * - No speculative entries: an OpenRouter entry is created only if a model actually
- *   points at the OpenRouter endpoint.
- * - Generated ids use generateServerId (host + path tail), deduplicated.
+ *   points at the OpenRouter endpoint. `existing` is only ever reused, never added to.
+ * - A group whose fingerprint matches an `existing` registry entry references that
+ *   entry instead of creating a duplicate — this is what makes a retried migration
+ *   (servers written, models write failed) converge instead of double-appending.
+ * - Generated ids use generateServerId (host + path tail), deduplicated against
+ *   `existing` ids as well.
  */
-export function planRegistryMigration(models: ModelConfig[]): MigrationPlan {
+export function planRegistryMigration(models: ModelConfig[], existing: ServerEntry[] = []): MigrationPlan {
   const servers: ServerEntry[] = [];
-  const migrated: MigratedModelConfig[] = [];
+  const migrated: Array<MigratedModelConfig | ModelConfig> = [];
   const skipped: Array<{ id: string; reason: string }> = [];
   /** fingerprint → entry id, so every member of a group resolves to its entry in O(1). */
   const entryIdByFingerprint = new Map<string, string>();
+  /** fingerprint → id for the untouched pre-existing registry; reuse-only. */
+  const existingIdByFingerprint = new Map<string, string>();
   const takenIds = new Set<string>();
+  for (const entry of existing) {
+    takenIds.add(entry.id);
+    const fp = serverEntryFingerprint(entry);
+    if (!existingIdByFingerprint.has(fp)) existingIdByFingerprint.set(fp, entry.id);
+  }
 
   for (const model of models) {
     const { serverUrl, requestHeaders, serverType, serverDisplayName, ...rest } = model;
 
     if (!serverUrl?.trim()) {
       skipped.push({ id: model.id ?? model.vllmModelId ?? '(unnamed)', reason: 'no serverUrl' });
+      migrated.push(model);
       continue;
     }
 
@@ -71,7 +90,7 @@ export function planRegistryMigration(models: ModelConfig[]): MigrationPlan {
     const headers = sanitizeRequestHeaders(requestHeaders ?? {});
     const fingerprint = serverFingerprint(normalizedUrl, headers);
 
-    let serverId = entryIdByFingerprint.get(fingerprint);
+    let serverId = entryIdByFingerprint.get(fingerprint) ?? existingIdByFingerprint.get(fingerprint);
     if (serverId === undefined) {
       serverId = generateServerId(normalizedUrl, takenIds);
       takenIds.add(serverId);
@@ -84,9 +103,10 @@ export function planRegistryMigration(models: ModelConfig[]): MigrationPlan {
       if (effectiveType !== undefined) entry.serverType = effectiveType;
       if (Object.keys(headers).length > 0) entry.requestHeaders = headers;
       servers.push(entry);
-    } else {
+    } else if (entryIdByFingerprint.has(fingerprint)) {
       // Backfill the entry with the group's first non-empty display name and
-      // first defined server type, whichever member carries them.
+      // first defined server type, whichever member carries them. Only in-run
+      // entries are touched — an existing registry entry is reused as-is.
       const entry = servers.find(s => s.id === serverId)!;
       if (entry.displayName === undefined && serverDisplayName?.trim()) {
         entry.displayName = serverDisplayName.trim();
