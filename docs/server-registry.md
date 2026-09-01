@@ -1,11 +1,14 @@
 # Server Registry — Architecture & Implementation Plan
 
-**Status:** Decided, not implemented. The registry is the only place a server lives: inline
+**Status:** ✅ **Implemented 2026-09-01** (Phase 1 `b496583`, Phase 1.5 `cf0caf3`, Phase 2 breaking
+sweep `e3ccec4`, docs `f2a70c3`). The registry is the only place a server lives: inline
 `serverUrl` is deleted, models reference a registry entry, and existing users' settings are
 migrated on activation without being asked. Additive designs (inline kept forever, opt-in
 migration) were considered and rejected — the reasoning is in §13 so nobody reopens it.
+Open: manual smoke test of the migration in an Extension Development Host, release bump.
 
-Verified against `cc8b3f7` (v1.35.3-rc0, suite green: 1195 passed / 3 skipped).
+Verified against `cc8b3f7` (v1.35.3-rc0, suite green: 1195 passed / 3 skipped);
+post-implementation suite green at `e3ccec4` (1243 passed / 3 skipped, `tsc` clean).
 
 **Created:** 2026-08-24 · **Revised:** 2026-09-01
 **Idea origin:** [feature-ideas.md](./feature-ideas.md) → "Named-Server Registry"
