@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveServer,
-  indexServers,
   generateServerId,
   toPublicServerEntry,
   serverEntryFingerprint,
@@ -66,24 +65,6 @@ describe('resolveServer', () => {
   it('normalizes the URL (scheme, trailing slash, /v1)', () => {
     const eff = resolveServer('s', [{ id: 's', serverUrl: 'example.com:8000/v1/' }]);
     expect(eff?.serverUrl).toBe('http://example.com:8000');
-  });
-});
-
-// ── indexServers ────────────────────────────────────────────────────────
-
-describe('indexServers', () => {
-  it('builds a map from id to entry', () => {
-    const a: ServerEntry = { id: 'a', serverUrl: 'http://a:1' };
-    const b: ServerEntry = { id: 'b', serverUrl: 'http://b:2' };
-    const map = indexServers([a, b]);
-    expect(map.size).toBe(2);
-    expect(map.get('a')).toBe(a);
-    expect(map.get('b')).toBe(b);
-    expect(map.get('c')).toBeUndefined();
-  });
-
-  it('handles an empty array', () => {
-    expect(indexServers([]).size).toBe(0);
   });
 });
 

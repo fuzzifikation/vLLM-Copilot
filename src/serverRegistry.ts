@@ -44,13 +44,6 @@ export function resolveServer(serverId: string, servers: ServerEntry[]): Effecti
 }
 
 /**
- * Build an id → entry map for O(1) lookup by callers that resolve many models.
- */
-export function indexServers(servers: ServerEntry[]): Map<string, ServerEntry> {
-  return new Map(servers.map(s => [s.id, s]));
-}
-
-/**
  * Generate a human-readable, URL-derived server id.
  * Slug = host + path tail (last path segment only), lowercased, non-alphanumeric
  * collapsed to single `-`, leading/trailing `-` stripped. OpenRouter hosts always
