@@ -73,7 +73,7 @@ shippable intermediate state** — deleting the field and shipping the migration
 ```jsonc
 "vllm-copilot.servers": [
   {
-    "id": "gw-shared",                        // REQUIRED, unique. The reference target.
+    "id": "gw-shared",                       // REQUIRED, unique. The reference target.
     "displayName": "IT Server for GLM5.2",    // optional; Rename Server writes here
     "serverType": "vllm",                     // optional; missing = vllm (policy unchanged)
     "serverUrl": "https://gw.example-corp.com/team-a/inference/gw-shared", // REQUIRED
@@ -85,7 +85,7 @@ shippable intermediate state** — deleting the field and shipping the migration
   {
     "id": "glm52-prod",
     "vllmModelId": "zai/glm-5.2",
-    "server": "gw-shared",                    // REQUIRED
+    "server": "gw-shared",                   // REQUIRED
     // ...all model facts unchanged (modes, params, budgets, capabilities, cost)
   }
 ]
