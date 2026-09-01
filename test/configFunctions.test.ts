@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { buildAuthHeaders, validateConfig, resolveServerType, resolveModelSettings, resolveMaxTokensForRequest, buildModelId, resolveWorkspaceRelativePath, toPublicModelConfig, type VllmConfig } from '../src/config.js';
+import { buildAuthHeaders, validateConfig, resolveServerType, resolveModelSettings, resolveMaxTokensForRequest, buildModelId, resolveWorkspaceRelativePath, toPublicModelConfig, type VllmConfig, type ModelConfig } from '../src/config.js';
+import type { ServerEntry } from '../src/serverRegistry.js';
 
 // ── resolveMaxTokensForRequest ──────────────────────────────────────────
 
@@ -12,7 +13,7 @@ describe('resolveMaxTokensForRequest', () => {
 
   it('honors the selected mode max_tokens over defaultParams (coherent advertised)', () => {
     const override = {
-      id: 'm', serverUrl: 'http://host:8000',
+      id: 'm', server: 'srv',
       defaultParams: { max_tokens: 1000 },
       modelModes: { Think: { max_tokens: 8000 }, Fast: {} },
     };
@@ -27,7 +28,7 @@ describe('resolveMaxTokensForRequest', () => {
     // window clamped). A mode wanting 32000 must not send more than advertised —
     // the wire can never exceed what Copilot was told.
     const override = {
-      id: 'm', serverUrl: 'http://host:8000',
+      id: 'm', server: 'srv',
       modelModes: { Big: { max_tokens: 32000 } },
     };
     expect(resolveMaxTokensForRequest(override, 'Big', 8000, 32768)).toBe(8000);
@@ -35,7 +36,7 @@ describe('resolveMaxTokensForRequest', () => {
 
   it('clamps to the context window as defense when the advertised budget is incoherent', () => {
     const override = {
-      id: 'm', serverUrl: 'http://host:8000',
+      id: 'm', server: 'srv',
       modelModes: { Big: { max_tokens: 100000 } },
     };
     // Advertised (99999) exceeds window-1 — only reachable with an incoherent
@@ -44,20 +45,20 @@ describe('resolveMaxTokensForRequest', () => {
   });
 
   it('floors fractional/negative values and ignores non-numeric max_tokens', () => {
-    const badMode = { id: 'm', serverUrl: 'http://host:8000', modelModes: { X: { max_tokens: 'lots' as any } } };
+    const badMode = { id: 'm', server: 'srv', modelModes: { X: { max_tokens: 'lots' as any } } };
     expect(resolveMaxTokensForRequest(badMode, 'X', 4096, 32768)).toBe(4096);
-    const frac = { id: 'm', serverUrl: 'http://host:8000', modelModes: { X: { max_tokens: 12.9 } } };
+    const frac = { id: 'm', server: 'srv', modelModes: { X: { max_tokens: 12.9 } } };
     expect(resolveMaxTokensForRequest(frac, 'X', 4096, 32768)).toBe(12);
   });
 
   it('never returns a budget below 1', () => {
-    const override = { id: 'm', serverUrl: 'http://host:8000', modelModes: { X: { max_tokens: -5 } } };
+    const override = { id: 'm', server: 'srv', modelModes: { X: { max_tokens: -5 } } };
     expect(resolveMaxTokensForRequest(override, 'X', 4096, 32768)).toBe(1);
   });
 
   it('picker outranks mode and defaultParams max_tokens', () => {
     const override = {
-      id: 'm', serverUrl: 'http://host:8000',
+      id: 'm', server: 'srv',
       defaultParams: { max_tokens: 1000 },
       modelModes: { Think: { max_tokens: 8000 } },
     };
@@ -68,14 +69,14 @@ describe('resolveMaxTokensForRequest', () => {
   });
 
   it('clamps the picker pick to the advertised ceiling too', () => {
-    const override = { id: 'm', serverUrl: 'http://host:8000', modelModes: { Think: { max_tokens: 8000 } } };
+    const override = { id: 'm', server: 'srv', modelModes: { Think: { max_tokens: 8000 } } };
     // A stale cached schema offering more than advertised must not exceed it.
     expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32768, 32000)).toBe(8000);
   });
 
   it('ignores a non-finite picker value and falls back to mode/defaultParams', () => {
     const override = {
-      id: 'm', serverUrl: 'http://host:8000',
+      id: 'm', server: 'srv',
       defaultParams: { max_tokens: 1000 },
       modelModes: { Think: { max_tokens: 8000 } },
     };
@@ -92,23 +93,38 @@ describe('resolveMaxTokensForRequest', () => {
 // ── resolveServerType ───────────────────────────────────────────────────
 
 describe('resolveServerType', () => {
-  it('always returns vllm when the field is missing (policy)', () => {
-    expect(resolveServerType(undefined)).toBe('vllm');
-    expect(resolveServerType({} as any)).toBe('vllm');
-    expect(resolveServerType({ serverType: undefined } as any)).toBe('vllm');
+  const servers: ServerEntry[] = [
+    { id: 'plain', serverUrl: 'http://a:8000' },
+    { id: 'lm', serverUrl: 'http://b:8000', serverType: 'lmstudio' },
+    { id: 'llama', serverUrl: 'http://c:8000', serverType: 'llamacpp' },
+    { id: 'oll', serverUrl: 'http://d:8000', serverType: 'ollama' },
+    { id: 'v', serverUrl: 'http://e:8000', serverType: 'vllm' },
+  ];
+  const model = (server: string): ModelConfig => ({ id: 'm', server });
+
+  it('always returns vllm for an undefined model or an entry without an explicit type (policy)', () => {
+    expect(resolveServerType(undefined, servers)).toBe('vllm');
+    expect(resolveServerType(model('plain'), servers)).toBe('vllm');
   });
 
-  it('returns the explicit backend when set', () => {
-    expect(resolveServerType({ serverType: 'lmstudio' } as any)).toBe('lmstudio');
-    expect(resolveServerType({ serverType: 'llamacpp' } as any)).toBe('llamacpp');
-    expect(resolveServerType({ serverType: 'ollama' } as any)).toBe('ollama');
-    expect(resolveServerType({ serverType: 'vllm' } as any)).toBe('vllm');
+  it('a dangling server ref falls back to vllm, same as a missing type', () => {
+    expect(resolveServerType(model('ghost'), servers)).toBe('vllm');
+    expect(resolveServerType(model('plain'), [])).toBe('vllm');
+  });
+
+  it('returns the explicit backend of the referenced entry', () => {
+    expect(resolveServerType(model('lm'), servers)).toBe('lmstudio');
+    expect(resolveServerType(model('llama'), servers)).toBe('llamacpp');
+    expect(resolveServerType(model('oll'), servers)).toBe('ollama');
+    expect(resolveServerType(model('v'), servers)).toBe('vllm');
   });
 });
 
 describe('resolveModelSettings', () => {
   it('normalizes invalid transport and retry values before runtime control flow', () => {
     expect(resolveModelSettings({
+      id: 'm',
+      server: 'srv',
       maxOutputTokens: Number.NaN,
       estimateCharsPerToken: Number.NaN,
       streamInactivityTimeout: -10,
@@ -124,38 +140,24 @@ describe('resolveModelSettings', () => {
   });
 
   it('floors retry counts to a non-negative integer', () => {
-    expect(resolveModelSettings({ autoContinueRetries: 2.9 }).autoContinueRetries).toBe(2);
+    expect(resolveModelSettings({ id: 'm', server: 'srv', autoContinueRetries: 2.9 }).autoContinueRetries).toBe(2);
   });
 });
 
 // ── toPublicModelConfig ───────────────────────────────────────────────────
 
 describe('toPublicModelConfig', () => {
-  const base = { id: 'm', vllmModelId: 'wire', serverUrl: 'http://h:8000' } as any;
+  const base = { id: 'm', vllmModelId: 'wire', server: 'srv' } satisfies ModelConfig;
 
-  it('returns a copy unchanged when there are no credentials', () => {
+  it('returns a copy unchanged — models carry no credentials post-registry', () => {
     expect(toPublicModelConfig(base)).toEqual(base);
     expect(toPublicModelConfig(base)).not.toBe(base);
   });
 
-  it('redacts header values but keeps key names (output-channel log)', () => {
-    const out = toPublicModelConfig({ ...base, requestHeaders: { Authorization: 'Bearer sekrit', 'X-Key': 'abc' } });
-    expect(out.requestHeaders).toEqual({ Authorization: '[REDACTED]', 'X-Key': '[REDACTED]' });
-    expect(JSON.stringify(out)).not.toContain('sekrit');
-    expect(JSON.stringify(out)).not.toContain('abc');
-  });
-
-  it('drops the requestHeaders field entirely when strip is set (webview)', () => {
-    const out = toPublicModelConfig({ ...base, requestHeaders: { Authorization: 'Bearer sekrit' } }, { strip: true });
-    expect('requestHeaders' in out).toBe(false);
-    expect(JSON.stringify(out)).not.toContain('sekrit');
-  });
-
-  it('keeps all non-credential fields', () => {
-    const cfg = { ...base, displayName: 'Model', serverType: 'vllm', defaultParams: { temperature: 0.7 } };
-    const out = toPublicModelConfig(cfg);
+  it('keeps all model fields (strip is a no-op; server auth is stripped by toPublicServerEntry)', () => {
+    const cfg: ModelConfig = { ...base, displayName: 'Model', defaultParams: { temperature: 0.7 } };
+    const out = toPublicModelConfig(cfg, { strip: true });
     expect(out.displayName).toBe('Model');
-    expect(out.serverType).toBe('vllm');
     expect(out.defaultParams).toEqual({ temperature: 0.7 });
   });
 });
@@ -238,14 +240,15 @@ describe('buildModelId', () => {
 /** Minimal valid config for validation tests (per-model). */
 function makeValidConfig(): VllmConfig {
   return {
-    models: [{ id: 'm', serverUrl: 'http://localhost:8000' }],
+    models: [{ id: 'm', server: 'srv' }],
+    servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }],
     enableFileLogging: false,
   };
 }
 
 /** Helper: build a config with a single model carrying the given fields. */
 function withModel(model: Record<string, unknown>): VllmConfig {
-  return { ...makeValidConfig(), models: [{ id: 'm', serverUrl: 'http://localhost:8000', ...model }] };
+  return { ...makeValidConfig(), models: [{ id: 'm', server: 'srv', ...model }] };
 }
 
 describe('validateConfig', () => {
@@ -254,21 +257,30 @@ describe('validateConfig', () => {
     expect(warnings).toHaveLength(0);
   });
 
-  it('warns when a model has no serverUrl', () => {
-    const warnings = validateConfig({ ...makeValidConfig(), models: [{ id: 'm' }] });
-    expect(warnings.some(w => w.includes('serverUrl'))).toBe(true);
+  it('warns when a model has no server reference', () => {
+    const warnings = validateConfig({ ...makeValidConfig(), models: [{ id: 'm' } as ModelConfig] });
+    expect(warnings.some(w => w.includes('no server reference'))).toBe(true);
   });
 
-  it('accepts every known serverType without warning', () => {
-    for (const serverType of ['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter']) {
-      const warnings = validateConfig(withModel({ serverType }));
-      expect(warnings.some(w => w.includes('serverType'))).toBe(false);
-    }
+  it('warns when a model references an unknown server id (dangling ref)', () => {
+    const warnings = validateConfig(withModel({ server: 'ghost' }));
+    expect(warnings.some(w => w.includes('references unknown server'))).toBe(true);
   });
 
-  it('warns on an unknown serverType', () => {
-    const warnings = validateConfig(withModel({ serverType: 'anything' }));
-    expect(warnings.some(w => w.includes('serverType'))).toBe(true);
+  it('warns on registry entries with a missing or duplicate id', () => {
+    const noId = validateConfig({
+      ...makeValidConfig(),
+      servers: [{ id: '', serverUrl: 'http://localhost:8000' }],
+    });
+    expect(noId.some(w => w.includes('missing its id'))).toBe(true);
+    const dup = validateConfig({
+      ...makeValidConfig(),
+      servers: [
+        { id: 'srv', serverUrl: 'http://localhost:8000' },
+        { id: 'srv', serverUrl: 'http://localhost:9000' },
+      ],
+    });
+    expect(dup.some(w => w.includes('duplicate id'))).toBe(true);
   });
 
   it('accepts every known routing mode without warning', () => {
@@ -367,7 +379,7 @@ describe('validateConfig', () => {
   });
 
   it('warns when a model entry has no id', () => {
-    const warnings = validateConfig({ ...makeValidConfig(), models: [{ vllmModelId: 'no-id', serverUrl: 'http://localhost:8000' }] });
+    const warnings = validateConfig({ ...makeValidConfig(), models: [{ vllmModelId: 'no-id', server: 'srv' } as ModelConfig] });
     expect(warnings.some(w => w.includes('missing id'))).toBe(true);
   });
 
@@ -375,8 +387,8 @@ describe('validateConfig', () => {
     const warnings = validateConfig({
       ...makeValidConfig(),
       models: [
-        { id: 'dup', serverUrl: 'http://localhost:8000' },
-        { id: 'dup', vllmModelId: 'other-model', serverUrl: 'http://localhost:9000' },
+        { id: 'dup', server: 'srv' },
+        { id: 'dup', vllmModelId: 'other-model', server: 'srv' },
       ],
     });
     expect(warnings.some(w => w.includes('duplicate id'))).toBe(true);
@@ -386,8 +398,8 @@ describe('validateConfig', () => {
     const warnings = validateConfig({
       ...makeValidConfig(),
       models: [
-        { id: 'm1', vllmModelId: 'shared', serverUrl: 'http://a:8000' },
-        { id: 'm2', vllmModelId: 'shared', serverUrl: 'http://b:8000' },
+        { id: 'm1', vllmModelId: 'shared', server: 'srv' },
+        { id: 'm2', vllmModelId: 'shared', server: 'srv' },
       ],
     });
     expect(warnings.some(w => w.includes('duplicate id'))).toBe(false);

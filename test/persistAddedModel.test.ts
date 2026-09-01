@@ -42,14 +42,14 @@ describe('persistAddedModel — BYOK setup after model persistence', () => {
 
     const pending = addServerFlow.persistAddedModel({
       id: 'new-model',
-      serverUrl: 'http://localhost:8000',
+      server: 'srv',
     });
 
     // The model write is still in flight — BYOK must not have started.
     expect(replaceSpy).toHaveBeenCalledTimes(1);
     expect(chatUpdate).not.toHaveBeenCalled();
 
-    resolveWrite({ model: { id: 'new-model', serverUrl: 'http://localhost:8000' }, created: true });
+    resolveWrite({ model: { id: 'new-model', server: 'srv' }, created: true });
     await pending;
 
     // BYOK write landed once the model write resolved.
@@ -63,12 +63,12 @@ describe('persistAddedModel — BYOK setup after model persistence', () => {
   it('calls onSaved only after both the model write and BYOK complete', async () => {
     const onSaved = vi.fn();
     vi.spyOn(configStore, 'replaceModelConfig').mockResolvedValue({
-      model: { id: 'new-model', serverUrl: 'http://localhost:8000' },
+      model: { id: 'new-model', server: 'srv' },
       created: true,
     });
 
     await addServerFlow.persistAddedModel(
-      { id: 'new-model', serverUrl: 'http://localhost:8000' },
+      { id: 'new-model', server: 'srv' },
       onSaved,
     );
 

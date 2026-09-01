@@ -4,14 +4,14 @@ import {
   maybeRunServerRegistryMigration,
   registerUndoServerRegistryMigration,
 } from '../src/serverRegistryMigration.js';
-import type { ModelConfig } from '../src/config.js';
+import type { LegacyModelConfig } from '../src/registryMigration.js';
 
 const FLAG = 'vllmCopilot.serverRegistryMigration.v1';
 const SNAPSHOT = 'vllmCopilot.serverRegistryMigration.snapshot.v1';
 const UNDO_COMMAND = 'vllm-copilot.undoServerRegistryMigration';
 
 interface Settings {
-  models?: ModelConfig[];
+  models?: LegacyModelConfig[];
   servers?: unknown;
 }
 
@@ -24,8 +24,8 @@ let output: { appendLine: ReturnType<typeof vi.fn> };
 let info: ReturnType<typeof vi.fn>;
 let error: ReturnType<typeof vi.fn>;
 
-function model(overrides: Partial<ModelConfig> = {}): ModelConfig {
-  return { id: 'm', vllmModelId: 'm', serverUrl: 'http://localhost:8000', ...overrides } as ModelConfig;
+function model(overrides: Partial<LegacyModelConfig> = {}): LegacyModelConfig {
+  return { id: 'm', vllmModelId: 'm', serverUrl: 'http://localhost:8000', ...overrides };
 }
 
 beforeEach(() => {
@@ -97,8 +97,8 @@ describe('maybeRunServerRegistryMigration', () => {
     await maybeRunServerRegistryMigration(context, output as never);
 
     expect(settings.servers).toEqual([{ id: 'localhost-8000', serverUrl: 'http://localhost:8000' }]);
-    expect((settings.models as Array<Record<string, unknown>>).every(m => m.server === 'localhost-8000')).toBe(true);
-    expect((settings.models as Array<Record<string, unknown>>).some(m => 'serverUrl' in m)).toBe(false);
+    expect((settings.models as Array<Record<string, unknown>> | undefined)?.every(m => m.server === 'localhost-8000')).toBe(true);
+    expect((settings.models as Array<Record<string, unknown>> | undefined)?.some(m => 'serverUrl' in m)).toBe(false);
     expect(stateStore[FLAG]).toBe('done');
     expect(String(info.mock.calls[0][0])).toContain('adopted 1 server');
   });
@@ -113,7 +113,7 @@ describe('maybeRunServerRegistryMigration', () => {
     await maybeRunServerRegistryMigration(context, output as never);
 
     expect(globalStateUpdates[0].key).toBe(SNAPSHOT);
-    expect((globalStateUpdates[0].value as { models: ModelConfig[] }).models).toBe(originalModels);
+    expect((globalStateUpdates[0].value as { models: LegacyModelConfig[] }).models).toBe(originalModels);
     expect((globalStateUpdates[0].value as { servers: unknown[] }).servers).toEqual([]);
     // Snapshot precedes both settings writes.
     expect(writes).toHaveLength(2);
@@ -170,7 +170,7 @@ describe('maybeRunServerRegistryMigration', () => {
 
   it('reports models without serverUrl and keeps them verbatim instead of inventing one', async () => {
     const withoutUrl = model({ id: 'orphan' });
-    delete (withoutUrl as Partial<ModelConfig>).serverUrl;
+    delete withoutUrl.serverUrl;
     settings.models = [withoutUrl, model({ id: 'ok' })];
 
     await maybeRunServerRegistryMigration(context, output as never);
@@ -185,7 +185,7 @@ describe('maybeRunServerRegistryMigration', () => {
 
   it('sets the marker and writes nothing when no model has a serverUrl', async () => {
     const withoutUrl = model({ id: 'orphan' });
-    delete (withoutUrl as Partial<ModelConfig>).serverUrl;
+    delete withoutUrl.serverUrl;
     settings.models = [withoutUrl];
 
     await maybeRunServerRegistryMigration(context, output as never);

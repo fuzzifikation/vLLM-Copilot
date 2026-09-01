@@ -812,6 +812,9 @@ export async function autoConfigureOpenRouterModel(
     id: modelId,
     vllmModelId: info.wireModelId,
     displayName: info.displayName ?? info.wireModelId,
+    // OpenRouter models reference the conventional `openrouter` registry entry;
+    // the calling flow upserts that entry (create-if-absent) before writing.
+    server: 'openrouter',
     capabilities: info.capabilities,
     ...(info.modelModes ? { modelModes: info.modelModes } : {}),
     ...(info.defaultMode ? { defaultMode: info.defaultMode } : {}),

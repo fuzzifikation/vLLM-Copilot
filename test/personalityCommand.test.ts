@@ -8,29 +8,36 @@ import type { ModelConfig } from '../src/config.js';
 
 /**
  * Server-less models must never reach saveModelConfig from the personality
- * command: the config matcher requires both id and serverUrl, so without a
- * serverUrl the store falls through to its append branch and writes a duplicate
- * entry into settings.json (verified bug, fixed as step 0a of the refactor plan).
+ * command: the config matcher requires both id and server ref, so without a
+ * resolvable ref the store falls through to its append branch and writes a
+ * duplicate entry into settings.json (verified bug, fixed as step 0a of the
+ * refactor plan; the ref now also has to RESOLVE against the registry).
  */
+const SERVERS = [{ id: 'srv', serverUrl: 'http://x:8000' }];
+
 describe('personalityApplicableTo', () => {
-  it('rejects a model without a serverUrl (prevents duplicate append)', () => {
-    const result = personalityApplicableTo({ id: 'm', displayName: 'M' } as ModelConfig);
+  it('rejects a model without a server ref (prevents duplicate append)', () => {
+    const result = personalityApplicableTo({ id: 'm', displayName: 'M' } as ModelConfig, SERVERS);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toContain('no serverUrl');
+    if (!result.ok) expect(result.reason).toContain('no resolvable server');
   });
 
-  it('rejects a blank/whitespace-only serverUrl', () => {
-    expect(personalityApplicableTo({ id: 'm', serverUrl: '   ' } as ModelConfig).ok).toBe(false);
+  it('rejects a blank/whitespace-only server ref', () => {
+    expect(personalityApplicableTo({ id: 'm', server: '   ' } as ModelConfig, SERVERS).ok).toBe(false);
   });
 
-  it('accepts a model with a serverUrl', () => {
-    expect(personalityApplicableTo({ id: 'm', serverUrl: 'http://x:8000' } as ModelConfig).ok).toBe(true);
+  it('rejects a model whose server ref dangles', () => {
+    expect(personalityApplicableTo({ id: 'm', server: 'ghost' } as ModelConfig, SERVERS).ok).toBe(false);
+  });
+
+  it('accepts a model with a resolvable server ref', () => {
+    expect(personalityApplicableTo({ id: 'm', server: 'srv' } as ModelConfig, SERVERS).ok).toBe(true);
   });
 
   it('uses displayName then id in the warning label', () => {
-    const byDisplay = personalityApplicableTo({ id: 'm', displayName: 'My Model' } as ModelConfig);
+    const byDisplay = personalityApplicableTo({ id: 'm', displayName: 'My Model' } as ModelConfig, SERVERS);
     if (!byDisplay.ok) expect(byDisplay.reason).toContain('My Model');
-    const byId = personalityApplicableTo({ id: 'm' } as ModelConfig);
+    const byId = personalityApplicableTo({ id: 'm' } as ModelConfig, SERVERS);
     if (!byId.ok) expect(byId.reason).toContain('"m"');
   });
 });
@@ -47,7 +54,8 @@ describe('registerSetModelPersonalityCommand', () => {
   let ensureSpy: ReturnType<typeof vi.spyOn>;
   let replaceSpy: ReturnType<typeof vi.spyOn>;
 
-  const MODEL = { id: 'm1', serverUrl: 'http://s:8000' };
+  const MODEL = { id: 'm1', server: 'srv' };
+  const MODEL_SERVERS = [{ id: 'srv', serverUrl: 'http://s:8000' }];
   const PRESETS = [
     { name: 'Spartan', description: 'Terse', sourcePath: '/p/spartan.json', source: 'bundled' as const },
   ];
@@ -69,7 +77,9 @@ describe('registerSetModelPersonalityCommand', () => {
     resolveSpy = vi.spyOn(personalityStore, 'resolveActivePersonality').mockResolvedValue(null);
     ensureSpy = vi.spyOn(personalityStore, 'ensureGlobalPersonality').mockResolvedValue('/g/spartan.json');
     replaceSpy = vi.spyOn(configStore, 'replaceModelConfig').mockResolvedValue({ model: MODEL as any, created: true });
-    vscode.workspace._mockConfig = { get: (key: string) => (key === 'models' ? [MODEL] : undefined) };
+    vscode.workspace._mockConfig = {
+      get: (key: string) => (key === 'models' ? [MODEL] : key === 'servers' ? MODEL_SERVERS : undefined),
+    };
   });
 
   afterEach(() => {
@@ -124,7 +134,7 @@ describe('registerSetModelPersonalityCommand', () => {
     expect(replaceSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'm1',
-        serverUrl: 'http://s:8000',
+        server: 'srv',
         systemMessageReplacementsFile: '/g/spartan.json',
       })
     );

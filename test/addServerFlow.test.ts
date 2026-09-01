@@ -61,9 +61,9 @@ describe('confirmAndSaveAddedModel', () => {
   let clipboardSpy: ReturnType<typeof vi.spyOn>;
   let output: any;
   const finalConfig = {
-    id: 'model on http://host:8000',
+    id: 'model on host:8000',
     vllmModelId: 'model',
-    serverUrl: 'http://host:8000',
+    server: 'host-8000',
   };
 
   beforeEach(() => {
@@ -239,11 +239,11 @@ describe('registerAddServerModelCommand', () => {
     resolveSpy = vi
       .spyOn(hfDiscovery, 'resolveModelConfigForAddSafely')
       .mockResolvedValue({
-        modelConfig: { id: 'model', vllmModelId: 'model', displayName: 'Model' },
+        modelConfig: { id: 'model', vllmModelId: 'model', displayName: 'Model', server: 'host-8000' },
         summary: ['discovered'],
       });
     vscode.workspace._mockConfig = {
-      get: (key: string) => (key === 'models' ? [] : undefined),
+      get: (key: string) => (key === 'models' ? [] : key === 'servers' ? [] : undefined),
       update: chatUpdate,
       inspect: () => ({ defaultValue: 'none' }),
     };
@@ -287,16 +287,19 @@ describe('registerAddServerModelCommand', () => {
       'vllm',   // detected backend type passed into auto-discovery
     );
 
-    // Composite id + serverUrl + detected serverType + suggested tokens.
+    // Model carries only identity + the server ref; URL/auth/type live on the registry entry.
     expect(replaceSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'model on host:8000',
         vllmModelId: 'model',
-        serverUrl: 'http://host:8000',
-        serverType: 'vllm',
-        requestHeaders: { Authorization: 'Bearer secret' },
+        server: 'host-8000',
         displayName: 'Model',
       }),
+    );
+    expect(chatUpdate).toHaveBeenCalledWith(
+      'servers',
+      [{ id: 'host-8000', serverUrl: 'http://host:8000', serverType: 'vllm', requestHeaders: { Authorization: 'Bearer secret' } }],
+      vscode.ConfigurationTarget.Global,
     );
     expect(chatUpdate).toHaveBeenCalled(); // BYOK bootstrap ran
     expect(provider.clearCache).toHaveBeenCalled(); // onSaved
@@ -326,8 +329,14 @@ describe('registerAddServerModelCommand', () => {
       expect.objectContaining({
         id: 'stub-model on host:8000',
         vllmModelId: 'stub-model',
-        serverUrl: 'http://host:8000',
+        server: 'host-8000',
       }),
+    );
+    // The registry entry is created even though the server never answered.
+    expect(chatUpdate).toHaveBeenCalledWith(
+      'servers',
+      [{ id: 'host-8000', serverUrl: 'http://host:8000' }],
+      vscode.ConfigurationTarget.Global,
     );
     expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('Stub saved for "stub-model"'));
     expect(provider.clearCache).toHaveBeenCalled();
@@ -368,8 +377,10 @@ describe('registerAddServerModelCommand', () => {
     vscode.workspace._mockConfig = {
       get: (key: string) =>
         key === 'models'
-          ? [{ id: 'custom-preset-id', vllmModelId: 'model', serverUrl: 'http://host:8000', displayName: 'OldName' }]
-          : undefined,
+          ? [{ id: 'custom-preset-id', vllmModelId: 'model', server: 'host-8000', displayName: 'OldName' }]
+          : key === 'servers'
+            ? [{ id: 'host-8000', serverUrl: 'http://host:8000' }]
+            : undefined,
       update: chatUpdate,
       inspect: () => ({ defaultValue: 'none' }),
     };
@@ -392,7 +403,7 @@ describe('registerAddServerModelCommand', () => {
       expect.objectContaining({
         id: 'custom-preset-id',
         vllmModelId: 'model',
-        serverUrl: 'http://host:8000',
+        server: 'host-8000',
       }),
     );
     expect(provider.clearCache).toHaveBeenCalled();
@@ -405,10 +416,12 @@ describe('registerAddServerModelCommand', () => {
       get: (key: string) =>
         key === 'models'
           ? [
-              { id: 'custom-preset-glm', vllmModelId: 'model', serverUrl: 'http://host:8000', displayName: 'GLM (Preset)' },
-              { id: 'model on host:8000', vllmModelId: 'model', serverUrl: 'http://host:8000' },
+              { id: 'custom-preset-glm', vllmModelId: 'model', server: 'host-8000', displayName: 'GLM (Preset)' },
+              { id: 'model on host:8000', vllmModelId: 'model', server: 'host-8000' },
             ]
-          : undefined,
+          : key === 'servers'
+            ? [{ id: 'host-8000', serverUrl: 'http://host:8000' }]
+            : undefined,
       update: chatUpdate,
       inspect: () => ({ defaultValue: 'none' }),
     };
@@ -441,7 +454,7 @@ describe('registerAddServerModelCommand', () => {
       expect.objectContaining({
         id: 'model on host:8000',
         vllmModelId: 'model',
-        serverUrl: 'http://host:8000',
+        server: 'host-8000',
       }),
     );
     expect(provider.clearCache).toHaveBeenCalled();

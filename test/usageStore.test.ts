@@ -403,12 +403,20 @@ describe('cost derivation', () => {
   });
 
   it('findModelCost locates rates by (serverUrl, wire modelId)', () => {
-    const models = [
-      { id: 'cfg1', vllmModelId: 'm1', serverUrl: 'http://s:8000', cost: { input: 0.1 } },
-      { id: 'cfg2', vllmModelId: 'm2', serverUrl: 'http://s:8000', cost: { output: 0.2 } },
-    ] as ModelConfig[];
-    expect(findModelCost(models, 'http://s:8000/v1', 'm1')?.input).toBe(0.1); // normalized URL match
-    expect(findModelCost(models, url, 'm2')?.output).toBe(0.2);
-    expect(findModelCost(models, url, 'nope')).toBeUndefined();
+    // Fixture-side registry: the lookup resolves the URL through the entries.
+    vscode.workspace._mockConfig = {
+      get: (k: string) => (k === 'servers' ? [{ id: 's8k', serverUrl: 'http://s:8000' }] : undefined),
+    };
+    try {
+      const models = [
+        { id: 'cfg1', vllmModelId: 'm1', server: 's8k', cost: { input: 0.1 } },
+        { id: 'cfg2', vllmModelId: 'm2', server: 's8k', cost: { output: 0.2 } },
+      ] as ModelConfig[];
+      expect(findModelCost(models, 'http://s:8000/v1', 'm1')?.input).toBe(0.1); // normalized URL match
+      expect(findModelCost(models, url, 'm2')?.output).toBe(0.2);
+      expect(findModelCost(models, url, 'nope')).toBeUndefined();
+    } finally {
+      vscode.workspace._mockConfig = {};
+    }
   });
 });

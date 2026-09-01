@@ -160,20 +160,22 @@ describe('shipped vllm-copilot-models.schema.json (artifact)', () => {
     $defs: { requestParams: { additionalProperties: boolean; properties: Record<string, { not?: unknown; type?: string; minimum?: number }> } };
   };
 
-  it('requires serverUrl and id', () => {
-    expect(schema.required).toContain('serverUrl');
+  it('requires id and server', () => {
+    expect(schema.required).toContain('server');
     expect(schema.required).toContain('id');
   });
 
-  it('requires serverUrl and id to be non-empty', () => {
-    expect(schema.properties.serverUrl.minLength).toBe(1);
+  it('requires server and id to be non-empty', () => {
+    expect(schema.properties.server.minLength).toBe(1);
     expect(schema.properties.id.minLength).toBe(1);
   });
 
-  it('declares the optional serverDisplayName label (string)', () => {
-    // Rename Server feature: keep the shipped schema in sync with ModelConfig —
-    // a missing declaration here would make editors flag valid configs.
-    expect(schema.properties.serverDisplayName?.type).toBe('string');
+  it('no longer carries server facts on the model entry', () => {
+    // Registry sweep: serverUrl/serverType/serverDisplayName/requestHeaders live
+    // ONLY on vllm-copilot.servers entries now.
+    for (const gone of ['serverUrl', 'serverType', 'serverDisplayName', 'requestHeaders']) {
+      expect(schema.properties[gone]).toBeUndefined();
+    }
   });
 
   it('allows unknown request params (pass-through)', () => {
@@ -209,8 +211,13 @@ describe('package.json inline models schema (artifact)', () => {
     pkg.contributes.configuration[0].properties['vllm-copilot.models'].items.properties;
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
-  it('declares serverDisplayName alongside serverType', () => {
-    expect(inlineProps().serverDisplayName?.type).toBe('string');
-    expect(inlineProps().serverType).toBeDefined();
+  it('declares server (registry ref) and no legacy server facts', () => {
+    expect(inlineProps().server?.type).toBe('string');
+    for (const gone of ['serverUrl', 'serverType', 'serverDisplayName', 'requestHeaders']) {
+      expect(inlineProps()[gone]).toBeUndefined();
+    }
+    const required =
+      pkg.contributes.configuration[0].properties['vllm-copilot.models'].items.required;
+    expect(required).toEqual(expect.arrayContaining(['id', 'server']));
   });
 });

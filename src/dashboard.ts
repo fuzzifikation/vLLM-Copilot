@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import { getConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, modelServerIdentity, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
-import { readModels } from './configStore.js';
+import { readModels, readServers } from './configStore.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from './openRouter.js';
 import {
@@ -466,13 +466,28 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       if (!this.visible || epoch !== this.refreshEpoch) {
         return;
       }
-      // Group models by server IDENTITY (URL + header fingerprint), not URL
-      // alone. Headers are per-model in this project — two models sharing a URL
-      // with different credentials/scopes are DIFFERENT logical servers and each
-      // gets its own engine, poller, and tree node (one model's credentials must
-      // never drive a sibling's metrics). Collect ALL wire ids per identity — the
-      // engine needs them to resolve the per-backend context window (non-vLLM
-      // only; OpenRouter relay models can have different windows).
+      // Group models by their server registry ENTRY, iterating servers[] in
+      // array order so node order follows settings order. Nodes are keyed by
+      // fingerprint (not entry id): two entries with identical URL *and* auth
+      // share one engine and one node — their models join the first entry's
+      // node (§5/§7). A model whose `server` ref does not resolve has no URL
+      // to group by: it is reported as unreachable, named by its ref.
+      const servers = config.servers || [];
+      const serverById = new Map(servers.map(s => [s.id, s]));
+      // entry id → accumulated wire ids (models resolving to this entry).
+      const modelIdsByEntry = new Map<string, string[]>();
+      const unreachable: ModelConfig[] = [];
+      for (const model of config.models) {
+        const entry = serverById.get(model.server);
+        if (!entry) { unreachable.push(model); continue; }
+        const wireId = model.vllmModelId ?? model.id;
+        if (!wireId) continue;
+        let list = modelIdsByEntry.get(entry.id);
+        if (!list) { list = []; modelIdsByEntry.set(entry.id, list); }
+        list.push(wireId);
+      }
+
+      // Emit one engine per distinct fingerprint, in servers[] array order.
       const identityMap = new Map<string, {
         url: string;
         requestHeaders: Record<string, string>;
@@ -480,26 +495,25 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         serverType?: ServerType;
         serverDisplayName?: string;
       }>();
-      for (const model of config.models) {
-        // A model without a URL is unreachable and has no identity to group by.
-        if (!model.serverUrl) continue;
-        const identity = modelServerIdentity(model);
+      for (const entry of servers) {
+        const identity = modelServerIdentity({ id: '', server: entry.id } as ModelConfig, servers);
         const fp = identity.fingerprint;
         let group = identityMap.get(fp);
         if (!group) {
-          group = { url: identity.serverUrl, requestHeaders: identity.requestHeaders, modelIds: [], serverType: model.serverType };
+          // Node label from the entry: trimmed, skipped for OpenRouter (the
+          // fixed relay endpoint is not renamable). Whitespace-only never renders.
+          const name = entry.serverType === 'openrouter' ? undefined : entry.displayName?.trim();
+          group = { url: identity.serverUrl, requestHeaders: identity.requestHeaders, modelIds: [], serverType: entry.serverType, serverDisplayName: name || undefined };
           identityMap.set(fp, group);
         }
-        const wireId = model.vllmModelId ?? model.id;
-        if (wireId) group.modelIds.push(wireId);
-        if (!group.serverType && model.serverType) group.serverType = model.serverType;
-        // Single normalization/filtering point for the display name: trimmed
-        // (whitespace-only hand-edits never render as blank labels) and skipped
-        // for OpenRouter (the fixed relay endpoint is not renamable).
-        const name = model.serverType === 'openrouter'
-          ? undefined
-          : model.serverDisplayName?.trim();
-        if (!group.serverDisplayName && name) group.serverDisplayName = name;
+        const ids = modelIdsByEntry.get(entry.id);
+        if (ids) group.modelIds.push(...ids);
+      }
+
+      // Report models whose server ref does not resolve so they never vanish
+      // silently from the sidebar.
+      for (const m of unreachable) {
+        this.outputChannel.appendLine(`[DASHBOARD] Model "${m.id || m.vllmModelId || '(unnamed)'}" references unknown server "${m.server}" — unreachable until fixed.`);
       }
 
       for (const [fp, group] of identityMap) {
@@ -1252,7 +1266,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     // still needs its Overall row visible).
     const modelIds = Array.from(new Set([...Object.keys(usage.today), ...Object.keys(usage.allTime)])).sort();
     return modelIds.map(modelId => {
-      const entry = findModelConfig(models, e.serverUrl, modelId);
+      const entry = findModelConfig(models, readServers(), e.serverUrl, modelId);
       const label = entry?.displayName || entry?.id || modelId;
       // Cost: actual reported (OpenRouter) when present, else the per-1M estimate.
       const { today, overall, currency } = this.modelCostFor(e.serverUrl, modelId, entry?.cost);
@@ -1289,9 +1303,11 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
    *  Two identities sharing a URL have different credentials, so each model
    *  belongs to exactly one identity and appears only under its own node. */
   private getRelayModels(fp: string): ModelConfig[] {
+    const servers = readServers();
+    const openrouterIds = new Set(servers.filter(s => s.serverType === 'openrouter').map(s => s.id));
     return readModels()
-      .filter(m => m.serverType === 'openrouter')
-      .filter(m => modelServerIdentity(m).fingerprint === fp);
+      .filter(m => openrouterIds.has(m.server))
+      .filter(m => modelServerIdentity(m, servers).fingerprint === fp);
   }
 
   /** The cached per-model context window for a relay model, if resolved. */

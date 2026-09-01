@@ -116,7 +116,7 @@ describe('parsePresetFile (format v2)', () => {
   });
 
   it('PRESET_CONFIG_KEYS excludes identity and transport fields', () => {
-    for (const forbidden of ['id', 'serverUrl', 'requestHeaders', 'serverType', 'provider']) {
+    for (const forbidden of ['id', 'server', 'serverUrl', 'requestHeaders', 'serverType', 'provider']) {
       expect(PRESET_CONFIG_KEYS.has(forbidden)).toBe(false);
     }
     for (const allowed of ['vllmModelId', 'modelModes', 'defaultParams', 'estimateCharsPerToken']) {
@@ -218,7 +218,7 @@ describe('mergePresetWithUserConfig', () => {
   };
 
   it('returns preset unchanged when no user config exists', () => {
-    const userConfig: ModelConfig = { id: 'test/model' };
+    const userConfig: ModelConfig = { id: 'test/model', server: 'test-server' };
     const merged = mergePresetWithUserConfig(presetConfig, userConfig);
 
     expect(merged.id).toBe('test/model');
@@ -230,6 +230,7 @@ describe('mergePresetWithUserConfig', () => {
   it('preset replaces all user modelModes (no preservation of old modes)', () => {
     const userConfig: ModelConfig = {
       id: 'test/model',
+      server: 'test-server',
       modelModes: {
         'Custom Mode': { temperature: 0.1, top_p: 0.5 },
       },
@@ -246,6 +247,7 @@ describe('mergePresetWithUserConfig', () => {
   it('preset wins over all overlapping user modelModes', () => {
     const userConfig: ModelConfig = {
       id: 'test/model',
+      server: 'test-server',
       modelModes: {
         'Think': { enable_thinking: true, temperature: 0.01 },
         'Custom Mode': { temperature: 0.1 },
@@ -261,6 +263,7 @@ describe('mergePresetWithUserConfig', () => {
   it('preset fully replaces top-level fields regardless of user values', () => {
     const userConfig: ModelConfig = {
       id: 'test/model',
+      server: 'test-server',
       displayName: 'My Custom Name',
       maxOutputTokens: 999,
       capabilities: {
@@ -288,6 +291,7 @@ describe('mergePresetWithUserConfig', () => {
     };
     const userConfig: ModelConfig = {
       id: 'test/model',
+      server: 'test-server',
       modelModes: {
         'User Mode': { temperature: 0.5 },
       },
@@ -301,7 +305,7 @@ describe('mergePresetWithUserConfig', () => {
 
   it('handles both preset and user having no modelModes', () => {
     const emptyPreset: PresetConfig = { vllmModelId: 'test/model' };
-    const emptyUser: ModelConfig = { id: 'test/model' };
+    const emptyUser: ModelConfig = { id: 'test/model', server: 'test-server' };
     const merged = mergePresetWithUserConfig(emptyPreset, emptyUser);
 
     expect(merged.modelModes).toBeUndefined();
@@ -314,11 +318,12 @@ describe('mergePresetWithUserConfig', () => {
       maxOutputTokens: 32768,
     };
     // The user configured the model under a short server alias.
-    const userConfig: ModelConfig = { id: 'zai-glm-52', vllmModelId: 'zai-glm-52' };
+    const userConfig: ModelConfig = { id: 'zai-glm-52', server: 'user-server', vllmModelId: 'zai-glm-52' };
     const merged = mergePresetWithUserConfig(preset, userConfig);
 
     // Identity stays the user's; preset only contributes the other fields.
     expect(merged.id).toBe('zai-glm-52');
+    expect(merged.server).toBe('user-server');
     expect(merged.vllmModelId).toBe('zai-glm-52');
     expect(merged.displayName).toBe('GLM-5.2');
     expect(merged.maxOutputTokens).toBe(32768);
@@ -326,7 +331,7 @@ describe('mergePresetWithUserConfig', () => {
 
   it('drops vllmModelId when the user config has none', () => {
     const preset: PresetConfig = { vllmModelId: 'repo/Model', maxOutputTokens: 100 };
-    const userConfig: ModelConfig = { id: 'my-model' }; // no vllmModelId
+    const userConfig: ModelConfig = { id: 'my-model', server: 'test-server' }; // no vllmModelId
     const merged = mergePresetWithUserConfig(preset, userConfig);
 
     expect(merged.id).toBe('my-model');

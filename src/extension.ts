@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider.js';
-import { getConfig, validateConfig, resolveServerConfig, resolveServerType, normalizeServerUrl } from './config.js';
+import { getConfig, validateConfig, normalizeServerUrl } from './config.js';
 import { FileLogger } from './logger.js';
 import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault, ensureAgentHostModelsEnabled } from './autoConfig.js';
 import { setSessionManagerOutput } from './sessionManager.js';
 import { syncBundledPersonalities } from './personalityStore.js';
-import { readModels } from './configStore.js';
+import { readServers } from './configStore.js';
+import { resolveServer } from './serverRegistry.js';
 import {
   registerTestAndRefreshModelsCommand,
   registerDiagnoseConnectionCommand,
@@ -221,28 +222,21 @@ export async function activate(context: vscode.ExtensionContext) {
     // Deep-Dive: open editor-area webview for a single server
     context.subscriptions.push(
       vscode.commands.registerCommand('vllm-copilot.openDeepDive', async (arg?: any) => {
-        const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
-        if (!serverUrl) {
-          vscode.window.showErrorMessage('Server URL not provided.');
+        const servers = readServers();
+        // Resolve the target server entry: from a tree item's server id, or by
+        // matching a URL argument against the registry.
+        const argUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
+        const argId = typeof arg === 'object' ? arg?.server : undefined;
+        const entry = argId
+          ? servers.find(s => s.id === argId)
+          : argUrl
+            ? servers.find(s => normalizeServerUrl(s.serverUrl) === normalizeServerUrl(argUrl))
+            : undefined;
+        if (!entry) {
+          vscode.window.showErrorMessage(argUrl ? `No registered server matches "${argUrl}".` : 'Server not provided.');
           return;
         }
-        // When launched from the dashboard tree node, the item carries this
-        // server identity's EXACT credentials (per-model headers — a URL may host
-        // several identities). Fall back to the first model pointing at the URL
-        // for programmatic/string invocations.
-        const fromTreeItem = typeof arg !== 'string' && arg?.requestHeaders;
-        const models = readModels();
-        // A hand-typed URL may be spelled differently than the stored one
-        // (`http://host:8000/v1` vs `http://host:8000`), so every lookup below
-        // compares NORMALIZED urls and shares one matcher — backend type,
-        // credentials and display name must come from the same set of models.
-        const normalizedArg = normalizeServerUrl(serverUrl);
-        const sameServer = (m: { serverUrl?: string }) =>
-          !!m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedArg;
-        const firstModel = models.find(sameServer);
-        const serverType = fromTreeItem
-          ? (arg.serverType ?? 'vllm')
-          : resolveServerType(firstModel);
+        const serverType = entry.serverType ?? 'vllm';
         // Deep-Dive is a vLLM metrics view — non-vLLM backends don't expose
         // /metrics, so the panel would be all empty rows. Guard even though the
         // context menu already hides it for non-vLLM servers (defense in depth).
@@ -252,21 +246,13 @@ export async function activate(context: vscode.ExtensionContext) {
           );
           return;
         }
-        const headers = fromTreeItem
-          ? arg.requestHeaders
-          : (firstModel ? resolveServerConfig(firstModel).requestHeaders : {});
-        // Display name: carried on the tree item when present; otherwise look
-        // it up (first non-empty, trimmed, never OpenRouter) from the models on
-        // this URL — covers string AND bare-object programmatic invocations.
-        const carried = typeof arg === 'object' && typeof arg?.serverDisplayName === 'string'
-          ? arg.serverDisplayName.trim()
-          : undefined;
-        const displayName = carried || models.find(m =>
-            sameServer(m)
-            && m.serverType !== 'openrouter'
-            && m.serverDisplayName?.trim()
-          )?.serverDisplayName?.trim();
-        openDeepDive(serverUrl, headers, serverType, context, outputChannel, displayName);
+        const resolved = resolveServer(entry.id, servers);
+        if (!resolved) {
+          vscode.window.showErrorMessage(`Server "${entry.id}" could not be resolved.`);
+          return;
+        }
+        const displayName = entry.serverType === 'openrouter' ? undefined : entry.displayName?.trim() || undefined;
+        openDeepDive(resolved.serverUrl, resolved.requestHeaders, serverType, context, outputChannel, displayName);
       }),
     );
 

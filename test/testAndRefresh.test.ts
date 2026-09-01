@@ -5,52 +5,63 @@ import * as diagnostics from '../src/diagnostics.js';
 import type { ModelConfig } from '../src/config.js';
 
 describe('groupModelsByServer', () => {
-  it('groups models sharing the same URL and headers', () => {
+  it('groups models sharing the same server entry', () => {
     const models: ModelConfig[] = [
-      { id: 'm1', serverUrl: 'http://s:8000' },
-      { id: 'm2', serverUrl: 'http://s:8000' },
+      { id: 'm1', server: 'srv' },
+      { id: 'm2', server: 'srv' },
     ];
-    const groups = groupModelsByServer(models);
+    const groups = groupModelsByServer(models, [{ id: 'srv', serverUrl: 'http://s:8000' }]);
     expect(groups).toHaveLength(1);
     expect(groups[0].models).toHaveLength(2);
   });
 
-  it('separates models with different URLs', () => {
+  it('separates models on different server entries', () => {
     const models: ModelConfig[] = [
-      { id: 'm1', serverUrl: 'http://a:8000' },
-      { id: 'm2', serverUrl: 'http://b:8000' },
+      { id: 'm1', server: 'a' },
+      { id: 'm2', server: 'b' },
     ];
-    const groups = groupModelsByServer(models);
+    const groups = groupModelsByServer(models, [
+      { id: 'a', serverUrl: 'http://a:8000' },
+      { id: 'b', serverUrl: 'http://b:8000' },
+    ]);
     expect(groups).toHaveLength(2);
   });
 
-  it('separates models on one URL that use different headers', () => {
+  it('separates entries on one URL that use different headers', () => {
     const models: ModelConfig[] = [
-      { id: 'm1', serverUrl: 'http://s:8000', requestHeaders: { 'X-Key': 'a' } },
-      { id: 'm2', serverUrl: 'http://s:8000', requestHeaders: { 'X-Key': 'b' } },
+      { id: 'm1', server: 's1' },
+      { id: 'm2', server: 's2' },
     ];
-    const groups = groupModelsByServer(models);
+    const groups = groupModelsByServer(models, [
+      { id: 's1', serverUrl: 'http://srv:8000', requestHeaders: { 'X-Key': 'a' } },
+      { id: 's2', serverUrl: 'http://srv:8000', requestHeaders: { 'X-Key': 'b' } },
+    ]);
     expect(groups).toHaveLength(2);
   });
 
   it('groups URL spellings of one server together and probes the canonical form', () => {
+    // Two registry entries whose URL spellings normalize to the same server
+    // share a fingerprint, so one probe covers both — in canonical form.
     const models: ModelConfig[] = [
-      { id: 'a', serverUrl: 'http://s:8000' },
-      { id: 'b', serverUrl: 'http://s:8000/v1/' },
+      { id: 'a', server: 'e1' },
+      { id: 'b', server: 'e2' },
     ];
-    const groups = groupModelsByServer(models);
+    const groups = groupModelsByServer(models, [
+      { id: 'e1', serverUrl: 'http://s:8000' },
+      { id: 'e2', serverUrl: 'http://s:8000/v1/' },
+    ]);
     expect(groups).toHaveLength(1);
     // The group carries the URL the probe fetches through — canonical, so the
     // caller doesn't have to normalize again.
     expect(groups[0].serverUrl).toBe('http://s:8000');
   });
 
-  it('gives each model without a serverUrl its own group', () => {
+  it('gives each model with an unresolvable server ref its own group', () => {
     const models: ModelConfig[] = [
-      { id: 'no-url-1' },
-      { id: 'no-url-2' },
+      { id: 'no-url-1', server: 'gone' },
+      { id: 'no-url-2', server: 'gone' },
     ];
-    const groups = groupModelsByServer(models);
+    const groups = groupModelsByServer(models, []);
     expect(groups).toHaveLength(2);
     for (const g of groups) {
       expect(g.serverUrl).toBe('');
@@ -58,14 +69,14 @@ describe('groupModelsByServer', () => {
     }
   });
 
-  it('mixes serverful and serverless models correctly', () => {
+  it('mixes resolvable and dangling models correctly', () => {
     const models: ModelConfig[] = [
-      { id: 'm1', serverUrl: 'http://s:8000' },
-      { id: 'no-url' },
-      { id: 'm2', serverUrl: 'http://s:8000' },
+      { id: 'm1', server: 'srv' },
+      { id: 'no-url', server: 'gone' },
+      { id: 'm2', server: 'srv' },
     ];
-    const groups = groupModelsByServer(models);
-    // Two groups: one for the server, one for the serverless model
+    const groups = groupModelsByServer(models, [{ id: 'srv', serverUrl: 'http://s:8000' }]);
+    // Two groups: one for the server, one for the dangling model
     const serverGroup = groups.find(g => g.serverUrl !== '');
     const noUrlGroup = groups.find(g => g.serverUrl === '');
     expect(serverGroup?.models).toHaveLength(2);
@@ -91,8 +102,16 @@ describe('registerTestAndRefreshModelsCommand', () => {
     return (vscode as any).commands._run('vllm-copilot.testAndRefreshModels');
   }
 
-  function configWith(models: any[]): any {
-    return { get: (key: string) => (key === 'models' ? models : undefined) };
+    function configWith(models: any[]): any {
+    // Auto-derive a registry: every distinct server ref in the fixtures probes
+    // the canonical test URL, mirroring the real settings the command reads.
+    const servers = [...new Set(models.map(m => m.server).filter(Boolean))].map(id => ({
+      id,
+      serverUrl: 'http://s:8000',
+    }));
+    return {
+      get: (key: string) => (key === 'models' ? models : key === 'servers' ? servers : undefined),
+    };
   }
 
   beforeEach(() => {
@@ -126,7 +145,7 @@ describe('registerTestAndRefreshModelsCommand', () => {
   });
 
   it('reports a matching server as OK and clears the cache', async () => {
-    vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 's-model' }]);
+    vscode.workspace._mockConfig = configWith([{ id: 'm1', server: 'srv', vllmModelId: 's-model' }]);
     // The shared resolver re-fetches /v1/models for the context display, so
     // return a FRESH response per call (a shared Response would be consumed by the
     // first reader and break the second — Body is unusable).
@@ -141,8 +160,8 @@ describe('registerTestAndRefreshModelsCommand', () => {
 
   it('fetches once per unique server for grouping, and the resolver supplies contexts', async () => {
     vscode.workspace._mockConfig = configWith([
-      { id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'a' },
-      { id: 'm2', serverUrl: 'http://s:8000', vllmModelId: 'b' },
+      { id: 'm1', server: 'srv', vllmModelId: 'a' },
+      { id: 'm2', server: 'srv', vllmModelId: 'b' },
     ]);
     fetchFn.mockImplementation(async () => jsonResponse({ data: [{ id: 'a', max_model_len: 100 }, { id: 'b', max_model_len: 200 }] }));
 
@@ -160,7 +179,7 @@ describe('registerTestAndRefreshModelsCommand', () => {
     // "Qwen/Qwen3.6-27B-FP8" violates the wire-id contract. Exact matching must
     // surface it as parked (no-match), NOT forgive it and report ✓ — the chat
     // request would be rejected by the server.
-    vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'Qwen/Qwen3.6-27B' }]);
+    vscode.workspace._mockConfig = configWith([{ id: 'm1', server: 'srv', vllmModelId: 'Qwen/Qwen3.6-27B' }]);
     fetchFn.mockImplementation(async () => jsonResponse({ data: [{ id: 'Qwen/Qwen3.6-27B-FP8', max_model_len: 100 }] }));
 
     await run();
@@ -172,7 +191,7 @@ describe('registerTestAndRefreshModelsCommand', () => {
 
   it('matches a configured model to its exact served id', async () => {
     // Exact wire-id match: config vllmModelId === server served id.
-    vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'Qwen/Qwen3.6-27B-FP8' }]);
+    vscode.workspace._mockConfig = configWith([{ id: 'm1', server: 'srv', vllmModelId: 'Qwen/Qwen3.6-27B-FP8' }]);
     fetchFn.mockImplementation(async () => jsonResponse({ data: [{ id: 'Qwen/Qwen3.6-27B-FP8', max_model_len: 100 }] }));
 
     await run();
@@ -183,8 +202,8 @@ describe('registerTestAndRefreshModelsCommand', () => {
 
   it('reports parked models on a server that also has matches', async () => {
     vscode.workspace._mockConfig = configWith([
-      { id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'a' },
-      { id: 'm2', serverUrl: 'http://s:8000', vllmModelId: 'not-served' },
+      { id: 'm1', server: 'srv', vllmModelId: 'a' },
+      { id: 'm2', server: 'srv', vllmModelId: 'not-served' },
     ]);
     fetchFn.mockImplementation(async () => jsonResponse({ data: [{ id: 'a', max_model_len: 100 }] }));
 
@@ -199,7 +218,7 @@ describe('registerTestAndRefreshModelsCommand', () => {
   it('does NOT report a matched model as healthy when its context cannot be resolved', async () => {
     // A llama.cpp /v1/models entry has no max_model_len → the shared resolver
     // throws. Test & Refresh must surface it as a warning, never a green ✓.
-    vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'llama-model' }]);
+    vscode.workspace._mockConfig = configWith([{ id: 'm1', server: 'srv', vllmModelId: 'llama-model' }]);
     fetchFn.mockImplementation(async () => jsonResponse({ data: [{ id: 'llama-model', owned_by: 'llamacpp' }] }));
 
     await run();
@@ -220,7 +239,7 @@ describe('registerTestAndRefreshModelsCommand', () => {
   });
 
   it('reports an auth failure as a server error', async () => {
-    vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 's-model' }]);
+    vscode.workspace._mockConfig = configWith([{ id: 'm1', server: 'srv', vllmModelId: 's-model' }]);
     fetchFn.mockResolvedValue(jsonResponse({}, 401));
 
     await run();
@@ -230,7 +249,7 @@ describe('registerTestAndRefreshModelsCommand', () => {
   });
 
   it('offers a deep diagnostic when a server fails to connect', async () => {
-    vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 's-model' }]);
+    vscode.workspace._mockConfig = configWith([{ id: 'm1', server: 'srv', vllmModelId: 's-model' }]);
     fetchFn.mockRejectedValue(new Error('ECONNREFUSED'));
     warningSpy.mockResolvedValue('Run Diagnostic' as any); // 3b popup ignores its return; the offer consumes it
 
@@ -248,7 +267,8 @@ describe('registerTestAndRefreshModelsCommand', () => {
   it('warns about network gating settings on failure and offers Open Settings', async () => {
     vscode.workspace._mockConfig = {
       get: (key: string) =>
-        key === 'models' ? [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 's-model' }]
+        key === 'models' ? [{ id: 'm1', server: 'srv', vllmModelId: 's-model' }]
+        : key === 'servers' ? [{ id: 'srv', serverUrl: 'http://s:8000' }]
         : key === 'proxySupport' ? 'off'
         : undefined,
     };
@@ -264,7 +284,7 @@ describe('registerTestAndRefreshModelsCommand', () => {
   });
 
   it('hints to open Model Settings when a reachable server has no matching model', async () => {
-    vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 's-model' }]);
+    vscode.workspace._mockConfig = configWith([{ id: 'm1', server: 'srv', vllmModelId: 's-model' }]);
     fetchFn.mockResolvedValue(jsonResponse({ data: [{ id: 'other-model' }] }));
     warningSpy.mockResolvedValue('Open Model Settings' as any);
 
@@ -281,7 +301,7 @@ describe('registerTestAndRefreshModelsCommand', () => {
 
     await run();
 
-    expect(warningSpy).toHaveBeenCalledWith(expect.stringContaining('no serverUrl configured'));
+    expect(warningSpy).toHaveBeenCalledWith(expect.stringContaining('no resolvable server configured'));
   });
 
   it('offers a deep diagnostic for an unreachable server even when a server-less model precedes it', async () => {
@@ -290,7 +310,7 @@ describe('registerTestAndRefreshModelsCommand', () => {
     // The server-less group performs no fetch; the s:8000 fetch (the only one) rejects.
     vscode.workspace._mockConfig = configWith([
       { id: 'no-url' },
-      { id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 's-model' },
+      { id: 'm1', server: 'srv', vllmModelId: 's-model' },
     ]);
     fetchFn.mockRejectedValue(new Error('ECONNREFUSED'));
     warningSpy.mockResolvedValue('Run Diagnostic' as any);
@@ -308,7 +328,7 @@ describe('registerTestAndRefreshModelsCommand', () => {
 
   it('reports a reachable server that served zero models (not silent)', async () => {
     // Finding 2: a no-match result with an empty model list must surface, not vanish.
-    vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 's-model' }]);
+    vscode.workspace._mockConfig = configWith([{ id: 'm1', server: 'srv', vllmModelId: 's-model' }]);
     fetchFn.mockResolvedValue(jsonResponse({ data: [] }));
 
     await run();
@@ -338,7 +358,7 @@ describe('registerTestAndRefreshModelsCommand', () => {
 
   it('still runs clearCache when the diagnostic rejects', async () => {
     // Finding 4: a diagnostic rejection must not escape and must not skip clearCache.
-    vscode.workspace._mockConfig = configWith([{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 's-model' }]);
+    vscode.workspace._mockConfig = configWith([{ id: 'm1', server: 'srv', vllmModelId: 's-model' }]);
     fetchFn.mockRejectedValue(new Error('ECONNREFUSED'));
     diagSpy.mockRejectedValueOnce(new Error('boom'));
     warningSpy.mockResolvedValue('Run Diagnostic' as any);

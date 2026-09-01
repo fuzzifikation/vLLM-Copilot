@@ -66,16 +66,15 @@ describe('sanitizeRequestHeaders', () => {
   });
 
   /**
-   * Sanitization now happens per-model inside resolveServerConfig. Feed the raw
-   * headers as a model's requestHeaders and read back the sanitized result.
+   * Sanitization now happens on the registry entry inside resolveServerConfig.
+   * Feed the raw headers as the entry's requestHeaders and read back the result.
    */
   function getConfigRequestHeaders(rawHeaders: Record<string, string>): Record<string, string> {
-    const { requestHeaders } = resolveServerConfig({
-      id: 'm',
-      serverUrl: 'http://localhost:8000',
-      requestHeaders: rawHeaders,
-    });
-    return requestHeaders;
+    const resolved = resolveServerConfig(
+      { id: 'm', server: 'srv' },
+      [{ id: 'srv', serverUrl: 'http://localhost:8000', requestHeaders: rawHeaders }],
+    );
+    return resolved!.requestHeaders;
   }
 
   it('allows valid custom headers', () => {

@@ -33,11 +33,11 @@ function loadWebview(
     key: 'srv-k1',
     url: 'http://server:8000',
     serverModelIds,
+    ...(serverType ? { serverType } : {}),
     models: [{
       id: 'model-config',
       vllmModelId: 'wire-model',
       serverUrl: 'http://server:8000',
-      ...(serverType ? { serverType } : {}),
       ...(initialProvider !== undefined ? { provider: initialProvider } : {}),
       ...(initialRoutingMode !== undefined ? { routingMode: initialRoutingMode } : {}),
       defaultParams: { parallel_tool_calls: true },

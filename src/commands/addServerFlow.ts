@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import type { ModelConfig, ServerType } from '../config.js';
-import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, toPublicModelConfig } from '../config.js';
-import { replaceModelConfig, readModels, type IdentifiedModelConfig } from '../configStore.js';
+import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, toPublicModelConfig, serverFingerprint, sanitizeRequestHeaders } from '../config.js';
+import { replaceModelConfig, readModels, readServers, writeServers, type IdentifiedModelConfig } from '../configStore.js';
+import type { ServerEntry } from '../serverRegistry.js';
+import { serverEntryFingerprint, generateServerId, resolveServer } from '../serverRegistry.js';
 import type { VllmModel } from '../types.js';
 import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../messageConverter.js';
 import { detectServerType } from '../runtimeLimits.js';
@@ -88,6 +90,44 @@ export async function persistAddedModel(
   await replaceModelConfig(finalConfig);
   await ensureByokUtilityDefault();
   onSaved?.();
+}
+
+/**
+ * Find-or-create the registry entry for a server connection (normalized URL +
+ * auth). Matching is by {@link serverEntryFingerprint}: an existing entry with
+ * the same URL + headers is reused as-is (its id, label and backend type are
+ * preserved); otherwise a new entry is appended with a URL-derived id from
+ * {@link generateServerId} and the registry is written whole-array.
+ *
+ * Returns the id the caller puts on the model's `server` field. Models never
+ * carry server facts — URL, auth, type and label live only on the registry.
+ * @internal Exported for the auto-configure flow.
+ */
+export async function ensureServerEntry(options: {
+  serverUrl: string;
+  requestHeaders?: Record<string, string>;
+  serverType?: ServerType;
+  preferredId?: string;
+}): Promise<string> {
+  const normalizedUrl = normalizeServerUrl(options.serverUrl);
+  const headers = sanitizeRequestHeaders(options.requestHeaders ?? {});
+  const servers = readServers();
+  const fingerprint = serverFingerprint(normalizedUrl, headers);
+  const existing = servers.find(s => serverEntryFingerprint(s) === fingerprint);
+  if (existing) return existing.id;
+
+  const takenIds = new Set(servers.map(s => s.id));
+  const id = options.preferredId && !takenIds.has(options.preferredId)
+    ? options.preferredId
+    : generateServerId(normalizedUrl, takenIds);
+  const newEntry: ServerEntry = {
+    id,
+    serverUrl: normalizedUrl,
+    ...(options.serverType ? { serverType: options.serverType } : {}),
+    ...(Object.keys(headers).length > 0 ? { requestHeaders: headers } : {}),
+  };
+  await writeServers([...servers, newEntry]);
+  return id;
 }
 
 /**
@@ -395,9 +435,12 @@ export async function runOpenRouterAddFlow(
   );
 
   // 4. Duplicate detection against the FIXED API base (mirrors the vLLM path).
+  //    Models reference the registry, so "on the OpenRouter server" resolves
+  //    through each model's server entry — not a URL field on the model.
   const apiBase = normalizeServerUrl(OPENROUTER_API_BASE); // 'https://openrouter.ai/api'
+  const registeredServers = readServers();
   const existingOpenRouterModels = existingModels.filter(
-    (m) => m.serverUrl && normalizeServerUrl(m.serverUrl) === apiBase
+    (m) => resolveServer(m.server, registeredServers)?.serverUrl === apiBase
   );
   let replaceExistingId: string | undefined;
   const sameModelEntries = existingOpenRouterModels.filter((m) => resolveVllmModelId(m) === requestedId);
@@ -441,19 +484,26 @@ export async function runOpenRouterAddFlow(
 
   // 5. Assemble, confirm, save. `id` is composite on the fixed host so two
   //    OpenRouter models stay distinct; `vllmModelId` is the raw wire id.
+  //    The API key + URL live on the `openrouter` registry entry (upserted
+  //    here — create-if-absent, reuse when the same auth is already stored);
+  //    the model carries only the `server` reference.
+  const openRouterServerId = await ensureServerEntry({
+    serverUrl: OPENROUTER_API_BASE,
+    requestHeaders,
+    serverType: 'openrouter',
+    preferredId: 'openrouter',
+  });
   const finalConfig: IdentifiedModelConfig = {
     id: replaceExistingId ?? buildModelId(OPENROUTER_API_BASE, requestedId),
     vllmModelId: requestedId,
     displayName: info.displayName ?? requestedId,
-    serverUrl: OPENROUTER_API_BASE,
-    serverType: 'openrouter',
+    server: openRouterServerId,
     capabilities: info.capabilities,
     ...(info.modelModes ? { modelModes: info.modelModes } : {}),
     ...(info.defaultMode ? { defaultMode: info.defaultMode } : {}),
     ...(info.defaultParams ? { defaultParams: info.defaultParams } : {}),
     ...(info.cost ? { cost: info.cost } : {}),
     ...(info.runtimeLimits.maxOutputTokens !== undefined ? { maxOutputTokens: info.runtimeLimits.maxOutputTokens } : {}),
-    ...(Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {}),
   };
 
   await confirmAndSaveAddedModel(finalConfig, requestedId, OPENROUTER_API_BASE, buildOpenRouterSummary(info), output, onSaved);
@@ -512,11 +562,12 @@ async function handleServerFailure(
     return true; // cancelled → stop
   }
 
+  // URL + auth live on the registry entry; the stub model references it by id.
+  const serverId = await ensureServerEntry({ serverUrl, requestHeaders });
   const finalConfig: IdentifiedModelConfig = {
     id: buildModelId(serverUrl, modelId),
     vllmModelId: modelId,
-    serverUrl,
-    ...(Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {}),
+    server: serverId,
   };
 
   await persistAddedModel(finalConfig, onSaved);
@@ -569,9 +620,11 @@ export function registerAddServerModelCommand(
       return;
     }
 
-    // Check if this server already exists
+    // Check if this server already exists. Models reference the registry by
+    // `server` id — resolve each model's entry to compare by URL.
+    const registeredServers = readServers();
     const existingServerModels = existingModels.filter(
-      m => m.serverUrl && normalizeServerUrl(m.serverUrl) === serverUrl
+      m => resolveServer(m.server, registeredServers)?.serverUrl === serverUrl
     );
 
     if (existingServerModels.length > 0) {
@@ -714,17 +767,24 @@ export function registerAddServerModelCommand(
       return;
     }
 
-    // Attach the server + headers. `id` is composite ("<model> on <host>") so the
-    // same model on two servers stays distinct; `vllmModelId` remains the raw wire identity.
-    // When replacing an existing entry the existing id is kept so the store replaces
-    // rather than appends (the composite would only match if it was already the stored id).
+    // Attach the server via the registry. A sibling model on the same URL +
+    // auth reuses that server's entry id (fingerprint match in ensureServerEntry)
+    // instead of duplicating the entry; only a genuinely new connection gets a
+    // fresh URL-derived id. `id` is composite ("<model> on <host>") so the same
+    // model on two servers stays distinct; `vllmModelId` remains the raw wire
+    // identity. When replacing an existing entry the existing id is kept so the
+    // store replaces rather than appends (the composite would only match if it
+    // was already the stored id).
+    const serverId = await ensureServerEntry({
+      serverUrl,
+      requestHeaders: hasHeaders ? requestHeaders : {},
+      serverType: detectedServerType,
+    });
     const finalConfig: IdentifiedModelConfig = {
       ...discoveryResult.modelConfig,
       id: replaceExistingId ?? buildModelId(serverUrl, modelId),
       vllmModelId: modelId,
-      serverUrl,
-      serverType: detectedServerType,
-      ...(hasHeaders ? { requestHeaders } : {}),
+      server: serverId,
     };
     if (discoveryResult.suggestedMaxOutputTokens !== undefined && finalConfig.maxOutputTokens === undefined) {
       finalConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;

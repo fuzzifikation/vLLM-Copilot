@@ -135,7 +135,11 @@ describe('enqueueWrite (system message capture)', () => {
     await pipeline.processSystemMessages(
       { id: 'model' } as unknown as vscode.LanguageModelChatInformation,
       [{ role: vscode.LanguageModelChatMessageRole.System, content: [new vscode.LanguageModelTextPart('original prompt')] }],
-      { models: [{ id: 'model' }], enableFileLogging: false },
+      {
+        models: [{ id: 'model', server: 'srv' }],
+        servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }],
+        enableFileLogging: false,
+      },
     );
 
     const captureFile = path.join(dir, '.vllm', 'system-messages.json');

@@ -92,7 +92,9 @@ export async function autoConfigureModel(
   serverType: ServerType = 'vllm',
 ): Promise<AutoConfigResult> {
   const summary: string[] = [];
-  const modelConfig: ModelConfig = { id: modelId, vllmModelId: modelId };
+  // `server: ''` is a placeholder — the caller (Add/Auto-configure flow) resolves
+  // the real registry entry and overwrites the reference before persisting.
+  const modelConfig: ModelConfig = { id: modelId, vllmModelId: modelId, server: '' };
 
   // 1. Fetch served-model info for `root` (HF-repo link only — the context
   //    window itself comes from the shared resolver below).
@@ -324,7 +326,7 @@ async function fetchVllmModelInfo(
  * the flow modules acyclic.
  *
  * @param baseConfig - The user's existing config (for auto-configure) or a minimal identity
- *   config (for add-server). Fields like `serverUrl` are added by the caller.
+ *   config (for add-server). The `server` reference is set by the caller.
  * @param serverRoot - Optional `root` from vLLM server model info (used for preset matching).
  * @param log - Optional output-channel logger (remote preset lookup diagnostics).
  */
@@ -407,7 +409,9 @@ export async function resolveModelConfigForAdd(
     }
     if (picked === undefined) return null; // cancelled
     if (picked === 'Use Preset') {
-      const userConfig = baseConfig ?? { id: modelId, vllmModelId: modelId };
+      // `server: ''` is a placeholder like in autoConfigureModel — the calling
+      // flow overwrites it with the resolved registry entry id before saving.
+      const userConfig = baseConfig ?? { id: modelId, vllmModelId: modelId, server: '' };
       // Strict policy: a preset config is only usable when the server reports a real
       // context window. Resolve it HERE so the preset path cannot bypass the check —
       // a failed resolution THROWS and the model is not saved.

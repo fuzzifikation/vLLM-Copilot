@@ -88,41 +88,41 @@ describe('buildEndpoint', () => {
   });
 });
 
-describe('serverIdentity', () => {
-  /** Model config carrying only the server fields identity is computed from. */
-  const model = (overrides: Record<string, unknown> = {}) =>
-    ({ id: 'm', serverUrl: 'http://gw:8000', ...overrides } as any);
+describe('serverIdentity (registry-resolved)', () => {
+  const model = { id: 'm', server: 'srv' } as any;
+  const entry = (overrides: Record<string, unknown> = {}) =>
+    [{ id: 'srv', serverUrl: 'http://gw:8000', ...overrides } as any];
 
   it('fingerprints exactly the pair resolveServerConfig hands the request path', () => {
-    const m = model({ requestHeaders: { Authorization: 'Bearer a', Cookie: 'never-sent' } });
-    const identity = modelServerIdentity(m);
-    const resolved = resolveServerConfig(m);
+    const servers = entry({ requestHeaders: { Authorization: 'Bearer secret', Cookie: 'never-sent' } });
+    const identity = modelServerIdentity(model, servers);
+    const resolved = resolveServerConfig(model, servers)!;
     expect(identity.serverUrl).toBe(resolved.serverUrl);
     expect(identity.requestHeaders).toEqual(resolved.requestHeaders);
     // The hash is of THAT pair — so a server is one identity everywhere.
     expect(identity.fingerprint).toBe(serverFingerprint(resolved.serverUrl, resolved.requestHeaders));
   });
 
-  it('is the same identity from a bare URL + headers as from a model', () => {
-    const headers = { Authorization: 'Bearer a', Connection: 'keep-alive' };
+  it('is the same identity from a bare URL + headers as from a model + entry', () => {
+    const headers = { Authorization: 'Bearer secret', Connection: 'keep-alive' };
     expect(serverIdentity('http://gw:8000', headers).fingerprint)
-      .toBe(modelServerIdentity(model({ requestHeaders: headers })).fingerprint);
+      .toBe(modelServerIdentity(model, entry({ requestHeaders: headers })).fingerprint);
   });
 
   it('drops headers that never reach the wire so a server keeps one identity', () => {
-    const withBlocked = modelServerIdentity(model({ requestHeaders: { Authorization: 'Bearer a', Connection: 'keep-alive' } }));
-    const without = modelServerIdentity(model({ requestHeaders: { Authorization: 'Bearer a' } }));
+    const withBlocked = modelServerIdentity(model, entry({ requestHeaders: { Authorization: 'Bearer secret', Connection: 'keep-alive' } }));
+    const without = modelServerIdentity(model, entry({ requestHeaders: { Authorization: 'Bearer secret' } }));
     expect(withBlocked.fingerprint).toBe(without.fingerprint);
   });
 
   it('ignores header order and URL spelling variants', () => {
-    const a = modelServerIdentity(model({ requestHeaders: { 'X-A': '1', 'X-B': '2' } }));
-    const b = modelServerIdentity(model({ serverUrl: 'http://gw:8000/v1/', requestHeaders: { 'X-B': '2', 'X-A': '1' } }));
+    const a = modelServerIdentity(model, entry({ requestHeaders: { 'X-A': '1', 'X-B': '2' } }));
+    const b = modelServerIdentity(model, entry({ serverUrl: 'http://gw:8000/v1/', requestHeaders: { 'X-B': '2', 'X-A': '1' } }));
     expect(a.fingerprint).toBe(b.fingerprint);
   });
 
-  it('is empty for a model without a server URL', () => {
-    const identity = modelServerIdentity(model({ serverUrl: undefined }));
+  it('is empty when the server ref resolves to nothing', () => {
+    const identity = modelServerIdentity({ id: 'm', server: 'ghost' } as any, entry());
     expect(identity.serverUrl).toBe('');
     expect(identity.requestHeaders).toEqual({});
   });

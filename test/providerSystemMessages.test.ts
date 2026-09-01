@@ -47,7 +47,7 @@ describe('system message processing', () => {
     const result = await pipeline.processSystemMessages(
       makeModel('model'),
       [systemMessage],
-      { models: [{ id: 'model' }], enableFileLogging: false },
+      { models: [{ id: 'model', server: 'srv' }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }], enableFileLogging: false },
     );
 
     expect(result).toEqual([systemMessage]);
@@ -66,7 +66,7 @@ describe('system message processing', () => {
     await pipeline.processSystemMessages(
       makeModel('model'),
       [{ role: vscode.LanguageModelChatMessageRole.System, content: [new vscode.LanguageModelTextPart('x')] }],
-      { models: [{ id: 'model' }], enableFileLogging: false },
+      { models: [{ id: 'model', server: 'srv' }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }], enableFileLogging: false },
     );
 
     expect(captureWriter).not.toHaveBeenCalled();
@@ -79,7 +79,7 @@ describe('system message processing', () => {
     const result = await pipeline.processSystemMessages(
       makeModel('model'),
       [userMsg],
-      { models: [{ id: 'model' }], enableFileLogging: false },
+      { models: [{ id: 'model', server: 'srv' }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }], enableFileLogging: false },
     );
 
     expect(result).toEqual([userMsg]);
@@ -98,7 +98,7 @@ describe('system message processing', () => {
       const result = await pipeline.processSystemMessages(
         makeModel('model'),
         [msg],
-        { models: [{ id: 'model', systemMessageReplacementsFile: bad }], enableFileLogging: false },
+        { models: [{ id: 'model', server: 'srv', systemMessageReplacementsFile: bad }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }], enableFileLogging: false },
       );
       // Fallback: original messages pass through.
       expect(result).toEqual([msg]);
@@ -121,7 +121,7 @@ describe('system message processing', () => {
     const result = await pipeline.processSystemMessages(
       makeModel('model'),
       [msg],
-      { models: [{ id: 'model' }], enableFileLogging: false },
+      { models: [{ id: 'model', server: 'srv' }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }], enableFileLogging: false },
     );
 
     expect(result).toEqual([msg]);
@@ -163,7 +163,7 @@ describe('system message processing — replacement application', () => {
     const result = await pipeline.processSystemMessages(
       makeModel('model'),
       [original],
-      { models: [{ id: 'model', systemMessageReplacementsFile: replFile }], enableFileLogging: false },
+      { models: [{ id: 'model', server: 'srv', systemMessageReplacementsFile: replFile }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }], enableFileLogging: false },
     );
 
     // New object, not the same reference — original must be untouched.
@@ -188,7 +188,7 @@ describe('system message processing — replacement application', () => {
     const result = await pipeline.processSystemMessages(
       makeModel('model'),
       [userMsg, { role: vscode.LanguageModelChatMessageRole.System, content: [new vscode.LanguageModelTextPart('original system prompt')] }],
-      { models: [{ id: 'model', systemMessageReplacementsFile: replFile }], enableFileLogging: false },
+      { models: [{ id: 'model', server: 'srv', systemMessageReplacementsFile: replFile }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }], enableFileLogging: false },
     );
 
     // User message passes through by reference; system message is replaced.
@@ -221,7 +221,7 @@ describe('loadReplacements — path resolution', () => {
 
     const rules = await pipeline.loadReplacements({
       id: 'm',
-      serverUrl: 'http://localhost:8000',
+      server: 'srv',
       systemMessageReplacementsFile: '.vllm/repl.json',
     });
 
@@ -244,8 +244,8 @@ describe('loadReplacements — path resolution', () => {
   it('returns [] when no personality is set (Default keeps the vanilla prompt untouched)', async () => {
     const { pipeline } = makePipeline();
     expect(await pipeline.loadReplacements(undefined)).toEqual([]);
-    expect(await pipeline.loadReplacements({ id: 'm', serverUrl: 'http://x' })).toEqual([]);
-    expect(await pipeline.loadReplacements({ id: 'm', serverUrl: 'http://x', systemMessageReplacementsFile: '  ' })).toEqual([]);
+    expect(await pipeline.loadReplacements({ id: 'm', server: 'srv' })).toEqual([]);
+    expect(await pipeline.loadReplacements({ id: 'm', server: 'srv', systemMessageReplacementsFile: '  ' })).toEqual([]);
   });
 
   it('returns [] (with a warning, and WITHOUT appending shared rules) when the relative file is missing', async () => {
@@ -256,7 +256,7 @@ describe('loadReplacements — path resolution', () => {
 
     const rules = await pipeline.loadReplacements({
       id: 'm',
-      serverUrl: 'http://localhost:8000',
+      server: 'srv',
       systemMessageReplacementsFile: '.vllm/missing.json',
     });
 

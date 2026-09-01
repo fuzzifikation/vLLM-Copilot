@@ -22,7 +22,7 @@ function preset(file: string, match: string[], config: Record<string, unknown>):
   return { sourceFile: file, match, config: config as ModelPreset['config'] };
 }
 
-const base = { id: 'm1', serverUrl: 'http://h:8000' };
+const base = { id: 'm1', server: 'h' };
 
 describe('planOutputLengthMigration', () => {
   it('adopts a preset-declared vector verbatim — declared order kept, preset wins over a higher scalar', () => {
@@ -81,13 +81,13 @@ describe('planOutputLengthMigration', () => {
     expect(plans[0].updates.defaultParams).toBe('');
   });
 
-  it('skips malformed entries without id or serverUrl', () => {
+  it('skips malformed entries without id or server', () => {
     const models = [
       { vllmModelId: 'x', maxOutputTokens: 100 } as unknown as ModelConfig,
       { id: 'nosrv', maxOutputTokens: 100 } as ModelConfig,
     ];
-    // First has no id (resolveConfigId falls back to vllmModelId but no serverUrl),
-    // second has no serverUrl → both refused by the store, so never proposed.
+    // First has no id (resolveConfigId falls back to vllmModelId but no server),
+    // second has no server ref → both refused by the store, so never proposed.
     expect(planOutputLengthMigration(models, [])).toHaveLength(0);
   });
 
@@ -118,7 +118,7 @@ describe('stripModeMaxTokens', () => {
 describe('formatMigrationPreview', () => {
   it('shows before/after per proposal', () => {
     const p: OutputLengthProposal = {
-      id: 'm', serverUrl: 'http://h', displayName: 'My Model', from: 81920,
+      id: 'm', server: 'h', displayName: 'My Model', from: 81920,
       to: [65536, 32768], source: 'preset', sourceFile: 'x.json',
       updates: { maxOutputTokens: [65536, 32768] },
     };
@@ -140,7 +140,7 @@ describe('maybeOfferOutputLengthMigration', () => {
 
   beforeEach(() => {
     models = [{
-      id: 'synth', serverUrl: 'http://h:8000', maxOutputTokens: 8192,
+      id: 'synth', server: 'h', maxOutputTokens: 8192,
       modelModes: { A: { max_tokens: 2048 } } as never,
     } as ModelConfig];
     update = vi.fn(async () => {});
@@ -168,7 +168,7 @@ describe('maybeOfferOutputLengthMigration', () => {
   });
 
   it('stays silent when no model can get an honest menu', async () => {
-    models = [{ id: 'x', serverUrl: 'http://h', maxOutputTokens: 100 } as ModelConfig];
+    models = [{ id: 'x', server: 'h', maxOutputTokens: 100 } as ModelConfig];
     await maybeOfferOutputLengthMigration(context, output as never);
     expect(info).not.toHaveBeenCalled();
     expect(context.globalState._v).toBeUndefined(); // no flag — future models still get an offer

@@ -11,10 +11,13 @@ import { ConfigurationTarget } from 'vscode';
 
 const output = { appendLine: vi.fn() } as any;
 
+/** Registry serving the URL the command is invoked with. */
+const SERVERS = [{ id: 'srv', serverUrl: 'http://s:8000' }];
+
 /** A spyable WorkspaceConfiguration whose get() serves a models array. */
 function makeConfig(models: any[]): any {
   return {
-    get: vi.fn((k: string) => (k === 'models' ? models : undefined)),
+    get: vi.fn((k: string) => (k === 'models' ? models : k === 'servers' ? SERVERS : undefined)),
     has: () => false,
     update: vi.fn(async () => {}),
     inspect: () => undefined,
@@ -28,7 +31,7 @@ describe('configureCost command', () => {
   });
 
   it('writes a cost block via patchModelConfig for the picked model', async () => {
-    const models = [{ id: 'cfg1', vllmModelId: 'm1', serverUrl: 'http://s:8000' }];
+    const models = [{ id: 'cfg1', vllmModelId: 'm1', server: 'srv' }];
     const cfg = makeConfig(models);
     vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
     vi.spyOn(vscode.window, 'showQuickPick')
@@ -52,7 +55,7 @@ describe('configureCost command', () => {
   });
 
   it('prefills existing rates and preserves them on partial entry', async () => {
-    const models = [{ id: 'cfg1', vllmModelId: 'm1', serverUrl: 'http://s:8000', cost: { input: 0.1, output: 0.2, currency: 'AI Credits' } }];
+    const models = [{ id: 'cfg1', vllmModelId: 'm1', server: 'srv', cost: { input: 0.1, output: 0.2, currency: 'AI Credits' } }];
     const cfg = makeConfig(models);
     vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
     vi.spyOn(vscode.window, 'showQuickPick')
@@ -78,7 +81,7 @@ describe('configureCost command', () => {
   });
 
   it('aborts early when no model is picked', async () => {
-    const models = [{ id: 'cfg1', vllmModelId: 'm1', serverUrl: 'http://s:8000' }];
+    const models = [{ id: 'cfg1', vllmModelId: 'm1', server: 'srv' }];
     const cfg = makeConfig(models);
     vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
     vi.spyOn(vscode.window, 'showQuickPick').mockResolvedValueOnce(undefined as any); // cancel pick

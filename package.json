@@ -109,7 +109,7 @@
         "toolReferenceName": "vllmModelSchema",
         "canBeReferencedInPrompt": true,
         "userDescription": "Fetch the vLLM-Copilot model configuration schema and guide, for creating or editing vllm-copilot.models entries and model modes.",
-        "modelDescription": "Returns the JSON schema and configuration guide for a vllm-copilot.models model entry (serverUrl, requestHeaders, params, modelModes, defaultMode, etc.), including the parameter resolution chain and valid vLLM request parameters. Use this whenever the user asks you to create, configure, or modify a vLLM-Copilot model or its modes in VS Code settings. May also be triggered explicitly when the user references it in chat via #vllmModelSchema.",
+        "modelDescription": "Returns the JSON schema and configuration guide for vLLM-Copilot's model entries (`vllm-copilot.models`, which reference servers from the `vllm-copilot.servers` registry by id) including params, modelModes, defaultMode, etc., the parameter resolution chain, and valid vLLM request parameters. Use this whenever the user asks you to create, configure, or modify a vLLM-Copilot model or its modes in VS Code settings. May also be triggered explicitly when the user references it in chat via #vllmModelSchema.",
         "icon": "$(json)",
         "tags": [
           "vllm-copilot",
@@ -307,29 +307,14 @@
           "vllm-copilot.models": {
             "type": "array",
             "default": [],
-            "markdownDescription": "Per-model configuration: server, auth, params, modes. See README Configuration Reference for details.",
+            "markdownDescription": "Per-model configuration: server reference, params, modes. Server connection facts (URL, auth, type) live in the `vllm-copilot.servers` registry. See README Configuration Reference for details.",
             "items": {
               "type": "object",
+              "required": ["id", "server"],
               "properties": {
-                "serverUrl": {
+                "server": {
                   "type": "string",
-                  "markdownDescription": "**Required.** The server URL hosting this model (OpenAI-compatible API). Each model targets its own server; there is no global server."
-                },
-                "serverType": {
-                  "type": "string",
-                  "enum": [
-                    "vllm",
-                    "lmstudio",
-                    "llamacpp",
-                    "ollama",
-                    "openrouter"
-                  ],
-                  "default": "vllm",
-                  "markdownDescription": "Backend serving this model. **Default: `vllm`.** Missing/omitted always means `vllm`. Secondary backends (LM Studio, llama.cpp, Ollama, OpenRouter) must be added via the **Add vLLM Server & Model** command or set `serverType` explicitly."
-                },
-                "serverDisplayName": {
-                  "type": "string",
-                  "markdownDescription": "**Optional server label** shown in the Dashboard tree and the Model Settings server dropdown instead of the raw URL (e.g. `\"IT Server for GLM5.2\"`). Server-level: the label of the FIRST model on a server that sets it is used, and **Rename Server** (right-click a server in the Dashboard) writes it to every model sharing that URL. Empty/omitted shows the URL."
+                  "markdownDescription": "**Required.** The `id` of this model's server entry in the `vllm-copilot.servers` registry. There is no global server and models never carry URLs, auth, or type themselves."
                 },
                 "provider": {
                   "type": "string",
@@ -343,14 +328,6 @@
                     "exacto"
                   ],
                   "markdownDescription": "⚡ **OpenRouter only**: how OpenRouter sorts/chooses among eligible providers when routing is **Auto** (no `provider` pinned). `standard` (default) = price-weighted load balancing; `nitro` = throughput-first + priority tier; `exacto` = quality/tool-calling-first. Ignored when a provider is pinned. Set via the **Routing** dropdown in Model Settings."
-                },
-                "requestHeaders": {
-                  "type": "object",
-                  "default": {},
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "markdownDescription": "HTTP headers sent with every request to this model's server (auth, routing, etc.). **Isolated:** used only for this model's server and never shared with other servers. Put a bearer token as `{ \"Authorization\": \"Bearer <key>\" }` or a gateway key as `{ \"X-API-Key\": \"...\" }`."
                 },
                 "id": {
                   "type": "string",

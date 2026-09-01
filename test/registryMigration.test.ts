@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { planRegistryMigration } from '../src/registryMigration.js';
-import { makeModelConfig, DEFAULT_TEST_SERVER_URL } from './factories.js';
+import { makeLegacyModelConfig, DEFAULT_TEST_SERVER_URL } from './factories.js';
 
 describe('planRegistryMigration', () => {
   it('migrates a single model to one server entry referenced by id', () => {
-    const plan = planRegistryMigration([makeModelConfig()]);
+    const plan = planRegistryMigration([makeLegacyModelConfig()]);
 
     expect(plan.skipped).toEqual([]);
     expect(plan.servers).toEqual([
@@ -17,9 +17,9 @@ describe('planRegistryMigration', () => {
 
   it('groups N models on one server (same URL + headers) into a single entry', () => {
     const plan = planRegistryMigration([
-      makeModelConfig({ id: 'a' }),
-      makeModelConfig({ id: 'b' }),
-      makeModelConfig({ id: 'c' }),
+      makeLegacyModelConfig({ id: 'a' }),
+      makeLegacyModelConfig({ id: 'b' }),
+      makeLegacyModelConfig({ id: 'c' }),
     ]);
 
     expect(plan.skipped).toEqual([]);
@@ -35,8 +35,8 @@ describe('planRegistryMigration', () => {
 
   it('keeps same-URL models with different credentials in separate entries', () => {
     const plan = planRegistryMigration([
-      makeModelConfig({ id: 'a', requestHeaders: { Authorization: 'Bearer key-one' } }),
-      makeModelConfig({ id: 'b', requestHeaders: { Authorization: 'Bearer key-two' } }),
+      makeLegacyModelConfig({ id: 'a', requestHeaders: { Authorization: 'Bearer key-one' } }),
+      makeLegacyModelConfig({ id: 'b', requestHeaders: { Authorization: 'Bearer key-two' } }),
     ]);
 
     expect(plan.skipped).toEqual([]);
@@ -60,7 +60,7 @@ describe('planRegistryMigration', () => {
 
   it('creates an `openrouter` entry when a model points at the OpenRouter endpoint', () => {
     const plan = planRegistryMigration([
-      makeModelConfig({ serverUrl: 'https://openrouter.ai/api' }),
+      makeLegacyModelConfig({ serverUrl: 'https://openrouter.ai/api' }),
     ]);
 
     expect(plan.skipped).toEqual([]);
@@ -73,7 +73,7 @@ describe('planRegistryMigration', () => {
   });
 
   it('creates no OpenRouter entry when no model points at it', () => {
-    const plan = planRegistryMigration([makeModelConfig()]);
+    const plan = planRegistryMigration([makeLegacyModelConfig()]);
 
     expect(plan.servers.some(s => s.id === 'openrouter')).toBe(false);
     expect(plan.servers.some(s => s.serverType === 'openrouter')).toBe(false);
@@ -84,11 +84,11 @@ describe('planRegistryMigration', () => {
   });
 
   it('keeps a model with no serverUrl verbatim instead of inventing one', () => {
-    const withoutUrl = makeModelConfig({ id: 'no-server' });
+    const withoutUrl = makeLegacyModelConfig({ id: 'no-server' });
     delete withoutUrl.serverUrl;
     const plan = planRegistryMigration([
       withoutUrl,
-      makeModelConfig({ id: 'has-server' }),
+      makeLegacyModelConfig({ id: 'has-server' }),
     ]);
 
     expect(plan.skipped).toEqual([{ id: 'no-server', reason: 'no serverUrl' }]);
@@ -103,8 +103,8 @@ describe('planRegistryMigration', () => {
 
   it('takes the entry displayName from the first group member with a non-empty one', () => {
     const plan = planRegistryMigration([
-      makeModelConfig({ id: 'a' }),
-      makeModelConfig({ id: 'b', serverDisplayName: 'GPU Box' }),
+      makeLegacyModelConfig({ id: 'a' }),
+      makeLegacyModelConfig({ id: 'b', serverDisplayName: 'GPU Box' }),
     ]);
 
     expect(plan.servers).toEqual([
@@ -114,8 +114,8 @@ describe('planRegistryMigration', () => {
 
   it("inherits the group's serverType onto the entry", () => {
     const plan = planRegistryMigration([
-      makeModelConfig({ id: 'a', serverType: 'ollama' }),
-      makeModelConfig({ id: 'b', serverType: 'ollama' }),
+      makeLegacyModelConfig({ id: 'a', serverType: 'ollama' }),
+      makeLegacyModelConfig({ id: 'b', serverType: 'ollama' }),
     ]);
 
     expect(plan.servers).toEqual([
@@ -128,7 +128,7 @@ describe('planRegistryMigration', () => {
       { id: 'my-box', serverUrl: DEFAULT_TEST_SERVER_URL, requestHeaders: { Authorization: 'alpha' } },
     ];
     const plan = planRegistryMigration(
-      [makeModelConfig({ requestHeaders: { Authorization: 'alpha' } })],
+      [makeLegacyModelConfig({ requestHeaders: { Authorization: 'alpha' } })],
       existing
     );
 
@@ -144,7 +144,7 @@ describe('planRegistryMigration', () => {
       { id: 'my-box', serverUrl: DEFAULT_TEST_SERVER_URL, requestHeaders: { Authorization: 'alpha' } },
     ];
     const plan = planRegistryMigration(
-      [makeModelConfig({ requestHeaders: { Authorization: 'beta' } })],
+      [makeLegacyModelConfig({ requestHeaders: { Authorization: 'beta' } })],
       existing
     );
 
@@ -160,7 +160,7 @@ describe('planRegistryMigration', () => {
 
   it('avoids id collisions with existing entries and leaves them untouched', () => {
     const existing = [{ id: 'localhost-8000', serverUrl: 'https://elsewhere.example/v1' }];
-    const plan = planRegistryMigration([makeModelConfig()], existing);
+    const plan = planRegistryMigration([makeLegacyModelConfig()], existing);
 
     expect(plan.servers).toEqual([
       { id: 'localhost-8000-2', serverUrl: DEFAULT_TEST_SERVER_URL },
@@ -170,9 +170,9 @@ describe('planRegistryMigration', () => {
 
   it('produces deterministic ids — same input, same plan', () => {
     const models = [
-      makeModelConfig({ id: 'a' }),
-      makeModelConfig({ id: 'b', requestHeaders: { Authorization: 'Bearer key' } }),
-      makeModelConfig({ id: 'c', serverUrl: 'https://openrouter.ai/api' }),
+      makeLegacyModelConfig({ id: 'a' }),
+      makeLegacyModelConfig({ id: 'b', requestHeaders: { Authorization: 'Bearer key' } }),
+      makeLegacyModelConfig({ id: 'c', serverUrl: 'https://openrouter.ai/api' }),
     ];
 
     expect(planRegistryMigration(models)).toEqual(planRegistryMigration(models));
@@ -180,7 +180,7 @@ describe('planRegistryMigration', () => {
 
   it('preserves all non-server model fields untouched', () => {
     const plan = planRegistryMigration([
-      makeModelConfig({
+      makeLegacyModelConfig({
         displayName: 'My Model',
         maxInputTokens: 32768,
         maxOutputTokens: [8192, 4096, 2048],
@@ -213,7 +213,7 @@ describe('planRegistryMigration', () => {
 
   it('keeps provider and routingMode on the model, not on the entry', () => {
     const plan = planRegistryMigration([
-      makeModelConfig({
+      makeLegacyModelConfig({
         serverUrl: 'https://openrouter.ai/api',
         provider: 'deepseek',
         routingMode: 'nitro',

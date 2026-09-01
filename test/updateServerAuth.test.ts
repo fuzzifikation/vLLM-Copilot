@@ -17,10 +17,10 @@ import { mergeAuthHeaders, registerUpdateServerAuthCommand } from '../src/comman
 const output = { appendLine: vi.fn(), show: vi.fn() } as any;
 const provider = { clearCache: vi.fn() } as any;
 
-/** A spyable WorkspaceConfiguration whose get() serves a models array. */
-function makeConfig(models: any[]): any {
+/** A spyable WorkspaceConfiguration serving models plus an optional server registry. */
+function makeConfig(models: any[], servers: any[] = []): any {
   return {
-    get: vi.fn((k: string) => (k === 'models' ? models : undefined)),
+    get: vi.fn((k: string) => (k === 'models' ? models : k === 'servers' ? servers : undefined)),
     has: () => false,
     update: vi.fn(async () => {}),
     inspect: () => undefined,
@@ -71,12 +71,15 @@ describe('updateServerAuth command', () => {
     vi.restoreAllMocks();
   });
 
+  /** Fixture: the registry entry owns the auth; the model only references it. */
+  function makeFixture(entryHeaders?: Record<string, string>) {
+    const servers: any[] = [{ id: 'srv', serverUrl: 'http://s:8000', ...(entryHeaders ? { requestHeaders: entryHeaders } : {}) }];
+    const models = [{ id: 'cfg1', vllmModelId: 'm1', server: 'srv' }];
+    return { cfg: makeConfig(models, servers), servers };
+  }
+
   it('merges a new API key into existing custom headers (no wipe)', async () => {
-    const models = [{
-      id: 'cfg1', vllmModelId: 'm1', serverUrl: 'http://s:8000',
-      requestHeaders: { Authorization: 'Bearer old', 'CF-Access-Client-Id': 'id' },
-    }];
-    const cfg = makeConfig(models);
+    const { cfg, servers } = makeFixture({ Authorization: 'Bearer old', 'CF-Access-Client-Id': 'id' });
     vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
     // Update Auth prompts: key then headers (via promptForServerAuth).
     vi.spyOn(vscode.window, 'showInputBox')
@@ -87,22 +90,18 @@ describe('updateServerAuth command', () => {
     await (vscode as any).commands._run('vllm-copilot.updateServerAuth', 'http://s:8000');
     disposable.dispose();
 
-    const updateCalls = cfg.update.mock.calls.filter((c: any[]) => c[0] === 'models');
+    const updateCalls = cfg.update.mock.calls.filter((c: any[]) => c[0] === 'servers');
     expect(updateCalls.length).toBe(1);
     const written = updateCalls[0][1] as any[];
     expect(written[0].requestHeaders).toEqual({
       Authorization: 'Bearer new-key',
-      'CF-Access-Client-Id': 'id', // preserved — the wipe bug is fixed
+      'CF-Access-Client-Id': 'id', // preserved on the ENTRY — the wipe bug stays fixed
     });
     expect(updateCalls[0][2]).toBe(ConfigurationTarget.Global);
   });
 
   it('keeps the existing key when only custom headers are entered', async () => {
-    const models = [{
-      id: 'cfg1', vllmModelId: 'm1', serverUrl: 'http://s:8000',
-      requestHeaders: { Authorization: 'Bearer old' },
-    }];
-    const cfg = makeConfig(models);
+    const { cfg } = makeFixture({ Authorization: 'keep-me' });
     vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
     vi.spyOn(vscode.window, 'showInputBox')
       .mockResolvedValueOnce('')                   // key left empty (keep)
@@ -112,16 +111,12 @@ describe('updateServerAuth command', () => {
     await (vscode as any).commands._run('vllm-copilot.updateServerAuth', 'http://s:8000');
     disposable.dispose();
 
-    const written = cfg.update.mock.calls.find((c: any[]) => c[0] === 'models')![1] as any[];
-    expect(written[0].requestHeaders).toEqual({ Authorization: 'Bearer old', 'X-API-Key': 'new' });
+    const written = cfg.update.mock.calls.find((c: any[]) => c[0] === 'servers')![1] as any[];
+    expect(written[0].requestHeaders).toEqual({ Authorization: 'keep-me', 'X-API-Key': 'new' });
   });
 
   it('is a no-op (no config write) when both key and headers are left empty', async () => {
-    const models = [{
-      id: 'cfg1', vllmModelId: 'm1', serverUrl: 'http://s:8000',
-      requestHeaders: { Authorization: 'Bearer old', 'X-API-Key': 'x' },
-    }];
-    const cfg = makeConfig(models);
+    const { cfg, servers } = makeFixture({ Authorization: 'keep-me', 'X-API-Key': 'x' });
     vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
     const infoSpy = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(undefined as any);
     vi.spyOn(vscode.window, 'showInputBox')
@@ -134,37 +129,37 @@ describe('updateServerAuth command', () => {
 
     expect(cfg.update).not.toHaveBeenCalled();
     expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('No auth changes'));
-    // Existing headers untouched.
-    expect(models[0].requestHeaders).toEqual({ Authorization: 'Bearer old', 'X-API-Key': 'x' });
+    // Existing entry headers untouched.
+    expect(servers[0].requestHeaders).toEqual({ Authorization: 'keep-me', 'X-API-Key': 'x' });
   });
 
-  it('replaces wholesale when a complete auth set is passed via initialHeaders (OpenRouter)', async () => {
+  it('merges a complete auth set passed via initialHeaders without re-prompting (OpenRouter)', async () => {
     // The OpenRouter Add flow passes the freshly collected key; merge still
     // applies, but a fresh Authorization replaces the old one.
-    const models = [{
-      id: 'cfg1', vllmModelId: 'm1', serverUrl: 'https://openrouter.ai/api',
-      requestHeaders: { Authorization: 'Bearer old', 'HTTP-Referer': 'https://github.com' },
-    }];
-    const cfg = makeConfig(models);
+    const servers: any[] = [{ id: 'openrouter', serverUrl: 'https://openrouter.ai/api', requestHeaders: { Authorization: 'sk-or-old', 'HTTP-Referer': 'https://github.com' } }];
+    const models = [{ id: 'or', vllmModelId: 'm', server: 'openrouter' }];
+    const cfg = makeConfig(models, servers);
     vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
+    const inputBoxSpy = vi.spyOn(vscode.window, 'showInputBox');
 
     const disposable = registerUpdateServerAuthCommand({} as any, provider, output);
     await (vscode as any).commands._run(
       'vllm-copilot.updateServerAuth',
       'https://openrouter.ai/api',
-      { Authorization: 'Bearer sk-or-v1-test' },
+      { Authorization: 'sk-or-new' },
     );
     disposable.dispose();
 
-    const written = cfg.update.mock.calls.find((c: any[]) => c[0] === 'models')![1] as any[];
+    expect(inputBoxSpy).not.toHaveBeenCalled();
+    const written = cfg.update.mock.calls.find((c: any[]) => c[0] === 'servers')![1] as any[];
     expect(written[0].requestHeaders).toEqual({
-      Authorization: 'Bearer sk-or-v1-test',
+      Authorization: 'sk-or-new',
       'HTTP-Referer': 'https://github.com', // lossless merge — still preserved
     });
   });
 
-  it('warns (no config write) when no models match the server', async () => {
-    const cfg = makeConfig([{ id: 'other', vllmModelId: 'm', serverUrl: 'http://elsewhere:8000' }]);
+  it('warns (no config write) when the server is not registered', async () => {
+    const cfg = makeConfig([{ id: 'other', vllmModelId: 'm', server: 'elsewhere' }], [{ id: 'elsewhere', serverUrl: 'http://elsewhere:8000' }]);
     vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
     const warnSpy = vi.spyOn(vscode.window, 'showWarningMessage').mockResolvedValue(undefined as any);
     vi.spyOn(vscode.window, 'showInputBox')
@@ -175,7 +170,7 @@ describe('updateServerAuth command', () => {
     await (vscode as any).commands._run('vllm-copilot.updateServerAuth', 'http://s:8000');
     disposable.dispose();
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('No models found'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('No registered server found'));
     expect(cfg.update).not.toHaveBeenCalled();
   });
 });

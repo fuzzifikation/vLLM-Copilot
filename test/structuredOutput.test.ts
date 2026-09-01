@@ -11,7 +11,7 @@ describe('structured_outputs via resolveRequestParams', () => {
   it('passes structured_outputs from defaultParams', () => {
     const model: ModelConfig = {
       id: 'm',
-      serverUrl: 'http://localhost:8000',
+      server: 'srv',
       defaultParams: { structured_outputs: { json: { type: 'object' } } },
     };
     const params = resolveRequestParams(model, undefined);
@@ -19,7 +19,7 @@ describe('structured_outputs via resolveRequestParams', () => {
   });
 
   it('is absent when no model/mode sets it', () => {
-    const model: ModelConfig = { id: 'm', serverUrl: 'http://localhost:8000' };
+    const model: ModelConfig = { id: 'm', server: 'srv' };
     const params = resolveRequestParams(model, undefined);
     expect(params.structured_outputs).toBeUndefined();
   });
@@ -27,7 +27,7 @@ describe('structured_outputs via resolveRequestParams', () => {
   it('mode-scope structured_outputs overrides model-scope', () => {
     const model: ModelConfig = {
       id: 'm',
-      serverUrl: 'http://localhost:8000',
+      server: 'srv',
       defaultParams: { structured_outputs: { json: { type: 'object' } } },
       modelModes: {
         JSON: { structured_outputs: { regex: '.*' } },
@@ -40,14 +40,14 @@ describe('structured_outputs via resolveRequestParams', () => {
   it('supports choice and grammar constraint shapes verbatim', () => {
     const choiceModel: ModelConfig = {
       id: 'm',
-      serverUrl: 'http://localhost:8000',
+      server: 'srv',
       defaultParams: { structured_outputs: { choice: ['yes', 'no'] } },
     };
     expect(resolveRequestParams(choiceModel, undefined).structured_outputs).toEqual({ choice: ['yes', 'no'] });
 
     const grammarModel: ModelConfig = {
       id: 'm',
-      serverUrl: 'http://localhost:8000',
+      server: 'srv',
       defaultParams: { structured_outputs: { grammar: 'root ::= "a"' } },
     };
     expect(resolveRequestParams(grammarModel, undefined).structured_outputs).toEqual({ grammar: 'root ::= "a"' });
@@ -64,7 +64,7 @@ describe('resolveRequestParams layering', () => {
   it('model defaultParams are applied when present', () => {
     const model: ModelConfig = {
       id: 'm',
-      serverUrl: 'http://localhost:8000',
+      server: 'srv',
       defaultParams: { temperature: 1 },
     };
     expect(resolveRequestParams(model, undefined).temperature).toBe(1);
@@ -73,7 +73,7 @@ describe('resolveRequestParams layering', () => {
   it('selected mode overrides model defaultParams', () => {
     const model: ModelConfig = {
       id: 'm',
-      serverUrl: 'http://localhost:8000',
+      server: 'srv',
       defaultParams: { temperature: 1 },
       modelModes: { Precise: { temperature: 0.6 } },
     };
@@ -83,7 +83,7 @@ describe('resolveRequestParams layering', () => {
   it('unknown mode falls back to model defaultParams', () => {
     const model: ModelConfig = {
       id: 'm',
-      serverUrl: 'http://localhost:8000',
+      server: 'srv',
       defaultParams: { temperature: 1 },
       modelModes: { Precise: { temperature: 0.6 } },
     };
@@ -101,7 +101,7 @@ describe('resolveRequestParams runtime options layer', () => {
   it('model defaultParams override runtime options', () => {
     const model: ModelConfig = {
       id: 'm',
-      serverUrl: 'http://localhost:8000',
+      server: 'srv',
       defaultParams: { temperature: 1 },
     };
     // Copilot's runtime temperature is overridden by the model's own defaultParams.
@@ -113,7 +113,7 @@ describe('resolveRequestParams runtime options layer', () => {
   it('selected mode outranks runtime options and defaultParams', () => {
     const model: ModelConfig = {
       id: 'm',
-      serverUrl: 'http://localhost:8000',
+      server: 'srv',
       defaultParams: { temperature: 1 },
       modelModes: { Precise: { temperature: 0.6 } },
     };

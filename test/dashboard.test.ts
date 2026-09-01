@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { DashboardTreeProvider } from '../src/dashboard.js';
 import { recordRequest, resetUsageStoreForTests } from '../src/usageStore.js';
-import { normalizeServerUrl } from '../src/config.js';
+import { normalizeServerUrl, sanitizeRequestHeaders, serverFingerprint } from '../src/config.js';
 import { getMetricsEngine } from '../src/vllmMetrics.js';
 import { resetOpenRouterProviderListCache } from '../src/openRouter.js';
 
@@ -14,6 +14,42 @@ import { resetOpenRouterProviderListCache } from '../src/openRouter.js';
  * lifecycle, and the offline/online metric rendering. Global fetch is stubbed
  * so the polling engine's first tick completes quickly against fake endpoints.
  */
+
+/**
+ * Registry shim for the flat legacy fixtures below: splits models that still
+ * carry serverUrl/requestHeaders/serverType/serverDisplayName into
+ * { models (server refs), servers (registry entries) }. Entries key on
+ * URL + sanitized headers + type — the registry's fingerprint semantics — so
+ * multi-identity fixtures stay separate entries.
+ */
+function regFix(cfg: any): any {
+  const models: any[] = cfg.models ?? [];
+  const entries: Array<Record<string, any>> = [];
+  const migrated = models.map((m: any) => {
+    if (!m || typeof m !== 'object' || m.server || !m.serverUrl) return m;
+    const headers = m.requestHeaders as Record<string, string> | undefined;
+    const key = serverFingerprint(normalizeServerUrl(m.serverUrl), sanitizeRequestHeaders(headers ?? {})) + '|' + (m.serverType ?? '');
+    let entry = entries.find(e => e.__key === key);
+    if (!entry) {
+      const slug = String(m.serverUrl).replace(/^[a-zA-Z]+:\/\//, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'srv';
+      let id = slug;
+      for (let n = 2; entries.some(e => e.id === id); n++) id = `${slug}-${n}`;
+      entry = {
+        __key: key,
+        id,
+        serverUrl: m.serverUrl,
+        ...(headers ? { requestHeaders: headers } : {}),
+        ...(m.serverType ? { serverType: m.serverType } : {}),
+        ...(m.serverDisplayName ? { displayName: m.serverDisplayName } : {}),
+      };
+      entries.push(entry);
+    }
+    const { serverUrl: _u, requestHeaders: _h, serverType: _t, serverDisplayName: _d, ...rest } = m;
+    return { ...rest, server: entry.id };
+  });
+  const { models: _models, ...rest } = cfg;
+  return { ...rest, models: migrated, servers: entries.map(({ __key: _k, ...e }) => e) };
+}
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -117,7 +153,7 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('shows poll interval, add, and refresh items with no servers configured', async () => {
-    (vscode as any).workspace._mockConfig = { models: [] };
+    (vscode as any).workspace._mockConfig = regFix({ models: [] });
 
     const labels = await rootLabels(provider);
 
@@ -128,9 +164,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('setVisible(true) subscribes configured servers and lists them', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', offlineFetch);
 
     provider.setVisible(true);
@@ -141,9 +177,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('shows an offline server with an Error child', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', offlineFetch);
 
     provider.setVisible(true);
@@ -157,9 +193,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('setVisible(false) removes the server from the tree and stops polling', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', offlineFetch);
 
     provider.setVisible(true);
@@ -174,9 +210,9 @@ describe('DashboardTreeProvider', () => {
     // Regression for the background-polling race: setVisible(true) fires an
     // async refreshSubscriptions that awaits getConfig; hiding during that gap
     // must abort the continuation so no engine is subscribed for a hidden view.
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', offlineFetch);
 
     provider.setVisible(true); // starts refresh; continuation queued on getConfig
@@ -190,9 +226,9 @@ describe('DashboardTreeProvider', () => {
     // Regression for the double-subscribe race: two refreshSubscriptions in
     // flight must leave exactly one subscription per server, or the tree would
     // list duplicate server nodes (and poll the server twice).
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', offlineFetch);
 
     provider.setVisible(true);
@@ -209,9 +245,9 @@ describe('DashboardTreeProvider', () => {
     // new one's — and it must say so immediately rather than waiting for the
     // first cycle to finish (which is up to the 5s timeout when the server is
     // unreachable).
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', onlineFetch);
     provider.setVisible(true);
     await settle();
@@ -219,9 +255,9 @@ describe('DashboardTreeProvider', () => {
     expect(await provider.getChildren(before as any)).not.toHaveLength(1); // real metrics, not one error row
 
     // Same URL, new credentials = a new identity. Nothing answers it yet.
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1', requestHeaders: { Authorization: '******' } }],
-    };
+    });
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
     provider.setVisible(false);
     provider.setVisible(true);
@@ -238,9 +274,9 @@ describe('DashboardTreeProvider', () => {
     // a rebuild must dispose the old engine AND drop it from the registry —
     // otherwise it polls a no-longer-configured identity forever in the
     // background and hands its stale cache to whatever comes next.
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://retired:8000', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', onlineFetch);
     provider.setVisible(true);
     await settle();
@@ -248,9 +284,9 @@ describe('DashboardTreeProvider', () => {
     const first = getMetricsEngine('http://retired:8000', {}, 'vllm', ['m1']);
     expect(first.getCachedAggregated()?.online).toBe(true);
 
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://retired:8000', vllmModelId: 'm1', requestHeaders: { Authorization: '******' } }],
-    };
+    });
     provider.setVisible(false);
     provider.setVisible(true);
     await settle();
@@ -266,12 +302,12 @@ describe('DashboardTreeProvider', () => {
     // Per-model credentials: two models share a URL but carry different keys.
     // They are DIFFERENT logical servers — each must get its own node, probed
     // with its own credentials (never the first model's headers for the other).
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [
         { id: 'a', serverUrl: 'http://gw:8000', vllmModelId: 'm-a', requestHeaders: { Authorization: 'Bearer secret-a' } },
         { id: 'b', serverUrl: 'http://gw:8000', vllmModelId: 'm-b', requestHeaders: { Authorization: 'Bearer secret-b' } },
       ],
-    };
+    });
     const fetchMock = vi.fn(async (url: unknown, _init?: RequestInit) => {
       if (String(url).endsWith('/v1/models')) return jsonResponse({ data: [{ id: 'probe' }] });
       return new Response(null, { status: 404 });
@@ -294,11 +330,11 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('shows a configured serverDisplayName instead of the URL', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [
         { id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1', serverDisplayName: 'IT Server for GLM5.2' },
       ],
-    };
+    });
     vi.stubGlobal('fetch', offlineFetch);
 
     provider.setVisible(true);
@@ -312,12 +348,12 @@ describe('DashboardTreeProvider', () => {
   it('keeps identity suffixes when renamed identities share one URL', async () => {
     // The `(identity N)` suffix keys off URL-sharing credential groups — never
     // off label equality — so two identically-NAMED identities stay distinct.
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [
         { id: 'a', serverUrl: 'http://gw:8000', vllmModelId: 'm-a', requestHeaders: { Authorization: 'Bearer secret-a' }, serverDisplayName: 'Gateway' },
         { id: 'b', serverUrl: 'http://gw:8000', vllmModelId: 'm-b', requestHeaders: { Authorization: 'Bearer secret-b' }, serverDisplayName: 'Gateway' },
       ],
-    };
+    });
     vi.stubGlobal('fetch', offlineFetch);
 
     provider.setVisible(true);
@@ -332,12 +368,12 @@ describe('DashboardTreeProvider', () => {
     // The fixed openrouter.ai endpoint is not renamable — a hand-edited name
     // must not render, and the node carries the Relay context value so the
     // Rename Server menu entry is hidden for it.
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{
         id: 'or1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-chat',
         serverType: 'openrouter', displayName: 'DeepSeek', serverDisplayName: 'My Relay',
       }],
-    };
+    });
     vi.stubGlobal('fetch', openRouterFetch);
 
     provider.setVisible(true);
@@ -352,9 +388,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('treats a whitespace-only hand-edited display name as unset', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1', serverDisplayName: '   ' }],
-    };
+    });
     vi.stubGlobal('fetch', offlineFetch);
 
     provider.setVisible(true);
@@ -366,9 +402,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('renders online server metric rows from a completed poll', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', onlineFetch);
 
     provider.setVisible(true);
@@ -395,7 +431,7 @@ describe('DashboardTreeProvider', () => {
     // model has its own context. The relay node shows an Account node (from
     // /api/v1/key) plus ONE collapsible node PER configured model (direct
     // children — no intermediate "collection" container).
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [
         {
           id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', serverType: 'openrouter', displayName: 'Nemotron',
@@ -410,7 +446,7 @@ describe('DashboardTreeProvider', () => {
           capabilities: { toolCalling: true, imageInput: true }, maxOutputTokens: 16000,
         },
       ],
-    };
+    });
     vi.stubGlobal('fetch', openRouterFetch);
 
     provider.setVisible(true);
@@ -472,7 +508,7 @@ describe('DashboardTreeProvider', () => {
     // budget is clamped to the ceiling → the node must carry the Attention icon
     // with an explanatory tooltip. The Nemotron (1M ctx → 81920 ceiling) with a
     // modest 4096 budget is NOT clamped → no icon.
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [
         {
           id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-chat', serverType: 'openrouter', displayName: 'DeepSeek',
@@ -485,7 +521,7 @@ describe('DashboardTreeProvider', () => {
           maxOutputTokens: 4096,
         },
       ],
-    };
+    });
     vi.stubGlobal('fetch', openRouterFetch);
 
     provider.setVisible(true);
@@ -514,9 +550,9 @@ describe('DashboardTreeProvider', () => {
 
   it('hides OpenRouter account + model nodes when no relay models are configured', async () => {
     // A non-OpenRouter server must not show relay nodes.
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', onlineFetch);
 
     provider.setVisible(true);
@@ -533,7 +569,7 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('shows an OpenRouter model node Cost row preferring actual reported spend', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [
         {
           id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', serverType: 'openrouter', displayName: 'Nemotron',
@@ -542,7 +578,7 @@ describe('DashboardTreeProvider', () => {
           cost: { input: 1, output: 2 }, // would estimate, but actual must win
         },
       ],
-    };
+    });
     vi.stubGlobal('fetch', openRouterFetch);
     recordRequest({
       serverUrl: normalizeServerUrl('https://openrouter.ai/api'),
@@ -579,7 +615,7 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('shows the pinned provider and its reported per-1M pricing on an OpenRouter model node', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [
         {
           id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-chat', serverType: 'openrouter', displayName: 'DeepSeek',
@@ -588,7 +624,7 @@ describe('DashboardTreeProvider', () => {
           cost: { input: 9, output: 9, cachedInput: 9, currency: 'USD' }, // must NOT be used — the pinned provider wins
         },
       ],
-    };
+    });
     vi.stubGlobal('fetch', openRouterFetch);
 
     provider.setVisible(true);
@@ -634,7 +670,7 @@ describe('DashboardTreeProvider', () => {
       if (u.endsWith('/v1/key')) return jsonResponse({ data: {} });
       return new Response(null, { status: 404 });
     });
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [
         {
           id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-v3.2', serverType: 'openrouter', displayName: 'DeepSeek',
@@ -642,7 +678,7 @@ describe('DashboardTreeProvider', () => {
           provider: 'sambanova-turbo',
         },
       ],
-    };
+    });
     vi.stubGlobal('fetch', limitedFetch);
 
     provider.setVisible(true);
@@ -682,7 +718,7 @@ describe('DashboardTreeProvider', () => {
       if (u.endsWith('/v1/key')) return jsonResponse({ data: {} });
       return new Response(null, { status: 404 });
     });
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [
         {
           id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-v3.2', serverType: 'openrouter', displayName: 'DeepSeek',
@@ -691,7 +727,7 @@ describe('DashboardTreeProvider', () => {
           provider: 'sambanova-turbo', // pinned
         },
       ],
-    };
+    });
     vi.stubGlobal('fetch', pinnedFetch);
 
     provider.setVisible(true);
@@ -716,7 +752,7 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('shows a red status dot and uptime for a degraded pinned provider', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [
         {
           id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'author/degraded', serverType: 'openrouter', displayName: 'Degraded',
@@ -724,7 +760,7 @@ describe('DashboardTreeProvider', () => {
           provider: 'slow',
         },
       ],
-    };
+    });
     vi.stubGlobal('fetch', openRouterFetch);
 
     provider.setVisible(true);
@@ -746,7 +782,7 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('falls back to config-rate estimate pricing when Auto and hides the Provider row', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [
         {
           id: 'm1', serverUrl: 'https://openrouter.ai/api', vllmModelId: 'deepseek/deepseek-chat', serverType: 'openrouter', displayName: 'DeepSeek',
@@ -755,7 +791,7 @@ describe('DashboardTreeProvider', () => {
           cost: { input: 1, output: 2, currency: 'USD' },
         },
       ],
-    };
+    });
     vi.stubGlobal('fetch', openRouterFetch);
 
     provider.setVisible(true);
@@ -780,9 +816,9 @@ describe('DashboardTreeProvider', () => {
     // consumeStream writes the store keyed by the NORMALIZED server URL; the
     // dashboard's node carries the raw `model.serverUrl`. A /v1 form must still
     // find its Last Request entry (regression: the node silently vanished).
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', onlineFetch);
     recordRequest({
       serverUrl: normalizeServerUrl('http://s:8000/v1'),
@@ -803,9 +839,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('dispose() clears subscriptions so no server remains listed', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', offlineFetch);
 
     provider.setVisible(true);
@@ -817,9 +853,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('shows a Token Usage and Cost node with per-model Today/Overall rows and derived cost', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1', displayName: 'Friendly M1', cost: { input: 1, output: 2, cachedInput: 0.5 } }],
-    };
+    });
     vi.stubGlobal('fetch', onlineFetch);
     recordRequest({
       serverUrl: normalizeServerUrl('http://s:8000/v1'),
@@ -865,9 +901,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('prefers actual reported cost in the per-model summary when the model reports it', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1', displayName: 'Friendly M1', cost: { input: 1, output: 2, cachedInput: 0.5 } }],
-    };
+    });
     vi.stubGlobal('fetch', onlineFetch);
     // 1M prompt / 500k completion would derive $1.90 from rates — but the server
     // reports actual cost, which must win.
@@ -894,9 +930,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('shows a Cost row under Last Request when the model has cost rates', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1', cost: { input: 1, output: 2, cachedInput: 0.5 } }],
-    };
+    });
     vi.stubGlobal('fetch', onlineFetch);
     recordRequest({
       serverUrl: normalizeServerUrl('http://s:8000/v1'),
@@ -921,9 +957,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('prefers actual reported cost over the estimate on the Last Request Cost row', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1', cost: { input: 1, output: 2, cachedInput: 0.5 } }],
-    };
+    });
     vi.stubGlobal('fetch', onlineFetch);
     recordRequest({
       serverUrl: normalizeServerUrl('http://s:8000/v1'),
@@ -952,9 +988,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('shows a BYOK row under Last Request when the backend served with an upstream key', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', onlineFetch);
     recordRequest({
       serverUrl: normalizeServerUrl('http://s:8000/v1'),
@@ -980,9 +1016,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('splits Last Request Input Tokens into fresh + cached when cache details exist', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000/v1', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', onlineFetch);
     recordRequest({
       serverUrl: normalizeServerUrl('http://s:8000/v1'),
@@ -1009,9 +1045,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('renders a non-vLLM server cleanly: no degraded label, hides absent vLLM-only rows', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1', serverType: 'llamacpp' }],
-    };
+    });
     vi.stubGlobal('fetch', onlineFetch);
     // Non-vLLM backends never report per-request metrics → measured path only.
     recordRequest({
@@ -1058,9 +1094,9 @@ describe('DashboardTreeProvider', () => {
     // Studio/Ollama/llama.cpp do not document — so they appeared offline (only an
     // error row), hiding Last Request / Token Usage / measured throughput even though
     // chat worked. Online is now /v1/models.ok for non-vLLM backends.
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1', serverType: 'ollama' }],
-    };
+    });
     vi.stubGlobal('fetch', nonVllmOnlineFetch);
     recordRequest({
       serverUrl: normalizeServerUrl('http://s:8000'),
@@ -1093,9 +1129,9 @@ describe('DashboardTreeProvider', () => {
   });
 
   it('shows measured generation for vLLM when --enable-per-request-metrics is off', async () => {
-    (vscode as any).workspace._mockConfig = {
+    (vscode as any).workspace._mockConfig = regFix({
       models: [{ id: 'm1', serverUrl: 'http://s:8000', vllmModelId: 'm1' }],
-    };
+    });
     vi.stubGlobal('fetch', onlineFetch);
     recordRequest({
       serverUrl: normalizeServerUrl('http://s:8000'),

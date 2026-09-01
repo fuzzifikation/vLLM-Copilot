@@ -90,12 +90,25 @@ function mockSaveSurfaces(chatUpdate = vi.fn().mockResolvedValue(undefined)) {
     .spyOn(configStore, 'replaceModelConfig')
     .mockResolvedValue({ model: { id: 'x' } as any, created: true });
   vscode.workspace._mockConfig = {
-    get: (key: string) => (key === 'models' ? [] : undefined),
+    get: (key: string) =>
+      key === 'models' ? [] : key === 'servers' ? OPENROUTER_SERVERS : undefined,
     update: chatUpdate,
     inspect: () => ({ defaultValue: 'none' }),
   };
   return resolveSpy;
 }
+
+/** Registry the duplicate detection resolves model `server` refs against.
+ *  Carries the same auth the flow will send, so `ensureServerEntry` reuses
+ *  the entry instead of minting a duplicate for the identical server. */
+const OPENROUTER_SERVERS = [
+  {
+    id: 'openrouter',
+    serverUrl: 'https://openrouter.ai/api',
+    displayName: 'OldName',
+    requestHeaders: { Authorization: 'Bearer sk-or-v1-test' },
+  },
+];
 
 /** Build a controllable createQuickPick stub. Drive it with _fireAccept/_fireHide. */
 function makeQuickPickStub(): any {
@@ -181,9 +194,8 @@ describe('runOpenRouterAddFlow', () => {
       expect.objectContaining({
         id: 'nvidia/nemotron-3.5-lightning:free on openrouter.ai',
         vllmModelId: 'nvidia/nemotron-3.5-lightning:free',
-        serverUrl: 'https://openrouter.ai/api',
-        serverType: 'openrouter',
-        requestHeaders: { Authorization: 'Bearer sk-or-v1-test' },
+        server: 'openrouter',
+        // Auth + URL live on the registry entry; the model only refs it.
         maxOutputTokens: 65536,
         capabilities: { toolCalling: true, imageInput: false },
       }),
@@ -213,8 +225,7 @@ describe('runOpenRouterAddFlow', () => {
     expect(resolveSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         vllmModelId: 'nvidia/nemotron-3.5-lightning:free',
-        serverType: 'openrouter',
-        serverUrl: 'https://openrouter.ai/api',
+        server: 'openrouter',
       }),
     );
   });
@@ -326,7 +337,7 @@ describe('runOpenRouterAddFlow', () => {
 
     // Full model-page URL → picker skipped, straight to the duplicate dialog.
     await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/nvidia/nemotron-3.5-lightning:free', [
-      { id: 'custom-openrouter-id', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', serverUrl: 'https://openrouter.ai/api', displayName: 'OldName' },
+      { id: 'custom-openrouter-id', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', server: 'openrouter' },
     ]);
     expect(createQuickPickSpy).not.toHaveBeenCalled();
 
@@ -351,7 +362,7 @@ describe('runOpenRouterAddFlow', () => {
 
     // Full model-page URL → picker skipped, straight to the duplicate dialog.
     await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/nvidia/nemotron-3.5-lightning:free', [
-      { id: 'custom-openrouter-id', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', serverUrl: 'https://openrouter.ai/api', displayName: 'OldName' },
+      { id: 'custom-openrouter-id', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', server: 'openrouter' },
     ]);
     expect(createQuickPickSpy).not.toHaveBeenCalled();
 
@@ -570,8 +581,7 @@ describe('registerAddServerModelCommand — OpenRouter routing', () => {
     expect(createQuickPickSpy).not.toHaveBeenCalled();
     expect(resolveSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        serverType: 'openrouter',
-        serverUrl: 'https://openrouter.ai/api',
+        server: 'openrouter',
         vllmModelId: 'nvidia/nemotron-3.5-lightning:free',
       }),
     );
@@ -617,8 +627,7 @@ describe('registerAddServerModelCommand — OpenRouter routing', () => {
     // The explicit URL resolved the exact catalog entry directly.
     expect(resolveSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        serverType: 'openrouter',
-        serverUrl: 'https://openrouter.ai/api',
+        server: 'openrouter',
         vllmModelId: 'nvidia/nemotron-3.5-lightning:free',
       }),
     );

@@ -5,9 +5,9 @@ import {
   resolveModelSettings,
   resolveServerType,
   resolveConfiguredMaxTokens,
-  buildModelId,
   type ModelConfig,
 } from '../config.js';
+import type { ServerEntry } from '../serverRegistry.js';
 import { buildModelInfo } from '../modelInfo.js';
 import { deriveTokenBudget } from '../tokenBudget.js';
 import { describeError } from '../messageConverter.js';
@@ -53,6 +53,7 @@ import type { ProviderClient } from './contracts.js';
  */
 export async function discoverModels(
   modelOverrides: ModelConfig[],
+  servers: ServerEntry[],
   client: Pick<ProviderClient, 'getModelContextWindow'>,
   output: vscode.OutputChannel,
   onModelDiscovered?: (modelId: string, contextWindow: number) => void,
@@ -74,23 +75,24 @@ export async function discoverModels(
   // Process each model: fetch context window from server, build info, or record error.
   // All models are queried in parallel so discovery time = max(server latencies), not sum.
   const tasks = modelOverrides.map(async (override) => {
-    if (!override.serverUrl) {
-      const id = override.id || resolveVllmModelId(override) || '(unnamed model)';
+    const settings = resolveModelSettings(override);
+    const vllmModelId = resolveVllmModelId(override) || override.id || '';
+    const serverConfig = resolveServerConfig(override, servers);
+    const serverType = resolveServerType(override, servers);
+
+    // A model whose server ref does not resolve is unreachable — drop it from
+    // the picker (settings remain the configured inventory) and say why.
+    if (!serverConfig) {
+      const id = override.id || vllmModelId || '(unnamed model)';
       return {
         model: null,
         contextWindow: null,
-        error: `[WARN] Model "${id}" has no serverUrl and will be skipped. Add one or run "Add vLLM Server & Model".`,
+        error: `[WARN] Model "${id}" references unknown server "${override.server}" and will be skipped. Fix the reference or re-add the server.`,
       };
     }
 
-    const settings = resolveModelSettings(override);
-    const vllmModelId = resolveVllmModelId(override) || override.id || '';
-    const serverConfig = resolveServerConfig(override);
-    const serverType = resolveServerType(override);
-
-    // Picker id — matches buildModelInfo's derivation so provider-tracked mode
-    // selections keyed by model.id resolve to the right override.
-    const presetId = override.id || buildModelId(serverConfig.serverUrl, vllmModelId);
+    // Picker id — the override's required `id` IS the config key.
+    const presetId = override.id;
     // Legacy output-budget chain (mode > defaultParams > vector head / scalar),
     // clamped below. Used as the advertised budget ONLY while no length pick
     // exists; once a pick exists the pick wins — even over a per-mode
@@ -135,7 +137,7 @@ export async function discoverModels(
       // ceiling clamped to what the model can promise.
       const pick = selectedLengthByModel?.get(presetId);
       const effectiveOutputTokens = pick !== undefined ? Math.min(pick, outputMenuCeiling) : legacyMaxOutput;
-      const model = buildModelInfo(serverModel, override, settings, serverConfig.serverUrl, limits.maxOutputTokens, (family, modelId) => {
+      const model = buildModelInfo(serverModel, override, settings, serverType, limits.maxOutputTokens, (family, modelId) => {
           // Fires only when no preset-declared family was available AND
           // HuggingFace auto-discovery did not provide one — the heuristic
           // fell through to the org-name guess. The family is just a sort key

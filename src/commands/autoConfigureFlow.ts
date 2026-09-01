@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from '../config.js';
 import { resolveConfigId, resolveVllmModelId, normalizeServerUrl, buildModelId, modelServerIdentity } from '../config.js';
-import { replaceModelConfig, readModels, type IdentifiedModelConfig } from '../configStore.js';
+import { replaceModelConfig, readModels, readServers, type IdentifiedModelConfig } from '../configStore.js';
+import { resolveServer } from '../serverRegistry.js';
 import { resolveModelConfigForAddSafely } from './hfDiscovery.js';
-import { confirmAndSaveAddedModel, type ClearCacheProvider } from './addServerFlow.js';
+import { confirmAndSaveAddedModel, ensureServerEntry, type ClearCacheProvider } from './addServerFlow.js';
 
 /**
  * Standalone command: re-run auto-configuration (HuggingFace + vLLM server discovery)
@@ -22,6 +23,8 @@ export function registerAutoConfigureModelCommand(
       vscode.window.showInformationMessage('No models configured. Use "Add vLLM Server & Model" first.');
       return;
     }
+    // Server facts live on the registry; models reference entries by `server` id.
+    const servers = readServers();
 
     let modelConfig: ModelConfig | undefined;
     let vllmId: string;
@@ -30,46 +33,51 @@ export function registerAutoConfigureModelCommand(
 
     if (argServerUrl && argModelId) {
       const argServerNorm = normalizeServerUrl(argServerUrl);
+      const urlOf = (m: ModelConfig): string | undefined => resolveServer(m.server, servers)?.serverUrl;
       const identitySibling = arg.identityModelId
-        ? existing.find(m => resolveConfigId(m) === arg.identityModelId && m.serverUrl && normalizeServerUrl(m.serverUrl) === argServerNorm)
+        ? existing.find(m => resolveConfigId(m) === arg.identityModelId && urlOf(m) === argServerNorm)
         : undefined;
       // Called with explicit server + model identity (e.g. from Server Settings
       // webview). The webview keys everything by the extension `id`; for an
       // unconfigured server-reported model that id is just the server model id.
       modelConfig = existing.find(
-        m => resolveConfigId(m) === argModelId && m.serverUrl &&
-             normalizeServerUrl(m.serverUrl) === argServerNorm &&
-             (!identitySibling || modelServerIdentity(m).fingerprint ===
-               modelServerIdentity(identitySibling).fingerprint)
+        m => resolveConfigId(m) === argModelId && urlOf(m) === argServerNorm &&
+             (!identitySibling || modelServerIdentity(m, servers).fingerprint ===
+               modelServerIdentity(identitySibling, servers).fingerprint)
       );
       vllmId = resolveVllmModelId(modelConfig) || argModelId;
 
       if (!modelConfig) {
         // Unconfigured model: the server reports it but settings has no entry
         // (Server Settings lists server-reported models even when unconfigured).
-        // Auto-configure it as a NEW model — borrow auth from a sibling model on
-        // the same server. That sibling is guaranteed to exist: the server group
-        // only appears in the webview because it has at least one configured model.
-        const sibling = identitySibling ?? existing.find(
-          m => m.serverUrl && normalizeServerUrl(m.serverUrl) === argServerNorm
-        );
-        const serverUrl = normalizeServerUrl(sibling?.serverUrl ?? argServerUrl);
+        // Auto-configure it as a NEW model — reuse the sibling's registry entry:
+        // same URL means the same server connection, so the entry id is shared
+        // rather than duplicated. The sibling is guaranteed to exist: the server
+        // group only appears in the webview because it has a configured model.
+        const sibling = identitySibling ?? existing.find(m => urlOf(m) === argServerNorm);
+        const siblingServer = sibling ? resolveServer(sibling.server, servers) : undefined;
+        const serverUrl = siblingServer?.serverUrl ?? argServerNorm;
         const discoveryResult = await resolveModelConfigForAddSafely(
-          output, context, vllmId, serverUrl, sibling?.requestHeaders,
-          undefined, undefined, sibling?.serverType
+          output, context, vllmId, serverUrl, siblingServer?.requestHeaders,
+          undefined, undefined, siblingServer?.serverType
         );
         if (!discoveryResult) {
           output.appendLine(`[INFO] Auto-configure stopped for new model "${vllmId}" — discovery returned no result.`);
           return;
         }
 
+        // Same fingerprint → same entry: when the sibling's entry exists this
+        // returns its id; only a dangling sibling ref creates a new entry.
+        const serverId = await ensureServerEntry({
+          serverUrl,
+          requestHeaders: siblingServer?.requestHeaders,
+          serverType: siblingServer?.serverType,
+        });
         const newConfig: IdentifiedModelConfig = {
           ...discoveryResult.modelConfig,
           id: buildModelId(serverUrl, vllmId),
           vllmModelId: vllmId,
-          serverUrl,
-          serverType: sibling?.serverType, // preserve the sibling's backend type — missing → vllm
-          ...(sibling?.requestHeaders ? { requestHeaders: sibling.requestHeaders } : {}),
+          server: serverId,
         };
         if (discoveryResult.suggestedMaxOutputTokens !== undefined && newConfig.maxOutputTokens === undefined) {
           newConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
@@ -87,7 +95,7 @@ export function registerAutoConfigureModelCommand(
         return {
           label,
           description: `#${idx + 1}`,
-          detail: m.serverUrl || '(no server)',
+          detail: resolveServer(m.server, servers)?.serverUrl || '(no server)',
         } as vscode.QuickPickItem;
       });
 
@@ -115,19 +123,19 @@ export function registerAutoConfigureModelCommand(
       }
     }
 
-    const serverUrl = modelConfig.serverUrl;
-    if (!serverUrl) {
-      output.appendLine(`[ERROR] Model "${vllmId}" has no serverUrl configured.`);
+    const modelServer = resolveServer(modelConfig.server, servers);
+    if (!modelServer) {
+      output.appendLine(`[ERROR] Model "${vllmId}" references server "${modelConfig.server}", which is not registered.`);
       output.show(true);
       return;
     }
 
     // 2. Shared resolution (preset check → dialog → preset or HuggingFace)
     const discoveryResult = await resolveModelConfigForAddSafely(
-      output, context, vllmId, normalizeServerUrl(serverUrl), modelConfig.requestHeaders,
+      output, context, vllmId, modelServer.serverUrl, modelServer.requestHeaders,
       undefined, // no server root for existing models
       modelConfig, // preserve identity
-      modelConfig.serverType // persist the model's own backend type
+      modelServer.serverType // persist the model's own backend type
     );
     if (!discoveryResult) {
       output.appendLine(`[INFO] Auto-configure stopped for "${vllmId}" — discovery returned no result.`);
@@ -136,13 +144,13 @@ export function registerAutoConfigureModelCommand(
 
     // 3. Merge: discovery result is the base (full model-specific replace).
     //    Only infrastructure/personal fields survive from the user's old config.
+    //    Server facts (URL, auth, type) live on the registry entry the model
+    //    references — the `server` ref is preserved verbatim.
     const newConfig: ModelConfig = {
       ...discoveryResult.modelConfig,
       id: modelConfig.id,
       vllmModelId: modelConfig.vllmModelId,
-      serverUrl: modelConfig.serverUrl,
-      requestHeaders: modelConfig.requestHeaders,
-      serverType: modelConfig.serverType, // preserve the model's own backend type — missing → vllm
+      server: modelConfig.server,
       systemMessageReplacementsFile: modelConfig.systemMessageReplacementsFile,
       autoContinueRetries: modelConfig.autoContinueRetries,
       streamInactivityTimeout: modelConfig.streamInactivityTimeout,

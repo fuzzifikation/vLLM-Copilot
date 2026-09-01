@@ -7,7 +7,7 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider.js';
-import { getConfig } from '../config.js';
+import { getConfig, resolveServerConfig } from '../config.js';
 import type { ModelConfig } from '../config.js';
 import { replaceModelConfig, type IdentifiedModelConfig } from '../configStore.js';
 import { discoverPersonalities, ensureGlobalPersonality, resolveActivePersonality } from '../personalityStore.js';
@@ -26,19 +26,23 @@ interface PersonalityPick {
 }
 
 /**
- * A personality can only be persisted on a model with a `serverUrl`: the config
- * matcher (`findModelConfigIndex`) requires both config id and serverUrl, so a
- * server-less model falls through to `replaceModelConfig`'s append branch and
- * writes a duplicate entry. This guard lets the caller skip such models with a
- * clear warning instead of corrupting settings.json.
+ * A personality can only be persisted on a model whose `server` reference
+ * resolves: the config matcher (`findModelConfigIndex`) requires both config id
+ * and server, so a model with an unresolvable ref falls through to
+ * `replaceModelConfig`'s append branch and writes a duplicate entry. This guard
+ * lets the caller skip such models with a clear warning instead of corrupting
+ * settings.json.
  * @returns `{ ok: true }` or `{ ok: false, reason }` with a user-facing message.
  */
-export function personalityApplicableTo(model: ModelConfig): { ok: true } | { ok: false; reason: string } {
-  if (!model.serverUrl?.trim()) {
+export function personalityApplicableTo(
+  model: ModelConfig,
+  servers: import('../serverRegistry.js').ServerEntry[] = []
+): { ok: true } | { ok: false; reason: string } {
+  if (!model.server?.trim() || !resolveServerConfig(model, servers)) {
     const label = model.displayName || model.id || '(unnamed)';
     return {
       ok: false,
-      reason: `Model "${label}" has no serverUrl configured. Add a server before setting a personality.`,
+      reason: `Model "${label}" has no resolvable server configured. Add a server before setting a personality.`,
     };
   }
   return { ok: true };
@@ -55,6 +59,7 @@ export function registerSetModelPersonalityCommand(
     async () => {
       const cfg = await getConfig(context);
       const models = cfg.models || [];
+      const servers = cfg.servers || [];
 
       if (models.length === 0) {
         vscode.window.showInformationMessage(
@@ -66,7 +71,7 @@ export function registerSetModelPersonalityCommand(
       // Step 1: pick the model
       const modelItems = models.map((m) => ({
         label: m.displayName || m.id || '(unnamed)',
-        description: m.serverUrl || 'no serverUrl',
+        description: resolveServerConfig(m, servers)?.serverUrl || 'no server',
         model: m,
       }));
 
@@ -77,9 +82,10 @@ export function registerSetModelPersonalityCommand(
       });
       if (!modelPick) return;
 
-      // A server-less model cannot be matched by replaceModelConfig (findModelConfigIndex
-      // needs both id and serverUrl) and would otherwise append a duplicate entry.
-      const applicability = personalityApplicableTo(modelPick.model);
+      // A model with an unresolvable server ref cannot be matched by
+      // replaceModelConfig (findModelConfigIndex needs both id and server) and
+      // would otherwise append a duplicate entry.
+      const applicability = personalityApplicableTo(modelPick.model, servers);
       if (!applicability.ok) {
         outputChannel.appendLine(`[WARN] Personality not applicable: ${applicability.reason}`);
         outputChannel.show(true);
@@ -155,9 +161,9 @@ export function registerSetModelPersonalityCommand(
         const replacementsFile = clear
           ? ''
           : await ensureGlobalPersonality(context, sourcePath!);
-        // serverUrl is verified non-blank by personalityApplicableTo above; id or
-        // vllmModelId is present for any matched entry. The store re-validates
-        // identity at runtime rather than writing a malformed entry.
+        // The server ref is verified resolvable by personalityApplicableTo above;
+        // id or vllmModelId is present for any matched entry. The store
+        // re-validates identity at runtime rather than writing a malformed entry.
         await replaceModelConfig({
           ...modelPick.model,
           // Empty string is the explicit clear signal (undefined would preserve the previous value).

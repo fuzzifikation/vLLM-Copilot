@@ -2,29 +2,20 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/fuzzifikation/vLLM-Copilot/blob/main/schemas/vllm-copilot-models.schema.json",
   "title": "vLLM-Copilot Model Entry",
-  "description": "One entry of the `vllm-copilot.models` array in VS Code settings. Each entry is SELF-CONTAINED: it carries its own serverUrl, requestHeaders, params, budgets, and modes. There is NO global server. This schema mirrors `ModelConfig` in src/config.ts.",
+  "description": "One entry of the `vllm-copilot.models` array in VS Code settings. Each entry references its server from the `vllm-copilot.servers` registry via the required `server` field and carries its own params, budgets, and modes. Server facts (URL, auth, type, label) live ONLY on the registry entry. There is NO global server. This schema mirrors `ModelConfig` in src/config.ts.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["serverUrl", "id"],
+  "required": ["id", "server"],
   "properties": {
-    "serverUrl": {
-      "type": "string",
-      "minLength": 1,
-      "description": "REQUIRED. OpenAI-compatible base URL of the server hosting this model (e.g. http://localhost:8000/v1). There is no global server — every model targets its own. Must be non-empty."
-    },
     "id": {
       "type": "string",
       "minLength": 1,
-      "description": "REQUIRED. Unique entry key. The Add flow uses \"<model> on <host>\". Used as the wire model id when vllmModelId is unset. Must be non-empty."
+      "description": "REQUIRED. Unique preset ID used by VS Code to identify this model entry. Must be unique across all entries. If vllmModelId is not set, this value is also used as the vLLM server model identifier."
     },
-    "serverType": {
+    "server": {
       "type": "string",
-      "enum": ["vllm", "lmstudio", "llamacpp", "ollama", "openrouter"],
-      "description": "Backend protocol. Default: vllm. Missing/omitted always means vllm. Set explicitly for non-vLLM backends."
-    },
-    "serverDisplayName": {
-      "type": "string",
-      "description": "Optional human-friendly name for this server, shown in the dashboard tree and the Model Settings server dropdown instead of the raw URL. Server-level (stored per-model): the dashboard uses the first non-empty value among the models sharing this server identity (URL + headers). Set via the dashboard's Rename Server context action; empty/omitted falls back to the server URL. Not applicable to OpenRouter relays."
+      "minLength": 1,
+      "description": "REQUIRED. The id of this model's server entry in the vllm-copilot.servers registry. Models never carry URLs, auth headers, server types, or server labels themselves."
     },
     "vllmModelId": {
       "type": "string",
@@ -46,11 +37,6 @@
       "type": "string",
       "enum": ["standard", "nitro", "exacto"],
       "description": "OpenRouter only. How OpenRouter sorts/chooses providers when routing is Auto. Ignored when a provider is pinned."
-    },
-    "requestHeaders": {
-      "type": "object",
-      "additionalProperties": { "type": "string" },
-      "description": "HTTP headers sent with every request to THIS model's server only (auth, routing). e.g. { \"Authorization\": \"Bearer <key>\" }."
     },
     "maxOutputTokens": {
       "default": 4096,

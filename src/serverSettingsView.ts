@@ -5,8 +5,9 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getConfig, buildEndpoint, findModelConfigIndex, toPublicModelConfig, modelServerIdentity, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
-import { patchModelConfig, readModels, type ModelIdentity } from './configStore.js';
+import { getConfig, buildEndpoint, findModelConfigIndex, toPublicModelConfig, normalizeServerUrl, sanitizeRequestHeaders, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
+import { patchModelConfig, readModels, readServers, writeServers, type ModelIdentity } from './configStore.js';
+import { serverEntryFingerprint, type ServerEntry } from './serverRegistry.js';
 import { detectServerTypeFromV1Models } from './runtimeLimits.js';
 import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from './openRouter.js';
 
@@ -64,8 +65,12 @@ interface ServerGroup {
    * embeds header values that must not reach the webview DOM.
    */
   key: string;
+  /** Registry id of the group's primary entry (first in `servers[]` order). */
+  serverId: string;
   url: string;
-  /** User-set server label (first non-empty among the group's models), or undefined. */
+  /** Backend type from the registry entry (undefined = unset → vLLM by policy). */
+  serverType?: ServerType;
+  /** User-set server label (first non-empty among the group's entries), or undefined. */
   serverDisplayName?: string;
   models: ModelConfig[];
   serverModelIds: string[];
@@ -79,14 +84,14 @@ interface ServerGroup {
  * `max_model_len`) and llama.cpp (`owned_by: "llamacpp"`); LM Studio and Ollama
  * expose their own endpoints and have no `/v1/models` signature. When the endpoint
  * signal is inconclusive — no such entry, or the fetch failed — adopt the persisted
- * `serverType` of a configured sibling on the same server instead of silently
- * defaulting to vllm. Never guesses: absent both, returns undefined and the caller
- * falls back to the vLLM policy default.
+ * serverType of the group's registry entry instead of silently defaulting to
+ * vllm. Never guesses: absent both, returns undefined and the caller falls back
+ * to the vLLM policy default.
  * @internal Exported for testing.
  */
 export function resolveDetectedServerType(
   entries: Array<{ owned_by?: string; max_model_len?: number }>,
-  siblings: ReadonlyArray<Pick<ModelConfig, 'serverType'>>
+  siblings: ReadonlyArray<{ serverType?: ServerType }>
 ): ServerType | undefined {
   return detectServerTypeFromV1Models(entries) ?? siblings[0]?.serverType;
 }
@@ -102,12 +107,20 @@ interface SaveMessage {
 
 interface ApplyPersonalityMessage {
   type: 'applyPersonality';
-  serverUrl: string;
+  /** Registry entry id the target model lives on. */
+  server: string;
   /** Extension `id` of the target model config (or the server model id when unconfigured). */
   id?: string;
   /** Source personality to apply. Omit (or set `clear`) to remove the personality. */
   sourcePath?: string;
   clear?: boolean;
+}
+
+interface SetServerTypeMessage {
+  type: 'setServerType';
+  /** Registry entry id whose backend type changes. */
+  server: string;
+  serverType: ServerType;
 }
 
 interface SetSystemMessageCaptureMessage {
@@ -124,7 +137,7 @@ interface WebviewAction {
   identityModelId?: string;
 }
 
-type FromWebviewMessage = ReadyMessage | SaveMessage | ApplyPersonalityMessage | SetSystemMessageCaptureMessage | WebviewAction;
+type FromWebviewMessage = ReadyMessage | SaveMessage | ApplyPersonalityMessage | SetServerTypeMessage | SetSystemMessageCaptureMessage | WebviewAction;
 
 export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
@@ -168,6 +181,8 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
             await this.saveModelConfig(msg.config);
           } else if (msg.type === 'applyPersonality') {
             await this.applyPersonality(msg);
+          } else if (msg.type === 'setServerType') {
+            await this.setServerType(msg);
           } else if (msg.type === 'setSystemMessageCapture') {
             await this.setSystemMessageCapture(msg.enabled);
           } else if (msg.type === 'autoConfigure') {
@@ -198,7 +213,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     );
 
     const configDisposable = vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('vllm-copilot.models')) {
+      if (e.affectsConfiguration('vllm-copilot.models') || e.affectsConfiguration('vllm-copilot.servers')) {
         this.refreshWebview();
       }
     });
@@ -240,53 +255,55 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     if (!view || !this.isWebviewReady) return;
     const generation = ++this.refreshGeneration;
     const config = await getConfig(this.context);
-    // Group by URL + header fingerprint, not URL alone. Headers are per-model in
-    // this project — two models sharing a URL with different credentials/scopes
-    // are DIFFERENT logical servers. Each group is probed (and labelled) with its
-    // own credentials; one model's headers must never describe a sibling.
-    const serverMap = new Map<string, {
-      url: string;
-      models: ModelConfig[];
-      publicModels: ModelConfig[];
-      requestHeaders: Record<string, string>;
-      serverDisplayName?: string;
-    }>();
+    // Group the registry entries by URL + header fingerprint, in `servers[]`
+    // array order — not by URL alone. Headers are per-entry in this project —
+    // two entries sharing a URL with different credentials/scopes are DIFFERENT
+    // logical servers. Each group is probed (and labelled) with its own
+    // credentials; one entry's headers must never describe a sibling.
+    const modelsByServer = new Map<string, ModelConfig[]>();
     for (const model of config.models) {
-      // A model without a URL is unreachable and has no identity to group by.
-      if (!model.serverUrl) continue;
-      const identity = modelServerIdentity(model);
-      const fp = identity.fingerprint;
-      let existing = serverMap.get(fp);
-      if (!existing) {
-        existing = { url: identity.serverUrl, models: [], publicModels: [], requestHeaders: identity.requestHeaders };
-        serverMap.set(fp, existing);
+      const list = modelsByServer.get(model.server);
+      if (list) list.push(model);
+      else modelsByServer.set(model.server, [model]);
+    }
+    const serverMap = new Map<string, {
+      entries: ServerEntry[];
+      models: ModelConfig[];
+    }>();
+    for (const entry of config.servers) {
+      const fp = serverEntryFingerprint(entry);
+      let group = serverMap.get(fp);
+      if (!group) {
+        group = { entries: [], models: [] };
+        serverMap.set(fp, group);
       }
-      existing.models.push(model);
-      // Mirror the dashboard's single normalization point for the display name:
-      // trimmed (whitespace-only hand-edits never render as blank labels) and
-      // skipped for OpenRouter relays (fixed endpoint, not renamable). The
-      // webview's relay-guard stays as defense-in-depth, not the source of truth.
-      const name = model.serverType === 'openrouter'
-        ? undefined
-        : model.serverDisplayName?.trim();
-      if (!existing.serverDisplayName && name) existing.serverDisplayName = name;
-      // Public projection: header values never reach the webview DOM.
-      existing.publicModels.push({
-        ...toPublicModelConfig(model, { strip: true }),
-        serverUrl: identity.serverUrl,
-      });
+      group.entries.push(entry);
+      for (const model of modelsByServer.get(entry.id) ?? []) group.models.push(model);
+    }
+    // A model whose `server` matches no entry is unreachable and shown nowhere —
+    // name it instead of dropping it silently (validateConfig warns too).
+    const knownIds = new Set(config.servers.map(s => s.id));
+    for (const model of config.models) {
+      if (!knownIds.has(model.server)) {
+        this.outputChannel.appendLine(
+          `[WARN] Model Settings: model "${model.id || model.vllmModelId || '?'}" references unknown server "${model.server}" — not shown.`
+        );
+      }
     }
     const servers: ServerGroup[] = await Promise.all(
       Array.from(serverMap.entries()).map(async ([fp, group]) => {
-        const url = group.url;
+        const primary = group.entries[0];
+        const url = normalizeServerUrl(primary.serverUrl);
+        const entryType = group.entries.find(e => e.serverType !== undefined)?.serverType;
+        const requestHeaders = sanitizeRequestHeaders(primary.requestHeaders ?? {});
         // Fetch server model IDs from /v1/models (same endpoint Add Server probes).
         // Also detect the backend from the response so unconfigured models can be
-        // added with the correct serverType instead of silently defaulting to vllm.
+        // added with the correct backend instead of silently defaulting to vllm.
         const serverModelIds: string[] = [];
         let entries: Array<{ id?: string; owned_by?: string; max_model_len?: number }> = [];
         try {
           const resp = await fetch(buildEndpoint(url, 'v1/models'), {
-            headers: group.requestHeaders,
+            headers: requestHeaders,
             signal: AbortSignal.timeout(5000),
           });
           if (resp.ok) {
@@ -302,9 +319,27 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
         }
         // /v1/models can only identify vLLM and llama.cpp. LM Studio / Ollama have no
         // /v1/models signature — when the endpoint signal is inconclusive (or unreachable),
-        // adopt the persisted serverType of a configured sibling on the same server.
-        const detectedServerType = resolveDetectedServerType(entries, group.models);
-        return { key: serverGroupKey(fp), url, serverDisplayName: group.serverDisplayName, models: group.publicModels, serverModelIds, detectedServerType };
+        // fall back to the registry entries' persisted serverType.
+        const detectedServerType = resolveDetectedServerType(entries, group.entries);
+        // Mirror the dashboard's single normalization point for the display name:
+        // trimmed (whitespace-only hand-edits never render as blank labels) and
+        // skipped for OpenRouter relays (fixed endpoint, not renamable). The
+        // webview's relay-guard stays as defense-in-depth, not the source of truth.
+        const serverDisplayName = entryType === 'openrouter'
+          ? undefined
+          : group.entries.map(e => e.displayName?.trim()).find(n => !!n);
+        // Public projection: models carry no credentials post-registry — auth
+        // lives on the entry, whose headers never reach the webview DOM.
+        return {
+          key: serverGroupKey(fp),
+          serverId: primary.id,
+          url,
+          serverType: entryType,
+          serverDisplayName,
+          models: group.models.map(m => toPublicModelConfig(m)),
+          serverModelIds,
+          detectedServerType,
+        };
       }),
     );
     const firstServer = servers[0];
@@ -353,8 +388,8 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     // to "Auto" only), never a fabricated list.
     const openRouterWireIds: string[] = [];
     for (const sv of servers) {
+      if (sv.serverType !== 'openrouter') continue;
       for (const m of sv.models) {
-        if (m.serverType !== 'openrouter') continue;
         const wireId = m.vllmModelId || m.id || '';
         if (wireId && !openRouterWireIds.includes(wireId)) openRouterWireIds.push(wireId);
       }
@@ -398,10 +433,10 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
    */
   private async applyPersonality(msg: ApplyPersonalityMessage): Promise<void> {
     const targetId = msg.id || '';
-    if (!targetId || !msg.serverUrl) return;
+    if (!targetId || !msg.server) return;
 
     const models = readModels();
-    const idx = findModelConfigIndex(models, targetId, msg.serverUrl);
+    const idx = findModelConfigIndex(models, targetId, msg.server);
     if (idx < 0) return;
     const model = models[idx];
 
@@ -425,7 +460,6 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       ...model,
       vllmModelId: model.vllmModelId || targetId,
       id: model.id || targetId,
-      serverUrl: model.serverUrl,
       systemMessageReplacementsFile: replacementsFile,
     });
   }
@@ -441,8 +475,29 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Change a server group's backend type. serverType describes the SERVER, so
+   * this writes the registry ENTRY — never the model. The webview sends the
+   * group's primary entry id; entries sharing one connection fingerprint are
+   * the same backend in practice, so updating the primary suffices.
+   */
+  private async setServerType(msg: SetServerTypeMessage): Promise<void> {
+    const validTypes: ServerType[] = ['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter'];
+    if (!msg.server || !validTypes.includes(msg.serverType)) return;
+    const servers = readServers();
+    const idx = servers.findIndex(s => s.id === msg.server);
+    if (idx < 0) return;
+    if ((servers[idx].serverType ?? 'vllm') === msg.serverType) return;
+    const next = servers.slice();
+    next[idx] = { ...next[idx], serverType: msg.serverType };
+    await writeServers(next);
+    this.clearCache?.();
+    // The 'vllm-copilot.servers' config listener owns the webview refresh.
+    this.outputChannel.appendLine(`[SETTINGS] Server "${msg.server}" type → ${msg.serverType}`);
+  }
+
+  /**
    * Persist a model edit from the webview. Identity is extracted here — `id` and
-   * `serverUrl` are lookup keys, never patchable properties — and delegated to
+   * `server` are lookup keys, never patchable properties — and delegated to
    * `configStore.patchModelConfig`, which owns the field-merge / composite-id
    * logic. Side effects (log, cache clear, toast) run in this handler AFTER the
    * store write succeeds, so the store stays pure. The webview refresh is NOT one
@@ -454,10 +509,10 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
    * across an auto-applied change (personality).
    */
   private async saveModelConfig(updates: Partial<ModelConfig>): Promise<void> {
-    const { id, serverUrl, ...rest } = updates;
+    const { id, server, ...rest } = updates;
     const identity: ModelIdentity = {
       id: id || updates.vllmModelId || '',
-      serverUrl: serverUrl || '',
+      server: server || '',
     };
 
     try {

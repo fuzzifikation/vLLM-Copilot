@@ -209,6 +209,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     const run = (async (): Promise<number> => {
       const config = await this.client.getConfigCached();
       const modelOverrides = config.models || [];
+      const servers = config.servers || [];
 
       if (modelOverrides.length === 0) {
         if (generation === this.modelCacheGeneration) {
@@ -226,6 +227,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       const contextWindows = new Map<string, number>();
       const models = await discoverModels(
         modelOverrides,
+        servers,
         this.client,
         this.output,
         (modelId, contextWindow) => contextWindows.set(modelId, contextWindow),

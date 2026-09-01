@@ -15,7 +15,7 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from './config.js';
 import { readModels, readServers, writeModels, writeServers } from './configStore.js';
-import { planRegistryMigration } from './registryMigration.js';
+import { planRegistryMigration, type LegacyModelConfig } from './registryMigration.js';
 import type { ServerEntry } from './serverRegistry.js';
 
 const MIGRATION_FLAG = 'vllmCopilot.serverRegistryMigration.v1';
@@ -26,7 +26,7 @@ const BTN_SHOW = 'Show servers';
 
 /** Pre-migration state of both arrays; doubles as the rollback payload. */
 interface RegistrySnapshot {
-  models: ModelConfig[];
+  models: LegacyModelConfig[];
   servers: ServerEntry[];
 }
 
@@ -43,7 +43,11 @@ export async function maybeRunServerRegistryMigration(
     const decided = context.globalState.get<string>(MIGRATION_FLAG);
     if (decided === 'done' || decided === 'reverted') return;
 
-    const models = readModels();
+    // Read the raw settings as the LEGACY shape — the migration exists precisely
+    // because the stored models predate the registry and still carry inline
+    // server facts. Cast from readModels(): the stored array is not yet the new
+    // ModelConfig shape, and treating it as such would defeat the migration.
+    const models = readModels() as unknown as LegacyModelConfig[];
     if (models.length === 0) {
       // Fresh install: models will be created in the new shape from the start.
       await context.globalState.update(MIGRATION_FLAG, 'done');
@@ -86,7 +90,12 @@ export async function maybeRunServerRegistryMigration(
       if (plan.servers.length > 0) {
         await writeServers(nextServers);
       }
-      await writeModels(plan.models);
+      // plan.models is the NEW shape for migrated entries plus verbatim-kept
+      // legacy orphans. writeModels is typed for the new ModelConfig; the union
+      // (with legacy orphans) is the honest representation of what we persist,
+      // so cast at this single write boundary — the stored array is exactly the
+      // migration output by construction.
+      await writeModels(plan.models as unknown as ModelConfig[]);
     } catch (err) {
       // Settings write blocked (e.g. invalid settings.json) — no marker, so
       // the next activation retries. The snapshot above is harmless.
@@ -138,7 +147,9 @@ export function registerUndoServerRegistryMigration(
     }
     try {
       await writeServers(snapshot.servers);
-      await writeModels(snapshot.models);
+      // snapshot.models is the LEGACY (pre-registry) shape by design — that is
+      // the whole point of undo. Cast across the write boundary.
+      await writeModels(snapshot.models as unknown as ModelConfig[]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       void vscode.window.showErrorMessage(`vLLM-Copilot: could not restore your previous settings — ${msg}`);

@@ -42,7 +42,7 @@ function makeToken(): any {
 
 function fakeClient(overrides: Partial<ProviderClient> = {}): ProviderClient {
   return {
-    getConfigCached: vi.fn(async () => ({ models: [], enableFileLogging: false } as VllmConfig)),
+    getConfigCached: vi.fn(async () => ({ models: [], servers: [], enableFileLogging: false } as VllmConfig)),
     invalidateConfigCache: vi.fn(),
     getModelContextWindow: vi.fn(async () => ({ contextWindow: 8192 })),
     chatCompletionStream: async function* () {},
@@ -50,8 +50,8 @@ function fakeClient(overrides: Partial<ProviderClient> = {}): ProviderClient {
   };
 }
 
-const server = 'http://localhost:8000';
-const configWithModel = { models: [{ id: 'm1', serverUrl: server, family: 'test-family' }] } as VllmConfig;
+const servers = [{ id: 'srv', serverUrl: 'http://localhost:8000' }];
+const configWithModel = { models: [{ id: 'm1', server: 'srv', family: 'test-family' }], servers } as VllmConfig;
 
 describe('provideLanguageModelChatInformation (facade)', () => {
   it('returns [] and skips discovery when running locally on a remote', async () => {
@@ -136,12 +136,14 @@ describe('clearCache (invalidation + change event)', () => {
       resolveOldContext = resolve;
     });
     const oldConfig = {
-      models: [{ id: 'old', serverUrl: server, family: 'old-family' }],
+      models: [{ id: 'old', server: 'srv', family: 'old-family' }],
       enableFileLogging: false,
+      servers,
     } as VllmConfig;
     const newConfig = {
-      models: [{ id: 'new', serverUrl: server, family: 'new-family' }],
+      models: [{ id: 'new', server: 'srv', family: 'new-family' }],
       enableFileLogging: false,
+      servers,
     } as VllmConfig;
     const client = fakeClient({
       getConfigCached: vi.fn()
@@ -171,8 +173,9 @@ describe('clearCache (invalidation + change event)', () => {
     // output budget) could be restored after the switch. This pins the
     // generation-increment in trackModeSelection specifically.
     const modelWithModes = {
-      models: [{ id: 'm1', serverUrl: server, family: 'test-family', modelModes: { Think: { max_tokens: 8000 }, Fast: {} } }],
+      models: [{ id: 'm1', server: 'srv', family: 'test-family', modelModes: { Think: { max_tokens: 8000 }, Fast: {} } }],
       enableFileLogging: false,
+      servers,
     } as VllmConfig;
 
     let resolveOldContext!: (value: { contextWindow: number }) => void;
@@ -220,10 +223,11 @@ describe('clearCache (invalidation + change event)', () => {
     // menu is filtered by the static ceiling, so 4096 stays selectable at 2048.
     const modelWithLengths = {
       models: [{
-        id: 'm1', serverUrl: server, family: 'test-family',
+        id: 'm1', server: 'srv', family: 'test-family',
         maxOutputTokens: [4096, 2048],
       }],
       enableFileLogging: false,
+      servers,
     } as VllmConfig;
     const client = fakeClient({
       getConfigCached: vi.fn(async () => modelWithLengths),
@@ -261,11 +265,12 @@ describe('clearCache (invalidation + change event)', () => {
     // it — the advertised budget follows the pick, not the mode.
     const modelWithModeCap = {
       models: [{
-        id: 'm1', serverUrl: server, family: 'test-family',
+        id: 'm1', server: 'srv', family: 'test-family',
         maxOutputTokens: [4096, 2048],
         modelModes: { Fast: { max_tokens: 1024 } },
       }],
       enableFileLogging: false,
+      servers,
     } as VllmConfig;
     const client = fakeClient({
       getConfigCached: vi.fn(async () => modelWithModeCap),
@@ -298,10 +303,11 @@ describe('clearCache (invalidation + change event)', () => {
     // windows forever. Only an actual change may invalidate the cache.
     const modelWithLengths = {
       models: [{
-        id: 'm1', serverUrl: server, family: 'test-family',
+        id: 'm1', server: 'srv', family: 'test-family',
         maxOutputTokens: [4096, 2048],
       }],
       enableFileLogging: false,
+      servers,
     } as VllmConfig;
     const client = fakeClient({
       getConfigCached: vi.fn(async () => modelWithLengths),

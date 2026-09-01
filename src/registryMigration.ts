@@ -9,7 +9,6 @@
  */
 
 import {
-  type ModelConfig,
   normalizeServerUrl,
   sanitizeRequestHeaders,
   serverFingerprint,
@@ -21,8 +20,23 @@ import {
   serverEntryFingerprint,
 } from './serverRegistry.js';
 
+/**
+ * The pre-migration model shape: server facts inline on the model. This is the
+ * ONLY place the legacy fields are named — the migration reads them, and after
+ * the sweep nothing else may. `Omit<ModelConfig, ...>` keeps the shared model
+ * fields in lockstep with the live type.
+ */
+import type { ModelConfig, ServerType } from './config.js';
+
+export type LegacyModelConfig = Omit<ModelConfig, 'server'> & {
+  serverUrl?: string;
+  requestHeaders?: Record<string, string>;
+  serverType?: ServerType;
+  serverDisplayName?: string;
+};
+
 /** A model config after migration — inline server fields replaced by a ref. */
-export type MigratedModelConfig = Omit<ModelConfig, 'serverUrl' | 'requestHeaders' | 'serverType' | 'serverDisplayName'> & {
+export type MigratedModelConfig = Omit<LegacyModelConfig, 'serverUrl' | 'requestHeaders' | 'serverType' | 'serverDisplayName'> & {
   /** Reference to the `ServerEntry.id` this model connects through. */
   server: string;
 };
@@ -37,7 +51,7 @@ export interface MigrationPlan {
    * the migration never silently deletes user settings. Consumers narrow on
    * `'server' in m`.
    */
-  models: Array<MigratedModelConfig | ModelConfig>;
+  models: Array<MigratedModelConfig | LegacyModelConfig>;
   /** Models kept verbatim because they could not be migrated (no usable serverUrl). */
   skipped: Array<{ id: string; reason: string }>;
 }
@@ -62,9 +76,9 @@ export interface MigrationPlan {
  * - Generated ids use generateServerId (host + path tail), deduplicated against
  *   `existing` ids as well.
  */
-export function planRegistryMigration(models: ModelConfig[], existing: ServerEntry[] = []): MigrationPlan {
+export function planRegistryMigration(models: LegacyModelConfig[], existing: ServerEntry[] = []): MigrationPlan {
   const servers: ServerEntry[] = [];
-  const migrated: Array<MigratedModelConfig | ModelConfig> = [];
+  const migrated: Array<MigratedModelConfig | LegacyModelConfig> = [];
   const skipped: Array<{ id: string; reason: string }> = [];
   /** fingerprint → entry id, so every member of a group resolves to its entry in O(1). */
   const entryIdByFingerprint = new Map<string, string>();
