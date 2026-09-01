@@ -1,12 +1,11 @@
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider.js';
-import { getConfig, validateConfig, normalizeServerUrl } from './config.js';
+import { getConfig, validateConfig, serverIdentity } from './config.js';
 import { FileLogger } from './logger.js';
 import { registerAddServerModelCommand, registerAddServerCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault, ensureAgentHostModelsEnabled } from './autoConfig.js';
 import { setSessionManagerOutput } from './sessionManager.js';
 import { syncBundledPersonalities } from './personalityStore.js';
 import { readServers } from './configStore.js';
-import { resolveServer } from './serverRegistry.js';
 import {
   registerTestAndRefreshModelsCommand,
   registerDiagnoseConnectionCommand,
@@ -127,8 +126,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // One-time, silent server registry migration: moves per-model server facts
     // into vllm-copilot.servers and rewrites models to { server } refs. Must
-    // complete before the output-length offer below, which identifies models by
-    // { id, serverUrl } — that key no longer exists after the rewrite.
+    // complete before the output-length offer below, which addresses models by
+    // { id, server } — a ref that only exists after the rewrite.
     await maybeRunServerRegistryMigration(context, outputChannel);
 
     // One-time activation summary
@@ -222,18 +221,12 @@ export async function activate(context: vscode.ExtensionContext) {
     // Deep-Dive: open editor-area webview for a single server
     context.subscriptions.push(
       vscode.commands.registerCommand('vllm-copilot.openDeepDive', async (arg?: any) => {
-        const servers = readServers();
-        // Resolve the target server entry: from a tree item's server id, or by
-        // matching a URL argument against the registry.
-        const argUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
-        const argId = typeof arg === 'object' ? arg?.server : undefined;
-        const entry = argId
-          ? servers.find(s => s.id === argId)
-          : argUrl
-            ? servers.find(s => normalizeServerUrl(s.serverUrl) === normalizeServerUrl(argUrl))
-            : undefined;
+        // The dashboard tree item carries the registry ENTRY id — never match by
+        // URL: one URL can host several credential identities, and URL-matching
+        // would open the panel with whichever entry happens to be first.
+        const entry = readServers().find(s => s.id === arg?.serverId);
         if (!entry) {
-          vscode.window.showErrorMessage(argUrl ? `No registered server matches "${argUrl}".` : 'Server not provided.');
+          vscode.window.showErrorMessage('Server not found — it may have been removed. Refresh the Dashboard.');
           return;
         }
         const serverType = entry.serverType ?? 'vllm';
@@ -246,13 +239,11 @@ export async function activate(context: vscode.ExtensionContext) {
           );
           return;
         }
-        const resolved = resolveServer(entry.id, servers);
-        if (!resolved) {
-          vscode.window.showErrorMessage(`Server "${entry.id}" could not be resolved.`);
-          return;
-        }
+        // We already hold the entry; normalize it directly instead of looking it
+        // up again by id.
+        const { serverUrl, requestHeaders } = serverIdentity(entry.serverUrl, entry.requestHeaders);
         const displayName = entry.serverType === 'openrouter' ? undefined : entry.displayName?.trim() || undefined;
-        openDeepDive(resolved.serverUrl, resolved.requestHeaders, serverType, context, outputChannel, displayName);
+        openDeepDive(serverUrl, requestHeaders, serverType, context, outputChannel, displayName);
       }),
     );
 

@@ -95,8 +95,9 @@ export async function persistAddedModel(
 /**
  * Find-or-create the registry entry for a server connection (normalized URL +
  * auth). Matching is by {@link serverEntryFingerprint}: an existing entry with
- * the same URL + headers is reused as-is (its id, label and backend type are
- * preserved); otherwise a new entry is appended with a URL-derived id from
+ * the same URL + headers is reused (its id and label are preserved; a backend
+ * type it does not have yet is filled in from `serverType`, never overwritten);
+ * otherwise a new entry is appended with a URL-derived id from
  * {@link generateServerId} and the registry is written whole-array.
  *
  * Returns the id the caller puts on the model's `server` field, plus whether
@@ -116,7 +117,19 @@ export async function ensureServerEntry(options: {
   const servers = readServers();
   const fingerprint = serverFingerprint(normalizedUrl, headers);
   const existing = servers.find(s => serverEntryFingerprint(s) === fingerprint);
-  if (existing) return { id: existing.id, created: false };
+  if (existing) {
+    // Fill in a MISSING backend type on reuse. "Add Server" registers without
+    // probing, so an entry can legitimately arrive type-less; when a model is
+    // later added, the detected type must land, or an Ollama/LM Studio server
+    // is spoken to as vLLM forever. Writing an unset field is not a change to
+    // anything the user declared — an existing `serverType` is never touched.
+    if (options.serverType && existing.serverType === undefined) {
+      await writeServers(
+        servers.map(s => (s.id === existing.id ? { ...s, serverType: options.serverType } : s))
+      );
+    }
+    return { id: existing.id, created: false };
+  }
 
   const takenIds = new Set(servers.map(s => s.id));
   const id = options.preferredId && !takenIds.has(options.preferredId)
@@ -147,6 +160,7 @@ export async function ensureServerEntry(options: {
 async function rotateEntryAuth(
   entryId: string | undefined,
   enteredHeaders: Record<string, string>,
+  output: vscode.OutputChannel,
 ): Promise<string | undefined> {
   if (!entryId) return undefined;
   const servers = readServers();
@@ -156,16 +170,22 @@ async function rotateEntryAuth(
   const merged = mergeAuthHeaders(existingHeaders, sanitizeRequestHeaders(enteredHeaders));
   if (merged && !sameHeaders(merged, existingHeaders)) {
     await writeServers(servers.map(s => (s.id === entryId ? { ...s, requestHeaders: merged } : s)));
+    // The write happens BEFORE the model confirm (the config to review needs a
+    // resolved server), so a later "Copy JSON"/dismiss leaves the rotated
+    // credentials in place. That must not be a secret: credentials on a shared
+    // entry are a fact about the server, not about the abandoned model.
+    output.appendLine(`[INFO] Rotated credentials into server entry "${entryId}" (Replace Config).`);
   }
   return entryId;
 }
 
 /**
- * Roll back a registry entry that was created for a model which never got
- * saved (confirm dismissed or "Copy JSON"). An entry no model references is
- * just live credentials parked in global settings with no purpose, so it is
- * removed — but only when genuinely unreferenced, so an entry the flow REUSED
- * (or that another model picked up meanwhile) is left alone.
+ * Roll back a registry entry that was created for a model whose confirm was
+ * dismissed. An entry no model references is just live credentials parked in
+ * global settings with no purpose, so it is removed — but only when genuinely
+ * unreferenced, so an entry the flow REUSED (or that another model picked up
+ * meanwhile) is left alone. "Copy JSON" does NOT roll back: the copied config
+ * references the entry.
  */
 async function discardUnreferencedServerEntry(entryId: string | undefined): Promise<void> {
   if (!entryId) return;
@@ -192,9 +212,10 @@ async function discardUnreferencedServerEntry(entryId: string | undefined): Prom
  * modal: a sniffed config is guesswork and deserves eyes.
  *
  * `createdServerId`: id of a registry entry this flow created for the model. If
- * the confirm is abandoned, the entry is rolled back
+ * the confirm is DISMISSED the entry is rolled back
  * ({@link discardUnreferencedServerEntry}) so a cancelled add never leaves
- * orphaned credentials in settings.
+ * orphaned credentials in settings. "Copy JSON" keeps it: the copied `server`
+ * ref points at that entry.
  * @internal Exported for the auto-configure flow.
  */
 export async function confirmAndSaveAddedModel(
@@ -238,15 +259,25 @@ export async function confirmAndSaveAddedModel(
     return true;
   } else if (action === 'Copy JSON') {
     await vscode.env.clipboard.writeText(JSON.stringify(finalConfig, null, 2));
+    // An entry this flow created is deliberately KEPT here: the copied config's
+    // `server` ref points at it, so rolling it back would hand the user a
+    // dangling ref. A zero-model entry is a legal state ("Add Server" creates
+    // one on purpose) and Remove Server deletes it again.
+    if (createdServerId) {
+      output.appendLine(
+        `[INFO] Copied config for "${modelId}" — registry entry "${createdServerId}" kept, the copied "server" ref points at it.`
+      );
+    }
     vscode.window.showInformationMessage('Model config copied to clipboard.');
+    return false;
   } else {
     output.appendLine('[INFO] Model add cancelled — confirm dismissed.');
     output.show(true);
+    // Dismissed with nothing saved: an entry this flow created would sit in
+    // settings unreferenced, holding live credentials nobody asked to keep.
+    await discardUnreferencedServerEntry(createdServerId);
+    return false;
   }
-  // Abandoned (Copy JSON or dismissed): nothing was saved, so an entry this
-  // flow created would sit in settings unreferenced, holding live credentials.
-  await discardUnreferencedServerEntry(createdServerId);
-  return false;
 }
 
 // ── OpenRouter onboarding branch ────────────────────────────────────────────
@@ -549,7 +580,7 @@ export async function runOpenRouterAddFlow(
   let openRouterServerId: string;
   let createdServerId: string | undefined;
   const replaceServerId = replaceExistingId
-    ? await rotateEntryAuth(replaceTargetServer, requestHeaders)
+    ? await rotateEntryAuth(replaceTargetServer, requestHeaders, output)
     : undefined;
   if (replaceServerId) {
     openRouterServerId = replaceServerId;
@@ -650,11 +681,6 @@ async function handleServerFailure(
 }
 
 /**
- * Guided command: add a vLLM server (URL + optional headers), discover its models,
- * auto-configure the chosen one, and save it as a per-model entry. This is the
- * end-to-end flow for onboarding a second server without hand-editing settings.json.
- */
-/**
  * Register a server in the registry WITHOUT adding a model. The Add-model
  * flows roll back a registry entry whose model was never saved, so without
  * this command a zero-model entry could not be created on purpose at all.
@@ -668,7 +694,7 @@ export function registerAddServerCommand(output: vscode.OutputChannel): vscode.D
       prompt: 'Enter a server URL (vLLM, LM Studio, llama.cpp, Ollama) to register without a model',
       placeHolder: 'https://host:8000',
       ignoreFocusOut: true,
-      validateInput: (v) => (v.trim() ? undefined : 'Server URL is required'),
+      validateInput: validateServerUrlInput,
     });
     if (!urlInput) {
       output.appendLine('[INFO] Add server cancelled — no URL entered.');
@@ -715,6 +741,30 @@ export function registerAddServerCommand(output: vscode.OutputChannel): vscode.D
   });
 }
 
+/**
+ * Reject anything `new URL()` can't parse or that has no hostname. Without this,
+ * `generateServerId` throws on garbage like "foo bar", and a host-less "http://"
+ * silently becomes the localhost:8000 default (normalizeServerUrl's fallback).
+ */
+export function validateServerUrlInput(value: string): string | undefined {
+  const raw = value.trim();
+  if (!raw) return 'Server URL is required';
+  let url: URL;
+  try {
+    url = new URL(raw.includes('://') ? raw : `http://${raw}`);
+  } catch {
+    return `"${raw}" is not a valid URL — e.g. https://host:8000`;
+  }
+  if (!url.hostname) return 'Enter a full server URL, e.g. https://host:8000';
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return 'Use an http(s) server URL';
+  return undefined;
+}
+
+/**
+ * Guided command: add a server (URL + optional headers), discover its models,
+ * auto-configure the chosen one, and save it as a per-model entry. This is the
+ * end-to-end flow for onboarding a second server without hand-editing settings.json.
+ */
 export function registerAddServerModelCommand(
   context: vscode.ExtensionContext,
   provider: ClearCacheProvider,
@@ -729,7 +779,7 @@ export function registerAddServerModelCommand(
       prompt: 'Enter a server URL (vLLM, LM Studio, llama.cpp, Ollama), or an openrouter.ai URL — a model-page URL pre-fills the model picker',
       placeHolder: 'https://host:8000  ·  https://openrouter.ai  ·  https://openrouter.ai/author/model',
       ignoreFocusOut: true,
-      validateInput: (v) => (v.trim() ? undefined : 'Server URL is required'),
+      validateInput: validateServerUrlInput,
     });
     if (!urlInput) {
       output.appendLine('[INFO] Add Server cancelled — no URL entered.');
@@ -913,7 +963,7 @@ export function registerAddServerModelCommand(
     let serverId: string;
     let createdServerId: string | undefined;
     const replaceServerId = replaceExistingId
-      ? await rotateEntryAuth(replaceTargetServer, hasHeaders ? requestHeaders : {})
+      ? await rotateEntryAuth(replaceTargetServer, hasHeaders ? requestHeaders : {}, output)
       : undefined;
     if (replaceServerId) {
       serverId = replaceServerId;

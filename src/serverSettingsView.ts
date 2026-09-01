@@ -142,9 +142,6 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private isWebviewReady = false;
   private refreshGeneration = 0;
-  /** (model id, dangling server ref) pairs already logged — dangling-ref
-   *  warnings fire once, not on every `refreshWebview`. */
-  private readonly warnedUnreachableModels = new Set<string>();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -280,19 +277,9 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       group.entries.push(entry);
       for (const model of modelsByServer.get(entry.id) ?? []) group.models.push(model);
     }
-    // One log line per (model, dangling ref) — refreshWebview runs on every
-    // settings write, and a broken ref must not spam the channel each time.
-    const knownIds = new Set(config.servers.map(s => s.id));
-    for (const model of config.models) {
-      if (!knownIds.has(model.server)) {
-        const label = `${model.id || model.vllmModelId || '?'}\u0000${model.server}`;
-        if (this.warnedUnreachableModels.has(label)) continue;
-        this.warnedUnreachableModels.add(label);
-        this.outputChannel.appendLine(
-          `[WARN] Model Settings: model "${model.id || model.vllmModelId || '?'}" references unknown server "${model.server}" — not shown.`
-        );
-      }
-    }
+    // Models whose `server` ref dangles never reach a group and so are absent
+    // from this view; `validateConfig` (activation) and discovery (every
+    // refresh) already name them, so no third log line belongs here.
     const servers: ServerGroup[] = await Promise.all(
       Array.from(serverMap.entries()).map(async ([fp, group]) => {
         const primary = group.entries[0];

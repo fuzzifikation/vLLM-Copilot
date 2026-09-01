@@ -4,8 +4,7 @@
  * per-model configs and into the `servers[]` registry (docs/server-registry.md §6).
  *
  * Pure module: no vscode imports, no I/O, no side effects. The caller (activation)
- * owns snapshotting, ordering the settings writes (servers first, then models),
- * and setting the migration marker.
+ * owns the settings writes (servers first, then models) and the migration marker.
  */
 
 import {

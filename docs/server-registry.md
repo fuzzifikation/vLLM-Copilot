@@ -201,7 +201,6 @@ including the globalState marker idiom and the plan-then-dumb-apply structure �
    be a second plaintext copy of every credential serving a recovery story nobody can act on.
    Rollback means restoring `settings.json` by hand or staying on an older VSIX — stated in the
    CHANGELOG.
-
 **Two rules the steps do not make obvious, now settled:**
 
 - **The migration is a pure function of the `models` array plus the already-present `servers`
@@ -243,7 +242,7 @@ What follows are only the decisions the compiler cannot make for you.
 | `src/config.ts` | `VllmConfig.servers` + `getConfig()`; `resolveServerConfig(model, servers)` returning `EffectiveServer` or undefined; `sanitizeRequestHeaders` exported; `findModelConfigIndex`/`findModelConfig`/`resolveOverrideForModel` take `servers` and compare the **resolved** URL (callers that only know a URL — the usage and dashboard lookups — still need it); `validateConfig` gains unknown-id, duplicate-id and unresolvable-ref warnings and loses the "has no serverUrl" branch; `CLEARABLE_ON_EMPTY` drops `serverDisplayName` and `serverType`. |
 | `src/configStore.ts` | **`ModelIdentity` becomes `{ id, server }`** and `assertValidIdentity` requires a non-blank `server`. Purity removes a hazard here: identity is always complete now, so the append-on-no-match path can no longer materialise a stray inline entry that outranks the registry — appending means what it says, "a new model on a known server". Replace-mode preserve list drops the two server fields, keeps `systemMessageReplacementsFile`. Gains a `writeServers()` mirroring `writeModels()` — the single `update('servers', ...)` in `src/`. |
 | `src/commands.ts` | Update Auth, Rename Server, Remove Server and Remove Model write through `writeModels` and must carry `server` through untouched. `resetUsage` scope and usage lookups keep taking the resolved URL. |
-| `src/dashboard.ts` | Grouping iterates **`servers[]` in array order** and attaches the models that resolve to each entry, so node order follows settings order and drag-reordering servers later stays a one-line change in `getChildren` — do not introduce an alphabetical sort. Nodes are keyed by **fingerprint, not entry**: when an entry's fingerprint equals one already emitted (two entries with the same URL *and* auth — allowed per §10), it does not emit a second node; its models join the existing node and the label stays with the first entry in array order. Engines and usage keys are fingerprint-keyed (§5), so entry-keyed nodes would double-render what the engine pool holds as one. An entry with no models is then just an empty group, which is why an empty-server node costs roughly 15 lines instead of a restructure. A model whose `server` ref does not resolve has no URL to group by: report it as unreachable, named by its ref, rather than letting it vanish from the sidebar. Node label from `EffectiveServer.displayName`. |
+| `src/dashboard.ts` | Grouping iterates **`servers[]` in array order** and attaches the models that resolve to each entry, so node order follows settings order and drag-reordering servers later stays a one-line change in `getChildren` — do not introduce an alphabetical sort. Nodes are keyed by **fingerprint, not entry**: when an entry's fingerprint equals one already emitted (two entries with the same URL *and* auth — allowed per §10), it does not emit a second node; its models join the existing node and the label stays with the first entry in array order. Engines and usage keys are fingerprint-keyed (§5), so entry-keyed nodes would double-render what the engine pool holds as one. An entry with no models is then just an empty group, which is why an empty-server node costs roughly 15 lines instead of a restructure. A model whose `server` ref does not resolve has no URL to group by, so it simply has no node; `validateConfig` at activation and the discovery pass on every refresh both name it by ref in the Output channel, so the sidebar stays quiet. Node label from `EffectiveServer.displayName`. |
 | `src/serverSettingsView.ts` (+ `resources/serverSettings.js`) | Its `affectsConfiguration('vllm-copilot.models')` listener widens to also match `vllm-copilot.servers` — the only listener that needs it. The blanket `vllm-copilot` listeners in `extension.ts` and `dashboard.ts` already cover cache invalidation and tree refresh for the new key. Server card edits **display name and type** only; auth stays in the native `promptForServerAuth` flow, so no credential value ever enters webview state. |
 | `src/commands/presets.ts` | `PresetConfig` already omits `serverUrl`, `requestHeaders`, `serverType`, `serverDisplayName`; it gains `server` in the same `Omit` list and `PRESET_CONFIG_KEYS` stays closed. Presets describe model facts and cannot name a server — a preset file carrying one is rejected by the existing allow-list, remote presets included. |
 | `src/commands/addServerFlow.ts`, `src/commands/autoConfigureFlow.ts`, `src/presetRemote.ts` | These **create** servers today by writing `serverUrl` into model entries. They become: upsert the entry, then write models referencing it. The OpenRouter branch stops being special (§3). |
@@ -270,9 +269,13 @@ What follows are only the decisions the compiler cannot make for you.
   model's config with new credentials rotates the entered auth *into* the entry the model already
   references (Update Auth doctrine) instead of deriving a fresh entry from the new headers — a new
   entry would change the `server` ref, make the replace match nothing and append a duplicate
-  model. And an entry *created* by the add flow is rolled back if the model is never saved
-  (confirm dismissed or "Copy JSON"): no orphaned entry with live credentials may survive an
-  abandoned flow. Entries the flow only reused are never touched.
+  model. An entry *created* by the add flow is rolled back when the confirm is **dismissed**: no
+  entry holding credentials the user walked away from may survive. "Copy JSON" keeps it — the
+  copied `server` ref points at that entry, and a zero-model entry is a legal state ("Add
+  Server" makes one on purpose), removable with Remove Server. Entries the flow only reused are
+  never touched. Credential rotation for a replaced model happens on the existing entry *before*
+  the confirm (the preview needs a resolved server) and is logged, so a dismissed confirm leaves
+  a rotated, not a silent, entry behind.
 - **New server** — `vllm-copilot.addServer`: URL → auth → entry saved with zero models; the
   success toast offers "Add a Model". No confirm/rollback dance — the entry *is* the deliverable,
   so it persists unconditionally. The existing `addServerModel` flow stays as-is (URL → probe →
@@ -301,6 +304,7 @@ What follows are only the decisions the compiler cannot make for you.
 | Migration splits or duplicates what the user thinks of as "one server" | It never merges across fingerprints and never rewrites a URL, so the worst case is one extra entry to rename or delete. |
 | Downgrade: an older VSIX reads migrated settings and finds models with no `serverUrl` | Accepted breaking change; stated in the CHANGELOG and in the post-migration notification. |
 | Something still reads a URL without resolving it | Deleted field, therefore compile error. That *is* the mitigation — no manual audit list exists at all. |
+| Replace Config: the target entry is deleted (another window, manual edit) between the confirm and the credential rotation | The rotation finds nothing, so a fresh entry is created and the model is appended instead of replaced — a duplicate, visible in settings, fixable by deleting one entry. Closing it needs a compare-and-set on `config.update()`, which VS Code does not offer; not worth a lock for a self-inflicted double-edit. |
 | LM tool / GUIDE / presets emit the old shape | Same-commit update plus the schema test; the tool's `modelDescription` is in §7. |
 | Server-scoped commands silently narrow their target set | §5: fan-out stays URL-wide; dialogs enumerate targets. |
 | Two entries with identical URL and auth | Allowed, warned about in validation, never auto-merged. Same fingerprint means one engine, one usage key and **one dashboard node carrying both entries' models** (§7) — they are one server wearing two name tags, and renaming one tag does not rename the box. |

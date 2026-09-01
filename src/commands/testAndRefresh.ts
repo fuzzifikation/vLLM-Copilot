@@ -51,7 +51,7 @@ interface ServerGroup {
  * reported individually — they would otherwise all share the empty-URL identity.
  * @internal Exported for testing.
  */
-export function groupModelsByServer(models: ModelConfig[], servers: ServerEntry[] = []): ServerGroup[] {
+export function groupModelsByServer(models: ModelConfig[], servers: ServerEntry[]): ServerGroup[] {
   const groups = new Map<string, ServerGroup>();
   models.forEach((model, index) => {
     if (!resolveServerConfig(model, servers)) {

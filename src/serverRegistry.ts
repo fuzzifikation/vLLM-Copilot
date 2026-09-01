@@ -80,7 +80,8 @@ function dedupe(slug: string, existingIds: Set<string>): string {
 }
 
 /**
- * Strip credentials for webview state — mirrors `toPublicModelConfig(config, { strip: true })`.
+ * Strip credentials for webview state — same job as `toPublicModelConfig`
+ * (config.ts), on the server side of the registry.
  */
 export function toPublicServerEntry(entry: ServerEntry): Omit<ServerEntry, 'requestHeaders'> {
   const { requestHeaders: _requestHeaders, ...rest } = entry;

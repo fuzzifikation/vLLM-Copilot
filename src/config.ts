@@ -326,7 +326,7 @@ export function resolveVllmModelId(override: ModelConfig | undefined): string | 
  */
 export function resolveServerType(
   model: ModelConfig | undefined,
-  servers: import('./serverRegistry.js').ServerEntry[] = []
+  servers: import('./serverRegistry.js').ServerEntry[]
 ): ServerType {
   if (!model) return 'vllm';
   const entry = servers.find(s => s.id === model.server);
@@ -411,7 +411,7 @@ export function resolveOverrideForModel(
  */
 export function resolveServerConfig(
   override: ModelConfig | undefined,
-  servers: import('./serverRegistry.js').ServerEntry[] = []
+  servers: import('./serverRegistry.js').ServerEntry[]
 ): { serverUrl: string; requestHeaders: Record<string, string> } | undefined {
   const eff = override && resolveServerEntry(override, servers);
   if (!eff) return undefined;
@@ -486,10 +486,7 @@ export function modelServerIdentity(
  * credentials are stripped separately by `toPublicServerEntry`
  * (serverRegistry.ts).
  */
-export function toPublicModelConfig(
-  config: ModelConfig,
-  _opts: { strip?: boolean } = {}
-): ModelConfig {
+export function toPublicModelConfig(config: ModelConfig): ModelConfig {
   const { requestHeaders: _requestHeaders, apiKey: _apiKey, ...pub } = config as ModelConfig & {
     requestHeaders?: unknown;
     apiKey?: unknown;

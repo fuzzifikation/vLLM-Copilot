@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import {
   pickModelFromServer,
   confirmAndSaveAddedModel,
+  ensureServerEntry,
   registerAddServerModelCommand,
   registerAddServerCommand,
 } from '../src/commands/addServerFlow.js';
@@ -502,7 +503,7 @@ describe('registerAddServerModelCommand', () => {
     expect(JSON.stringify(registry[0])).toContain(['Bearer', 'newsecret'].join(' '));
   });
 
-  it('abandoned confirm discards the registry entry created for the unsaved model', async () => {
+  it('dismissed confirm discards the registry entry created for the unsaved model', async () => {
     // The entry holds live credentials; if the model is never saved, an
     // unreferenced entry must not stay behind in settings.
     let registry: any[] = [];
@@ -513,13 +514,35 @@ describe('registerAddServerModelCommand', () => {
       .mockResolvedValueOnce('secret')           // API key
       .mockResolvedValueOnce('');                // headers
     quickPickSpy.mockResolvedValueOnce({ label: 'model' } as any);
-    infoSpy.mockResolvedValueOnce('Copy JSON' as any); // final confirm → not saved
+    infoSpy.mockResolvedValueOnce(undefined); // final confirm dismissed
 
     registerAddServerModelCommand({} as any, provider, output);
     await (vscode as any).commands._run('vllm-copilot.addServerModel');
 
     expect(replaceSpy).not.toHaveBeenCalled();
     expect(registry).toHaveLength(0); // created during the flow, rolled back after
+  });
+
+  it('"Copy JSON" keeps the entry the copied config points at', async () => {
+    // The copied model references the entry, so deleting it would hand the user
+    // a dangling ref. A zero-model entry is legal (addServer makes one) and
+    // Remove Server deletes it again.
+    let registry: any[] = [];
+    vi.spyOn(configStore, 'readServers').mockImplementation(() => registry);
+    vi.spyOn(configStore, 'writeServers').mockImplementation(async next => { registry = next; });
+    inputBoxSpy
+      .mockResolvedValueOnce('http://host:8000')
+      .mockResolvedValueOnce('secret')
+      .mockResolvedValueOnce('');
+    quickPickSpy.mockResolvedValueOnce({ label: 'model' } as any);
+    infoSpy.mockResolvedValueOnce('Copy JSON' as any);
+
+    registerAddServerModelCommand({} as any, provider, output);
+    await (vscode as any).commands._run('vllm-copilot.addServerModel');
+
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(registry).toHaveLength(1);
+    expect(registry[0].id).toBe('host-8000');
   });
 
   it('abandoned confirm keeps an entry the flow only REUSED', async () => {
@@ -628,5 +651,61 @@ describe('registerAddServerCommand', () => {
 
     expect(writeServersSpy).not.toHaveBeenCalled();
     expect(String(infoSpy.mock.calls.some(([m]) => String(m).includes('OpenRouter')))).toBe('true');
+  });
+
+  it('rejects URLs the flow cannot turn into an entry, in the prompt itself', async () => {
+    // Garbage never reaches generateServerId (its `new URL()` throws) and a
+    // host-less value never becomes the localhost:8000 fallback.
+    registerAddServerCommand(output);
+    await (vscode as any).commands._run('vllm-copilot.addServer');
+    const validate = (inputBoxSpy.mock.calls[0][0] as any).validateInput;
+
+    expect(validate('')).toMatch(/required/i);
+    expect(validate('foo bar')).toMatch(/not a valid URL/i);
+    expect(validate('http://')).toMatch(/not a valid URL/i);
+    expect(validate('file://')).toMatch(/full server URL/i);
+    expect(validate('ftp://host:21')).toMatch(/http\(s\)/i);
+    expect(validate('localhost:8000')).toBeUndefined();
+    expect(validate('https://host:8000/v1')).toBeUndefined();
+  });
+});
+
+describe('ensureServerEntry', () => {
+  let registry: any[];
+  let writeServersSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    registry = [];
+    writeServersSpy = vi
+      .spyOn(configStore, 'writeServers')
+      .mockImplementation(async next => { registry = [...next]; });
+    vi.spyOn(configStore, 'readServers').mockImplementation(() => registry);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fills a missing serverType into the entry it reuses', async () => {
+    // "Add Server" registers without probing, so a type-less entry is normal.
+    // The model add flow detects the backend and must be allowed to record it,
+    // or an Ollama server is spoken to as vLLM forever.
+    registry = [{ id: 'host-8000', serverUrl: 'http://host:8000' }];
+
+    const res = await ensureServerEntry({ serverUrl: 'http://host:8000', serverType: 'ollama' });
+
+    expect(res).toEqual({ id: 'host-8000', created: false });
+    expect(registry).toEqual([
+      { id: 'host-8000', serverUrl: 'http://host:8000', serverType: 'ollama' },
+    ]);
+  });
+
+  it('never overwrites a serverType the entry already declares', async () => {
+    registry = [{ id: 'host-8000', serverUrl: 'http://host:8000', serverType: 'vllm' }];
+
+    const res = await ensureServerEntry({ serverUrl: 'http://host:8000', serverType: 'ollama' });
+
+    expect(res).toEqual({ id: 'host-8000', created: false });
+    expect(writeServersSpy).not.toHaveBeenCalled();
   });
 });

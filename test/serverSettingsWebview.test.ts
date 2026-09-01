@@ -31,13 +31,14 @@ function loadWebview(
   dom.window.eval(script);
   const servers = [{
     key: 'srv-k1',
+    serverId: 'entry-1',
     url: 'http://server:8000',
     serverModelIds,
     ...(serverType ? { serverType } : {}),
     models: [{
       id: 'model-config',
       vllmModelId: 'wire-model',
-      serverUrl: 'http://server:8000',
+      server: 'entry-1',
       ...(initialProvider !== undefined ? { provider: initialProvider } : {}),
       ...(initialRoutingMode !== undefined ? { routingMode: initialRoutingMode } : {}),
       defaultParams: { parallel_tool_calls: true },
@@ -141,11 +142,12 @@ describe('Model Settings webview', () => {
   it('disambiguates multiple header identities sharing one URL', () => {
     const { dom, posted } = loadWebview({}, ['wire-model'], [{
       key: 'srv-k2',
+      serverId: 'entry-2',
       url: 'http://server:8000',
       serverModelIds: ['model-b'],
       // Legacy configs may have no explicit id; identity uses the same
       // id-or-vllmModelId fallback as the rest of Model Settings.
-      models: [{ vllmModelId: 'model-b', serverUrl: 'http://server:8000' }],
+      models: [{ vllmModelId: 'model-b', server: 'entry-2' }],
     }]);
     const select = dom.window.document.querySelector<HTMLSelectElement>('#sSel')!;
     expect(select.options).toHaveLength(2);
@@ -159,10 +161,11 @@ describe('Model Settings webview', () => {
     select.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     dom.window.document.getElementById('autoConfigureBtn')!.click();
     const action = posted.find((message: any) => message.type === 'autoConfigure');
+    // The message addresses the registry ENTRY, not a URL — two identities on
+    // one URL must not be able to pick the wrong credentials.
     expect(action).toMatchObject({
-      serverUrl: 'http://server:8000',
+      server: 'entry-2',
       id: 'model-b',
-      identityModelId: 'model-b',
     });
   });
 

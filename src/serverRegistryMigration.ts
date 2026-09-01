@@ -9,7 +9,8 @@
  * servers-before-models write order.
  *
  * Must run *before* `maybeOfferOutputLengthMigration` in activate(): that one
- * identifies models by `{ id, serverUrl }`, which the rewrite removes.
+ * patches models addressed by `{ id, server }`, a ref that only exists once the
+ * rewrite has landed.
  */
 
 import * as vscode from 'vscode';

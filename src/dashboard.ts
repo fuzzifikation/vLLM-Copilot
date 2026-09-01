@@ -39,8 +39,11 @@ class ServerTreeItem extends vscode.TreeItem {
    * @param key - Stable identity key (URL + header fingerprint hash). Two models
    *   sharing a URL with different credentials get distinct keys — the tree id
    *   and metrics are per identity.
-   * @param requestHeaders - This identity's exact credentials, carried so the
-   *   Deep-Dive command uses the right ones (never the first model's).
+   * @param serverId - Registry entry id for this identity. Carried so the
+   *   Deep-Dive command loads THIS server's credentials instead of URL-matching
+   *   (which would grab the first entry on a multi-identity URL). Two entries
+   *   sharing one fingerprint collapse into one node, so any of their ids
+   *   resolves to the same URL and headers.
    * @param displayLabel - Optional disambiguated label (e.g. `s:8000 (identity 2)`) when
    *   multiple identities share one URL; defaults to `shortUrl(serverUrl)` or the
    *   user-set `serverDisplayName`.
@@ -52,7 +55,7 @@ class ServerTreeItem extends vscode.TreeItem {
     /** Identity fingerprint (URL + headers) — matches the engine registry key. */
     public readonly fp: string,
     public readonly serverUrl: string,
-    public readonly requestHeaders: Record<string, string>,
+    public readonly serverId: string,
     public readonly metrics: ServerMetrics,
     public readonly serverType?: ServerType,
     displayLabel?: string,
@@ -386,7 +389,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     /** Identity fingerprint (URL + headers) — matches the engine registry key. */
     fp: string;
     url: string;
-    requestHeaders: Record<string, string>;
+    /** Registry entry the node was created from — what Deep-Dive resolves. */
+    serverId: string;
     serverType?: ServerType;
     /** User-set server label (first non-empty among the group's models), or undefined. */
     serverDisplayName?: string;
@@ -407,9 +411,6 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
    *  `setVisible(true)`) both pass the visibility check and both subscribe,
    *  double-polling the servers until the next toggle. */
   private refreshEpoch = 0;
-  /** (model id, dangling server ref) pairs already logged — dangling-ref
-   *  warnings fire once, not on every refresh. */
-  private readonly warnedUnreachableModels = new Set<string>();
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -473,16 +474,16 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       // array order so node order follows settings order. Nodes are keyed by
       // fingerprint (not entry id): two entries with identical URL *and* auth
       // share one engine and one node — their models join the first entry's
-      // node (§5/§7). A model whose `server` ref does not resolve has no URL
-      // to group by: it is reported as unreachable, named by its ref.
+      // node (§5/§7). A model whose `server` ref does not resolve has no URL to
+      // group by and is skipped here; `validateConfig` (activation) and
+      // discovery (every refresh) name it, so no third log line belongs here.
       const servers = config.servers || [];
       const serverById = new Map(servers.map(s => [s.id, s]));
       // entry id → accumulated wire ids (models resolving to this entry).
       const modelIdsByEntry = new Map<string, string[]>();
-      const unreachable: ModelConfig[] = [];
       for (const model of config.models) {
         const entry = serverById.get(model.server);
-        if (!entry) { unreachable.push(model); continue; }
+        if (!entry) continue;
         const wireId = model.vllmModelId ?? model.id;
         if (!wireId) continue;
         let list = modelIdsByEntry.get(entry.id);
@@ -494,6 +495,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       const identityMap = new Map<string, {
         url: string;
         requestHeaders: Record<string, string>;
+        /** Entry the node was created from — first entry with this fingerprint. */
+        serverId: string;
         modelIds: string[];
         serverType?: ServerType;
         serverDisplayName?: string;
@@ -506,21 +509,11 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
           // Node label from the entry: trimmed, skipped for OpenRouter (the
           // fixed relay endpoint is not renamable). Whitespace-only never renders.
           const name = entry.serverType === 'openrouter' ? undefined : entry.displayName?.trim();
-          group = { url: identity.serverUrl, requestHeaders: identity.requestHeaders, modelIds: [], serverType: entry.serverType, serverDisplayName: name || undefined };
+          group = { url: identity.serverUrl, requestHeaders: identity.requestHeaders, serverId: entry.id, modelIds: [], serverType: entry.serverType, serverDisplayName: name || undefined };
           identityMap.set(fp, group);
         }
         const ids = modelIdsByEntry.get(entry.id);
         if (ids) group.modelIds.push(...ids);
-      }
-
-      // Report models whose server ref does not resolve so they never vanish
-      // silently from the sidebar — once per (model, ref), since this runs on
-      // every refresh and a broken ref would otherwise spam the channel.
-      for (const m of unreachable) {
-        const label = `${m.id || m.vllmModelId || '(unnamed)'}\u0000${m.server}`;
-        if (this.warnedUnreachableModels.has(label)) continue;
-        this.warnedUnreachableModels.add(label);
-        this.outputChannel.appendLine(`[DASHBOARD] Model "${m.id || m.vllmModelId || '(unnamed)'}" references unknown server "${m.server}" — unreachable until fixed.`);
       }
 
       for (const [fp, group] of identityMap) {
@@ -536,7 +529,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
           key,
           fp,
           url: group.url,
-          requestHeaders: group.requestHeaders,
+          serverId: group.serverId,
           serverType: group.serverType,
           serverDisplayName: group.serverDisplayName,
           metrics: engine.getCachedAggregated() ?? emptyFallbackMetrics(),
@@ -590,7 +583,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         // suffix, and passing undefined here would make ServerTreeItem fall
         // back to shortUrl — silently dropping a configured display name.
         const label = shared ? `${base} (identity ${n})` : base;
-        return new ServerTreeItem(sub.key, sub.fp, sub.url, sub.requestHeaders, sub.metrics, sub.serverType, label, sub.serverDisplayName);
+        return new ServerTreeItem(sub.key, sub.fp, sub.url, sub.serverId, sub.metrics, sub.serverType, label, sub.serverDisplayName);
       });
       return [...items, ...servers, new AddServerTreeItem(), new TestRefreshTreeItem()];
     }

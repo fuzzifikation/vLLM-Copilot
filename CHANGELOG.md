@@ -4,7 +4,7 @@
 
 ### Changed
 
-- **Breaking: servers are now a registry.** Server connection settings (`serverUrl`, `requestHeaders`, `serverType`, display label) moved out of each model entry into a new top-level `vllm-copilot.servers` setting; every model entry now has a required `id` and `server` (the registry entry's id) instead. On first start, existing configs migrate automatically: models sharing the same URL + headers become one entry each, credentials that differ stay separate servers. Models no longer carry `serverUrl`, `requestHeaders`, `serverType`, or `serverDisplayName`.
+- **Breaking: servers are now a registry.** Server connection settings (`serverUrl`, `requestHeaders`, `serverType`, display label) moved out of each model entry into a new top-level `vllm-copilot.servers` setting; every model entry now has a required `id` and `server` (the registry entry's id) instead. On first start, existing configs migrate automatically: models sharing the same URL + headers become one entry each, credentials that differ stay separate servers. Models no longer carry `serverUrl`, `requestHeaders`, `serverType`, or `serverDisplayName`. The migration never deletes a settings value: a hand-edited leftover server or model entry is kept and reported in the Output channel. Rolling back means restoring `settings.json` by hand or staying on an older VSIX — there is deliberately no in-product Undo, because restoring the old shape would leave settings this version cannot read.
 
 ## v1.35.2
 
