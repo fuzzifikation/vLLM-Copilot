@@ -630,7 +630,7 @@ describe('registerAddServerCommand', () => {
     await (vscode as any).commands._run('vllm-copilot.addServer');
 
     expect(writeServersSpy).not.toHaveBeenCalled();
-    expect(String(infoSpy.mock.calls.some(([m]) => String(m).includes('already registered')))).toBe('true');
+    expect(infoSpy.mock.calls.some((call: any[]) => String(call[0]).includes('already registered'))).toBe(true);
   });
 
   it('writes nothing when the auth prompt is abandoned', async () => {
@@ -650,7 +650,7 @@ describe('registerAddServerCommand', () => {
     await (vscode as any).commands._run('vllm-copilot.addServer');
 
     expect(writeServersSpy).not.toHaveBeenCalled();
-    expect(String(infoSpy.mock.calls.some(([m]) => String(m).includes('OpenRouter')))).toBe('true');
+    expect(infoSpy.mock.calls.some((call: any[]) => String(call[0]).includes('OpenRouter'))).toBe(true);
   });
 
   it('rejects URLs the flow cannot turn into an entry, in the prompt itself', async () => {

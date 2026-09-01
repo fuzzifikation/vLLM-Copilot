@@ -154,11 +154,24 @@ describe('toPublicModelConfig', () => {
     expect(toPublicModelConfig(base)).not.toBe(base);
   });
 
-  it('keeps all model fields (strip is a no-op; server auth is stripped by toPublicServerEntry)', () => {
+  it('keeps ordinary model fields', () => {
     const cfg: ModelConfig = { ...base, displayName: 'Model', defaultParams: { temperature: 0.7 } };
-    const out = toPublicModelConfig(cfg, { strip: true });
+    const out = toPublicModelConfig(cfg);
     expect(out.displayName).toBe('Model');
     expect(out.defaultParams).toEqual({ temperature: 0.7 });
+  });
+
+  it('strips legacy credential keys a hand-edited settings.json smuggles back', () => {
+    const cfg = {
+      ...base,
+      displayName: 'Model',
+      requestHeaders: { Authorization: ['Bearer', 'secret-a'].join(' ') },
+      apiKey: 'plain-secret',
+    } as unknown as ModelConfig;
+    const out = toPublicModelConfig(cfg);
+    expect(out.displayName).toBe('Model');
+    expect('requestHeaders' in out).toBe(false);
+    expect('apiKey' in out).toBe(false);
   });
 });
 
