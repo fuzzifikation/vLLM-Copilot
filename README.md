@@ -20,6 +20,7 @@ For teams running AI on their own vLLM servers for many users, this gives you th
 - **Production vLLM observability**: a live dashboard of server availability, queue status, KV-cache usage, TTFT, throughput, per-request token details, and a cumulative token & cost tracker. Your admins and users will know what is going on!
 - **Multi-server, multi-user by design**: each server and model carries its own endpoint, auth, sampling, and token budget. Different teams, environments, or credentials stay isolated and independently managed. But all models are available in the model picker of familiar Copilot!
 - **Full request control**: model modes give you any vLLM parameter, such as thinking effort, sampling, and structured output. A dedicated **Output Length** dropdown caps response length without a settings edit. Switch both per model from the Copilot picker.
+- **Your model, your rules (uncensoring)**: personality presets strip Copilot's hidden Microsoft safety and identity rules from every request — like serving an abliterated model, but at request time. You own the policy. See [Personalities & System Prompts](#personalities--system-prompts).
 - **OpenRouter**: add any of **~415 cloud models** in a few clicks. Useful for teams without GPU capacity. Real context window, capabilities, pricing, and **actual spend** (`usage.cost`) show on the dashboard. See [Using OpenRouter](#using-openrouter).
 - **Other backends supported**: llama.cpp, LM Studio, and Ollama alongside vLLM, each with core features like chat, streaming, tools, personalities, and usage tracking.
 
@@ -272,6 +273,9 @@ This uses the System-Instructions-Replacement of above with pre-made instruction
 | **Spartan** | Minimalist replies: short, little to read, to the point. Saves tokens. |
 
 Bundled presets are extension-owned and re-synced on every apply; custom behavior belongs in your own replacement file (below) or a user-created personality.
+
+> ### 🔓 Uncensored
+> Every personality except **Default** strips Microsoft's hidden safety and identity rules (the hidden System-Prompt like "Follow Microsoft content policies…", etc) before your model sees them. Same philosophy as abliterated and uncensored models. **You** own the policy. No open model neutered by a corporate ruleset in a box you control. This means: You are in charge but also fully responsible.
 
 
 
