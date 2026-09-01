@@ -1,0 +1,188 @@
+import { describe, it, expect } from 'vitest';
+import { planRegistryMigration } from '../src/registryMigration.js';
+import { makeModelConfig, DEFAULT_TEST_SERVER_URL } from './factories.js';
+
+describe('planRegistryMigration', () => {
+  it('migrates a single model to one server entry referenced by id', () => {
+    const plan = planRegistryMigration([makeModelConfig()]);
+
+    expect(plan.skipped).toEqual([]);
+    expect(plan.servers).toEqual([
+      { id: 'localhost-8000', serverUrl: DEFAULT_TEST_SERVER_URL },
+    ]);
+    expect(plan.models).toEqual([
+      { id: 'test-model', vllmModelId: 'test-model', server: 'localhost-8000' },
+    ]);
+  });
+
+  it('groups N models on one server (same URL + headers) into a single entry', () => {
+    const plan = planRegistryMigration([
+      makeModelConfig({ id: 'a' }),
+      makeModelConfig({ id: 'b' }),
+      makeModelConfig({ id: 'c' }),
+    ]);
+
+    expect(plan.skipped).toEqual([]);
+    expect(plan.servers).toEqual([
+      { id: 'localhost-8000', serverUrl: DEFAULT_TEST_SERVER_URL },
+    ]);
+    expect(plan.models.map(m => [m.id, m.server])).toEqual([
+      ['a', 'localhost-8000'],
+      ['b', 'localhost-8000'],
+      ['c', 'localhost-8000'],
+    ]);
+  });
+
+  it('keeps same-URL models with different credentials in separate entries', () => {
+    const plan = planRegistryMigration([
+      makeModelConfig({ id: 'a', requestHeaders: { Authorization: 'Bearer key-one' } }),
+      makeModelConfig({ id: 'b', requestHeaders: { Authorization: 'Bearer key-two' } }),
+    ]);
+
+    expect(plan.skipped).toEqual([]);
+    expect(plan.servers).toEqual([
+      {
+        id: 'localhost-8000',
+        serverUrl: DEFAULT_TEST_SERVER_URL,
+        requestHeaders: { Authorization: 'Bearer key-one' },
+      },
+      {
+        id: 'localhost-8000-2',
+        serverUrl: DEFAULT_TEST_SERVER_URL,
+        requestHeaders: { Authorization: 'Bearer key-two' },
+      },
+    ]);
+    expect(plan.models.map(m => [m.id, m.server])).toEqual([
+      ['a', 'localhost-8000'],
+      ['b', 'localhost-8000-2'],
+    ]);
+  });
+
+  it('creates an `openrouter` entry when a model points at the OpenRouter endpoint', () => {
+    const plan = planRegistryMigration([
+      makeModelConfig({ serverUrl: 'https://openrouter.ai/api' }),
+    ]);
+
+    expect(plan.skipped).toEqual([]);
+    expect(plan.servers).toEqual([
+      { id: 'openrouter', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' },
+    ]);
+    expect(plan.models).toEqual([
+      { id: 'test-model', vllmModelId: 'test-model', server: 'openrouter' },
+    ]);
+  });
+
+  it('creates no OpenRouter entry when no model points at it', () => {
+    const plan = planRegistryMigration([makeModelConfig()]);
+
+    expect(plan.servers.some(s => s.id === 'openrouter')).toBe(false);
+    expect(plan.servers.some(s => s.serverType === 'openrouter')).toBe(false);
+  });
+
+  it('migrates an empty models array to an empty plan', () => {
+    expect(planRegistryMigration([])).toEqual({ servers: [], models: [], skipped: [] });
+  });
+
+  it('skips a model with no serverUrl instead of inventing one', () => {
+    const withoutUrl = makeModelConfig({ id: 'no-server' });
+    delete withoutUrl.serverUrl;
+    const plan = planRegistryMigration([
+      withoutUrl,
+      makeModelConfig({ id: 'has-server' }),
+    ]);
+
+    expect(plan.skipped).toEqual([{ id: 'no-server', reason: 'no serverUrl' }]);
+    expect(plan.models.map(m => m.id)).toEqual(['has-server']);
+    expect(plan.servers).toEqual([
+      { id: 'localhost-8000', serverUrl: DEFAULT_TEST_SERVER_URL },
+    ]);
+  });
+
+  it('takes the entry displayName from the first group member with a non-empty one', () => {
+    const plan = planRegistryMigration([
+      makeModelConfig({ id: 'a' }),
+      makeModelConfig({ id: 'b', serverDisplayName: 'GPU Box' }),
+    ]);
+
+    expect(plan.servers).toEqual([
+      { id: 'localhost-8000', serverUrl: DEFAULT_TEST_SERVER_URL, displayName: 'GPU Box' },
+    ]);
+  });
+
+  it("inherits the group's serverType onto the entry", () => {
+    const plan = planRegistryMigration([
+      makeModelConfig({ id: 'a', serverType: 'ollama' }),
+      makeModelConfig({ id: 'b', serverType: 'ollama' }),
+    ]);
+
+    expect(plan.servers).toEqual([
+      { id: 'localhost-8000', serverUrl: DEFAULT_TEST_SERVER_URL, serverType: 'ollama' },
+    ]);
+  });
+
+  it('produces deterministic ids — same input, same plan', () => {
+    const models = [
+      makeModelConfig({ id: 'a' }),
+      makeModelConfig({ id: 'b', requestHeaders: { Authorization: 'Bearer key' } }),
+      makeModelConfig({ id: 'c', serverUrl: 'https://openrouter.ai/api' }),
+    ];
+
+    expect(planRegistryMigration(models)).toEqual(planRegistryMigration(models));
+  });
+
+  it('preserves all non-server model fields untouched', () => {
+    const plan = planRegistryMigration([
+      makeModelConfig({
+        displayName: 'My Model',
+        maxInputTokens: 32768,
+        maxOutputTokens: [8192, 4096, 2048],
+        capabilities: { toolCalling: true, imageInput: true },
+        modelModes: { Think: { chat_template_kwargs: { enable_thinking: true } } },
+        defaultMode: 'Think',
+        defaultParams: { temperature: 0.7 },
+        family: 'qwen3_5',
+        estimateCharsPerToken: 3.5,
+      }),
+    ]);
+
+    expect(plan.models).toEqual([
+      {
+        id: 'test-model',
+        vllmModelId: 'test-model',
+        displayName: 'My Model',
+        maxInputTokens: 32768,
+        maxOutputTokens: [8192, 4096, 2048],
+        capabilities: { toolCalling: true, imageInput: true },
+        modelModes: { Think: { chat_template_kwargs: { enable_thinking: true } } },
+        defaultMode: 'Think',
+        defaultParams: { temperature: 0.7 },
+        family: 'qwen3_5',
+        estimateCharsPerToken: 3.5,
+        server: 'localhost-8000',
+      },
+    ]);
+  });
+
+  it('keeps provider and routingMode on the model, not on the entry', () => {
+    const plan = planRegistryMigration([
+      makeModelConfig({
+        serverUrl: 'https://openrouter.ai/api',
+        provider: 'deepseek',
+        routingMode: 'nitro',
+      }),
+    ]);
+
+    expect(plan.servers).toEqual([
+      { id: 'openrouter', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' },
+    ]);
+    expect(plan.models).toEqual([
+      {
+        id: 'test-model',
+        vllmModelId: 'test-model',
+        provider: 'deepseek',
+        routingMode: 'nitro',
+        server: 'openrouter',
+      },
+    ]);
+  });
+});

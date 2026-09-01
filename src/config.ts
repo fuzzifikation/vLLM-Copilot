@@ -624,7 +624,7 @@ export function buildAuthHeaders(apiKey?: string): Record<string, string> {
 /**
  * Sanitize custom HTTP headers by stripping blocked names, invalid characters, and CRLF values.
  */
-function sanitizeRequestHeaders(headers: Record<string, string>): Record<string, string> {
+export function sanitizeRequestHeaders(headers: Record<string, string>): Record<string, string> {
   const blockedHeaders = new Set([
     'host', 'origin', 'cookie', 'connection', 'content-length',
     'transfer-encoding', 'upgrade', 'te', 'trailer',
