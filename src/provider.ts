@@ -83,8 +83,8 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
   /**
    * Clear cached model list and fire change event so VS Code refreshes.
    * Also invalidates VllmClient's config cache (the single source of truth for
-   * config) so settings changes (per-model serverUrl, headers, params) take effect
-   * immediately rather than after extension restart.
+   * config) so settings changes (model edits, server registry entries, params)
+   * take effect immediately rather than after extension restart.
    */
   clearCache(): void {
     this.modelCacheGeneration++;

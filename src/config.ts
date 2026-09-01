@@ -411,7 +411,14 @@ export function resolveServerConfig(
   return { serverUrl: eff.serverUrl, requestHeaders: eff.requestHeaders };
 }
 
-/** Resolve a model to its registry entry (undefined when the ref dangles). */
+/**
+ * Resolve a model to its registry entry (undefined when the ref dangles).
+ *
+ * ⚠️ Deliberate duplicate of `resolveServer` in serverRegistry.ts: importing
+ * that module here would create a `config.ts ↔ serverRegistry.ts` cycle
+ * (serverRegistry uses config's normalize/sanitize/fingerprint helpers).
+ * Keep the two bodies identical — change one, change both.
+ */
 function resolveServerEntry(
   model: ModelConfig,
   servers: import('./serverRegistry.js').ServerEntry[]
@@ -582,11 +589,12 @@ export function buildEndpoint(baseUrl: string, path: string): string {
  * are a separate concern — users add those as custom request headers. Returns an
  * empty object when no key is set.
  *
- * ⚠️ **Scope: write/migration paths only.** This function is used only by the
- * Add Server and Update Auth commands (`commands/addServerFlow.ts`, `commands.ts`) to
- * construct headers from user-provided key input. Runtime chat requests do
- * NOT call this — auth comes from the per-model `requestHeaders` in settings.
- * Wiring this into runtime code would silently add or omit the wrong headers.
+ * ⚠️ **Scope: write paths only.** This function is used only by the Add Server,
+ * Update Auth, and migration code paths (`commands/addServerFlow.ts`, `commands.ts`)
+ * to construct headers from user-provided key input. Runtime chat requests do
+ * NOT call this — auth comes from the registry entry's `requestHeaders`,
+ * resolved via `resolveServerConfig`. Wiring this into runtime code would
+ * silently add or omit the wrong headers.
  */
 export function buildAuthHeaders(apiKey?: string): Record<string, string> {
   if (!apiKey) return {};
@@ -617,10 +625,10 @@ export function sanitizeRequestHeaders(headers: Record<string, string>): Record<
 /**
  * Read configuration from VS Code settings.
  *
- * Only two genuine globals exist: the per-model `models` array and the
+ * Only genuine globals are the `models` array, the `servers` registry, and the
  * `enableFileLogging` diagnostic toggle. All server, auth, generation, token, and
- * transport settings are per-model and resolved at request time via
- * `resolveServerConfig` / `resolveRequestParams` / `resolveModelSettings`.
+ * transport settings live on models and their registry entries, resolved at
+ * request time via `resolveServerConfig` / `resolveRequestParams` / `resolveModelSettings`.
  */
 export async function getConfig(_context: vscode.ExtensionContext): Promise<VllmConfig> {
   const section = vscode.workspace.getConfiguration('vllm-copilot');

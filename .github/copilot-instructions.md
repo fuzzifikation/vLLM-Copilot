@@ -53,7 +53,7 @@ These apply to any codebase.
 - **The only global settings are the `servers` registry and `enableFileLogging`.**
 - There is NO global `serverUrl`, `apiKey`, `requestHeaders`, or sampling params. The registry is not "a global server" — it is a table; nothing may resolve a server unless a model references its entry.
 - The discovery logic must NOT probe a "global server" — it groups models by their `server` reference (resolved through the registry) and discovers from each server independently.
-- `VllmConfig.serverUrl`, `VllmConfig.apiKey`, `VllmConfig.requestHeaders` are **deprecated legacy fields** kept only for one-time migration. They must not be used at runtime.
+- There are NO deprecated legacy fields on `VllmConfig` — `serverUrl`, `apiKey`, and `requestHeaders` were removed outright by the registry migration. Nothing may resolve a server unless a model references its entry.
 
 ### Version Compatibility
 - **Only support newest versions.** Don't add workarounds for old versions unless explicitly requested. This goes for vLLM, VS Code, Copilot.
