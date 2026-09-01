@@ -318,7 +318,7 @@ Proposed shape — models reference a server by id instead of copying it:
 ```jsonc
 "vllm-copilot.servers": [{
   "id": "gw-shared",
-  "serverUrl": "https://gw.example-corp.com",
+  "serverUrl": "https://gw.example-corp.com/team-a/inference/gw-shared",
   "requestHeaders": { "X-API-Key": "..." },
   "displayName": "IT Server for GLM5.2",   // moves here from serverDisplayName
   "serverType": "vllm"
