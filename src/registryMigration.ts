@@ -106,7 +106,16 @@ export function planRegistryMigration(models: LegacyModelConfig[], existing: Ser
 
     let serverId = entryIdByFingerprint.get(fingerprint) ?? existingIdByFingerprint.get(fingerprint);
     if (serverId === undefined) {
-      serverId = generateServerId(normalizedUrl, takenIds);
+      // An unparseable URL survives normalizeServerUrl only to die in
+      // generateServerId's `new URL`. Never let one garbage entry abort the
+      // whole one-shot migration (§6: unusable models are skipped + reported).
+      try {
+        serverId = generateServerId(normalizedUrl, takenIds);
+      } catch {
+        skipped.push({ id: model.id ?? model.vllmModelId ?? '(unnamed)', reason: `unparseable serverUrl "${serverUrl}"` });
+        migrated.push(model);
+        continue;
+      }
       takenIds.add(serverId);
       entryIdByFingerprint.set(fingerprint, serverId);
 

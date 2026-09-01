@@ -68,4 +68,23 @@ describe('removeModelFromConfig', () => {
     expect(removed).toBe(1);
     expect(otherServer).toHaveLength(1);
   });
+
+  it('matches any entry in a server-id SET (URL-addressed legacy callers)', () => {
+    // Two credential identities share one URL; the model lives on the SECOND
+    // entry — first-match resolution would miss it entirely.
+    const multi: ModelConfig[] = [
+      { id: 'x', vllmModelId: 'mx', server: 'srv-a' },
+      { id: 'y', vllmModelId: 'my', server: 'srv-b' },
+      { id: 'z', vllmModelId: 'mz', server: 'elsewhere' },
+    ];
+    const { filtered, removed } = removeModelFromConfig(multi, new Set(['srv-a', 'srv-b']), 'y');
+    expect(removed).toBe(1);
+    expect(filtered.map(m => m.id)).toEqual(['x', 'z']);
+  });
+
+  it('set matching still respects the config id', () => {
+    const { filtered, removed } = removeModelFromConfig(models, new Set(['host', 'other']), 'nope');
+    expect(removed).toBe(0);
+    expect(filtered).toEqual(models);
+  });
 });

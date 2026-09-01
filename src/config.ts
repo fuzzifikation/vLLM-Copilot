@@ -651,9 +651,11 @@ export function validateConfig(config: VllmConfig): string[] {
 
   // Registry-level checks: server ids must be unique (a model references by id,
   // so a duplicate id is ambiguous), and unknown/blank ids are unreachable.
+  // Comparison is EXACTLY like the resolver's (`s.id === model.server`, no
+  // trimming) — trimming here would green-light a padded ref that dangles at runtime.
   const serverIds = new Set<string>();
   for (const entry of config.servers) {
-    const id = entry.id?.trim();
+    const id = entry.id;
     if (!id) {
       warnings.push('A server registry entry is missing its id — models cannot reference it.');
       continue;
@@ -672,7 +674,9 @@ export function validateConfig(config: VllmConfig): string[] {
   const seenIds = new Set<string>();
   for (const model of config.models) {
     const display = model.id || model.vllmModelId || '(unnamed model)';
-    const id = model.id?.trim();
+    // Raw comparison: `id` is used verbatim as the key by personalities, the
+    // webview, and config writes — a padded id is a different key, not a typo.
+    const id = model.id;
     if (!id) {
       warnings.push(
         `Model "${display}": missing id — each model entry must have a unique id (the extension key for personalities and settings).`
@@ -685,7 +689,8 @@ export function validateConfig(config: VllmConfig): string[] {
     }
 
     // The model must reference a registered server. A dangling ref is unreachable.
-    const ref = model.server?.trim();
+    // Exact comparison — same match the resolver performs.
+    const ref = model.server;
     if (!ref) {
       warnings.push(`Model "${display}" has no server reference and cannot be reached. Set its "server" to a registry entry id.`);
     } else if (!serverIds.has(ref)) {

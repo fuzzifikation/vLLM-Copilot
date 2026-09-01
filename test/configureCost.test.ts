@@ -15,9 +15,9 @@ const output = { appendLine: vi.fn() } as any;
 const SERVERS = [{ id: 'srv', serverUrl: 'http://s:8000' }];
 
 /** A spyable WorkspaceConfiguration whose get() serves a models array. */
-function makeConfig(models: any[]): any {
+function makeConfig(models: any[], servers: any[] = SERVERS): any {
   return {
-    get: vi.fn((k: string) => (k === 'models' ? models : k === 'servers' ? SERVERS : undefined)),
+    get: vi.fn((k: string) => (k === 'models' ? models : k === 'servers' ? servers : undefined)),
     has: () => false,
     update: vi.fn(async () => {}),
     inspect: () => undefined,
@@ -52,6 +52,37 @@ describe('configureCost command', () => {
     const written = updateCalls[0][1] as any[];
     expect(written[0].cost).toEqual({ input: 1, output: 2, cachedInput: 0.5, currency: 'USD' });
     expect(updateCalls[0][2]).toBe(ConfigurationTarget.Global);
+  });
+
+  it('lists models of EVERY entry on the URL (§5 URL-wide scope)', async () => {
+    // Two credential identities on one URL: first-match resolution would list
+    // only the first entry's models and silently drop the rest.
+    const servers = [
+      { id: 'srv-a', serverUrl: 'http://s:8000' },
+      { id: 'srv-b', serverUrl: 'http://s:8000' },
+    ];
+    const models = [
+      { id: 'ma', vllmModelId: 'ma', server: 'srv-b' }, // lives on the SECOND identity
+      { id: 'mb', vllmModelId: 'mb', server: 'srv-a' },
+    ];
+    const cfg = makeConfig(models, servers);
+    vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
+    const pick = vi.spyOn(vscode.window, 'showQuickPick')
+      .mockResolvedValueOnce({ label: 'ma', model: models[0] } as any) // model pick
+      .mockResolvedValueOnce({ label: 'USD' } as any);                // currency
+    vi.spyOn(vscode.window, 'showInputBox')
+      .mockResolvedValueOnce('1')
+      .mockResolvedValueOnce('0')
+      .mockResolvedValueOnce('');
+
+    const disposable = registerConfigureCostCommand({} as any, output);
+    await (vscode as any).commands._run('vllm-copilot.configureCost', { serverUrl: 'http://s:8000' });
+    disposable.dispose();
+
+    const items = pick.mock.calls[0][0] as any[];
+    expect(items.map(i => i.model.id)).toEqual(['ma', 'mb']);
+    const written = cfg.update.mock.calls.find((c: any[]) => c[0] === 'models')![1] as any[];
+    expect(written.find(m => m.id === 'ma').cost).toMatchObject({ input: 1 });
   });
 
   it('prefills existing rates and preserves them on partial entry', async () => {

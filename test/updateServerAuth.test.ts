@@ -173,4 +173,33 @@ describe('updateServerAuth command', () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('No registered server found'));
     expect(cfg.update).not.toHaveBeenCalled();
   });
+
+  it('updates EVERY entry on the URL — two credential identities rotate together (§5 URL-wide scope)', async () => {
+    const servers: any[] = [
+      { id: 'srv-a', serverUrl: 'http://s:8000', requestHeaders: { Authorization: 'Bearer ' + 'old' + '-a', 'X-Tenant': 'a' } },
+      { id: 'srv-b', serverUrl: 'http://s:8000/', requestHeaders: { Authorization: 'Bearer ' + 'old' + '-b', 'X-Tenant': 'b' } },
+      { id: 'other', serverUrl: 'http://elsewhere:9000', requestHeaders: { Authorization: 'keep' } },
+    ];
+    const models = [
+      { id: 'm1', vllmModelId: 'm1', server: 'srv-a' },
+      { id: 'm2', vllmModelId: 'm2', server: 'srv-b' },
+    ];
+    const cfg = makeConfig(models, servers);
+    vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
+    vi.spyOn(vscode.window, 'showInputBox')
+      .mockResolvedValueOnce('rotated-key')
+      .mockResolvedValueOnce('');
+
+    const disposable = registerUpdateServerAuthCommand({} as any, provider, output);
+    await (vscode as any).commands._run('vllm-copilot.updateServerAuth', 'http://s:8000');
+    disposable.dispose();
+
+    const written = cfg.update.mock.calls.find((c: any[]) => c[0] === 'servers')![1] as any[];
+    const byId = Object.fromEntries(written.map(s => [s.id, s]));
+    // Both identities on the URL rotate; per-entry custom headers survive.
+    expect(byId['srv-a'].requestHeaders).toEqual({ Authorization: 'Bearer ' + 'rotated' + '-key', 'X-Tenant': 'a' });
+    expect(byId['srv-b'].requestHeaders).toEqual({ Authorization: 'Bearer ' + 'rotated' + '-key', 'X-Tenant': 'b' });
+    // The unrelated server is untouched.
+    expect(byId['other'].requestHeaders).toEqual({ Authorization: 'keep' });
+  });
 });

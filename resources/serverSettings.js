@@ -504,7 +504,7 @@
     const rmBtn = document.getElementById('removeModelBtn');
     if (rmBtn) rmBtn.onclick = async () => {
       if (await webviewConfirm('Remove model "' + S.selModel + '" from ' + selServerUrl() + '?')) {
-        vscode.postMessage({ type: 'removeModel', serverUrl: selServerUrl(), id: S.selModel });
+        vscode.postMessage({ type: 'removeModel', server: selServerId(), serverUrl: selServerUrl(), id: S.selModel });
       }
     };
   }

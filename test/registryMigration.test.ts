@@ -233,4 +233,30 @@ describe('planRegistryMigration', () => {
       },
     ]);
   });
+
+  it('skips a model with an unparseable serverUrl instead of throwing (migration must not brick)', () => {
+    // `new URL()` inside generateServerId would otherwise abort the whole
+    // one-shot migration forever, orphaning EVERY model (Phase 2 deleted all
+    // legacy-field readers). One rotten URL must not sink the fleet.
+    const garbage = makeLegacyModelConfig({ id: 'broken', serverUrl: 'http://my server:8000' });
+    const plan = planRegistryMigration([
+      garbage,
+      makeLegacyModelConfig({ id: 'healthy' }),
+    ]);
+
+    expect(plan.skipped).toEqual([{ id: 'broken', reason: 'unparseable serverUrl "http://my server:8000"' }]);
+    expect(plan.models[0]).toBe(garbage); // verbatim, in place
+    expect(plan.models[1]).toMatchObject({ id: 'healthy', server: 'localhost-8000' });
+    expect(plan.servers).toEqual([{ id: 'localhost-8000', serverUrl: DEFAULT_TEST_SERVER_URL }]);
+  });
+
+  it('skips a non-URL serverUrl ("not a url") without touching valid models', () => {
+    const junk = makeLegacyModelConfig({ id: 'junk', serverUrl: 'not a url' });
+    const plan = planRegistryMigration([makeLegacyModelConfig({ id: 'ok' }), junk]);
+
+    expect(plan.skipped).toHaveLength(1);
+    expect(plan.skipped[0].id).toBe('junk');
+    expect(plan.models[1]).toBe(junk);
+    expect(plan.servers).toHaveLength(1);
+  });
 });
