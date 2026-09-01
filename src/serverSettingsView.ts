@@ -480,22 +480,30 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   /**
    * Change a server group's backend type. serverType describes the SERVER, so
    * this writes the registry ENTRY — never the model. The webview sends the
-   * group's primary entry id; entries sharing one connection fingerprint are
-   * the same backend in practice, so updating the primary suffices.
+   * group's primary entry id, but the connection fingerprint IS the group
+   * (§5: the registry id is a write target, not an identity): every entry
+   * sharing that fingerprint — including hand-written duplicates — gets the
+   * type, or a sibling keeps serving with a stale backend type.
    */
   private async setServerType(msg: SetServerTypeMessage): Promise<void> {
     const validTypes: ServerType[] = ['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter'];
     if (!msg.server || !validTypes.includes(msg.serverType)) return;
     const servers = readServers();
-    const idx = servers.findIndex(s => s.id === msg.server);
-    if (idx < 0) return;
-    if ((servers[idx].serverType ?? 'vllm') === msg.serverType) return;
-    const next = servers.slice();
-    next[idx] = { ...next[idx], serverType: msg.serverType };
+    const selected = servers.find(s => s.id === msg.server);
+    if (!selected) return;
+    const fingerprint = serverEntryFingerprint(selected);
+    const changedIds: string[] = [];
+    const next = servers.map(s => {
+      if (serverEntryFingerprint(s) !== fingerprint) return s;
+      if ((s.serverType ?? 'vllm') === msg.serverType) return s;
+      changedIds.push(s.id);
+      return { ...s, serverType: msg.serverType };
+    });
+    if (changedIds.length === 0) return;
     await writeServers(next);
     this.clearCache?.();
     // The 'vllm-copilot.servers' config listener owns the webview refresh.
-    this.outputChannel.appendLine(`[SETTINGS] Server "${msg.server}" type → ${msg.serverType}`);
+    this.outputChannel.appendLine(`[SETTINGS] Server type → ${msg.serverType} (entries ${changedIds.map(id => `"${id}"`).join(', ')})`);
   }
 
   /**

@@ -563,6 +563,46 @@ describe('ServerSettingsViewProvider', () => {
     });
   });
 
+  describe('setServerType', () => {
+    it('updates every entry sharing the connection fingerprint, leaves other identities alone', async () => {
+      // 'b' is a hand-edited sibling of 'a' — same URL + auth, different header
+      // spelling. Fingerprint identity (case-folded) makes them ONE group: both
+      // must get the type or 'b' keeps serving with a stale backend type.
+      const servers = [
+        { id: 'a', serverUrl: 'http://s:8000', requestHeaders: { Authorization: 'k' } },
+        { id: 'b', serverUrl: 'http://s:8000', requestHeaders: { authorization: 'k' } },
+        { id: 'c', serverUrl: 'http://s:8000', requestHeaders: { Authorization: 'other-credential' } },
+        { id: 'd', serverUrl: 'http://s:9000' },
+      ];
+      vscode.workspace._mockConfig = {
+        get: (key: string) => (key === 'servers' ? servers : undefined),
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await (provider as any).setServerType({ type: 'setServerType', server: 'a', serverType: 'ollama' });
+
+      expect(vscode.workspace._mockConfig.update).toHaveBeenCalledTimes(1);
+      const written = vscode.workspace._mockConfig.update.mock.calls[0][1] as any[];
+      const byId = Object.fromEntries(written.map(s => [s.id, s]));
+      expect(byId.a.serverType).toBe('ollama');
+      expect(byId.b.serverType).toBe('ollama');
+      expect(byId.c.serverType).toBeUndefined();
+      expect(byId.d.serverType).toBeUndefined();
+    });
+
+    it('does not write when the whole group already has the type', async () => {
+      const servers = [{ id: 'a', serverUrl: 'http://s:8000', serverType: 'ollama' }];
+      vscode.workspace._mockConfig = {
+        get: (key: string) => (key === 'servers' ? servers : undefined),
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await (provider as any).setServerType({ type: 'setServerType', server: 'a', serverType: 'ollama' });
+
+      expect(vscode.workspace._mockConfig.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('refreshWebview', () => {
     it('uses trusted headers with a canonical URL but strips them from webview state', async () => {
       const postMessage = vi.fn().mockResolvedValue(true);

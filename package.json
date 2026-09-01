@@ -235,6 +235,14 @@
         {
           "command": "vllm-copilot.renameServer",
           "when": "false"
+        },
+        {
+          "command": "vllm-copilot.removeServer",
+          "when": "false"
+        },
+        {
+          "command": "vllm-copilot.removeModel",
+          "when": "false"
         }
       ],
       "view/item/context": [
@@ -247,6 +255,11 @@
           "command": "vllm-copilot.renameServer",
           "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive)",
           "group": "1_server@2"
+        },
+        {
+          "command": "vllm-copilot.removeServer",
+          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive || viewItem == serverOnlineRelay || viewItem == serverOfflineRelay)",
+          "group": "1_server@3"
         },
         {
           "command": "vllm-copilot.openDeepDive",

@@ -155,6 +155,13 @@ survive migration untouched.
 Fingerprint header sorting stays plain comparison operators, never `localeCompare`: the
 fingerprint is identity-bearing and must be locale-invariant (`config.ts`).
 
+Header *names* are case-folded inside the fingerprint, and `sanitizeRequestHeaders` collapses
+case-duplicate spellings to the last occurrence (RFC 7230 §3.2 — `authorization` and
+`Authorization` are one header). Values keep their exact bytes. A hand-written lowercase entry
+and the extension-written `Authorization` are therefore one identity, and a rotated key replaces
+the old header instead of persisting a doubled auth header. `validateConfig` warns when two
+registry entries describe the same connection — allowed, never auto-merged.
+
 **Server-scoped commands keep their current scope.** `Rename Server` matches the *normalized URL*
 (the label names the box, not one credential's view of it) and `Update Auth` merges into every
 model on that URL. Deriving targets from the credential group instead would silently narrow both

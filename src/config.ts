@@ -444,11 +444,16 @@ function resolveServerEntry(
  * (webview DOM, logs). Use {@link serverGroupKey} for a non-reversible key.
  */
 export function serverFingerprint(url: string, headers: Record<string, string>): string {
-  // Sort header keys lexicographically — NEVER localeCompare: this feeds a
+  // Header names are case-folded before sorting: HTTP names are case-insensitive,
+  // so `Authorization` and `authorization` are the same header and must produce
+  // the same identity. Values keep their exact bytes (secrets are case-sensitive).
+  // Sort lexicographically — NEVER localeCompare: this feeds a
   // server-IDENTITY fingerprint (dashboard grouping, engine registry, Deep-Dive
   // identity). Two machines with different locales must derive the SAME key for
   // the same server, or a model silently moves server groups between machines.
-  const sorted = Object.entries(headers).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const sorted = Object.entries(headers)
+    .map(([name, value]) => [name.toLowerCase(), value] as const)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   return JSON.stringify([url, sorted]);
 }
 
@@ -605,6 +610,12 @@ export function buildAuthHeaders(apiKey?: string): Record<string, string> {
 
 /**
  * Sanitize custom HTTP headers by stripping blocked names, invalid characters, and CRLF values.
+ *
+ * Header names are case-insensitive on the wire (RFC 7230 §3.2), so two entries
+ * that differ only in spelling (`authorization` / `Authorization`) are ONE header.
+ * The last occurrence wins — the earlier spelling is dropped, so the request (and
+ * the identity fingerprint) never carries two spellings of the same header.
+ * The surviving spelling is preserved as written.
  */
 export function sanitizeRequestHeaders(headers: Record<string, string>): Record<string, string> {
   const blockedHeaders = new Set([
@@ -613,10 +624,15 @@ export function sanitizeRequestHeaders(headers: Record<string, string>): Record<
   ]);
   const headerNameRe = /^[a-zA-Z0-9!#$%&'*+.^_`|~-]+$/;
   const sanitized: Record<string, string> = {};
+  const spellingByLower = new Map<string, string>();
   for (const [key, value] of Object.entries(headers)) {
     if (blockedHeaders.has(key.toLowerCase())) continue;
     if (!headerNameRe.test(key)) continue;
     if (/\r|\n/.test(value)) continue;
+    const lower = key.toLowerCase();
+    const previous = spellingByLower.get(lower);
+    if (previous !== undefined && previous !== key) delete sanitized[previous];
+    spellingByLower.set(lower, key);
     sanitized[key] = value;
   }
   return sanitized;
@@ -654,6 +670,7 @@ export function validateConfig(config: VllmConfig): string[] {
   // Comparison is EXACTLY like the resolver's (`s.id === model.server`, no
   // trimming) — trimming here would green-light a padded ref that dangles at runtime.
   const serverIds = new Set<string>();
+  const serverIdByConnection = new Map<string, string>();
   for (const entry of config.servers) {
     const id = entry.id;
     if (!id) {
@@ -664,6 +681,20 @@ export function validateConfig(config: VllmConfig): string[] {
       warnings.push(`Server registry: duplicate id "${id}" — each server entry must have a unique id.`);
     }
     serverIds.add(id);
+    // Same URL + same auth = the same connection. Allowed (each id is a valid
+    // write target), but one entry is redundant — warn, never auto-merge.
+    if (entry.serverUrl?.trim()) {
+      const connection = serverFingerprint(
+        normalizeServerUrl(entry.serverUrl),
+        sanitizeRequestHeaders(entry.requestHeaders ?? {})
+      );
+      const other = serverIdByConnection.get(connection);
+      if (other !== undefined) {
+        warnings.push(`Server registry: entries "${other}" and "${id}" are the same server connection (same URL and auth) — one of them is redundant.`);
+      } else {
+        serverIdByConnection.set(connection, id);
+      }
+    }
   }
 
   // The extension's unique model key is `id` — it is what personalities, the

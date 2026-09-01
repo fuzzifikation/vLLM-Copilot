@@ -13,7 +13,7 @@ import {
   sanitizeRequestHeaders,
   serverFingerprint,
 } from './config.js';
-import { OPENROUTER_API_BASE } from './openRouter.js';
+import { isOpenRouterUrl } from './openRouter.js';
 import {
   type ServerEntry,
   generateServerId,
@@ -119,7 +119,9 @@ export function planRegistryMigration(models: LegacyModelConfig[], existing: Ser
       takenIds.add(serverId);
       entryIdByFingerprint.set(fingerprint, serverId);
 
-      const isOpenRouter = normalizeServerUrl(OPENROUTER_API_BASE) === normalizedUrl;
+      // Same classifier the runtime uses: any openrouter.ai host is OpenRouter,
+      // not just the exact canonical API base the old string equality matched.
+      const isOpenRouter = isOpenRouterUrl(normalizedUrl);
       const entry: ServerEntry = { id: serverId, serverUrl: normalizedUrl };
       if (serverDisplayName?.trim()) entry.displayName = serverDisplayName.trim();
       const effectiveType = serverType ?? (isOpenRouter ? 'openrouter' : undefined);

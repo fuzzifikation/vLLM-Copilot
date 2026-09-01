@@ -83,6 +83,15 @@ describe('sanitizeRequestHeaders', () => {
     expect(headers['X-Custom']).toBe('hello');
   });
 
+  it('collapses case-duplicate header names — last occurrence wins, surviving spelling kept', () => {
+    // HTTP header names are case-insensitive; persisting `authorization` AND
+    // `Authorization` meant requests carried the same header twice.
+    const headers = getConfigRequestHeaders({ authorization: 'first', Authorization: 'second', 'X-Tenant-ID': 'abc' });
+    expect(headers['authorization']).toBeUndefined();
+    expect(headers['Authorization']).toBe('second');
+    expect(Object.keys(headers)).toEqual(['Authorization', 'X-Tenant-ID']);
+  });
+
   it('strips blocked header: host', () => {
     const headers = getConfigRequestHeaders({ 'host': 'evil.com' });
     expect(headers['host']).toBeUndefined();

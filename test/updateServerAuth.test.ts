@@ -202,4 +202,43 @@ describe('updateServerAuth command', () => {
     // The unrelated server is untouched.
     expect(byId['other'].requestHeaders).toEqual({ Authorization: 'keep' });
   });
+
+  it('rotates the key when the stored entry spells the header in a different case (no doubled auth header)', async () => {
+    // Hand-written settings.json commonly uses lowercase `authorization`. The
+    // prompt produces `Authorization` — merging without sanitizing persisted
+    // BOTH spellings, so every request carried two auth headers.
+    const { cfg } = makeFixture({ authorization: 'wr' + 'ite-old', 'X-Tenant': 't' });
+    vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
+    vi.spyOn(vscode.window, 'showInputBox')
+      .mockResolvedValueOnce('fresh-key')
+      .mockResolvedValueOnce('');
+
+    const disposable = registerUpdateServerAuthCommand({} as any, provider, output);
+    await (vscode as any).commands._run('vllm-copilot.updateServerAuth', 'http://s:8000');
+    disposable.dispose();
+
+    const written = cfg.update.mock.calls.find((c: any[]) => c[0] === 'servers')![1] as any[];
+    expect(written[0].requestHeaders).toEqual({
+      'X-Tenant': 't',
+      Authorization: 'Bearer ' + 'fresh-key', // incoming spelling wins; lowercase one is gone
+    });
+  });
+
+  it('drops blocked header names from an initialHeaders payload', async () => {
+    const servers: any[] = [{ id: 'openrouter', serverUrl: 'https://openrouter.ai/api', requestHeaders: { Authorization: 'sk-or-old' } }];
+    const models = [{ id: 'or', vllmModelId: 'm', server: 'openrouter' }];
+    const cfg = makeConfig(models, servers);
+    vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
+
+    const disposable = registerUpdateServerAuthCommand({} as any, provider, output);
+    await (vscode as any).commands._run(
+      'vllm-copilot.updateServerAuth',
+      'https://openrouter.ai/api',
+      { Authorization: 'sk-or-new', Cookie: 'nope' },
+    );
+    disposable.dispose();
+
+    const written = cfg.update.mock.calls.find((c: any[]) => c[0] === 'servers')![1] as any[];
+    expect(written[0].requestHeaders).toEqual({ Authorization: 'sk-or-new' });
+  });
 });

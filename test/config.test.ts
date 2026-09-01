@@ -121,6 +121,14 @@ describe('serverIdentity (registry-resolved)', () => {
     expect(a.fingerprint).toBe(b.fingerprint);
   });
 
+  it('case-folds header names — spelling is not identity — while values stay case-sensitive', () => {
+    const upper = modelServerIdentity(model, entry({ requestHeaders: { Authorization: 'BeaR' } }));
+    const lower = modelServerIdentity(model, entry({ requestHeaders: { authorization: 'BeaR' } }));
+    expect(upper.fingerprint).toBe(lower.fingerprint);
+    const otherValue = modelServerIdentity(model, entry({ requestHeaders: { Authorization: 'bear' } }));
+    expect(upper.fingerprint).not.toBe(otherValue.fingerprint);
+  });
+
   it('is empty when the server ref resolves to nothing', () => {
     const identity = modelServerIdentity({ id: 'm', server: 'ghost' } as any, entry());
     expect(identity.serverUrl).toBe('');

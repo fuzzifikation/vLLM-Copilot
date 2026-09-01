@@ -72,6 +72,18 @@ describe('planRegistryMigration', () => {
     ]);
   });
 
+  it('auto-detects the `openrouter` type for any openrouter.ai host variant, not just the canonical /api base', () => {
+    // Must use the same host-based classifier (isOpenRouterUrl) the runtime
+    // uses — the old exact-string check typed 'https://openrouter.ai/api/'
+    // variants and bare hosts as plain vllm, then every probe misbehaved.
+    const plan = planRegistryMigration([
+      makeLegacyModelConfig({ id: 'or', serverUrl: 'https://openrouter.ai' }),
+    ]);
+
+    expect(plan.skipped).toEqual([]);
+    expect(plan.servers[0].serverType).toBe('openrouter');
+  });
+
   it('creates no OpenRouter entry when no model points at it', () => {
     const plan = planRegistryMigration([makeLegacyModelConfig()]);
 

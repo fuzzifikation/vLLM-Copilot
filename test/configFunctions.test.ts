@@ -283,6 +283,28 @@ describe('validateConfig', () => {
     expect(dup.some(w => w.includes('duplicate id'))).toBe(true);
   });
 
+  it('warns when two entries are the same connection (same URL + auth), ignoring header-name case', () => {
+    const dup = validateConfig({
+      ...makeValidConfig(),
+      models: [],
+      servers: [
+        { id: 'a', serverUrl: 'http://localhost:8000', requestHeaders: { Authorization: 'k' } },
+        { id: 'b', serverUrl: 'http://localhost:8000', requestHeaders: { authorization: 'k' } },
+      ],
+    });
+    expect(dup.some(w => w.includes('"a" and "b"') && w.includes('same server connection'))).toBe(true);
+    // Different credentials = different identities → no warning (credential isolation).
+    const distinct = validateConfig({
+      ...makeValidConfig(),
+      models: [],
+      servers: [
+        { id: 'a', serverUrl: 'http://localhost:8000', requestHeaders: { Authorization: 'k1' } },
+        { id: 'b', serverUrl: 'http://localhost:8000', requestHeaders: { Authorization: 'k2' } },
+      ],
+    });
+    expect(distinct.some(w => w.includes('same server connection'))).toBe(false);
+  });
+
   it('accepts every known routing mode without warning', () => {
     for (const routingMode of ['standard', 'nitro', 'exacto']) {
       const warnings = validateConfig(withModel({ routingMode }));

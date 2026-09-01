@@ -9,7 +9,7 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from './provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId } from './config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId, sanitizeRequestHeaders } from './config.js';
 import type { ModelConfig } from './config.js';
 import type { ServerEntry } from './serverRegistry.js';
 import { patchModelConfig, readModels, readServers, writeModels, writeServers } from './configStore.js';
@@ -238,6 +238,23 @@ export function mergeAuthHeaders(
 }
 
 /**
+ * Content equality for header maps — config round-trips produce fresh objects,
+ * so reference checks miss real no-ops. Case-sensitive on purpose: callers
+ * compare maps that were already sanitized (one spelling per header name).
+ * @internal Exported for testing.
+ */
+export function sameHeaders(
+  a: Record<string, string> | undefined,
+  b: Record<string, string> | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every(k => b[k] === a[k]);
+}
+
+/**
  * Update auth (API key + request headers) for all models on a server.
  * Triggered from right-click context menu on a server node in the dashboard.
  */
@@ -273,7 +290,7 @@ export function registerUpdateServerAuthCommand(
     // requires the key (chat bills per account), generic servers keep it optional.
     let combinedHeaders: Record<string, string>;
     if (initialHeaders && Object.keys(initialHeaders).length > 0) {
-      combinedHeaders = initialHeaders;
+      combinedHeaders = sanitizeRequestHeaders(initialHeaders);
     } else {
       const collected = await promptForServerAuth({
         apiKeyTitle: `Update Auth for ${serverUrl} (1/2)`,
@@ -290,7 +307,7 @@ export function registerUpdateServerAuthCommand(
         outputChannel.appendLine(`[INFO] Update Auth cancelled for ${serverUrl} — no credentials entered.`);
         return; // cancelled
       }
-      combinedHeaders = collected;
+      combinedHeaders = sanitizeRequestHeaders(collected);
     }
 
     // Re-read AFTER the prompt: a settings edit made while it was open must
@@ -313,10 +330,17 @@ export function registerUpdateServerAuthCommand(
     const transitions: Array<{ from: Record<string, string> | undefined; to: Record<string, string> }> = [];
     for (const { i } of targetIdx) {
       const current = currentServers[i];
-      const nextHeaders = mergeAuthHeaders(current.requestHeaders, combinedHeaders);
-      if (nextHeaders && nextHeaders !== current.requestHeaders) {
+      // Sanitize BOTH sides. Stored headers come from hand-editable settings and
+      // may carry blocked names or a second spelling (`authorization` next to
+      // the `Authorization` this prompt produces). Merging raw would persist both
+      // spellings and send a doubled auth header. Sanitizing the merge result
+      // makes the freshly entered value win the collision (last occurrence wins).
+      const existingHeaders = sanitizeRequestHeaders(current.requestHeaders ?? {});
+      const merged = mergeAuthHeaders(existingHeaders, combinedHeaders) ?? existingHeaders;
+      const nextHeaders = sanitizeRequestHeaders(merged);
+      if (!sameHeaders(nextHeaders, existingHeaders)) {
         updatedServers[i] = { ...current, requestHeaders: nextHeaders };
-        transitions.push({ from: current.requestHeaders, to: nextHeaders });
+        transitions.push({ from: existingHeaders, to: nextHeaders });
       }
     }
     if (transitions.length === 0) {
