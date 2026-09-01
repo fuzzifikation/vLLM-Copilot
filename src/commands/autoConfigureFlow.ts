@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from '../config.js';
-import { resolveConfigId, resolveVllmModelId, normalizeServerUrl, buildModelId, modelServerIdentity } from '../config.js';
+import { resolveConfigId, resolveVllmModelId, buildModelId } from '../config.js';
 import { replaceModelConfig, readModels, readServers, type IdentifiedModelConfig } from '../configStore.js';
 import { resolveServer } from '../serverRegistry.js';
 import { resolveModelConfigForAddSafely } from './hfDiscovery.js';
-import { confirmAndSaveAddedModel, ensureServerEntry, type ClearCacheProvider } from './addServerFlow.js';
+import { confirmAndSaveAddedModel, type ClearCacheProvider } from './addServerFlow.js';
 
 /**
  * Standalone command: re-run auto-configuration (HuggingFace + vLLM server discovery)
@@ -16,7 +16,7 @@ export function registerAutoConfigureModelCommand(
   provider: ClearCacheProvider,
   output: vscode.OutputChannel
 ): vscode.Disposable {
-  return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { server?: string; serverUrl?: string; id?: string; identityModelId?: string }) => {
+  return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { server?: string; id?: string }) => {
     const existing = readModels();
     if (existing.length === 0) {
       output.appendLine('[INFO] Auto-configure cancelled — no models configured.');
@@ -28,73 +28,53 @@ export function registerAutoConfigureModelCommand(
 
     let modelConfig: ModelConfig | undefined;
     let vllmId: string;
-    const argServerUrl = arg?.serverUrl;
     const argModelId = arg?.id;
-    // The webview posts the selected group's registry entry id. Trust it over URL
-    // matching: a group can have ZERO configured models (its last one removed, or
-    // a hand-added entry), and falling back to "any model on this URL" would
-    // anchor on a DIFFERENT identity's credentials when one URL hosts several.
-    // URL matching stays as the fallback for callers that pass only a URL.
+    // The webview posts the selected server group's registry entry id plus the
+    // target model's id. The entry id pins URL AND credentials outright — no
+    // URL matching, identity-sibling guessing or fingerprint comparing, which
+    // is exactly where those heuristics failed for model-less groups and for
+    // one URL hosting several credentials.
     const argEntry = arg?.server ? resolveServer(arg.server, servers) : undefined;
-    const argServerNorm =
-      argEntry?.serverUrl ?? (argServerUrl ? normalizeServerUrl(argServerUrl) : undefined);
+    if (arg?.server && !argEntry) {
+      output.appendLine(`[ERROR] Auto-configure: server entry "${arg.server}" is not registered.`);
+      void vscode.window.showErrorMessage('vLLM-Copilot: the selected server no longer exists in the registry.');
+      return;
+    }
 
-    if (argServerNorm && argModelId) {
-      const urlOf = (m: ModelConfig): string | undefined => resolveServer(m.server, servers)?.serverUrl;
-      const identitySibling = arg.identityModelId
-        ? existing.find(m => resolveConfigId(m) === arg.identityModelId && urlOf(m) === argServerNorm)
-        : undefined;
-      // Called with explicit server + model identity (e.g. from Server Settings
-      // webview). The webview keys everything by the extension `id`; for an
-      // unconfigured server-reported model that id is just the server model id.
-      modelConfig = existing.find(
-        m => resolveConfigId(m) === argModelId && urlOf(m) === argServerNorm &&
-             (!identitySibling || modelServerIdentity(m, servers).fingerprint ===
-               modelServerIdentity(identitySibling, servers).fingerprint)
-      );
+    if (argEntry && argModelId) {
+      // Called with explicit entry + model identity (Server Settings webview).
+      // The webview keys everything by the extension `id`; for an unconfigured
+      // server-reported model that id is just the server model id.
+      const entryId = arg.server!;
+      modelConfig = existing.find(m => m.server === entryId && resolveConfigId(m) === argModelId);
       vllmId = resolveVllmModelId(modelConfig) || argModelId;
 
       if (!modelConfig) {
         // Unconfigured model: the server reports it but settings has no entry
         // (Server Settings lists server-reported models even when unconfigured).
-        // Auto-configure it as a NEW model — reuse the identity's registry entry
-        // so the entry id is shared, not duplicated. Anchor order: the selected
-        // entry (argEntry) > the identity sibling's entry > any model on the
-        // URL. The last fallback is best-effort: the group may have no model at
-        // all, in which case discovery runs headerless.
-        const sibling = identitySibling ?? existing.find(m => urlOf(m) === argServerNorm);
-        const siblingServer =
-          argEntry ?? (sibling ? resolveServer(sibling.server, servers) : undefined);
-        const serverUrl = siblingServer?.serverUrl ?? argServerNorm;
+        // Auto-configure it as a NEW model referencing the selected entry —
+        // same entry means same URL and credentials, nothing is duplicated.
         const discoveryResult = await resolveModelConfigForAddSafely(
-          output, context, vllmId, serverUrl, siblingServer?.requestHeaders,
-          undefined, undefined, siblingServer?.serverType
+          output, context, vllmId, argEntry.serverUrl, argEntry.requestHeaders,
+          undefined, undefined, argEntry.serverType
         );
         if (!discoveryResult) {
           output.appendLine(`[INFO] Auto-configure stopped for new model "${vllmId}" — discovery returned no result.`);
           return;
         }
 
-        // Same fingerprint → same entry: when the identity's entry exists this
-        // returns its id; only a dangling ref (or no anchor at all) creates a
-        // new entry — track it so an abandoned confirm rolls it back.
-        const { id: serverId, created } = await ensureServerEntry({
-          serverUrl,
-          requestHeaders: siblingServer?.requestHeaders,
-          serverType: siblingServer?.serverType,
-        });
         const newConfig: IdentifiedModelConfig = {
           ...discoveryResult.modelConfig,
-          id: buildModelId(serverUrl, vllmId),
+          id: buildModelId(argEntry.serverUrl, vllmId),
           vllmModelId: vllmId,
-          server: serverId,
+          server: entryId,
         };
         if (discoveryResult.suggestedMaxOutputTokens !== undefined && newConfig.maxOutputTokens === undefined) {
           newConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
         }
         await confirmAndSaveAddedModel(
-          newConfig, vllmId, serverUrl, discoveryResult.summary.join('\n'), output,
-          () => provider.clearCache(), discoveryResult.presetFile, created ? serverId : undefined
+          newConfig, vllmId, argEntry.serverUrl, discoveryResult.summary.join('\n'), output,
+          () => provider.clearCache(), discoveryResult.presetFile
         );
         return;
       }

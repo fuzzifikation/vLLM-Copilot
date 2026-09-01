@@ -5,8 +5,8 @@
  * off every `vllm-copilot.models` entry and into the `vllm-copilot.servers`
  * registry, rewriting models to `{ server: <id> }` refs. Runs once per install,
  * silently — the planning itself is the pure `planRegistryMigration()`; this
- * module owns only the vscode-side contract: the globalState marker, the
- * pre-write snapshot, and the servers-before-models write order.
+ * module owns only the vscode-side contract: the globalState marker and the
+ * servers-before-models write order.
  *
  * Must run *before* `maybeOfferOutputLengthMigration` in activate(): that one
  * identifies models by `{ id, serverUrl }`, which the rewrite removes.
@@ -16,17 +16,9 @@ import * as vscode from 'vscode';
 import type { ModelConfig } from './config.js';
 import { readModels, readServers, writeModels, writeServers } from './configStore.js';
 import { planRegistryMigration, type LegacyModelConfig } from './registryMigration.js';
-import type { ServerEntry } from './serverRegistry.js';
 
 const MIGRATION_FLAG = 'vllmCopilot.serverRegistryMigration.v1';
-const SNAPSHOT_KEY = 'vllmCopilot.serverRegistryMigration.snapshot.v1';
 const BTN_SHOW = 'Show servers';
-
-/** Pre-migration state of both arrays; kept as a forensic backup, not a user feature. */
-interface RegistrySnapshot {
-  models: LegacyModelConfig[];
-  servers: ServerEntry[];
-}
 
 /**
  * Activation entry point. Never throws — activation awaits it, and a failure
@@ -57,14 +49,10 @@ export async function maybeRunServerRegistryMigration(
     // write failed) converging: matching fingerprints are reused, not duplicated.
     const plan = planRegistryMigration(models, existingServers);
 
-    // Forensic backup of the pre-write state, stored before any write touches
-    // settings.json. There is deliberately NO user-facing Undo: restoring the
-    // legacy shape would leave settings this version cannot use. The snapshot
-    // stays as a recovery reference should a migration bug ever be reported.
-    // It contains requestHeaders; same machine, same (accepted) threat model
-    // as plaintext settings.
-    const snapshot: RegistrySnapshot = { models, servers: existingServers };
-    await context.globalState.update(SNAPSHOT_KEY, snapshot);
+    // No pre-write snapshot and no Undo: the migration is verifiably additive
+    // (servers are adopted, never deleted; models keep every non-server field),
+    // VS Code keeps its own settings history, and restoring the legacy shape
+    // would only produce settings this version cannot use.
 
     for (const s of plan.skipped) {
       output.appendLine(
@@ -99,7 +87,7 @@ export async function maybeRunServerRegistryMigration(
       await writeModels(plan.models as unknown as ModelConfig[]);
     } catch (err) {
       // Settings write blocked (e.g. invalid settings.json) — no marker, so
-      // the next activation retries. The snapshot above is harmless.
+      // the next activation retries the idempotent plan from scratch.
       const msg = err instanceof Error ? err.message : String(err);
       void vscode.window.showErrorMessage(`vLLM-Copilot: could not adopt your servers into settings — will retry next start. ${msg}`);
       output.appendLine(`[WARN] Server registry migration write failed: ${msg}`);

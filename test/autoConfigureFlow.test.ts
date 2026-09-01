@@ -11,8 +11,8 @@ import * as hfDiscovery from '../src/commands/hfDiscovery.js';
  * Direct tests for the auto-configure flow module: the update-confirm helper and
  * the re-configure command (arg-based existing-model and unconfigured-new-model
  * paths). Discovery + persistence are stubbed so the flow's own logic is
- * measured: identity matching, sibling auth borrowing, infra-field preservation,
- * and the replace-based save.
+ * measured: entry-id anchoring, infra-field preservation, and the
+ * replace-based save.
  */
 describe('applyAutoConfigUpdate', () => {
   let infoSpy: ReturnType<typeof vi.spyOn>;
@@ -118,7 +118,7 @@ describe('registerAutoConfigureModelCommand', () => {
 
     registerAutoConfigureModelCommand({} as any, provider, output);
     await (vscode as any).commands._run('vllm-copilot.autoConfigureModel', {
-      serverUrl: 'http://host:8000',
+      server: 'host-8000',
       id: 'existing-id',
     });
 
@@ -165,7 +165,7 @@ describe('registerAutoConfigureModelCommand', () => {
 
     registerAutoConfigureModelCommand({} as any, provider, output);
     await (vscode as any).commands._run('vllm-copilot.autoConfigureModel', {
-      serverUrl: 'http://host:8000',
+      server: 'host-8000',
       id: 'new-model',
     });
 
@@ -186,7 +186,7 @@ describe('registerAutoConfigureModelCommand', () => {
     expect(provider.clearCache).toHaveBeenCalled();
   });
 
-  it('borrows auth from the selected identity when one URL has multiple credentials', async () => {
+  it('targets the selected entry\'s credentials when one URL has multiple identities', async () => {
     const siblings = [
       { id: 'identity-a', vllmModelId: 'model-a', server: 'srv-a' },
       { id: 'identity-b', vllmModelId: 'model-b', server: 'srv-b' },
@@ -208,9 +208,8 @@ describe('registerAutoConfigureModelCommand', () => {
 
     registerAutoConfigureModelCommand({} as any, provider, output);
     await (vscode as any).commands._run('vllm-copilot.autoConfigureModel', {
-      serverUrl: 'http://host:8000',
+      server: 'srv-b',
       id: 'new-model',
-      identityModelId: 'identity-b',
     });
 
     expect(resolveSpy).toHaveBeenCalledWith(

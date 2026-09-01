@@ -4,6 +4,7 @@ import {
   pickModelFromServer,
   confirmAndSaveAddedModel,
   registerAddServerModelCommand,
+  registerAddServerCommand,
 } from '../src/commands/addServerFlow.js';
 import * as configStore from '../src/configStore.js';
 import * as hfDiscovery from '../src/commands/hfDiscovery.js';
@@ -540,5 +541,92 @@ describe('registerAddServerModelCommand', () => {
 
     expect(replaceSpy).not.toHaveBeenCalled();
     expect(registry).toHaveLength(1);
+  });
+});
+
+describe('registerAddServerCommand', () => {
+  let output: any;
+  let inputBoxSpy: ReturnType<typeof vi.spyOn>;
+  let infoSpy: ReturnType<typeof vi.spyOn>;
+  let writeServersSpy: ReturnType<typeof vi.spyOn>;
+  let registry: unknown[];
+
+  beforeEach(() => {
+    (vscode as any).commands._registrations = [];
+    output = { appendLine: vi.fn(), dispose: vi.fn(), show: vi.fn(), hide: vi.fn() };
+    inputBoxSpy = vi.spyOn(vscode.window, 'showInputBox').mockResolvedValue(undefined);
+    infoSpy = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(undefined);
+    registry = [];
+    writeServersSpy = vi
+      .spyOn(configStore, 'writeServers')
+      .mockImplementation(async next => { registry = [...next]; });
+    vscode.workspace._mockConfig = {
+      get: (key: string) => (key === 'models' ? [] : key === 'servers' ? registry : undefined),
+      update: vi.fn().mockResolvedValue(undefined),
+      inspect: () => ({ defaultValue: 'none' }),
+    };
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vscode.workspace._mockConfig = {};
+  });
+
+  it('writes only a registry entry — no model, no BYOK write', async () => {
+    inputBoxSpy
+      .mockResolvedValueOnce('http://new:9000') // server URL
+      .mockResolvedValueOnce('key42')           // API key
+      .mockResolvedValueOnce('');               // custom headers
+
+    registerAddServerCommand(output);
+    await (vscode as any).commands._run('vllm-copilot.addServer');
+
+    expect(registry).toEqual([
+      {
+        id: 'new-9000',
+        serverUrl: 'http://new:9000',
+        requestHeaders: { Authorization: ['Bearer', 'key42'].join(' ') },
+      },
+    ]);
+  });
+
+  it('does not write again when the same URL + auth is already registered', async () => {
+    registry = [
+      {
+        id: 'new-9000',
+        serverUrl: 'http://new:9000',
+        requestHeaders: { Authorization: ['Bearer', 'key42'].join(' ') },
+      },
+    ];
+    inputBoxSpy
+      .mockResolvedValueOnce('http://new:9000')
+      .mockResolvedValueOnce('key42')
+      .mockResolvedValueOnce('');
+
+    registerAddServerCommand(output);
+    await (vscode as any).commands._run('vllm-copilot.addServer');
+
+    expect(writeServersSpy).not.toHaveBeenCalled();
+    expect(String(infoSpy.mock.calls.some(([m]) => String(m).includes('already registered')))).toBe('true');
+  });
+
+  it('writes nothing when the auth prompt is abandoned', async () => {
+    inputBoxSpy.mockResolvedValueOnce('http://new:9000'); // URL, then Esc on the key
+
+    registerAddServerCommand(output);
+    await (vscode as any).commands._run('vllm-copilot.addServer');
+
+    expect(writeServersSpy).not.toHaveBeenCalled();
+    expect(registry).toHaveLength(0);
+  });
+
+  it('routes OpenRouter URLs to the model add flow instead of registering an entry', async () => {
+    inputBoxSpy.mockResolvedValueOnce('https://openrouter.ai');
+
+    registerAddServerCommand(output);
+    await (vscode as any).commands._run('vllm-copilot.addServer');
+
+    expect(writeServersSpy).not.toHaveBeenCalled();
+    expect(String(infoSpy.mock.calls.some(([m]) => String(m).includes('OpenRouter')))).toBe('true');
   });
 });

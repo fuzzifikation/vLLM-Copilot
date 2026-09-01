@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider.js';
 import { getConfig, validateConfig, normalizeServerUrl } from './config.js';
 import { FileLogger } from './logger.js';
-import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault, ensureAgentHostModelsEnabled } from './autoConfig.js';
+import { registerAddServerModelCommand, registerAddServerCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault, ensureAgentHostModelsEnabled } from './autoConfig.js';
 import { setSessionManagerOutput } from './sessionManager.js';
 import { syncBundledPersonalities } from './personalityStore.js';
 import { readServers } from './configStore.js';
@@ -204,6 +204,7 @@ export async function activate(context: vscode.ExtensionContext) {
       registerTestAndRefreshModelsCommand(context, activeProvider, outputChannel),
       registerDiagnoseConnectionCommand(context, outputChannel),
       registerAddServerModelCommand(context, activeProvider, outputChannel),
+      registerAddServerCommand(outputChannel),
       registerAutoConfigureModelCommand(context, activeProvider, outputChannel),
       registerConfigureUtilityModelCommand(outputChannel),
       registerOpenLogFileCommand(fileLogger),

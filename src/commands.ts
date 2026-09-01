@@ -534,80 +534,55 @@ export function registerRemoveServerCommand(
 }
 
 /**
- * Filter out the single model matching (server, configId) from a config
- * array, where `server` is a registry entry id — or, for URL-addressed
- * legacy callers, the set of entry ids sharing one URL — and `configId` is
- * the extension `id` (falling back to the vLLM wire id for legacy entries).
- * Never touches sibling models on the same server.
- * Pure helper, exported for testing.
+ * Filter out the single model matching (server entry id, configId) from a
+ * config array. `configId` is the extension `id` (falling back to the vLLM
+ * wire id for legacy entries). Never touches sibling models on the same
+ * server. Pure helper, exported for testing.
  */
 export function removeModelFromConfig(
   existing: ModelConfig[],
-  server: string | ReadonlySet<string>,
+  server: string,
   configId: string,
 ): { filtered: ModelConfig[]; removed: number } {
-  const onServer = (s: string) => (typeof server === 'string' ? s === server : server.has(s));
   const filtered = existing.filter(
-    m => !(onServer(m.server) && resolveConfigId(m) === configId)
+    m => !(m.server === server && resolveConfigId(m) === configId)
   );
   return { filtered, removed: existing.length - filtered.length };
 }
 
 /**
  * Remove a single model entry from a server.
- * Triggered from the Server Settings webview "Remove Model" button.
- * Removes only the selected (server, id) entry — never sibling models on the
- * same server. `server` is the registry entry id (`arg.server`, or a server
- * URL via legacy `arg.serverUrl`, resolved through the registry). Accepts the
- * extension `id` (preferred) or the vLLM wire id for legacy callers.
+ * Triggered from the Server Settings webview "Remove Model" button — the only
+ * caller. The webview confirms the removal with the user before posting, so
+ * there is no command-side modal. Removes only the selected (entry, id)
+ * model — never sibling models on the same server. Accepts the extension
+ * `id` (preferred) or the vLLM wire id for legacy entries.
  */
 export function registerRemoveModelCommand(
   _context: vscode.ExtensionContext,
   _provider: VllmChatModelProvider,
   outputChannel: vscode.OutputChannel,
 ): vscode.Disposable {
-  return vscode.commands.registerCommand('vllm-copilot.removeModel', async (arg?: any) => {
-    const configId = typeof arg === 'object' ? (arg?.id ?? arg?.vllmModelId) : undefined;
-    const skipConfirm = typeof arg === 'object' && arg?.skipConfirm === true;
-    let server: string | ReadonlySet<string> | undefined = typeof arg === 'object' ? arg?.server : undefined;
-    const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
-    if (!server && serverUrl) {
-      // URL-addressed legacy caller: target every entry on the URL (§5 scope)
-      // instead of gambling on the first match.
-      const normalizedUrl = normalizeServerUrl(serverUrl);
-      const ids = new Set(
-        readServers().filter(s => normalizeServerUrl(s.serverUrl) === normalizedUrl).map(s => s.id)
-      );
-      server = ids.size > 0 ? ids : undefined;
-    }
+  return vscode.commands.registerCommand('vllm-copilot.removeModel', async (arg?: { server?: string; id?: string }) => {
+    const server = arg?.server;
+    const configId = arg?.id;
     if (!server || !configId) {
       vscode.window.showErrorMessage('Server and model ID are required.');
       return;
     }
-    const serverLabel = typeof server === 'string' ? server : serverUrl;
 
     const existing = readModels();
     const { filtered, removed } = removeModelFromConfig(existing, server, configId);
 
     if (removed === 0) {
-      vscode.window.showWarningMessage(`No configured model "${configId}" found on server "${serverLabel}".`);
+      vscode.window.showWarningMessage(`No configured model "${configId}" found on server "${server}".`);
       return;
-    }
-
-    if (!skipConfirm) {
-      const confirm = await vscode.window.showWarningMessage(
-        `Remove model "${configId}" from server "${serverLabel}"?`,
-        { modal: true },
-        'Remove',
-        'Cancel',
-      );
-      if (confirm !== 'Remove') return;
     }
 
     await writeModels(filtered);
     _provider.clearCache();
-    outputChannel.appendLine(`[INFO] Removed model "${configId}" from server "${serverLabel}".`);
-    vscode.window.showInformationMessage(`Removed model "${configId}" from server "${serverLabel}".`);
+    outputChannel.appendLine(`[INFO] Removed model "${configId}" from server "${server}".`);
+    vscode.window.showInformationMessage(`Removed model "${configId}" from server "${server}".`);
   });
 }
 

@@ -654,6 +654,67 @@ async function handleServerFailure(
  * auto-configure the chosen one, and save it as a per-model entry. This is the
  * end-to-end flow for onboarding a second server without hand-editing settings.json.
  */
+/**
+ * Register a server in the registry WITHOUT adding a model. The Add-model
+ * flows roll back a registry entry whose model was never saved, so without
+ * this command a zero-model entry could not be created on purpose at all.
+ * The entry IS the artifact here — it is what the user asked for, so it is
+ * written once, directly, with no confirm/rollback dance.
+ */
+export function registerAddServerCommand(output: vscode.OutputChannel): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.addServer', async () => {
+    const urlInput = await vscode.window.showInputBox({
+      title: 'Add vLLM Server (1/2)',
+      prompt: 'Enter a server URL (vLLM, LM Studio, llama.cpp, Ollama) to register without a model',
+      placeHolder: 'https://host:8000',
+      ignoreFocusOut: true,
+      validateInput: (v) => (v.trim() ? undefined : 'Server URL is required'),
+    });
+    if (!urlInput) {
+      output.appendLine('[INFO] Add server cancelled — no URL entered.');
+      return;
+    }
+    const serverUrl = normalizeServerUrl(urlInput);
+    if (isOpenRouterUrl(serverUrl)) {
+      // OpenRouter entries only make sense with a catalog-picked model; the
+      // dedicated add flow owns that branch.
+      void vscode.window.showInformationMessage(
+        'OpenRouter is set up with "Add or Reconfigure Server/Model" — it always adds a model.'
+      );
+      return;
+    }
+
+    const requestHeaders = await promptForServerAuth({
+      apiKeyTitle: 'Add vLLM Server (2/2)',
+      apiKeyPrompt: '(optional) vLLM API key, sent as an Authorization header. Leave empty if the server has none.',
+      apiKeyPlaceholder: 'abc123... or leave empty',
+      headersTitle: 'Add vLLM Server (2/2)',
+      headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty for none.',
+      headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
+    });
+    if (requestHeaders === undefined) {
+      output.appendLine('[INFO] Add server cancelled — auth prompt abandoned.');
+      return;
+    }
+
+    const { id, created } = await ensureServerEntry({ serverUrl, requestHeaders });
+    if (!created) {
+      void vscode.window.showInformationMessage(
+        `Server ${serverUrl} is already registered as "${id}".`
+      );
+      return;
+    }
+    output.appendLine(`[INFO] Registered server "${id}" (${serverUrl}) — no model yet.`);
+    const pick = await vscode.window.showInformationMessage(
+      `Server "${id}" registered. It stays out of the model picker until a model references it.`,
+      'Add a Model'
+    );
+    if (pick === 'Add a Model') {
+      await vscode.commands.executeCommand('vllm-copilot.addServerModel');
+    }
+  });
+}
+
 export function registerAddServerModelCommand(
   context: vscode.ExtensionContext,
   provider: ClearCacheProvider,

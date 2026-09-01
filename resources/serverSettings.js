@@ -493,19 +493,12 @@
     setDirtyUI();
     const autoCfgBtn = document.getElementById('autoConfigureBtn');
     if (autoCfgBtn) autoCfgBtn.onclick = () => {
-      const sv = S.servers.find(s => s.key === S.selServer);
-      vscode.postMessage({
-        type: 'autoConfigure',
-        server: selServerId(),
-        serverUrl: selServerUrl(),
-        id: S.selModel,
-        identityModelId: sv && sv.models && sv.models[0] ? configKey(sv.models[0]) : undefined,
-      });
+      vscode.postMessage({ type: 'autoConfigure', server: selServerId(), id: S.selModel });
     };
     const rmBtn = document.getElementById('removeModelBtn');
     if (rmBtn) rmBtn.onclick = async () => {
       if (await webviewConfirm('Remove model "' + S.selModel + '" from ' + selServerUrl() + '?')) {
-        vscode.postMessage({ type: 'removeModel', server: selServerId(), serverUrl: selServerUrl(), id: S.selModel });
+        vscode.postMessage({ type: 'removeModel', server: selServerId(), id: S.selModel });
       }
     };
   }

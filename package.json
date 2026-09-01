@@ -138,6 +138,11 @@
         "category": "vLLM-Copilot"
       },
       {
+        "command": "vllm-copilot.addServer",
+        "title": "Add Server (no model)",
+        "category": "vLLM-Copilot"
+      },
+      {
         "command": "vllm-copilot.autoConfigureModel",
         "title": "Auto-Configure Model",
         "category": "vLLM-Copilot"

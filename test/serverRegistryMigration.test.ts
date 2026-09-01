@@ -4,7 +4,6 @@ import { maybeRunServerRegistryMigration } from '../src/serverRegistryMigration.
 import type { LegacyModelConfig } from '../src/registryMigration.js';
 
 const FLAG = 'vllmCopilot.serverRegistryMigration.v1';
-const SNAPSHOT = 'vllmCopilot.serverRegistryMigration.snapshot.v1';
 
 interface Settings {
   models?: LegacyModelConfig[];
@@ -97,17 +96,6 @@ describe('maybeRunServerRegistryMigration', () => {
   it('writes servers before models', async () => {
     await maybeRunServerRegistryMigration(context, output as never);
     expect(writes.map(w => w.key)).toEqual(['servers', 'models']);
-  });
-
-  it('snapshots both arrays to globalState before any settings write', async () => {
-    const originalModels = settings.models;
-    await maybeRunServerRegistryMigration(context, output as never);
-
-    expect(globalStateUpdates[0].key).toBe(SNAPSHOT);
-    expect((globalStateUpdates[0].value as { models: LegacyModelConfig[] }).models).toBe(originalModels);
-    expect((globalStateUpdates[0].value as { servers: unknown[] }).servers).toEqual([]);
-    // Snapshot precedes both settings writes.
-    expect(writes).toHaveLength(2);
   });
 
   it('keeps pre-existing servers and appends adopted ones', async () => {

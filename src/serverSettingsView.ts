@@ -130,13 +130,10 @@ interface SetSystemMessageCaptureMessage {
 
 interface WebviewAction {
   type: 'autoConfigure' | 'removeModel';
-  serverUrl: string;
-  /** Registry entry id of the selected identity (removeModel's precise target). */
+  /** Registry entry id of the selected server — anchors both actions. */
   server?: string;
   /** Extension `id` of the target model config (or the server model id when unconfigured). */
   id?: string;
-  /** Configured sibling identifying the selected URL + header identity. */
-  identityModelId?: string;
 }
 
 type FromWebviewMessage = ReadyMessage | SaveMessage | ApplyPersonalityMessage | SetServerTypeMessage | SetSystemMessageCaptureMessage | WebviewAction;
@@ -193,16 +190,12 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
           } else if (msg.type === 'autoConfigure') {
             await vscode.commands.executeCommand('vllm-copilot.autoConfigureModel', {
               server: msg.server,
-              serverUrl: msg.serverUrl,
               id: msg.id,
-              identityModelId: msg.identityModelId,
             });
           } else if (msg.type === 'removeModel') {
             await vscode.commands.executeCommand('vllm-copilot.removeModel', {
               server: msg.server,
-              serverUrl: msg.serverUrl,
               id: msg.id,
-              skipConfirm: true,
             });
           }
         } catch (err) {
