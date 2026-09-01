@@ -216,7 +216,10 @@ async function main() {
   if (cliFinds.length) {
     let refText = null;
     try {
-      refText = readFileSync(CLI_REFERENCE, 'utf8');
+      // EOL-normalize: CLI rule finds come from JSON (`\n` escapes, always LF)
+      // and are matched verbatim; a core.autocrlf checkout can materialize the
+      // reference with CRLF, which would report every multi-line rule as DEAD.
+      refText = readFileSync(CLI_REFERENCE, 'utf8').replace(/\r\n/g, '\n');
     } catch {
       cliRefMissing = true;
     }

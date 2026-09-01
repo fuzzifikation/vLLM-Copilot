@@ -37,7 +37,12 @@ const rawRules = (file: string): RawRule[] => {
 
 const countOccurrences = (haystack: string, needle: string) => haystack.split(needle).length - 1;
 
-const reference = fs.readFileSync(referencePath, 'utf-8');
+// EOL-normalize: rule `find` strings come from JSON (`\n` escapes, always LF)
+// and must match the reference byte-for-byte, but a Windows checkout with
+// core.autocrlf=true can materialize the reference with CRLF. Without this
+// normalization the multi-line finds match 0 times and the suite fails on a
+// pristine checkout. (.gitattributes pins LF; this is the belt-and-braces.)
+const reference = fs.readFileSync(referencePath, 'utf-8').replace(/\r\n/g, '\n');
 const commonRules = rawRules(commonPath);
 const commonCli = commonRules.filter(r => r.scope === 'cli');
 

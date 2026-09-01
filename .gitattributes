@@ -1,0 +1,14 @@
+# Normalize line endings so checkouts are byte-predictable on every platform.
+# Without this, core.autocrlf=true materializes text files as CRLF on Windows,
+# which silently breaks byte-exact prompt anchors (rule `find` strings from JSON
+# always contain \n; scripts/cli-prompt-reference.txt is matched verbatim).
+* text=auto eol=lf
+
+# Binary assets: never touch bytes.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.vsix binary
+*.ttf binary
