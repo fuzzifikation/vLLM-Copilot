@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## v1.36.0 — The server registry
+
+### Added
+
+- **Servers are a first-class thing you can manage.** A new **vLLM-Copilot: Add Server (no model)** command registers a server on its own, and **Remove Server** sits in the Dashboard's server context menu. Both keep the model list and the registry in sync, so an entry never disappears from under a model.
 
 ### Changed
 
