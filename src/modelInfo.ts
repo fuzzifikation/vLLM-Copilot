@@ -7,7 +7,7 @@
 import * as vscode from 'vscode';
 import { extractFamilyWithSource } from './modelUtils.js';
 import { deriveTokenBudget, resolveOutputBudgetScalar, resolveOutputLengthVector, type TokenBudget } from './tokenBudget.js';
-import { buildModelId, type ModelConfig } from './config.js';
+import { type ModelConfig } from './config.js';
 
 /**
  * True when `current` (a VS Code version string such as `1.135.0` or
@@ -59,6 +59,8 @@ export function buildPickerBanners(
   reportedMaxOutputTokens: number | undefined,
   supportsInfoText: boolean,
   effectiveOutputTokens?: number,
+  /** Resolved backend type of the model's server (defaults to 'vllm'). */
+  serverType: import('./config.js').ServerType = 'vllm',
 ): { warningText?: Record<string, string>; infoText?: Record<string, string> } {
   const warningText: Record<string, string> = {};
   const infoText: Record<string, string> = {};
@@ -94,7 +96,7 @@ export function buildPickerBanners(
 
   // Non-default OpenRouter routing changes which backend actually serves the
   // request — purely informational, exactly what infoText is for.
-  if (override?.serverType === 'openrouter') {
+  if (serverType === 'openrouter' && override) {
     const bits: string[] = [];
     if (override.provider) {
       bits.push(`pinned to provider \"${override.provider}\"`);
@@ -224,9 +226,8 @@ export function resolveOutputLengthOptions(
  * @param serverModel - The vLLM wire model (`id` is the vLLM model id, not the picker id).
  * @param override - Per-model override from `vllm-copilot.models`.
  * @param config - Resolved token/transport settings.
- * @param serverUrl - The model's server URL. Used to derive a unique picker id when
- *   `override.id` is absent (so the same vLLM model on two servers yields two distinct
- *   picker entries instead of colliding on the wire id).
+ * @param serverType - The resolved backend type of the model's server. Drives the
+ *   OpenRouter routing banner.
  * @param onFamilyFallback - Called once with `(family, modelId)` when the family had to
  *   be estimated from the model id via the org-name fallback (no preset/HF family).
  */
@@ -234,7 +235,7 @@ export function buildModelInfo(
   serverModel: { id: string; max_model_len?: number },
   override: Partial<ModelConfig> | undefined,
   config: { maxOutputTokens: number },
-  serverUrl: string,
+  serverType: import('./config.js').ServerType,
   /**
    * Server-reported output ceiling (e.g. OpenRouter per-request completion
    * limit). Clamps the derived output budget; undefined leaves it unchanged.
@@ -293,11 +294,8 @@ export function buildModelInfo(
     }
   }
 
-  // Picker id: an explicit `id` is the unique extension key; otherwise derive a
-  // unique id from (serverUrl, vllmModelId) so the same model on two servers
-  // shows as two picker entries instead of colliding on the wire id.
-  // `resolveOverrideForModel` round-trips this derived id back to its config.
-  const presetId = override?.id || buildModelId(serverUrl, serverModel.id);
+  // Picker id: the override's required `id` IS the unique extension key.
+  const presetId = override?.id || serverModel.id;
   // `configurationSchema` is a `chatProvider`-proposal field VS Code reads for the
   // model-modes picker; it is not on the stable LanguageModelChatInformation type,
   // so it is declared via intersection rather than erased with `any`. `isBYOK` is
@@ -342,6 +340,7 @@ export function buildModelInfo(
     reportedMaxOutputTokens,
     isVersionAtLeast(INFO_TEXT_MIN_VSCODE, vscode.version),
     effectiveOutputTokens,
+    serverType,
   );
   if (banners.warningText) {
     info.warningText = banners.warningText;

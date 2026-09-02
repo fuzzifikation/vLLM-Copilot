@@ -83,8 +83,8 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
   /**
    * Clear cached model list and fire change event so VS Code refreshes.
    * Also invalidates VllmClient's config cache (the single source of truth for
-   * config) so settings changes (per-model serverUrl, headers, params) take effect
-   * immediately rather than after extension restart.
+   * config) so settings changes (model edits, server registry entries, params)
+   * take effect immediately rather than after extension restart.
    */
   clearCache(): void {
     this.modelCacheGeneration++;
@@ -209,6 +209,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     const run = (async (): Promise<number> => {
       const config = await this.client.getConfigCached();
       const modelOverrides = config.models || [];
+      const servers = config.servers || [];
 
       if (modelOverrides.length === 0) {
         if (generation === this.modelCacheGeneration) {
@@ -226,6 +227,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       const contextWindows = new Map<string, number>();
       const models = await discoverModels(
         modelOverrides,
+        servers,
         this.client,
         this.output,
         (modelId, contextWindow) => contextWindows.set(modelId, contextWindow),

@@ -6,21 +6,18 @@ import { jsonrepair } from 'jsonrepair';
 
 /**
  * The part of a `ModelConfig` a preset is allowed to provide: everything
- * except identity and transport. A preset must never carry `id`, `serverUrl`,
- * `requestHeaders`, `serverType` or `provider` — those belong to the user's
- * own settings, and merging them in would let a preset repoint or rename a
+ * except identity and transport. A preset must never carry `id`, `server`
+ * (the registry ref) or `provider` — those belong to the user's own
+ * settings, and merging them in would let a preset repoint or rename a
  * model. Also excludes runtime-behaviour knobs (timeouts, auto-continue,
  * prompt replacements) and `cost`, which are user decisions, not model facts.
  */
 export type PresetConfig = Omit<
   ModelConfig,
   | 'id'
-  | 'serverUrl'
-  | 'serverDisplayName'
-  | 'serverType'
+  | 'server'
   | 'provider'
   | 'routingMode'
-  | 'requestHeaders'
   | 'systemMessageReplacementsFile'
   | 'streamInactivityTimeout'
   | 'initialResponseTimeoutMs'
@@ -343,23 +340,24 @@ export function findPresetForModel(
  * Merge a preset into an existing user config.
  *
  * Strategy:
- * - Preset fully replaces all top-level fields (id, displayName, family,
+ * - Preset fully replaces all top-level fields (displayName, family,
  *   maxOutputTokens, capabilities, defaultMode, modelModes, etc.).
- * - User's identity (`id`, `vllmModelId`) is preserved — preset must NOT
- *   rename or repoint the model.
+ * - User's identity (`id`, `vllmModelId`, `server` ref) is preserved — the
+ *   preset must NOT rename or repoint the model.
  */
 export function mergePresetWithUserConfig(
   preset: PresetConfig,
   userConfig: ModelConfig
 ): ModelConfig {
   // Start with the guard-validated preset as the base (full replace). The
-  // Add flow completes this into a full ModelConfig (serverUrl/serverType)
-  // before saving — a preset contributes modes/limits, never transport.
+  // guard-allowed keys structurally exclude transport and identity — a preset
+  // contributes modes/limits, never server refs.
   const merged = { ...preset } as ModelConfig;
 
-  // Identity is the user's — a preset must NEVER rename the model or repoint its
-  // vLLM server model id.
+  // Identity is the user's — a preset must NEVER rename the model, repoint its
+  // vLLM server model id, or retarget its server entry.
   merged.id = userConfig.id;
+  merged.server = userConfig.server;
   if (userConfig.vllmModelId !== undefined) {
     merged.vllmModelId = userConfig.vllmModelId;
   } else {

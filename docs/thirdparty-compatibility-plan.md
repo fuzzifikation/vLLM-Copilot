@@ -340,5 +340,4 @@ pass against a live standard installation.
 4. LM Studio and llama.cpp complete normal Copilot chat and tool workflows.
 5. Ollama is called supported only after live chat, tool, stream, context, and
   cancellation and auto-continue verification succeeds.
-6. `npm run compile`, `npm test`, `npm run test:coverage`, and `git diff --check`
-   pass before merge.
+6. `npm run compile`, `npm test`, and `git diff --check` pass before merge.

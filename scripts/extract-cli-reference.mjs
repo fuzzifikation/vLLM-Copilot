@@ -71,8 +71,25 @@ function extractRegions(text) {
 }
 
 const raw = JSON.parse(readFileSync(CAPTURE, 'utf8'));
-const entries = Array.isArray(raw) ? raw : [raw];
-if (entries.length === 0) throw new Error('capture file contains no entries');
+const allEntries = Array.isArray(raw) ? raw : [raw];
+if (allEntries.length === 0) throw new Error('capture file contains no entries');
+
+// A capture holds every system message seen while systemMessageCapture was on:
+// classic Copilot chat turns, CLI (Agents-window) turns, anything else. Only the
+// CLI runtime prompt is anchored here, so non-CLI entries are ignored — without
+// this filter a session that used classic chat before the Agents turn puts a
+// classic system message at entries[0] and every marker lookup fails.
+const CLI_MARKER = 'using Copilot CLI runtime';
+const entries = allEntries.filter((e) => (e.receivedContent || '').includes(CLI_MARKER));
+if (entries.length === 0) {
+  throw new Error(
+    `no capture entry contains "${CLI_MARKER}" — the capture holds no Agents-window (CLI runtime) ` +
+    'turn. Enable vllm-copilot.systemMessageCapture, run one Agents-window turn, and re-run.'
+  );
+}
+if (entries.length < allEntries.length) {
+  console.log(`filtered ${allEntries.length - entries.length} non-CLI capture entry(ies)`);
+}
 
 const first = extractRegions(entries[0].receivedContent);
 for (let i = 1; i < entries.length; i++) {

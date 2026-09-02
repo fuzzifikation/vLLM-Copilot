@@ -11,8 +11,8 @@ import * as hfDiscovery from '../src/commands/hfDiscovery.js';
  * Direct tests for the auto-configure flow module: the update-confirm helper and
  * the re-configure command (arg-based existing-model and unconfigured-new-model
  * paths). Discovery + persistence are stubbed so the flow's own logic is
- * measured: identity matching, sibling auth borrowing, infra-field preservation,
- * and the replace-based save.
+ * measured: entry-id anchoring, infra-field preservation, and the
+ * replace-based save.
  */
 describe('applyAutoConfigUpdate', () => {
   let infoSpy: ReturnType<typeof vi.spyOn>;
@@ -24,7 +24,7 @@ describe('applyAutoConfigUpdate', () => {
     show: vi.fn(),
     hide: vi.fn(),
   } as any;
-  const newConfig = { id: 'm', vllmModelId: 'm', serverUrl: 'http://host:8000' };
+  const newConfig = { id: 'm', vllmModelId: 'm', server: 'srv' };
 
   beforeEach(() => {
     infoSpy = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(undefined);
@@ -49,14 +49,6 @@ describe('applyAutoConfigUpdate', () => {
     expect(infoSpy).toHaveBeenCalledWith('Model "m" updated.');
   });
 
-  it('copies the JSON and does not persist on Copy JSON', async () => {
-    infoSpy.mockResolvedValueOnce('Copy JSON' as any);
-
-    await applyAutoConfigUpdate(newConfig, 'm', 'detail', output);
-
-    expect(clipboardSpy).toHaveBeenCalledWith(JSON.stringify(newConfig, null, 2));
-    expect(replaceSpy).not.toHaveBeenCalled();
-  });
 });
 
 describe('registerAutoConfigureModelCommand', () => {
@@ -93,9 +85,7 @@ describe('registerAutoConfigureModelCommand', () => {
       {
         id: 'existing-id',
         vllmModelId: 'wire',
-        serverUrl: 'http://host:8000',
-        requestHeaders: { 'X-Auth': 'keep' },
-        serverType: undefined, // missing → treated as vllm by policy
+        server: 'host-8000',
         autoContinueRetries: 3,
         streamInactivityTimeout: 60000,
         systemMessageReplacementsFile: '.vllm/spartan.json',
@@ -103,20 +93,24 @@ describe('registerAutoConfigureModelCommand', () => {
         estimateCharsPerToken: 4,
       },
     ];
+    // Server facts (URL, auth, type) live on the registry entry the model refs.
+    const servers = [
+      { id: 'host-8000', serverUrl: 'http://host:8000', requestHeaders: { 'X-Auth': 'keep' } },
+    ];
     vscode.workspace._mockConfig = {
-      get: (key: string) => (key === 'models' ? existing : undefined),
+      get: (key: string) => (key === 'models' ? existing : key === 'servers' ? servers : undefined),
       update: chatUpdate,
       inspect: () => ({ defaultValue: 'none' }),
     };
     resolveSpy = vi.spyOn(hfDiscovery, 'resolveModelConfigForAddSafely').mockResolvedValue({
-      modelConfig: { id: 'existing-id', vllmModelId: 'wire', capabilities: { toolCalling: true, imageInput: false } },
+      modelConfig: { id: 'existing-id', vllmModelId: 'wire', server: 'host-8000', capabilities: { toolCalling: true, imageInput: false } },
       summary: ['discovered'],
     });
     infoSpy.mockResolvedValue('Save' as any);
 
     registerAutoConfigureModelCommand({} as any, provider, output);
     await (vscode as any).commands._run('vllm-copilot.autoConfigureModel', {
-      serverUrl: 'http://host:8000',
+      server: 'host-8000',
       id: 'existing-id',
     });
 
@@ -124,15 +118,14 @@ describe('registerAutoConfigureModelCommand', () => {
       expect.anything(), // output channel
       expect.anything(), // extension context
       'wire', 'http://host:8000', { 'X-Auth': 'keep' }, undefined, existing[0],
-      existing[0].serverType, // model's own persisted backend type (undefined → vllm)
+      'vllm', // entry backend type (unset on the entry → defaults to vllm)
     );
     // Infra/personal fields survive the discovery-result base merge.
     expect(replaceSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'existing-id',
         vllmModelId: 'wire',
-        serverUrl: 'http://host:8000',
-        requestHeaders: { 'X-Auth': 'keep' },
+        server: 'host-8000',
         autoContinueRetries: 3,
         streamInactivityTimeout: 60000,
         systemMessageReplacementsFile: '.vllm/spartan.json',
@@ -146,19 +139,17 @@ describe('registerAutoConfigureModelCommand', () => {
   });
 
   it('auto-configures an unconfigured server-reported model, borrowing sibling auth', async () => {
-    const sibling = {
-      id: 'sibling',
-      vllmModelId: 'sib',
-      serverUrl: 'http://host:8000',
-      requestHeaders: { 'X-Borrow': 'yes' },
-    };
+    const sibling = { id: 'sibling', vllmModelId: 'sib', server: 'host-8000' };
+    const servers = [
+      { id: 'host-8000', serverUrl: 'http://host:8000', requestHeaders: { 'X-Borrow': 'yes' } },
+    ];
     vscode.workspace._mockConfig = {
-      get: (key: string) => (key === 'models' ? [sibling] : undefined),
+      get: (key: string) => (key === 'models' ? [sibling] : key === 'servers' ? servers : undefined),
       update: chatUpdate,
       inspect: () => ({ defaultValue: 'none' }),
     };
     resolveSpy = vi.spyOn(hfDiscovery, 'resolveModelConfigForAddSafely').mockResolvedValue({
-      modelConfig: { id: 'new-model', vllmModelId: 'new-model', capabilities: { toolCalling: true, imageInput: false } },
+      modelConfig: { id: 'new-model', vllmModelId: 'new-model', server: 'host-8000', capabilities: { toolCalling: true, imageInput: false } },
       summary: ['discovered'],
     });
     // confirmAndSaveAddedModel dialog → Save to Settings (BYOK path).
@@ -166,17 +157,17 @@ describe('registerAutoConfigureModelCommand', () => {
 
     registerAutoConfigureModelCommand({} as any, provider, output);
     await (vscode as any).commands._run('vllm-copilot.autoConfigureModel', {
-      serverUrl: 'http://host:8000',
+      server: 'host-8000',
       id: 'new-model',
     });
 
-    // New entry: composite id, borrowed headers, BYOK bootstrap ran.
+    // New entry: composite config key + the shared server ref (the sibling's
+    // entry matched by connection, so no duplicate entry was written).
     expect(replaceSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        id: 'new-model on host:8000',
+        id: 'new-model on host-8000',
         vllmModelId: 'new-model',
-        serverUrl: 'http://host:8000',
-        requestHeaders: { 'X-Borrow': 'yes' },
+        server: 'host-8000',
       }),
     );
     expect(chatUpdate).toHaveBeenCalledWith(
@@ -187,37 +178,30 @@ describe('registerAutoConfigureModelCommand', () => {
     expect(provider.clearCache).toHaveBeenCalled();
   });
 
-  it('borrows auth from the selected identity when one URL has multiple credentials', async () => {
+  it('targets the selected entry\'s credentials when one URL has multiple identities', async () => {
     const siblings = [
-      {
-        id: 'identity-a',
-        vllmModelId: 'model-a',
-        serverUrl: 'http://host:8000',
-        requestHeaders: { Authorization: 'Bearer secret-a' },
-      },
-      {
-        id: 'identity-b',
-        vllmModelId: 'model-b',
-        serverUrl: 'http://host:8000',
-        requestHeaders: { Authorization: 'Bearer secret-b' },
-      },
+      { id: 'identity-a', vllmModelId: 'model-a', server: 'srv-a' },
+      { id: 'identity-b', vllmModelId: 'model-b', server: 'srv-b' },
+    ];
+    const servers = [
+      { id: 'srv-a', serverUrl: 'http://host:8000', requestHeaders: { Authorization: 'Bearer a' } },
+      { id: 'srv-b', serverUrl: 'http://host:8000', requestHeaders: { Authorization: 'Bearer b' } },
     ];
     vscode.workspace._mockConfig = {
-      get: (key: string) => (key === 'models' ? siblings : undefined),
+      get: (key: string) => (key === 'models' ? siblings : key === 'servers' ? servers : undefined),
       update: chatUpdate,
       inspect: () => ({ defaultValue: 'none' }),
     };
     resolveSpy = vi.spyOn(hfDiscovery, 'resolveModelConfigForAddSafely').mockResolvedValue({
-      modelConfig: { id: 'new-model', vllmModelId: 'new-model' },
+      modelConfig: { id: 'new-model', vllmModelId: 'new-model', server: 'srv-b' },
       summary: ['discovered'],
     });
     infoSpy.mockResolvedValue('Save to Settings' as any);
 
     registerAutoConfigureModelCommand({} as any, provider, output);
     await (vscode as any).commands._run('vllm-copilot.autoConfigureModel', {
-      serverUrl: 'http://host:8000',
+      server: 'srv-b',
       id: 'new-model',
-      identityModelId: 'identity-b',
     });
 
     expect(resolveSpy).toHaveBeenCalledWith(
@@ -225,13 +209,12 @@ describe('registerAutoConfigureModelCommand', () => {
       expect.anything(),
       'new-model',
       'http://host:8000',
-      { Authorization: 'Bearer secret-b' },
+      { Authorization: 'Bearer b' },
       undefined,
       undefined,
-      undefined,
+      'vllm',
     );
-    expect(replaceSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ requestHeaders: { Authorization: 'Bearer secret-b' } }),
-    );
+    // The model refs identity-b's registry entry — that IS the auth borrow.
+    expect(replaceSpy).toHaveBeenCalledWith(expect.objectContaining({ server: 'srv-b' }));
   });
 });

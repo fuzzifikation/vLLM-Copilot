@@ -44,7 +44,7 @@ describe('ServerSettingsViewProvider', () => {
         {
           id: 'test-model',
           vllmModelId: 'test-model',
-          serverUrl: 'http://localhost:8000',
+          server: 'test',
           displayName: 'Old Name',
         },
       ];
@@ -56,7 +56,7 @@ describe('ServerSettingsViewProvider', () => {
 
       const updates: Partial<ModelConfig> = {
         displayName: 'New Name',
-        serverUrl: 'http://localhost:8000',
+        server: 'test',
         vllmModelId: 'test-model',
         id: 'test-model',
       };
@@ -80,7 +80,7 @@ describe('ServerSettingsViewProvider', () => {
       );
     });
 
-    it('should create a new model entry when not found (composite id like other creation paths)', async () => {
+    it('should create a new model entry with the config id verbatim (no composite id)', async () => {
       const existingConfig: ModelConfig[] = [];
 
       vscode.workspace._mockConfig = {
@@ -88,11 +88,11 @@ describe('ServerSettingsViewProvider', () => {
         update: vi.fn().mockResolvedValue(undefined),
       };
 
-      // The webview stub sends the raw server id as both id and vllmModelId.
+      // The webview sends the raw id plus the server registry ref it belongs to.
       const updates: Partial<ModelConfig> = {
         id: 'new-model',
         vllmModelId: 'new-model',
-        serverUrl: 'http://localhost:8000',
+        server: 'test',
         displayName: 'New Model',
       };
 
@@ -102,9 +102,9 @@ describe('ServerSettingsViewProvider', () => {
         'models',
         expect.arrayContaining([
           expect.objectContaining({
-            id: 'new-model on localhost:8000',
+            id: 'new-model',
             vllmModelId: 'new-model',
-            serverUrl: 'http://localhost:8000',
+            server: 'test',
             displayName: 'New Model',
           }),
         ]),
@@ -116,7 +116,7 @@ describe('ServerSettingsViewProvider', () => {
       );
     });
 
-    it('P1: same model saved via webview on two servers gets distinct ids (no duplicate id)', async () => {
+    it('P1: same model saved via webview on two servers stays two entries keyed by (id, server)', async () => {
       const existingConfig: ModelConfig[] = [];
 
       vscode.workspace._mockConfig = {
@@ -127,7 +127,7 @@ describe('ServerSettingsViewProvider', () => {
       await (provider as any).saveModelConfig({
         id: 'qwen-7b',
         vllmModelId: 'qwen-7b',
-        serverUrl: 'http://a:8000',
+        server: 'a',
       });
       const afterFirst = vscode.workspace._mockConfig.update.mock.calls[0][1];
 
@@ -135,14 +135,17 @@ describe('ServerSettingsViewProvider', () => {
       await (provider as any).saveModelConfig({
         id: 'qwen-7b',
         vllmModelId: 'qwen-7b',
-        serverUrl: 'http://b:8000',
+        server: 'b',
       });
       const afterSecond = vscode.workspace._mockConfig.update.mock.calls[1][1];
 
       expect(afterSecond).toHaveLength(2);
-      expect(new Set(afterSecond.map((m: any) => m.id)).size).toBe(2);
-      expect(afterSecond[0].id).toBe('qwen-7b on a:8000');
-      expect(afterSecond[1].id).toBe('qwen-7b on b:8000');
+      // Identity is the (id, server) pair — the id itself stays verbatim.
+      expect(new Set(afterSecond.map((m: any) => `${m.id}|${m.server}`)).size).toBe(2);
+      expect(afterSecond[0].id).toBe('qwen-7b');
+      expect(afterSecond[0].server).toBe('a');
+      expect(afterSecond[1].id).toBe('qwen-7b');
+      expect(afterSecond[1].server).toBe('b');
     });
 
     it('should preserve existing properties when updating', async () => {
@@ -150,7 +153,7 @@ describe('ServerSettingsViewProvider', () => {
         {
           id: 'test-model',
           vllmModelId: 'test-model',
-          serverUrl: 'http://localhost:8000',
+          server: 'test',
           displayName: 'Test Model',
           maxOutputTokens: 4096,
           modelModes: {
@@ -166,7 +169,7 @@ describe('ServerSettingsViewProvider', () => {
 
       const updates: Partial<ModelConfig> = {
         displayName: 'Updated Name',
-        serverUrl: 'http://localhost:8000',
+        server: 'test',
         vllmModelId: 'test-model',
         id: 'test-model',
       };
@@ -190,7 +193,7 @@ describe('ServerSettingsViewProvider', () => {
       const existingConfig: ModelConfig[] = [
         {
           id: 'fallback-model',
-          serverUrl: 'http://localhost:8000',
+          server: 'test',
         },
       ];
 
@@ -201,7 +204,7 @@ describe('ServerSettingsViewProvider', () => {
 
       const updates: Partial<ModelConfig> = {
         id: 'fallback-model',
-        serverUrl: 'http://localhost:8000',
+        server: 'test',
         displayName: 'Fallback Model',
       };
 
@@ -213,33 +216,12 @@ describe('ServerSettingsViewProvider', () => {
       );
     });
 
-    it('should show info message with vllmModelId when displayName is missing', async () => {
-      const existingConfig: ModelConfig[] = [];
-
-      vscode.workspace._mockConfig = {
-        get: (key: string) => (key === 'models' ? existingConfig : undefined),
-        update: vi.fn().mockResolvedValue(undefined),
-      };
-
-      const updates: Partial<ModelConfig> = {
-        id: 'no-display-name',
-        vllmModelId: 'no-display-name',
-        serverUrl: 'http://localhost:8000',
-      };
-
-      await (provider as any).saveModelConfig(updates);
-
-      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-        'Settings saved for "no-display-name"',
-      );
-    });
-
     it('P1 clear: deletes an empty systemMessageReplacementsFile instead of storing ""', async () => {
       const existingConfig: ModelConfig[] = [
         {
           id: 'test-model',
           vllmModelId: 'test-model',
-          serverUrl: 'http://localhost:8000',
+          server: 'test',
           systemMessageReplacementsFile: 'C:/some/personalities/tough-love.json',
         },
       ];
@@ -253,7 +235,7 @@ describe('ServerSettingsViewProvider', () => {
       await (provider as any).saveModelConfig({
         id: 'test-model',
         vllmModelId: 'test-model',
-        serverUrl: 'http://localhost:8000',
+        server: 'test',
         systemMessageReplacementsFile: '',
       });
 
@@ -267,11 +249,14 @@ describe('ServerSettingsViewProvider', () => {
     // configStore unification (step 3b) cannot silently change behavior.
 
     it('P2: preserves headers, family, defaults, and transport settings when the patch omits them', async () => {
-      const existingConfig: ModelConfig[] = [
+      // Smuggled legacy keys: characterization of the patch merge — entries saved
+      // before migration keep unknown legacy keys in storage (normalizeModelEntry
+      // only strips empty strings), so the assertions below stay valid.
+      const existingConfig = [
         {
           id: 'test-model',
           vllmModelId: 'test-model',
-          serverUrl: 'http://localhost:8000',
+          server: 'test',
           displayName: 'Test Model',
           requestHeaders: { 'X-Auth': 'secret' },
           family: 'qwen3_5',
@@ -282,7 +267,7 @@ describe('ServerSettingsViewProvider', () => {
           maxOutputTokens: 4096,
           modelModes: { balanced: { temperature: 0.5 } },
         },
-      ];
+      ] as unknown as ModelConfig[];
 
       vscode.workspace._mockConfig = {
         get: (key: string) => (key === 'models' ? existingConfig : undefined),
@@ -292,7 +277,7 @@ describe('ServerSettingsViewProvider', () => {
       await (provider as any).saveModelConfig({
         id: 'test-model',
         vllmModelId: 'test-model',
-        serverUrl: 'http://localhost:8000',
+        server: 'test',
         displayName: 'Renamed',
       });
 
@@ -315,15 +300,15 @@ describe('ServerSettingsViewProvider', () => {
     });
 
     it('P2: replaces (not merges) requestHeaders when the patch supplies them', async () => {
-      const existingConfig: ModelConfig[] = [
+      const existingConfig = [
         {
           id: 'test-model',
           vllmModelId: 'test-model',
-          serverUrl: 'http://localhost:8000',
+          server: 'test',
           displayName: 'Test Model',
           requestHeaders: { 'X-Old': 'value', 'X-Share': 'both' },
         },
-      ];
+      ] as unknown as ModelConfig[];
 
       vscode.workspace._mockConfig = {
         get: (key: string) => (key === 'models' ? existingConfig : undefined),
@@ -333,7 +318,7 @@ describe('ServerSettingsViewProvider', () => {
       await (provider as any).saveModelConfig({
         id: 'test-model',
         vllmModelId: 'test-model',
-        serverUrl: 'http://localhost:8000',
+        server: 'test',
         requestHeaders: { 'X-New': 'value', 'X-Share': 'updated' },
       });
 
@@ -342,7 +327,7 @@ describe('ServerSettingsViewProvider', () => {
       expect('X-Old' in (stored[0].requestHeaders ?? {})).toBe(false);
     });
 
-    it('P2: derives the composite id from vllmModelId when id and wire id differ (new entry)', async () => {
+    it('P2: keeps the config id verbatim for a new entry (composite ids are gone)', async () => {
       const existingConfig: ModelConfig[] = [];
 
       vscode.workspace._mockConfig = {
@@ -354,41 +339,16 @@ describe('ServerSettingsViewProvider', () => {
       await (provider as any).saveModelConfig({
         id: 'preset-a',
         vllmModelId: 'wire-model',
-        serverUrl: 'http://a:8000',
+        server: 'a',
         displayName: 'Preset A',
       });
 
       const stored = vscode.workspace._mockConfig.update.mock.calls[0][1];
       expect(stored).toHaveLength(1);
-      // buildModelId(serverUrl, vllmModelId) — the wire id wins, not updates.id.
-      expect(stored[0].id).toBe('wire-model on a:8000');
+      // Identity is the (id, server) pair — no url-derived composite anymore.
+      expect(stored[0].id).toBe('preset-a');
       expect(stored[0].vllmModelId).toBe('wire-model');
-    });
-
-    it('P2: fires toast and clearCache after persistence; the config listener owns the refresh', async () => {
-      const clearCache = vi.fn();
-      const providerWithCache = new ServerSettingsViewProvider(mockContext, mockOutputChannel, clearCache);
-      const refreshSpy = vi.spyOn(providerWithCache as any, 'refreshWebview').mockResolvedValue(undefined);
-
-      vscode.workspace._mockConfig = {
-        get: () => [],
-        update: vi.fn().mockResolvedValue(undefined),
-      };
-
-      await (providerWithCache as any).saveModelConfig({
-        id: 'new-model',
-        vllmModelId: 'new-model',
-        serverUrl: 'http://localhost:8000',
-        displayName: 'New Model',
-      });
-
-      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Settings saved for "New Model"');
-      expect(clearCache).toHaveBeenCalled();
-      // saveModelConfig must NOT refresh: patchModelConfig writes vllm-copilot.models,
-      // which fires the onDidChangeConfiguration listener that owns the single refresh.
-      // A second refresh here would post a duplicate 'data' message that clobbers a
-      // draft the webview preserved across an auto-applied personality change.
-      expect(refreshSpy).not.toHaveBeenCalled();
+      expect(stored[0].server).toBe('a');
     });
 
     it('P2: a rejected persistence suppresses clearCache, refresh, and the success toast', async () => {
@@ -405,7 +365,7 @@ describe('ServerSettingsViewProvider', () => {
         (providerWithCache as any).saveModelConfig({
           id: 'new-model',
           vllmModelId: 'new-model',
-          serverUrl: 'http://localhost:8000',
+          server: 'test',
           displayName: 'New Model',
         }),
       ).rejects.toThrow('write failed');
@@ -436,7 +396,7 @@ describe('ServerSettingsViewProvider', () => {
         (providerWithView as any).saveModelConfig({
           id: 'new-model',
           vllmModelId: 'new-model',
-          serverUrl: 'http://localhost:8000',
+          server: 'test',
           displayName: 'New Model',
         }),
       ).rejects.toThrow('write failed');
@@ -450,8 +410,8 @@ describe('ServerSettingsViewProvider', () => {
   describe('applyPersonality', () => {
     it('P1: keys the target preset by extension id when two presets share a vllmModelId', async () => {
       const existingConfig: ModelConfig[] = [
-        { id: 'preset-a', vllmModelId: 'shared-model', serverUrl: 'http://localhost:8000', displayName: 'A' },
-        { id: 'preset-b', vllmModelId: 'shared-model', serverUrl: 'http://localhost:8000', displayName: 'B' },
+        { id: 'preset-a', vllmModelId: 'shared-model', server: 'test', displayName: 'A' },
+        { id: 'preset-b', vllmModelId: 'shared-model', server: 'test', displayName: 'B' },
       ];
 
       vscode.workspace._mockConfig = {
@@ -462,7 +422,7 @@ describe('ServerSettingsViewProvider', () => {
       // clear: true avoids ensureGlobalPersonality (no fs access).
       await (provider as any).applyPersonality({
         type: 'applyPersonality',
-        serverUrl: 'http://localhost:8000',
+        server: 'test',
         id: 'preset-b',
         clear: true,
       });
@@ -477,28 +437,12 @@ describe('ServerSettingsViewProvider', () => {
       expect('systemMessageReplacementsFile' in updatedModels.find((m: any) => m.id === 'preset-b')).toBe(false);
     });
 
-    it('does nothing for an unknown id (unconfigured server model)', async () => {
-      vscode.workspace._mockConfig = {
-        get: () => [],
-        update: vi.fn().mockResolvedValue(undefined),
-      };
-
-      await (provider as any).applyPersonality({
-        type: 'applyPersonality',
-        serverUrl: 'http://localhost:8000',
-        id: 'server-reported-only-model',
-        clear: true,
-      });
-
-      expect(vscode.workspace._mockConfig.update).not.toHaveBeenCalled();
-    });
-
     it('clear removes an existing personality instead of resurrecting the old value', async () => {
       const existingConfig: ModelConfig[] = [
         {
           id: 'test-model',
           vllmModelId: 'test-model',
-          serverUrl: 'http://localhost:8000',
+          server: 'test',
           displayName: 'Test',
           systemMessageReplacementsFile: 'C:/personalities/tough-love.json',
         },
@@ -511,7 +455,7 @@ describe('ServerSettingsViewProvider', () => {
 
       await (provider as any).applyPersonality({
         type: 'applyPersonality',
-        serverUrl: 'http://localhost:8000',
+        server: 'test',
         id: 'test-model',
         clear: true,
       });
@@ -524,35 +468,43 @@ describe('ServerSettingsViewProvider', () => {
     });
   });
 
-  describe('setSystemMessageCapture', () => {
-    it('updates the global systemMessageCapture setting', async () => {
+  describe('setServerType', () => {
+    it('writes exactly the addressed entry — the entry id is the identity', async () => {
+      // 'b' is a same-URL + same-auth sibling of 'a' (redundant — validateConfig
+      // warns). Under the entry-id doctrine it is a SEPARATE server: the webview
+      // addressed 'a', so only 'a' gets the type. No fingerprint sweep exists.
+      const servers = [
+        { id: 'a', serverUrl: 'http://s:8000', requestHeaders: { Authorization: 'k' } },
+        { id: 'b', serverUrl: 'http://s:8000', requestHeaders: { authorization: 'k' } },
+        { id: 'c', serverUrl: 'http://s:8000', requestHeaders: { Authorization: 'other-credential' } },
+        { id: 'd', serverUrl: 'http://s:9000' },
+      ];
       vscode.workspace._mockConfig = {
-        get: () => undefined,
+        get: (key: string) => (key === 'servers' ? servers : undefined),
         update: vi.fn().mockResolvedValue(undefined),
       };
 
-      await (provider as any).setSystemMessageCapture(true);
+      await (provider as any).setServerType({ type: 'setServerType', server: 'a', serverType: 'ollama' });
 
-      expect(vscode.workspace._mockConfig.update).toHaveBeenCalledWith(
-        'systemMessageCapture',
-        true,
-        vscode.ConfigurationTarget.Global,
-      );
+      expect(vscode.workspace._mockConfig.update).toHaveBeenCalledTimes(1);
+      const written = vscode.workspace._mockConfig.update.mock.calls[0][1] as any[];
+      const byId = Object.fromEntries(written.map(s => [s.id, s]));
+      expect(byId.a.serverType).toBe('ollama');
+      expect(byId.b.serverType).toBeUndefined();
+      expect(byId.c.serverType).toBeUndefined();
+      expect(byId.d.serverType).toBeUndefined();
     });
 
-    it('persists disabling recording', async () => {
+    it('does not write when the addressed entry already has the type', async () => {
+      const servers = [{ id: 'a', serverUrl: 'http://s:8000', serverType: 'ollama' }];
       vscode.workspace._mockConfig = {
-        get: () => undefined,
+        get: (key: string) => (key === 'servers' ? servers : undefined),
         update: vi.fn().mockResolvedValue(undefined),
       };
 
-      await (provider as any).setSystemMessageCapture(false);
+      await (provider as any).setServerType({ type: 'setServerType', server: 'a', serverType: 'ollama' });
 
-      expect(vscode.workspace._mockConfig.update).toHaveBeenCalledWith(
-        'systemMessageCapture',
-        false,
-        vscode.ConfigurationTarget.Global,
-      );
+      expect(vscode.workspace._mockConfig.update).not.toHaveBeenCalled();
     });
   });
 
@@ -565,13 +517,10 @@ describe('ServerSettingsViewProvider', () => {
       mockContext.globalStorageUri = { fsPath: 'global-storage' };
       vscode.workspace._mockConfig = {
         get: (key: string) => key === 'models'
-          ? [{
-              id: 'configured',
-              vllmModelId: 'configured',
-              serverUrl: 'http://secure:8000/v1',
-              requestHeaders: { Authorization: 'Bearer secret' },
-            }]
-          : undefined,
+          ? [{ id: 'configured', vllmModelId: 'configured', server: 'srv' }]
+          : key === 'servers'
+            ? [{ id: 'srv', serverUrl: 'http://secure:8000/v1', requestHeaders: { Authorization: 'Bearer secret' } }]
+            : undefined,
         update: vi.fn().mockResolvedValue(undefined),
       };
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
@@ -593,173 +542,7 @@ describe('ServerSettingsViewProvider', () => {
       expect(payload.servers[0].url).toBe('http://secure:8000');
       expect(payload.servers[0].serverModelIds).toEqual(['configured', 'unconfigured']);
       expect(payload.servers[0].models[0]).not.toHaveProperty('requestHeaders');
-      expect(payload.servers[0].models[0].serverUrl).toBe('http://secure:8000');
+      expect(payload.servers[0].models[0].server).toBe('srv');
     });
-
-    it('probes each header identity independently on one canonical URL', async () => {
-      const postMessage = vi.fn().mockResolvedValue(true);
-      (provider as any).view = { webview: { postMessage } };
-      (provider as any).isWebviewReady = true;
-      mockContext.extensionUri = { fsPath: 'extension' };
-      mockContext.globalStorageUri = { fsPath: 'global-storage' };
-      vscode.workspace._mockConfig = {
-        get: (key: string) => key === 'models'
-          ? [
-              { id: 'a', vllmModelId: 'a', serverUrl: 'http://gw:8000/v1', requestHeaders: { Authorization: 'Bearer secret-a' } },
-              { id: 'b', vllmModelId: 'b', serverUrl: 'http://gw:8000/', requestHeaders: { Authorization: 'Bearer secret-b' } },
-            ]
-          : undefined,
-        update: vi.fn().mockResolvedValue(undefined),
-      };
-      // Two different header identities on one canonical URL → two logical
-      // servers, each probed with its own credentials (never the first model's
-      // headers standing in for a sibling).
-      const fetchSpy = vi.spyOn(globalThis, 'fetch')
-        .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'a' }, { id: 'shared' }] }), { status: 200 }))
-        .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'b' }, { id: 'shared' }] }), { status: 200 }));
-
-      await (provider as any).refreshWebview();
-
-      expect(fetchSpy).toHaveBeenCalledTimes(2);
-      expect(fetchSpy).toHaveBeenNthCalledWith(
-        1,
-        'http://gw:8000/v1/models',
-        expect.objectContaining({ headers: { Authorization: 'Bearer secret-a' } }),
-      );
-      expect(fetchSpy).toHaveBeenNthCalledWith(
-        2,
-        'http://gw:8000/v1/models',
-        expect.objectContaining({ headers: { Authorization: 'Bearer secret-b' } }),
-      );
-
-      const payload = postMessage.mock.calls[0][0];
-      expect(payload.servers).toHaveLength(2);
-      expect(payload.servers[0].url).toBe('http://gw:8000');
-      expect(payload.servers[1].url).toBe('http://gw:8000');
-      // Distinct identities get distinct keys; each group is labelled against
-      // its own probe, and raw header values never reach the webview DOM.
-      expect(payload.servers[0].key).not.toBe(payload.servers[1].key);
-      expect(payload.servers[0].serverModelIds).toEqual(['a', 'shared']);
-      expect(payload.servers[1].serverModelIds).toEqual(['b', 'shared']);
-      expect(payload.servers[0].models[0]).not.toHaveProperty('requestHeaders');
-      expect(JSON.stringify(payload)).not.toContain('secret-a');
-      expect(JSON.stringify(payload)).not.toContain('secret-b');
-    });
-
-    it('discards an older refresh that finishes after a newer one', async () => {
-      const postMessage = vi.fn().mockResolvedValue(true);
-      (provider as any).view = { webview: { postMessage } };
-      (provider as any).isWebviewReady = true;
-      mockContext.extensionUri = { fsPath: 'extension' };
-      mockContext.globalStorageUri = { fsPath: 'global-storage' };
-      let models: ModelConfig[] = [{ id: 'old', serverUrl: 'http://old:8000' }];
-      vscode.workspace._mockConfig = {
-        get: (key: string) => key === 'models' ? models : undefined,
-        update: vi.fn().mockResolvedValue(undefined),
-      };
-      let resolveOld!: (response: Response) => void;
-      const oldResponse = new Promise<Response>(resolve => { resolveOld = resolve; });
-      const fetchSpy = vi.spyOn(globalThis, 'fetch')
-        .mockImplementationOnce(() => oldResponse)
-        .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'new' }] }), { status: 200 }));
-
-      const oldRefresh = (provider as any).refreshWebview();
-      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
-      models = [{ id: 'new', serverUrl: 'http://new:8000' }];
-      await (provider as any).refreshWebview();
-      resolveOld(new Response(JSON.stringify({ data: [{ id: 'old' }] }), { status: 200 }));
-      await oldRefresh;
-
-      expect(postMessage).toHaveBeenCalledTimes(1);
-      expect(postMessage.mock.calls[0][0].servers[0].url).toBe('http://new:8000');
-    });
-
-    it('fetches OpenRouter provider lists keyed by wire id, in parallel, with failures dropped', async () => {
-      const postMessage = vi.fn().mockResolvedValue(true);
-      (provider as any).view = { webview: { postMessage } };
-      (provider as any).isWebviewReady = true;
-      mockContext.extensionUri = { fsPath: 'extension' };
-      mockContext.globalStorageUri = { fsPath: 'global-storage' };
-      vscode.workspace._mockConfig = {
-        get: (key: string) => key === 'models'
-          ? [
-              { id: 'cfg-a', vllmModelId: 'author/a', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter', requestHeaders: { Authorization: 'Bearer secret' } },
-              { id: 'cfg-b', vllmModelId: 'author/b', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter', requestHeaders: { Authorization: 'Bearer secret' } },
-            ]
-          : undefined,
-        update: vi.fn().mockResolvedValue(undefined),
-      };
-      // The /v1/models probe is called once per identity; the /endpoints fetches
-      // run for both wire ids. One endpoint resolves, one 404s (dropped → no entry).
-      const fetchSpy = vi.spyOn(globalThis, 'fetch')
-        .mockImplementation(async (url: unknown) => {
-          const u = String(url);
-          if (u.endsWith('/v1/models')) {
-            return new Response(JSON.stringify({ data: [{ id: 'author/a' }, { id: 'author/b' }] }), { status: 200 });
-          }
-          if (u.endsWith('/author/a/endpoints')) {
-            return new Response(JSON.stringify({ data: { id: 'author/a', endpoints: [{ tag: 'together', provider_name: 'Together', quantization: 'unknown', pricing: { prompt: '0.0000005', completion: '0.0000015' } }] } }), { status: 200 });
-          }
-          return new Response(null, { status: 404 });
-        });
-
-      await (provider as any).refreshWebview();
-
-      // The /endpoints URL keeps the model id's literal path separator.
-      expect(fetchSpy).toHaveBeenCalledWith(
-        'https://openrouter.ai/api/v1/models/author/a/endpoints',
-        expect.anything(),
-      );
-      expect(fetchSpy).toHaveBeenCalledWith(
-        'https://openrouter.ai/api/v1/models/author/b/endpoints',
-        expect.anything(),
-      );
-      const payload = postMessage.mock.calls[0][0];
-      // Only the resolved provider list reaches the webview — keyed by the wire id.
-      expect(payload.providersByModel).toEqual({
-        'author/a': [expect.objectContaining({ tag: 'together', providerName: 'Together' })],
-      });
-      expect(payload.providersByModel['author/b']).toBeUndefined();
-      // Header values never leak into the payload.
-      expect(JSON.stringify(payload)).not.toContain('secret');
-    });
-  });
-});
-
-describe('resolveDetectedServerType', () => {
-  it('prefers the /v1/models signal over a sibling serverType', () => {
-    expect(
-      resolveDetectedServerType(
-        [{ owned_by: 'llamacpp' }, { owned_by: 'mystery' }],
-        [{ serverType: 'lmstudio' }],
-      )
-    ).toBe('llamacpp');
-  });
-
-  it('adopts a configured sibling serverType when /v1/models is inconclusive', () => {
-    // LM Studio / Ollama have no /v1/models signature → no vLLM/llamacpp signal.
-    expect(
-      resolveDetectedServerType(
-        [{ owned_by: 'mystery' }],
-        [{ serverType: 'lmstudio' }],
-      )
-    ).toBe('lmstudio');
-    expect(
-      resolveDetectedServerType(
-        [],
-        [{ serverType: 'ollama' }],
-      )
-    ).toBe('ollama');
-  });
-
-  it('returns undefined when neither the endpoint nor a sibling provides a type', () => {
-    expect(resolveDetectedServerType([{ owned_by: 'mystery' }], [])).toBeUndefined();
-    expect(
-      resolveDetectedServerType([{ owned_by: 'mystery' }], [{}])
-    ).toBeUndefined();
-  });
-
-  it('returns undefined for a fully inconclusive endpoint with no siblings at all', () => {
-    expect(resolveDetectedServerType([], [])).toBeUndefined();
   });
 });

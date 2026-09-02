@@ -9,9 +9,10 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from './provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId } from './config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders } from './config.js';
 import type { ModelConfig } from './config.js';
-import { patchModelConfig, readModels, writeModels } from './configStore.js';
+import { firstEntryById, type ServerEntry } from './serverRegistry.js';
+import { patchModelConfig, readModels, readServers, writeModels, writeServers } from './configStore.js';
 import { promptForServerAuth } from './commands/serverAuth.js';
 import { FileLogger } from './logger.js';
 import { describeError } from './messageConverter.js';
@@ -22,7 +23,7 @@ import {
   SessionPickedItem,
   WorkspaceEntry,
 } from './sessionManager.js';
-import { updateMetricsEngineHeaders } from './vllmMetrics.js';
+import { refreshEngineHeaders } from './vllmMetrics.js';
 import { updateDeepDiveTitle } from './deepDiveView.js';
 import { resetUsage, getServersWithUsage } from './usageStore.js';
 import { isOpenRouterUrl } from './openRouter.js';
@@ -58,7 +59,7 @@ export function registerDiagnoseConnectionCommand(
     // Let the user pick which model's server to diagnose.
     const items = models.map(m => ({
       label: m.displayName || m.id || '(unnamed)',
-      description: m.serverUrl || 'no serverUrl',
+      description: resolveServerConfig(m, config.servers)?.serverUrl || 'no server',
       model: m,
     }));
 
@@ -68,20 +69,19 @@ export function registerDiagnoseConnectionCommand(
     });
     if (!picked) return;
 
-    const serverUrl = picked.model.serverUrl;
-    if (!serverUrl) {
-      vscode.window.showWarningMessage(
-        `Model "${picked.label}" has no serverUrl. Add one first.`
-      );
-      return;
-    }
-
     // Resolve the model's canonical URL and request headers so the diagnostic
     // tests the same authenticated, normalized request the extension makes —
     // not a bare GET (which would 401 on auth-required servers) and not a raw
     // URL that still carries a redundant `/v1` suffix.
-    const { serverUrl: canonicalUrl, requestHeaders } = resolveServerConfig(picked.model);
-    const url = buildEndpoint(canonicalUrl || serverUrl, 'v1/models');
+    const resolved = resolveServerConfig(picked.model, config.servers);
+    if (!resolved) {
+      vscode.window.showWarningMessage(
+        `Model "${picked.label}" references server "${picked.model.server}", which is not registered. Add the server first.`
+      );
+      return;
+    }
+    const { serverUrl: canonicalUrl, requestHeaders } = resolved;
+    const url = buildEndpoint(canonicalUrl, 'v1/models');
     outputChannel.show(true);
     outputChannel.appendLine('[INFO] Running diagnostics…');
 
@@ -210,32 +210,11 @@ export function registerCleanSessionsCommand(
 }
 
 /**
- * Merge newly entered auth into a model's existing request headers.
- *
- * Update Auth must NEVER wipe a field the user didn't touch. Replacing the whole
- * requestHeaders object meant rotating the API key silently deleted any existing
- * custom headers (e.g. CF-Access proxy headers) — the same class of silent data
- * loss as the focus-loss bug. Merge semantics: a non-empty key sets
- * Authorization, entered headers merge on top, and anything left empty keeps the
- * existing value. Returns the SAME reference when nothing changes so callers can
- * detect a no-op (clearing auth entirely is done by editing settings.json).
- * @internal Exported for testing.
+ * Header-merge helpers live in config.ts (shared with the Add Server flow, which
+ * rotates credentials on a registry entry). Re-exported for the existing
+ * command-side tests that import them from this facade.
  */
-export function mergeAuthHeaders(
-  existing: Record<string, string> | undefined,
-  incoming: Record<string, string>,
-): Record<string, string> | undefined {
-  if (Object.keys(incoming).length === 0) return existing; // nothing entered → no-op
-  const merged: Record<string, string> = { ...(existing ?? {}) };
-  let changed = false;
-  for (const [k, v] of Object.entries(incoming)) {
-    if (merged[k] !== v) {
-      merged[k] = v;
-      changed = true;
-    }
-  }
-  return changed ? merged : existing;
-}
+export { mergeAuthHeaders, sameHeaders };
 
 /**
  * Update auth (API key + request headers) for all models on a server.
@@ -247,10 +226,23 @@ export function registerUpdateServerAuthCommand(
   outputChannel: vscode.OutputChannel,
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.updateServerAuth', async (arg?: any, initialHeaders?: Record<string, string>) => {
-    // VS Code passes the tree item for context menus; extract serverUrl.
+    // VS Code passes the tree item for context menus; extract the server URL.
     const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
     if (!serverUrl) {
       vscode.window.showErrorMessage('Server URL not provided.');
+      return;
+    }
+
+    // Auth lives on the server registry ENTRY now, not on models. The command
+    // contract is still URL-addressed (tree items, the Add Server flow), and §5
+    // keeps that scope URL-wide: every entry on this URL is a write target —
+    // usually one, but two credential identities on the same URL both rotate
+    // together, exactly as the pre-registry merge hit every model on the URL.
+    const servers = readServers();
+    const normalizedUrl = normalizeServerUrl(serverUrl);
+    const targets = servers.filter(s => normalizeServerUrl(s.serverUrl) === normalizedUrl);
+    if (targets.length === 0) {
+      vscode.window.showWarningMessage(`No registered server found for ${serverUrl}. Add the server first.`);
       return;
     }
 
@@ -260,7 +252,7 @@ export function registerUpdateServerAuthCommand(
     // requires the key (chat bills per account), generic servers keep it optional.
     let combinedHeaders: Record<string, string>;
     if (initialHeaders && Object.keys(initialHeaders).length > 0) {
-      combinedHeaders = initialHeaders;
+      combinedHeaders = sanitizeRequestHeaders(initialHeaders);
     } else {
       const collected = await promptForServerAuth({
         apiKeyTitle: `Update Auth for ${serverUrl} (1/2)`,
@@ -277,99 +269,100 @@ export function registerUpdateServerAuthCommand(
         outputChannel.appendLine(`[INFO] Update Auth cancelled for ${serverUrl} — no credentials entered.`);
         return; // cancelled
       }
-      combinedHeaders = collected;
+      combinedHeaders = sanitizeRequestHeaders(collected);
     }
 
-    // Update all models pointing to this server. MERGE the newly entered auth
-    // into each model's existing requestHeaders — never replace wholesale, so
+    // Re-read AFTER the prompt: a settings edit made while it was open must
+    // not be clobbered by a stale snapshot. MERGE the newly entered auth into
+    // each target entry's existing requestHeaders — never replace wholesale, so
     // rotating only the key can't wipe custom proxy headers (and vice versa).
     // Fields left empty keep their current value (clearing is settings.json).
-    const existing = readModels();
-    const normalizedUrl = normalizeServerUrl(serverUrl);
-    let matched = 0;
-    let updated = 0;
-    // Header transitions per CHANGED model, so each server identity moves to its
-    // own new headers. Merge is per-model, so models that already differ on this
-    // URL still differ afterwards — one shared "new headers" value would push
-    // model A's credentials into model B's engine (and its open Deep-Dive).
-    const transitions: Array<{ previous: Record<string, string> | undefined; next: Record<string, string> }> = [];
-    const updatedModels = existing.map(m => {
-      if (m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl) {
-        matched++;
-        const nextHeaders = mergeAuthHeaders(m.requestHeaders, combinedHeaders);
-        if (!nextHeaders || nextHeaders === m.requestHeaders) return m; // no-op
-        updated++;
-        transitions.push({ previous: m.requestHeaders, next: nextHeaders });
-        return { ...m, requestHeaders: nextHeaders };
-      }
-      return m;
-    });
-
-    if (matched === 0) {
-      vscode.window.showWarningMessage(`No models found for server ${serverUrl}.`);
+    const currentServers = readServers();
+    // Re-resolve by URL (not the pre-prompt ids): an entry added while the
+    // prompt was open belongs to this server too.
+    const targetIdx = currentServers
+      .map((s, i) => ({ s, i }))
+      .filter(({ s }) => normalizeServerUrl(s.serverUrl) === normalizedUrl);
+    if (targetIdx.length === 0) {
+      const names = targets.map(t => t.id).join(', ');
+      vscode.window.showWarningMessage(`Server "${names}" is no longer registered — nothing updated.`);
       return;
     }
-    if (updated === 0) {
+    const updatedServers = currentServers.slice();
+    const transitions: Array<{ id: string; to: Record<string, string> }> = [];
+    for (const { i } of targetIdx) {
+      const current = currentServers[i];
+      // Sanitize BOTH sides. Stored headers come from hand-editable settings and
+      // may carry blocked names or a second spelling (`authorization` next to
+      // the `Authorization` this prompt produces). Merging raw would persist both
+      // spellings and send a doubled auth header. Sanitizing the merge result
+      // makes the freshly entered value win the collision (last occurrence wins).
+      const existingHeaders = sanitizeRequestHeaders(current.requestHeaders ?? {});
+      const merged = mergeAuthHeaders(existingHeaders, combinedHeaders) ?? existingHeaders;
+      const nextHeaders = sanitizeRequestHeaders(merged);
+      if (!sameHeaders(nextHeaders, existingHeaders)) {
+        updatedServers[i] = { ...current, requestHeaders: nextHeaders };
+        transitions.push({ id: current.id, to: nextHeaders });
+      }
+    }
+    if (transitions.length === 0) {
       outputChannel.appendLine(`[INFO] Update Auth: no changes for ${serverUrl} — fields left empty keep their current values.`);
       vscode.window.showInformationMessage(`No auth changes for ${serverUrl}. Enter a new key or headers to update.`);
       return;
     }
 
-    await writeModels(updatedModels);
+    await writeServers(updatedServers);
     _provider.clearCache();
-    // Push each changed identity's headers to its metrics engine so an open
-    // deep-dive uses fresh auth. Update-if-present only: Update Auth must not
-    // create a zero-subscriber engine (an engine only exists when a
-    // dashboard/deep-dive is subscribed). Repeating a transition is a no-op, so
-    // models that shared an identity need no de-duplication here.
-    for (const t of transitions) updateMetricsEngineHeaders(serverUrl, t.previous, t.next);
-    outputChannel.appendLine(`[INFO] Updated auth for ${updated} model(s) on ${serverUrl}.`);
-    vscode.window.showInformationMessage(`Updated auth for ${updated} model(s) on ${serverUrl}.`);
+    // Push the new headers to the metrics engines so an open deep-dive uses
+    // fresh auth. Update-if-present only: Update Auth must not create a
+    // zero-subscriber engine (an engine only exists when a dashboard/deep-dive
+    // is subscribed). Engines are keyed by entry id, so a header rotation can
+    // never orphan a poller — the engine keeps its key and just gets new headers.
+    for (const t of transitions) {
+      refreshEngineHeaders(t.id, t.to);
+    }
+    const ids = targetIdx.map(({ s }) => `"${s.id}"`).join(', ');
+    outputChannel.appendLine(`[INFO] Updated auth for server ${serverUrl} (entries ${ids}).`);
+    vscode.window.showInformationMessage(`Updated auth for ${serverUrl}.`);
   });
 }
 
 /**
- * Apply (or clear) a server display name on every model entry sharing the
- * server URL. Pure helper, exported for testing.
+ * Apply (or clear) the display name on the server registry entry matching the
+ * given server URL. Pure helper, exported for testing.
  *
- * Matching scope is the NORMALIZED URL — deliberately wider than the URL +
- * header fingerprint that groups the dashboard tree. The name labels "the box",
- * not one credential's view of it; two header identities on one URL are two
- * views of the same server and share its label. The dashboard keeps rendering
- * `(identity N)` suffixes per credential group, so distinct identities stay
- * distinguishable even when they now share a friendly name.
- *
- * An empty/whitespace `displayName` CLEARS: matched entries lose the key
- * entirely (this write path bypasses `normalizeModelEntry`, so `''` would
- * otherwise be persisted verbatim). Entries whose value already equals the
- * target are left untouched so an unchanged config produces no write.
+ * The name labels "the box" — the dashboard tree shows it instead of the bare
+ * host. An empty/whitespace `displayName` CLEARS: the entry loses the key
+ * entirely (absent means "show the URL again"; persisting `''` would be a bug).
+ * An entry whose value already equals the target is left untouched so an
+ * unchanged registry produces no write.
  */
 export function applyServerDisplayName(
-  existing: ModelConfig[],
+  servers: ServerEntry[],
   serverUrl: string,
   displayName: string,
-): { models: ModelConfig[]; matched: number; changed: number } {
+): { servers: ServerEntry[]; matched: number; changed: number } {
   const normalizedUrl = normalizeServerUrl(serverUrl);
   const trimmed = displayName.trim();
   let matched = 0;
   let changed = 0;
-  const models = existing.map(m => {
-    if (!m.serverUrl || normalizeServerUrl(m.serverUrl) !== normalizedUrl) return m;
+  const nextServers = servers.map(s => {
+    if (normalizeServerUrl(s.serverUrl) !== normalizedUrl) return s;
     matched++;
-    if ((m.serverDisplayName ?? '') === trimmed) return m; // no-op — nothing changed
+    if ((s.displayName ?? '') === trimmed) return s; // no-op — nothing changed
     changed++;
-    const next = { ...m };
-    if (trimmed === '') delete next.serverDisplayName;
-    else next.serverDisplayName = trimmed;
+    const next = { ...s };
+    if (trimmed === '') delete next.displayName;
+    else next.displayName = trimmed;
     return next;
   });
-  return { models, matched, changed };
+  return { servers: nextServers, matched, changed };
 }
 
 /**
- * Rename a server for display: sets `serverDisplayName` on every model entry
- * pointing at the given server URL. The Dashboard tree shows that name instead
- * of the bare host; empty input clears it (the URL is shown again).
+ * Rename a server for display: sets `displayName` on the server registry entry
+ * for the given server URL. The Dashboard tree shows that name instead of the
+ * bare host; empty input clears it (the URL is shown again).
  * Triggered from right-click context menu on a server node in the dashboard.
  * Not applicable to OpenRouter — openrouter.ai is a fixed managed relay.
  */
@@ -379,13 +372,34 @@ export function registerRenameServerCommand(
   outputChannel: vscode.OutputChannel,
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.renameServer', async (arg?: any) => {
-    // VS Code passes the tree item for context menus; extract serverUrl.
+    // VS Code passes the tree item for context menus; extract the server URL.
     const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
     if (!serverUrl) {
       vscode.window.showErrorMessage('Server URL not provided.');
       return;
     }
-    if (isOpenRouterUrl(serverUrl)) {
+
+    // The registry entries own the name. A command arg identifies a SERVER, so
+    // reject when no entry matches — never silently rename nothing. The write
+    // fans out to EVERY entry sharing this URL (§5), so the OpenRouter refusal
+    // must consider all of them, and the prefill comes from the entry the user
+    // actually right-clicked (tree items carry `serverId`; fall back to the
+    // first URL match for bare-URL programmatic calls).
+    const servers = readServers();
+    const normalizedUrl = normalizeServerUrl(serverUrl);
+    const matches = servers.filter(s => normalizeServerUrl(s.serverUrl) === normalizedUrl);
+    if (matches.length === 0) {
+      vscode.window.showWarningMessage(`No registered server found for ${serverUrl}.`);
+      return;
+    }
+    const addressed =
+      (typeof arg === 'object' && typeof arg?.serverId === 'string'
+        ? servers.find(s => s.id === arg.serverId)
+        : undefined) ?? matches[0];
+    // Never rename OpenRouter: the relay label is fixed. Check the entries'
+    // declared types (a non-openrouter.ai relay URL counts too) — the URL check
+    // alone would miss custom OpenRouter-compatible endpoints.
+    if (isOpenRouterUrl(serverUrl) || matches.some(e => e.serverType === 'openrouter')) {
       vscode.window.showInformationMessage(
         'Rename Server does not apply to OpenRouter — openrouter.ai is a fixed managed relay.'
       );
@@ -396,11 +410,7 @@ export function registerRenameServerCommand(
     // happens after the await below, so a settings edit made while the prompt
     // is open is never clobbered by a stale snapshot (same pattern as Update
     // Auth, which also reads after its prompts).
-    const normalizedUrl = normalizeServerUrl(serverUrl);
-    const current = readModels()
-      .find(m =>
-        m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl && m.serverDisplayName?.trim()
-      )?.serverDisplayName?.trim() ?? '';
+    const current = addressed.displayName?.trim() ?? '';
 
     const name = await vscode.window.showInputBox({
       ignoreFocusOut: true,
@@ -414,13 +424,13 @@ export function registerRenameServerCommand(
       return; // cancelled
     }
 
-    // Re-read AFTER the prompt: models may have changed while it was open.
-    const existing = readModels();
-    const { models, matched, changed } = applyServerDisplayName(existing, serverUrl, name);
+    // Re-read AFTER the prompt: the registry may have changed while it was open.
+    const existingServers = readServers();
+    const { servers: nextServers, matched, changed } = applyServerDisplayName(existingServers, serverUrl, name);
     if (matched === 0) {
-      // Distinct from no-op: nothing points at this URL — a stale tree item or
-      // a programmatic call with a wrong URL should fail loudly, not "no changes".
-      vscode.window.showWarningMessage(`No models found for server ${serverUrl}.`);
+      // Distinct from no-op: the entry vanished mid-prompt — a stale tree item
+      // or a programmatic call with a wrong URL should fail loudly.
+      vscode.window.showWarningMessage(`No registered server found for ${serverUrl}.`);
       return;
     }
     if (changed === 0) {
@@ -428,25 +438,29 @@ export function registerRenameServerCommand(
       return;
     }
 
-    await writeModels(models);
+    await writeServers(nextServers);
     provider.clearCache();
     const trimmed = name.trim();
     // Retitle any open Deep-Dive panels for this server immediately — without
     // this they keep the old label until closed and reopened.
     updateDeepDiveTitle(serverUrl, trimmed || undefined);
     if (trimmed) {
-      outputChannel.appendLine(`[INFO] Renamed server ${serverUrl} to "${trimmed}" (${changed} model(s)).`);
+      outputChannel.appendLine(`[INFO] Renamed server ${serverUrl} to "${trimmed}" (applied to ${matched} entr${matched === 1 ? 'y' : 'ies'}).`);
       vscode.window.showInformationMessage(`Server renamed to "${trimmed}".`);
     } else {
-      outputChannel.appendLine(`[INFO] Cleared display name for ${serverUrl} (${changed} model(s)).`);
+      outputChannel.appendLine(`[INFO] Cleared display name for ${serverUrl} (applied to ${matched} entr${matched === 1 ? 'y' : 'ies'}).`);
       vscode.window.showInformationMessage(`Display name cleared — showing the URL again.`);
     }
   });
 }
 
 /**
- * Remove all models associated with a server.
+ * Remove a server registry entry.
  * Triggered from right-click context menu on a server node in the dashboard.
+ *
+ * REFUSES while any model still references the server id — removing the entry
+ * would strand those models on a dangling reference. The user removes the
+ * models first (Remove Model), then the server.
  */
 export function registerRemoveServerCommand(
   _context: vscode.ExtensionContext,
@@ -454,27 +468,48 @@ export function registerRemoveServerCommand(
   outputChannel: vscode.OutputChannel,
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.removeServer', async (arg?: any) => {
-    // VS Code passes the tree item for context menus; extract serverUrl.
-    const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
+    // VS Code passes the tree item for context menus; every server-ish node
+    // (plain, relay account, relay model) carries its registry `serverId`.
+    // The command addresses EXACTLY that entry — entry id is the identity,
+    // and a destructive node command must never sweep sibling entries that
+    // merely share a URL.
+    const serverId = typeof arg === 'object' ? arg?.serverId : undefined;
     const skipConfirm = typeof arg === 'object' && arg?.skipConfirm === true;
-    if (!serverUrl) {
-      vscode.window.showErrorMessage('Server URL not provided.');
+    if (typeof serverId !== 'string' || !serverId) {
+      vscode.window.showErrorMessage('Server id not provided.');
       return;
     }
 
-    const existing = readModels();
-    const normalizedUrl = normalizeServerUrl(serverUrl);
-    const filtered = existing.filter(m => !(m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl));
-    const removed = existing.length - filtered.length;
+    const servers = readServers();
+    // First entry wins per id, exactly like the runtime resolver: removing a
+    // shadowed duplicate by id would address an entry no request ever reaches,
+    // so the visible entry IS the removal target. `validateConfig` reports the
+    // duplicate id itself.
+    const entry = firstEntryById(servers).get(serverId);
+    if (!entry) {
+      vscode.window.showWarningMessage(`No registered server with id "${serverId}".`);
+      return;
+    }
+    const label = entry.displayName?.trim() || normalizeServerUrl(entry.serverUrl);
 
-    if (removed === 0) {
-      vscode.window.showWarningMessage(`No models found for server ${serverUrl}.`);
+    // Refuse while referenced: models point at entries BY ID, so dropping the
+    // entry would break every one of them at once.
+    const allModels = readModels();
+    const referencing = allModels.filter(m => m.server === serverId);
+    if (referencing.length > 0) {
+      const names = referencing.map(m => m.displayName || m.id).join(', ');
+      outputChannel.appendLine(
+        `[WARN] Remove Server refused for "${serverId}" (${label}) — still referenced by ${referencing.length} model(s): ${names}.`
+      );
+      vscode.window.showWarningMessage(
+        `Server "${label}" is still used by ${referencing.length} model(s): ${names}. Remove those models first (Remove Model), then remove the server.`
+      );
       return;
     }
 
     if (!skipConfirm) {
       const confirm = await vscode.window.showWarningMessage(
-        `Remove ${removed} model(s) from ${serverUrl}?`,
+        `Remove server "${label}" (id "${serverId}")? No models reference it.`,
         { modal: true },
         'Remove',
         'Cancel',
@@ -482,74 +517,84 @@ export function registerRemoveServerCommand(
       if (confirm !== 'Remove') return;
     }
 
-    await writeModels(filtered);
+    // Re-read for the write: the registry may have changed while the confirm
+    // dialog was open. Match by id (not a stale index) so a concurrent edit
+    // can't drop the wrong entry — and can only ever drop this one.
+    const currentServers = readServers();
+    if (!currentServers.some(s => s.id === serverId)) {
+      vscode.window.showInformationMessage(`Server "${label}" was already removed.`);
+      return;
+    }
+    // References re-checked too: a concurrent Add flow may have pointed a model
+    // at this entry while the confirm dialog was open.
+    const nowReferencing = readModels().filter(m => m.server === serverId);
+    if (nowReferencing.length > 0) {
+      const names = nowReferencing.map(m => m.displayName || m.id).join(', ');
+      outputChannel.appendLine(
+        `[WARN] Remove Server aborted for "${serverId}" — now referenced by ${nowReferencing.length} model(s): ${names}.`
+      );
+      vscode.window.showWarningMessage(
+        `Server "${label}" is now used by ${nowReferencing.length} model(s): ${names}. Removal cancelled — remove those models first.`
+      );
+      return;
+    }
+    await writeServers(currentServers.filter(s => s.id !== serverId));
     _provider.clearCache();
-    outputChannel.appendLine(`[INFO] Removed ${removed} model(s) from ${serverUrl}.`);
-    vscode.window.showInformationMessage(`Removed ${removed} model(s) from ${serverUrl}.`);
+    outputChannel.appendLine(`[INFO] Removed server "${serverId}" (${label}).`);
+    vscode.window.showInformationMessage(`Removed server "${label}".`);
   });
 }
 
 /**
- * Filter out the single model matching (serverUrl, configId) from a config
- * array, where `configId` is the extension `id` (falling back to the vLLM wire
- * id for legacy entries). Never touches sibling models on the same server.
- * Pure helper, exported for testing.
+ * Filter out the single model matching (server entry id, configId) from a
+ * config array. `configId` is the extension `id` (falling back to the vLLM
+ * wire id for legacy entries). Never touches sibling models on the same
+ * server. Pure helper, exported for testing.
  */
 export function removeModelFromConfig(
   existing: ModelConfig[],
-  serverUrl: string,
+  server: string,
   configId: string,
 ): { filtered: ModelConfig[]; removed: number } {
-  const normalizedUrl = normalizeServerUrl(serverUrl);
   const filtered = existing.filter(
-    m => !(m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedUrl && resolveConfigId(m) === configId)
+    m => !(m.server === server && resolveConfigId(m) === configId)
   );
   return { filtered, removed: existing.length - filtered.length };
 }
 
 /**
  * Remove a single model entry from a server.
- * Triggered from the Server Settings webview "Remove Model" button.
- * Removes only the selected (serverUrl, id) entry — never sibling models on the
- * same server. Accepts the extension `id` (preferred) or the vLLM wire id for
- * legacy callers.
+ * Triggered from the Server Settings webview "Remove Model" button — the only
+ * caller. The webview confirms the removal with the user before posting, so
+ * there is no command-side modal. Removes only the selected (entry, id)
+ * model — never sibling models on the same server. Accepts the extension
+ * `id` (preferred) or the vLLM wire id for legacy entries.
  */
 export function registerRemoveModelCommand(
   _context: vscode.ExtensionContext,
   _provider: VllmChatModelProvider,
   outputChannel: vscode.OutputChannel,
 ): vscode.Disposable {
-  return vscode.commands.registerCommand('vllm-copilot.removeModel', async (arg?: any) => {
-    const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
-    const configId = typeof arg === 'object' ? (arg?.id ?? arg?.vllmModelId) : undefined;
-    const skipConfirm = typeof arg === 'object' && arg?.skipConfirm === true;
-    if (!serverUrl || !configId) {
-      vscode.window.showErrorMessage('Server URL and model ID are required.');
+  return vscode.commands.registerCommand('vllm-copilot.removeModel', async (arg?: { server?: string; id?: string }) => {
+    const server = arg?.server;
+    const configId = arg?.id;
+    if (!server || !configId) {
+      vscode.window.showErrorMessage('Server and model ID are required.');
       return;
     }
 
     const existing = readModels();
-    const { filtered, removed } = removeModelFromConfig(existing, serverUrl, configId);
+    const { filtered, removed } = removeModelFromConfig(existing, server, configId);
 
     if (removed === 0) {
-      vscode.window.showWarningMessage(`No configured model "${configId}" found on ${serverUrl}.`);
+      vscode.window.showWarningMessage(`No configured model "${configId}" found on server "${server}".`);
       return;
-    }
-
-    if (!skipConfirm) {
-      const confirm = await vscode.window.showWarningMessage(
-        `Remove model "${configId}" from ${serverUrl}?`,
-        { modal: true },
-        'Remove',
-        'Cancel',
-      );
-      if (confirm !== 'Remove') return;
     }
 
     await writeModels(filtered);
     _provider.clearCache();
-    outputChannel.appendLine(`[INFO] Removed model "${configId}" from ${serverUrl}.`);
-    vscode.window.showInformationMessage(`Removed model "${configId}" from ${serverUrl}.`);
+    outputChannel.appendLine(`[INFO] Removed model "${configId}" from server "${server}".`);
+    vscode.window.showInformationMessage(`Removed model "${configId}" from server "${server}".`);
   });
 }
 
@@ -627,7 +672,11 @@ export function registerConfigureCostCommand(
     }
     const normalized = normalizeServerUrl(serverUrl);
     const models = readModels();
-    const serverModels = models.filter(m => m.serverUrl && normalizeServerUrl(m.serverUrl) === normalized);
+    const servers = readServers();
+    // The usage node is URL-keyed but may span several credential identities —
+    // offer every model on any entry of this URL (§5: URL-wide scope).
+    const serverIds = new Set(servers.filter(s => normalizeServerUrl(s.serverUrl) === normalized).map(s => s.id));
+    const serverModels = models.filter(m => serverIds.has(m.server));
     if (serverModels.length === 0) {
       vscode.window.showWarningMessage(`No configured models found on ${serverUrl}.`);
       return;
@@ -645,7 +694,7 @@ export function registerConfigureCostCommand(
 
     const model = picked.model;
     const configId = resolveConfigId(model);
-    if (!configId || !model.serverUrl) {
+    if (!configId) {
       vscode.window.showWarningMessage(`Model "${picked.label}" has no config id; cannot set cost.`);
       return;
     }
@@ -694,7 +743,7 @@ export function registerConfigureCostCommand(
       cachedInput: numOrZero(cachedInput),
       currency,
     };
-    await patchModelConfig({ id: configId, serverUrl: model.serverUrl }, { cost });
+    await patchModelConfig({ id: configId, server: model.server }, { cost });
     outputChannel.appendLine(`[INFO] Set cost for ${picked.label} (${currency}): in ${cost.input}, out ${cost.output}, cached-in ${cost.cachedInput} per 1M.`);
     vscode.window.showInformationMessage(`Cost set for ${picked.label}.`);
   });

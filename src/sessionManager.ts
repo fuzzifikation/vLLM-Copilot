@@ -203,7 +203,7 @@ export async function discoverWorkspaces(): Promise<WorkspaceEntry[]> {
  * pattern matters for future maintenance). Uses `node:sqlite`'s synchronous API
  * — `changes` is the per-statement rowcount (0 if no row matched).
  */
-export async function deleteChatKeys(dbPath: string): Promise<number> {
+async function deleteChatKeys(dbPath: string): Promise<number> {
   let db: DatabaseSync | undefined;
   try {
     db = new DatabaseSync(dbPath);
@@ -276,7 +276,7 @@ async function countSessionsBatch(
 // ── Filesystem operations ──────────────────────────────────────────────────
 
 /** Remove the GitHub.copilot-chat directory for a workspace (transcripts, logs, etc.). */
-export async function removeChatDir(wsId: string): Promise<boolean> {
+async function removeChatDir(wsId: string): Promise<boolean> {
   const dirPath = chatDirPath(wsId);
   try {
     await fs.rm(dirPath, { recursive: true, force: true });
@@ -289,13 +289,13 @@ export async function removeChatDir(wsId: string): Promise<boolean> {
 }
 
 /** Remove the chatSessions directory for a workspace (side panel chat history files). */
-export async function removeChatSessions(wsId: string): Promise<boolean> {
+async function removeChatSessions(wsId: string): Promise<boolean> {
   const dirPath = chatSessionsDirPath(wsId);
   return removeDir(dirPath);
 }
 
 /** Remove the chatEditingSessions directory for a workspace (inline chat history files). */
-export async function removeChatEditingSessions(wsId: string): Promise<boolean> {
+async function removeChatEditingSessions(wsId: string): Promise<boolean> {
   const dirPath = chatEditingSessionsDirPath(wsId);
   return removeDir(dirPath);
 }

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from './config.js';
-import { buildModelId, findModelConfigIndex, normalizeModelEntry, resolveConfigId } from './config.js';
+import { findModelConfigIndex, normalizeModelEntry, resolveConfigId } from './config.js';
+import type { ServerEntry } from './serverRegistry.js';
 
 /**
  * Read the raw `vllm-copilot.models` array exactly as stored.
@@ -32,6 +33,24 @@ export async function writeModels(models: ModelConfig[]): Promise<void> {
 }
 
 /**
+ * Read the raw `vllm-copilot.servers` array exactly as stored ([] when unset).
+ * Counterpart of {@link readModels} for the server registry.
+ */
+export function readServers(): ServerEntry[] {
+  return vscode.workspace.getConfiguration('vllm-copilot').get<ServerEntry[]>('servers') || [];
+}
+
+/**
+ * The ONLY writer of the `vllm-copilot.servers` setting, whole-array like
+ * {@link writeModels}. The registry migration relies on the same error
+ * propagation so it can defer its completion marker until every write succeeded.
+ */
+export async function writeServers(servers: ServerEntry[]): Promise<void> {
+  const config = vscode.workspace.getConfiguration('vllm-copilot');
+  await config.update('servers', servers, vscode.ConfigurationTarget.Global);
+}
+
+/**
  * Result of a store write. `model` is the entry exactly as persisted.
  */
 export interface SaveModelResult {
@@ -42,23 +61,20 @@ export interface SaveModelResult {
 
 /**
  * A full model entry for the replace operation: it must carry a non-blank
- * `serverUrl` and at least one of `id`/`vllmModelId` — the identity the matcher
- * keys on. Requiring identity at the type boundary prevents an accidental
- * append when a caller omits a matching field.
+ * `id` (required) and a `server` ref — the identity the matcher keys on.
+ * Requiring identity at the type boundary prevents an accidental append when a
+ * caller omits a matching field.
  */
-export type IdentifiedModelConfig = ModelConfig
-  & { serverUrl: string }
-  & ({ id: string } | { vllmModelId: string });
+export type IdentifiedModelConfig = ModelConfig & { id: string; server: string };
 
 /**
  * Runtime backstop for the type-level identity requirement. Returns the
- * validated config id (a blank `id` falling back to `vllmModelId` is already
- * resolved by the caller via `resolveConfigId`).
+ * validated config id.
  */
-function assertValidIdentity(configId: string | undefined, serverUrl: string | undefined): string {
-  if (!configId?.trim() || !serverUrl?.trim()) {
+function assertValidIdentity(configId: string | undefined, server: string | undefined): string {
+  if (!configId?.trim() || !server?.trim()) {
     throw new TypeError(
-      'Model identity requires a non-blank id (or vllmModelId) and serverUrl; refusing to write a malformed entry.'
+      'Model identity requires a non-blank id and a server ref; refusing to write a malformed entry.'
     );
   }
   return configId;
@@ -69,34 +85,26 @@ function assertValidIdentity(configId: string | undefined, serverUrl: string | u
  *
  * Replaces the entire entry for the entry's identity. Model-specific fields
  * (modelModes, family, capabilities, defaultParams, token budgets, transport
- * settings) are overwritten by the replacement; that is the contract. Only
- * infrastructure/personal fields the replacement cannot know survive:
- * `serverUrl` (required identity), `requestHeaders` (when the replacement
- * omits them), `serverDisplayName` (same rule as requestHeaders: undefined
- * preserves the previous value; `''` clears it via `normalizeModelEntry` —
- * presets and auto-configuration must never wipe a user's server label),
- * and `systemMessageReplacementsFile` (undefined preserves the previous
- * value; `''` clears it via `normalizeModelEntry`).
+ * settings) are overwritten by the replacement; that is the contract. The only
+ * infrastructure field the replacement cannot know that survives is
+ * `systemMessageReplacementsFile` (undefined preserves the previous value; `''`
+ * clears it via `normalizeModelEntry`). Server facts (URL, auth, type, label)
+ * live on the registry entry the model references — never on the model — so
+ * there is nothing server-shaped to preserve here.
  *
- * On no match the entry is appended with `id` verbatim — deriving a composite
- * id is the caller's job. Callers' objects are never mutated. Top-level
- * undefined-valued fields are stripped before the write, so an explicit
- * `{ displayName: undefined }` replacement stores no `displayName` key at all
- * (the value is not preserved, unlike patch: replace replaces the field).
- * Nested undefined values (inside defaultParams, modelModes, capabilities,
- * requestHeaders) are left untouched — they are inert: reads and JSON
- * serialization treat absent and undefined identically. JSON callers never
- * send undefined today.
+ * On no match the entry is appended with `id` verbatim. Callers' objects are
+ * never mutated. Top-level undefined-valued fields are stripped before the
+ * write. Nested undefined values are left untouched — they are inert.
  *
  * This is a pure store operation: it performs no toasts, no cache invalidation,
  * and no BYOK setup. Side effects belong to the callers.
  */
 export async function replaceModelConfig(entry: IdentifiedModelConfig): Promise<SaveModelResult> {
   const clean = stripUndefined(entry as unknown as Record<string, unknown>) as unknown as IdentifiedModelConfig;
-  const configId = assertValidIdentity(resolveConfigId(clean), clean.serverUrl);
+  const configId = assertValidIdentity(resolveConfigId(clean), clean.server);
 
   const existing = readModels();
-  const useIdx = findModelConfigIndex(existing, configId, clean.serverUrl);
+  const useIdx = findModelConfigIndex(existing, configId, clean.server);
 
   if (useIdx >= 0) {
     const prev = existing[useIdx];
@@ -106,8 +114,6 @@ export async function replaceModelConfig(entry: IdentifiedModelConfig): Promise<
         : prev.systemMessageReplacementsFile;
     const merged: ModelConfig = {
       ...clean,
-      requestHeaders: clean.requestHeaders ?? prev.requestHeaders,
-      serverDisplayName: clean.serverDisplayName ?? prev.serverDisplayName,
       systemMessageReplacementsFile: replacementsFile,
     };
     const next = existing.slice();
@@ -122,12 +128,12 @@ export async function replaceModelConfig(entry: IdentifiedModelConfig): Promise<
 }
 
 /**
- * Immutable identity used by the patch operation. `id` and `serverUrl` are the
+ * Immutable identity used by the patch operation. `id` and `server` are the
  * lookup keys the webview keys everything by; they are NOT patchable properties.
  */
 export interface ModelIdentity {
   id: string;
-  serverUrl: string;
+  server: string;
 }
 
 /**
@@ -151,38 +157,37 @@ function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
 /**
  * Patch-mode persistence — a shallow field-level merge, the webview's contract.
  *
- * `identity.id`/`identity.serverUrl` are the immutable lookup keys. Fields
+ * `identity.id`/`identity.server` are the immutable lookup keys. Fields
  * present in `updates` overwrite the existing entry; fields absent are
- * preserved (headers, family, defaults, transport settings all survive — the
+ * preserved (family, defaults, transport settings all survive — the
  * reverse of replace-mode). `''` clears `systemMessageReplacementsFile` via
  * `normalizeModelEntry`. Top-level undefined-valued keys in `updates` are
  * stripped before the merge, so a `{ displayName: undefined }` patch cannot
  * wipe the stored value; nested undefined values are left untouched (inert —
  * see `stripUndefined`) (hardening — the webview never sends undefined today).
  *
- * On no match a new entry is created with a composite id derived from the wire
- * id: `wireId = updates.vllmModelId || identity.id`, stored id =
- * `buildModelId(identity.serverUrl, wireId)` — so the same model on two servers
- * stays distinct, and when config identity and `updates.vllmModelId` differ the
- * wire id wins. Callers' objects are never mutated.
+ * On no match a new entry is created under `identity` verbatim — identity is
+ * always complete (`id` + `server`), so appending means exactly "a new model
+ * on a known server". `wireId = updates.vllmModelId || identity.id`. Callers'
+ * objects are never mutated.
  *
  * Pure store operation: no toasts, no cache invalidation, no refresh — the
  * handler owns those side effects.
  */
 export async function patchModelConfig(
   identity: ModelIdentity,
-  updates: Omit<Partial<ModelConfig>, 'id' | 'serverUrl'>
+  updates: Omit<Partial<ModelConfig>, 'id' | 'server'>
 ): Promise<SaveModelResult> {
-  const configId = assertValidIdentity(identity.id, identity.serverUrl);
+  const configId = assertValidIdentity(identity.id, identity.server);
   const clean = stripUndefined(updates as Record<string, unknown>);
   // Runtime backstop for the Omit type boundary: identity is immutable, so even
-  // a caller that smuggles id/serverUrl into updates must not move them. The
+  // a caller that smuggles id/server into updates must not move them. The
   // matcher already keyed on identity; the merge must not then overwrite it.
   delete clean.id;
-  delete clean.serverUrl;
+  delete clean.server;
 
   const existing = readModels();
-  const useIdx = findModelConfigIndex(existing, configId, identity.serverUrl);
+  const useIdx = findModelConfigIndex(existing, configId, identity.server);
 
   if (useIdx >= 0) {
     const next = existing.slice();
@@ -193,10 +198,10 @@ export async function patchModelConfig(
 
   const wireId = updates.vllmModelId || configId;
   const entry = normalizeModelEntry({
-    ...(clean as ModelConfig),
+    ...(clean as unknown as ModelConfig),
     vllmModelId: wireId,
-    id: buildModelId(identity.serverUrl, wireId),
-    serverUrl: identity.serverUrl,
+    id: configId,
+    server: identity.server,
   });
   const next = existing.concat(entry);
   await writeModels(next);

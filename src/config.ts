@@ -1,8 +1,15 @@
 import * as path from 'path';
-import { createHash } from 'node:crypto';
 import * as vscode from 'vscode';
 import type { WireStructuredOutputConfig } from './types.js';
 import { resolveOutputBudgetScalar } from './tokenBudget.js';
+import { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders } from './serverCore.js';
+import { entryMatchesConnection, resolveServer } from './serverRegistry.js';
+
+// The connection primitives live in serverCore.ts (leaf module) so config.ts
+// and serverRegistry.ts can share them without an import cycle — that cycle
+// used to force a duplicated resolver here. Re-exported for existing consumers.
+// Server identity is the registry ENTRY ID; nothing here derives one.
+export { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders };
 
 export type StructuredOutputConfig = WireStructuredOutputConfig;
 
@@ -19,12 +26,12 @@ export type ServerType = 'vllm' | 'lmstudio' | 'llamacpp' | 'ollama' | 'openrout
 
 export interface ModelConfig {
   /**
-   * Unique identifier for this model preset in VS Code.
+   * Unique identifier for this model preset in VS Code. Required.
    * Must be unique across all entries — this is what VS Code uses
    * to distinguish different presets of the same underlying model.
    * If `vllmModelId` is not set, `id` is also used as the vLLM server model identifier.
    */
-  id?: string;
+  id: string;
   /**
    * The actual model ID on the vLLM server (e.g. "Qwen/Qwen3-8B").
    * Allows multiple presets (different ids) to point to the same server model.
@@ -68,31 +75,12 @@ export interface ModelConfig {
    */
   defaultMode?: string;
   /**
-   * The vLLM server URL hosting this model (OpenAI-compatible API).
-   * Every model targets its own server — there is no global server.
+   * Reference to the server registry entry (`ServerEntry.id`) this model
+   * connects through. Required: every model connects to exactly one registered
+   * server — there is no global server. URL, auth, type, and label live on the
+   * registry entry, never on the model.
    */
-  serverUrl?: string;
-  /**
-   * Optional human-friendly name for this server, shown in the dashboard tree
-   * and the Model Settings server dropdown in place of the raw URL.
-   *
-   * SERVER-level (not model-level), stored per-model because the config has no
-   * global server object. The dashboard groups models by server identity (URL +
-   * header fingerprint) and uses the FIRST non-empty `serverDisplayName` in the
-   * group as the node label — so models sharing one endpoint can share a single
-   * meaningful name instead of repeating the same URL. Set via the dashboard's
-   * **Rename Server** context action, which writes it to every model in the
-   * group. Empty/omitted falls back to the server URL. Not applicable to
-   * OpenRouter relays (the fixed `openrouter.ai` endpoint is never renamed).
-   */
-  serverDisplayName?: string;
-  /**
-   * Backend serving this model: `vllm` (default), `lmstudio`, `llamacpp`, or
-   * `ollama`. Missing/omitted ALWAYS means `vllm`. Set by the Add Server
-   * flow after detection, or manually for a secondary backend. Used to select the
-   * required context endpoint and request adaptation — never guessed at runtime.
-   */
-  serverType?: ServerType;
+  server: string;
   /**
    * OpenRouter-only: the exact provider slug (as returned by
    * `GET /api/v1/models/{id}/endpoints`) to force routing to that provider via
@@ -111,11 +99,6 @@ export interface ModelConfig {
    * base slug so catalog/metadata resolution is never affected.
    */
   routingMode?: 'standard' | 'nitro' | 'exacto';
-  /**
-   * HTTP headers sent with every request to this model's server (auth, routing).
-   * Isolated: used only for this model's server, never shared with other servers.
-   */
-  requestHeaders?: Record<string, string>;
   /**
    * Model-scope request parameters (raw vLLM request-body keys, snake_case).
    * Applied on top of the built-in `DEFAULT_REQUEST_PARAMS` and overridden by the
@@ -170,8 +153,10 @@ export interface ModelConfig {
 }
 
 export interface VllmConfig {
-  /** Per-model configuration. Each entry carries its own server, auth, params, and budgets. */
+  /** Per-model configuration. Each entry references its server by id (`server`). */
   models: ModelConfig[];
+  /** The server registry. Models reference entries here by `server` id. */
+  servers: import('./serverRegistry.js').ServerEntry[];
   /** Extension-wide diagnostic toggle — the only global user setting. */
   enableFileLogging: boolean;
 }
@@ -192,7 +177,7 @@ export interface VllmConfig {
  * JSON arrays, and code loops — not just actual repetition loops.
  * Users who want it can enable it per-model via defaultParams in their config.
  */
-export const DEFAULT_REQUEST_PARAMS: Record<string, unknown> = {};
+const DEFAULT_REQUEST_PARAMS: Record<string, unknown> = {};
 
 /** Built-in defaults for per-model token/transport settings. */
 export const DEFAULT_MODEL_SETTINGS = {
@@ -335,11 +320,18 @@ export function resolveVllmModelId(override: ModelConfig | undefined): string | 
 }
 
 /**
- * Resolve the backend type for a model. A missing field ALWAYS means `vllm` —
- * every released configuration is vLLM; secondary backends must opt in.
+ * Resolve the backend type for a model via its referenced server entry.
+ * A missing entry, or an entry with no explicit type, ALWAYS means `vllm` —
+ * every released configuration is vLLM; secondary backends opt in on the entry.
  */
-export function resolveServerType(model?: ModelConfig): ServerType {
-  return model?.serverType ?? 'vllm';
+export function resolveServerType(
+  model: ModelConfig | undefined,
+  servers: import('./serverRegistry.js').ServerEntry[]
+): ServerType {
+  if (!model) return 'vllm';
+  // Same resolver as everything else (`resolveServer`, first entry wins) —
+  // a hand-rolled `servers.find` here would be a second rule waiting to drift.
+  return resolveServerEntry(model, servers)?.serverType ?? 'vllm';
 }
 
 /**
@@ -372,220 +364,89 @@ export function resolveConfigId(override: ModelConfig | undefined): string | und
 }
 
 /**
- * Build a readable, unique VS Code model `id` from a server URL and the vLLM
- * model id, formatted as `"<model> on <host>"` (e.g. `zai-glm-52 on host:8000`).
+ * Build a readable, unique model config `id` from the server registry ENTRY id
+ * and the wire model id, formatted as `"<model> on <entry-id>"` (e.g.
+ * `zai-glm-52 on localhost-8000`).
  *
- * The host (including port) makes the id unique per (server, model) pair, so the
- * same model served from two servers yields two distinct entries — enabling manual
- * load balancing. The `vllmModelId` stays the raw wire identity; this is only the
+ * The ENTRY id is the discriminator, because the entry is the server: two
+ * registry entries can share one host (same URL, different credentials — a
+ * supported configuration), and keying on the host would give the same wire
+ * model on both the SAME config id — a duplicate-id collision. The entry id is
+ * unique by construction, stable across renames, and every caller already
+ * holds it. The `vllmModelId` stays the raw wire identity; this is only the
  * extension-facing key (and the picker label when no `displayName` is set).
  */
-export function buildModelId(serverUrl: string, vllmModelId: string): string {
-  let host = serverUrl;
-  try {
-    host = new URL(normalizeServerUrl(serverUrl)).host; // host:port, path/scheme stripped
-  } catch (err) {
-    // Should not happen after normalizeServerUrl, but fall back to the raw string
-    // if it does. The caller (provider.ts) will log the resulting model id as a
-    // warning if discovery fails, so the user will see the issue.
-    const reason = err instanceof Error ? err.message : String(err);
-    console.warn(`[config] buildModelId URL parse failed for "${serverUrl}": ${reason}`);
-  }
-  return `${vllmModelId} on ${host}`;
+export function buildModelId(serverEntryId: string, vllmModelId: string): string {
+  return `${vllmModelId} on ${serverEntryId}`;
 }
 
 /**
  * Find the user override that produced a given VS Code model id.
  *
- * `buildModelInfo` sets a model's id to `override.id`, or — for id-less configs —
- * to a composite derived from `(serverUrl, vllmModelId)` via `buildModelId`
- * (`"<model> on <host>"`). The composite is what makes the same vLLM model on two
- * servers show as two distinct picker entries; this matcher round-trips it back
- * to the id-less config that produced it. An override that only sets `vllmModelId`
- * (no `id`) also yields a model id equal to the server id, so we resolve via the
- * vLLM model id too — matching on `o.id` alone would silently drop the model's
- * `modelModes`.
- *
- * Matching is EXACT ONLY — no fuzzy tiers, no quantization stripping, no
- * cross-org keys. `vllmModelId` is a wire identity: it must exactly equal one
- * of the server's served model ids. The picker id is unique and deduped by
- * construction, and every extension write path stores the exact served id, so
- * exact matching always finds the config. A mismatch means the user hand-edited a
- * config to violate the contract (pointing `vllmModelId` at a name the server
- * does not serve) — that must fail loudly at discovery/T&R, not be silently
- * forgiven and replayed as a request the server will reject.
- *
- * Matching is in tiers:
- * 1. Exact: config key equals the model id.
- * 2. Composite round-trip: an id-less config whose derived `buildModelId` equals
- *    the model id. Only id-less configs participate, so an id'd config that shares
- *    the same wire id + server is never matched by another config's composite.
+ * `buildModelInfo` sets a model's picker id to the override's required `id`.
+ * Matching is EXACT on that key — since `id` is now a required field, there is
+ * no composite round-trip: the picker id IS the config key. Matching is exact
+ * only — no fuzzy tiers, no quantization stripping, no cross-org keys.
  */
 export function resolveOverrideForModel(
   overrides: ModelConfig[],
   modelId: string
 ): ModelConfig | undefined {
-  return overrides.find(o => {
-    const oId = o.id || resolveVllmModelId(o);
-    if (!oId) return false;
-    // Exact match first
-    if (oId === modelId) return true;
-    // Composite round-trip: match a derived "<model> on <host>" id back to the
-    // id-less config that discovery assigned it to.
-    return !o.id && o.serverUrl && buildModelId(o.serverUrl, oId) === modelId;
-  });
+  return overrides.find(o => resolveConfigId(o) === modelId);
 }
 
 /**
- * Resolve the effective server URL and request headers for a model.
+ * Resolve the effective server connection facts (URL + headers + type) for a
+ * model, by looking its `server` id up in the registry.
  *
- * Every model is an independent server: its `requestHeaders` are used only for
- * its own server and never shared, so one server's credentials (e.g. a Cloudflare
- * Access secret) cannot leak to another. A model with no `serverUrl` yields an
- * empty URL — the caller is expected to skip such models (they are unreachable).
+ * Returns `undefined` when the model's `server` ref does not resolve to a
+ * registered entry — the caller treats such models as unreachable. Header
+ * values are used only for this model's own server and never shared, so one
+ * server's credentials cannot leak to another.
  */
 export function resolveServerConfig(
-  override: ModelConfig | undefined
-): { serverUrl: string; requestHeaders: Record<string, string> } {
-  // Delegates so the request path and every identity key are computed identically.
-  const { serverUrl, requestHeaders } = serverIdentity(override?.serverUrl, override?.requestHeaders);
-  return { serverUrl, requestHeaders };
+  override: ModelConfig | undefined,
+  servers: import('./serverRegistry.js').ServerEntry[]
+): { serverUrl: string; requestHeaders: Record<string, string> } | undefined {
+  const eff = override && resolveServerEntry(override, servers);
+  if (!eff) return undefined;
+  return { serverUrl: eff.serverUrl, requestHeaders: eff.requestHeaders };
 }
 
 /**
- * Build a deterministic fingerprint for a server identity from its URL and auth
- * headers. Two model configs that point to the same server (same URL + same
- * headers) produce the same fingerprint and are treated as one logical server;
- * models sharing a URL but with different credentials/scopes are DIFFERENT
- * logical servers and must never share a probe, engine, or status.
- *
- * The fingerprint embeds header VALUES — never send it to an untrusted surface
- * (webview DOM, logs). Use {@link serverGroupKey} for a non-reversible key.
+ * Resolve a model to its registry entry (undefined when the ref dangles).
+ * Thin alias over `resolveServer` — the single implementation, shared with
+ * every other module through serverRegistry.ts.
  */
-export function serverFingerprint(url: string, headers: Record<string, string>): string {
-  // Sort header keys lexicographically — NEVER localeCompare: this feeds a
-  // server-IDENTITY fingerprint (dashboard grouping, engine registry, Deep-Dive
-  // identity). Two machines with different locales must derive the SAME key for
-  // the same server, or a model silently moves server groups between machines.
-  const sorted = Object.entries(headers).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return JSON.stringify([url, sorted]);
+function resolveServerEntry(
+  model: ModelConfig,
+  servers: import('./serverRegistry.js').ServerEntry[]
+): import('./serverRegistry.js').EffectiveServer | undefined {
+  return resolveServer(model.server, servers);
 }
 
-/**
- * Deterministic, non-reversible identity key for a server group. The raw
- * fingerprint embeds header values, so only a hash is exposed to untrusted
- * surfaces (webview DOM, tree item ids). Stable across refreshes as long as the
- * URL and headers don't change.
- */
-export function serverGroupKey(fingerprint: string): string {
-  return 'srv-' + createHash('sha256').update(fingerprint).digest('hex');
-}
-
-/**
- * THE server-identity computation: normalized URL + sanitized headers, plus the
- * fingerprint derived from exactly that pair.
- *
- * `serverFingerprint` is identity-bearing (dashboard grouping, metrics-engine
- * registry, Deep-Dive panel keys, usage-store keys) while `resolveServerConfig`
- * sanitizes headers. Any caller that instead fingerprints the RAW headers derives a
- * different identity for the same server, and the same box then exists twice: two
- * dashboard nodes, or an engine re-keyed under a fingerprint nobody looks up again.
- * Never pair `serverFingerprint` with un-sanitized headers — call this.
- *
- * The fingerprint embeds header values, so surfaces that must not reveal them
- * (webview DOM, tree item ids) hash it further with {@link serverGroupKey}.
- */
-export function serverIdentity(
-  url: string | undefined,
-  headers: Record<string, string> | undefined
-): {
-  serverUrl: string;
-  requestHeaders: Record<string, string>;
-  fingerprint: string;
-} {
-  const serverUrl = url ? normalizeServerUrl(url) : '';
-  const requestHeaders = sanitizeRequestHeaders(headers ?? {});
-  return { serverUrl, requestHeaders, fingerprint: serverFingerprint(serverUrl, requestHeaders) };
-}
-
-/** Server identity of a model's own server fields. See {@link serverIdentity}. */
-export function modelServerIdentity(model: ModelConfig | undefined): ReturnType<typeof serverIdentity> {
-  return serverIdentity(model?.serverUrl, model?.requestHeaders);
-}
+// Server identity is the registry ENTRY ID (ServerEntry.id, unique).
+// The fingerprint/identity machinery this comment block replaces encoded
+// header VALUES into map keys, needed a sha256 wrapper before those keys
+// could touch the DOM, and required re-keying engines whenever auth rotated.
+// Grouping, engines, panels and usage now key by entry id; "is this URL+auth
+// already registered" is answered at write time by entryMatchesConnection
+// (serverRegistry.ts), never by a derived identity.
 
 /**
  * Copy of a model config that is safe for non-trusted surfaces — the output
- * channel and webview state. Credentials (request header *values*) never leave
- * trusted extension code: by default they are replaced with `[REDACTED]` while
- * key names are kept (header names are not secret and keep a log informative);
- * pass `{ strip: true }` to drop the field entirely (webview projection). Used
- * by the Add Server log and the Server Settings webview.
+ * channel and webview state. Models carry no credentials post-registry (auth
+ * lives on the server entry), but a hand-edited settings.json can smuggle the
+ * legacy keys back in, so they are stripped here as defense in depth. Server
+ * entries need no such helper: the settings view builds its webview cards
+ * field by field and never copies `requestHeaders` into webview state.
  */
-export function toPublicModelConfig(
-  config: ModelConfig,
-  opts: { strip?: boolean } = {}
-): ModelConfig {
-  const { requestHeaders, ...rest } = config;
-  if (!requestHeaders || Object.keys(requestHeaders).length === 0) return rest;
-  if (opts.strip) return rest;
-  const redacted: Record<string, string> = {};
-  for (const key of Object.keys(requestHeaders)) redacted[key] = '[REDACTED]';
-  return { ...rest, requestHeaders: redacted };
-}
-
-/**
- * Ensure the server URL has a valid scheme. If the user types `localhost:8000`
- * instead of `http://localhost:8000`, prepend a scheme so `fetch()` doesn't
- * throw `TypeError: fetch failed` on an invalid URL.
- * Heuristic: if the host includes an explicit port (e.g. `host:8000`) we
- * default to `http://` (likely a raw vLLM server); otherwise `https://`
- * (likely a reverse proxy).
- * Also strip trailing slashes and trailing `/v1` so endpoint joins don't
- * produce `//v1/...` or `/v1/v1/models`. The extension adds `/v1` itself
- * when constructing requests, so a user-provided `/v1` suffix is redundant.
- * Returns a warning string if the URL is invalid (e.g. `http://` with no host).
- */
-export function normalizeServerUrl(url: string): string {
-  if (!url) return 'http://localhost:8000';
-  let normalized = url.trim();
-  if (!normalized) return 'http://localhost:8000';
-
-  // Already has a scheme (URI schemes are case-insensitive). Canonicalize it
-  // so all downstream string operations and map keys see one spelling.
-  if (!/^https?:\/\//i.test(normalized)) {
-    // Missing scheme — detect scheme by whether the host has an explicit port.
-    // Has port (e.g. host:8000) → http:// (raw vLLM). No port → https:// (reverse proxy).
-    const hostPart = normalized.split(/[\/?]/)[0];
-    const scheme = /\:\d+$/.test(hostPart) ? 'http' : 'https';
-    normalized = `${scheme}://${normalized}`;
-  } else {
-    normalized = normalized.replace(/^https?:\/\//i, match => match.toLowerCase());
-  }
-
-  // Validate that a host is present (http:// and https:// have no host)
-  // by checking that there's at least one character after the scheme that
-  // isn't a path separator.
-  const schemeMatch = normalized.match(/^(?:https?:)\/\//);
-  if (schemeMatch) {
-    const afterScheme = normalized.slice(schemeMatch[0].length);
-    if (!afterScheme || afterScheme.startsWith('/') || afterScheme.startsWith('?')) {
-      // No host — mark URL as invalid so validateConfig can surface the warning.
-      return 'http://localhost:8000';
-    }
-  }
-
-  // Remove one or more trailing slashes, but keep scheme delimiter intact.
-  while (normalized.endsWith('/') && !normalized.endsWith('://')) {
-    normalized = normalized.slice(0, -1);
-  }
-
-  // Strip a trailing /v1 path segment. Users commonly copy the OpenAI base URL
-  // (e.g. https://api.openai.com/v1) but the extension appends /v1 itself.
-  if (normalized.endsWith('/v1')) {
-    normalized = normalized.slice(0, -3);
-  }
-
-  return normalized;
+export function toPublicModelConfig(config: ModelConfig): ModelConfig {
+  const { requestHeaders: _requestHeaders, apiKey: _apiKey, ...pub } = config as ModelConfig & {
+    requestHeaders?: unknown;
+    apiKey?: unknown;
+  };
+  return pub as ModelConfig;
 }
 
 /**
@@ -608,11 +469,12 @@ export function buildEndpoint(baseUrl: string, path: string): string {
  * are a separate concern — users add those as custom request headers. Returns an
  * empty object when no key is set.
  *
- * ⚠️ **Scope: write/migration paths only.** This function is used only by the
- * Add Server and Update Auth commands (`commands/addServerFlow.ts`, `commands.ts`) to
- * construct headers from user-provided key input. Runtime chat requests do
- * NOT call this — auth comes from the per-model `requestHeaders` in settings.
- * Wiring this into runtime code would silently add or omit the wrong headers.
+ * ⚠️ **Scope: write paths only.** This function is used only by the Add Server,
+ * Update Auth, and migration code paths (`commands/addServerFlow.ts`, `commands.ts`)
+ * to construct headers from user-provided key input. Runtime chat requests do
+ * NOT call this — auth comes from the registry entry's `requestHeaders`,
+ * resolved via `resolveServerConfig`. Wiring this into runtime code would
+ * silently add or omit the wrong headers.
  */
 export function buildAuthHeaders(apiKey?: string): Record<string, string> {
   if (!apiKey) return {};
@@ -622,37 +484,50 @@ export function buildAuthHeaders(apiKey?: string): Record<string, string> {
 }
 
 /**
- * Sanitize custom HTTP headers by stripping blocked names, invalid characters, and CRLF values.
+ * Merge newly entered auth into a server entry's existing request headers.
+ *
+ * Updating auth must NEVER wipe a field the user didn't touch. Replacing the
+ * whole requestHeaders object meant rotating the API key silently deleted any
+ * existing custom headers (e.g. CF-Access proxy headers) — the same class of
+ * silent data loss as the focus-loss bug. Merge semantics: a non-empty key sets
+ * Authorization, entered headers merge on top, and anything left empty keeps the
+ * existing value. Returns the SAME reference when nothing changes so callers can
+ * detect a no-op (clearing auth entirely is done by editing settings.json).
  */
-function sanitizeRequestHeaders(headers: Record<string, string>): Record<string, string> {
-  const blockedHeaders = new Set([
-    'host', 'origin', 'cookie', 'connection', 'content-length',
-    'transfer-encoding', 'upgrade', 'te', 'trailer',
-  ]);
-  const headerNameRe = /^[a-zA-Z0-9!#$%&'*+.^_`|~-]+$/;
-  const sanitized: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    if (blockedHeaders.has(key.toLowerCase())) continue;
-    if (!headerNameRe.test(key)) continue;
-    if (/\r|\n/.test(value)) continue;
-    sanitized[key] = value;
+export function mergeAuthHeaders(
+  existing: Record<string, string> | undefined,
+  incoming: Record<string, string>,
+): Record<string, string> | undefined {
+  if (Object.keys(incoming).length === 0) return existing; // nothing entered → no-op
+  const merged: Record<string, string> = { ...(existing ?? {}) };
+  let changed = false;
+  for (const [k, v] of Object.entries(incoming)) {
+    if (merged[k] !== v) {
+      merged[k] = v;
+      changed = true;
+    }
   }
-  return sanitized;
+  return changed ? merged : existing;
 }
+
+// sameHeaders lives in serverCore.ts (re-exported above): header-map equality
+// for no-op detection, shared with the registry and migration without an
+// import cycle.
 
 /**
  * Read configuration from VS Code settings.
  *
- * Only two genuine globals exist: the per-model `models` array and the
+ * Only genuine globals are the `models` array, the `servers` registry, and the
  * `enableFileLogging` diagnostic toggle. All server, auth, generation, token, and
- * transport settings are per-model and resolved at request time via
- * `resolveServerConfig` / `resolveRequestParams` / `resolveModelSettings`.
+ * transport settings live on models and their registry entries, resolved at
+ * request time via `resolveServerConfig` / `resolveRequestParams` / `resolveModelSettings`.
  */
 export async function getConfig(_context: vscode.ExtensionContext): Promise<VllmConfig> {
   const section = vscode.workspace.getConfiguration('vllm-copilot');
 
   return {
     models: section.get<ModelConfig[]>('models') || [],
+    servers: section.get<import('./serverRegistry.js').ServerEntry[]>('servers') || [],
     enableFileLogging: section.get<boolean>('enableFileLogging') ?? false,
   };
 }
@@ -666,6 +541,41 @@ export async function getConfig(_context: vscode.ExtensionContext): Promise<Vllm
 export function validateConfig(config: VllmConfig): string[] {
   const warnings: string[] = [];
 
+  // Registry-level checks: server ids must be unique (a model references by id,
+  // so a duplicate id is ambiguous), and unknown/blank ids are unreachable.
+  // Comparison is EXACTLY like the resolver's (`s.id === model.server`, no
+  // trimming) — trimming here would green-light a padded ref that dangles at runtime.
+  const serverIds = new Set<string>();
+  // Redundancy check buckets by normalized URL (cheap string key, no hashing
+  // of secrets), then compares sanitized headers within the bucket.
+  const byUrl = new Map<string, { id: string; entry: import('./serverRegistry.js').ServerEntry }[]>();
+  for (const entry of config.servers) {
+    const id = entry.id;
+    if (!id) {
+      warnings.push('A server registry entry is missing its id — models cannot reference it.');
+      continue;
+    }
+    if (serverIds.has(id)) {
+      warnings.push(`Server registry: duplicate id "${id}" — each server entry must have a unique id.`);
+    }
+    serverIds.add(id);
+    // Same URL + same auth = the same connection. Allowed (each id is a valid
+    // write target), but one entry is redundant — warn, never auto-merge.
+    if (entry.serverUrl?.trim()) {
+      const url = normalizeServerUrl(entry.serverUrl);
+      const headers = sanitizeRequestHeaders(entry.requestHeaders ?? {});
+      const bucket = byUrl.get(url) ?? [];
+      // Does any EARLIER entry describe this entry's connection? (Same-id
+      // twins get the duplicate-id warning already — skip the redundancy one.)
+      const twin = bucket.find(prev => prev.id !== id && entryMatchesConnection(prev.entry, url, headers));
+      if (twin) {
+        warnings.push(`Server registry: entries "${twin.id}" and "${id}" are the same server connection (same URL and auth) — one of them is redundant.`);
+      }
+      bucket.push({ id, entry });
+      byUrl.set(url, bucket);
+    }
+  }
+
   // The extension's unique model key is `id` — it is what personalities, the
   // webview, and config updates all use. It must be present and unique. Two
   // presets may legitimately share a `vllmModelId` (same model on different
@@ -674,7 +584,9 @@ export function validateConfig(config: VllmConfig): string[] {
   const seenIds = new Set<string>();
   for (const model of config.models) {
     const display = model.id || model.vllmModelId || '(unnamed model)';
-    const id = model.id?.trim();
+    // Raw comparison: `id` is used verbatim as the key by personalities, the
+    // webview, and config writes — a padded id is a different key, not a typo.
+    const id = model.id;
     if (!id) {
       warnings.push(
         `Model "${display}": missing id — each model entry must have a unique id (the extension key for personalities and settings).`
@@ -686,24 +598,13 @@ export function validateConfig(config: VllmConfig): string[] {
       seenIds.add(id);
     }
 
-    if (!model.serverUrl) {
-      warnings.push(`Model "${display}" has no serverUrl and cannot be reached. Add a serverUrl or run "Add vLLM Server & Model".`);
-    } else {
-      // Warn if normalizeServerUrl silently fell back to localhost (empty host after scheme).
-      const trimmed = model.serverUrl.trim();
-      const afterScheme = trimmed.replace(/^https?:\/\//i, '');
-      if (/^https?:\/\//i.test(trimmed) &&
-          (!afterScheme || afterScheme.startsWith('/') || afterScheme.startsWith('?'))) {
-        warnings.push(`Model "${display}": serverUrl "${model.serverUrl}" is invalid (no host) — falling back to http://localhost:8000.`);
-      }
-    }
-
-    // serverType must be a known backend when present. Missing always means vLLM.
-    if (model.serverType !== undefined && !['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter'].includes(model.serverType)) {
-      warnings.push(
-        `Model "${display}": serverType "${model.serverType}" is not a supported backend ` +
-        `(expected "vllm", "lmstudio", "llamacpp", "ollama", or "openrouter").`
-      );
+    // The model must reference a registered server. A dangling ref is unreachable.
+    // Exact comparison — same match the resolver performs.
+    const ref = model.server;
+    if (!ref) {
+      warnings.push(`Model "${display}" has no server reference and cannot be reached. Set its "server" to a registry entry id.`);
+    } else if (!serverIds.has(ref)) {
+      warnings.push(`Model "${display}" references unknown server "${ref}" — no registry entry has that id. Fix the reference or add the server.`);
     }
 
     // routingMode must be one of the OpenRouter variants when present — anything
@@ -803,10 +704,10 @@ function validateRequestParams(params: Record<string, unknown> | undefined, labe
 }
 
 /**
- * Find the index of a model in the array by its extension `id` and server URL.
- * Matching is on the unique config key ({@link resolveConfigId}) — NOT the vLLM
- * wire id, since several presets may share a `vllmModelId`. Uses normalized URL
- * comparison. Returns -1 if no match is found.
+ * Find the index of a model in the array by its extension `id` and server ref.
+ * Matching is on the unique config key ({@link resolveConfigId}) plus the
+ * `server` registry id — NOT the wire id, since several presets may share a
+ * `vllmModelId`. Returns -1 if no match is found.
  *
  * Shared by {@link replaceModelConfig} (configStore.ts) and the webview's patch
  * path (serverSettingsView.ts) so matching logic stays in one place.
@@ -814,19 +715,16 @@ function validateRequestParams(params: Record<string, unknown> | undefined, labe
 export function findModelConfigIndex(
   models: ModelConfig[],
   configId: string,
-  serverUrl: string,
+  server: string,
 ): number {
-  const normalizedUrl = normalizeServerUrl(serverUrl);
-  return models.findIndex(m => {
-    if (!m.serverUrl) return false;
-    return resolveConfigId(m) === configId && normalizeServerUrl(m.serverUrl) === normalizedUrl;
-  });
+  return models.findIndex(m => resolveConfigId(m) === configId && m.server === server);
 }
 
 /**
- * Locate a model config by `(serverUrl, wire modelId)` — the id the usage
+ * Locate a model config by (server URL, wire modelId) - the id the usage
  * tracker keys on (`vllmModelId`, or legacy `id` when `vllmModelId` is unset).
- * Returns undefined when no configured entry matches. Shared by the dashboard
+ * Resolved through the registry: every entry pointing at that URL matches.
+ * Undefined when no configured entry matches. Shared by the dashboard
  * (cost lookup + display-name labeling) so wire-id matching stays in one place.
  *
  * Distinct from {@link findModelConfigIndex}, which matches on the extension
@@ -834,13 +732,13 @@ export function findModelConfigIndex(
  */
 export function findModelConfig(
   models: ModelConfig[],
+  servers: import('./serverRegistry.js').ServerEntry[],
   serverUrl: string,
   modelId: string,
 ): ModelConfig | undefined {
-  const normalized = normalizeServerUrl(serverUrl);
+  const url = normalizeServerUrl(serverUrl);
   return models.find(m =>
-    resolveVllmModelId(m) === modelId
-    && normalizeServerUrl(m.serverUrl ?? '') === normalized
+    resolveVllmModelId(m) === modelId && resolveServerEntry(m, servers)?.serverUrl === url
   );
 }
 
@@ -855,8 +753,6 @@ export function findModelConfig(
  */
 const CLEARABLE_ON_EMPTY: readonly (keyof ModelConfig)[] = [
   'displayName',
-  'serverDisplayName',
-  'serverType',
   'maxOutputTokens',
   'maxInputTokens',
   'estimateCharsPerToken',

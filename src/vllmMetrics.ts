@@ -15,7 +15,7 @@
  */
 
 import * as vscode from 'vscode';
-import { buildEndpoint, serverIdentity, type ServerType } from './config.js';
+import { buildEndpoint, normalizeServerUrl, sanitizeRequestHeaders, type ServerType } from './config.js';
 import { buildRequestHeaders } from './fetchRetry.js';
 import { resolveRuntimeLimits } from './runtimeLimits.js';
 import {
@@ -380,8 +380,8 @@ export class ServerMetricsEngine {
   /** Whether the OpenRouter account probe last succeeded — for transition logging. */
   private accountProbeSucceeded: boolean | undefined;
 
-  /** Registry key this engine is registered under (identity fingerprint). */
-  private registryKey = '';
+  /** Registry entry id this engine polls (the engine-registry key). */
+  private serverId = '';
 
   constructor(
     private serverUrl: string,
@@ -393,14 +393,19 @@ export class ServerMetricsEngine {
     this.modelIds = [...modelIds];
   }
 
-  /** Set the registry key (called by getMetricsEngine / updateMetricsEngineHeaders). */
-  setRegistryKey(key: string): void {
-    this.registryKey = key;
+  /** Claim the registry slot (called by getMetricsEngine on creation). */
+  setServerId(serverId: string): void {
+    this.serverId = serverId;
   }
 
-  /** The canonical server URL this engine fetches (used for registry re-keying). */
-  getServerUrl(): string {
-    return this.serverUrl;
+  /**
+   * Repoint this engine at the entry's current canonical URL. The engine
+   * registry is keyed by ENTRY ID, which survives a hand-edited `serverUrl`,
+   * so the reuse path must push the URL too — otherwise an entry moved to a
+   * different box in settings keeps getting polled at its old address.
+   */
+  setUrl(serverUrl: string): void {
+    this.serverUrl = serverUrl;
   }
 
   /** Latest aggregated metrics (synchronous, may be null before first poll). */
@@ -478,9 +483,9 @@ export class ServerMetricsEngine {
     this.callbacks = [];
     this.stopPolling();
     // Prevent registry from returning this disposed zombie. The registry is
-    // keyed by identity (URL + headers), so the engine's own key is used.
-    if (this.registryKey && engineRegistry.get(this.registryKey) === this) {
-      engineRegistry.delete(this.registryKey);
+    // keyed by registry entry id, so the engine's own id is used.
+    if (this.serverId && engineRegistry.get(this.serverId) === this) {
+      engineRegistry.delete(this.serverId);
     }
   }
 
@@ -678,53 +683,52 @@ function getPollSettingMs(): number {
 
 // ─── Engine Registry ────────────────────────────────────────────────
 
-/** Module-level map of server identity → engine. Keyed by URL + header
- * fingerprint, NOT URL alone — headers are per-model, so two models sharing a
- * URL with different credentials/scopes are DIFFERENT logical servers and each
- * gets its own engine (one model's credentials must never drive a sibling's
- * metrics). Hand-edited URL spellings of the same server still share one
- * engine because the fingerprint is computed over the canonical URL. */
+/** Module-level map of registry entry id → engine (see {@link
+ * getMetricsEngine}). One engine per `vllm-copilot.servers` entry, never
+ * shared across entries: two entries describing the same box are polled
+ * separately, each with its own credentials — one entry's auth must never
+ * drive another's metrics. */
 const engineRegistry = new Map<string, ServerMetricsEngine>();
 
 /**
- * Get or create a {@link ServerMetricsEngine} for the given server identity.
+ * Get or create the {@link ServerMetricsEngine} for one server registry entry.
  * Engines are shared across the dashboard and deep-dive views via this registry.
- * The engine is disposed-rece when the last subscriber unsubscribes.
+ * The engine is disposed when the last subscriber unsubscribes.
  *
- * The registry is keyed by URL + header fingerprint, so distinct credentials
- * on one URL get independent engines. Re-use with the SAME identity updates
- * backend type/output in place; a different identity is a separate engine.
+ * The registry is keyed by the `vllm-copilot.servers` ENTRY ID — the registry's
+ * unique, user-facing identifier. No URL/header hashing: an entry IS a server,
+ * its id IS its identity, and two entries describing the same box are two
+ * entries (each polled honestly). Re-use refreshes headers/backend type/output
+ * in place, so an Update Auth write lands on the live engine without any
+ * re-keying: the id never moves.
  *
- * @param serverUrl - The vLLM server URL
+ * @param serverId - Registry entry id (the engine-registry key)
+ * @param serverUrl - The server URL (canonicalized internally for fetching)
  * @param requestHeaders - Auth/routing headers for this server
  */
 export function getMetricsEngine(
+  serverId: string,
   serverUrl: string,
   requestHeaders?: Record<string, string>,
   serverType: ServerType = 'vllm',
   modelIds?: string[],
   output?: vscode.OutputChannel,
 ): ServerMetricsEngine {
-  // Key engines by the canonical server URL (scheme added, trailing slash and
-  // trailing /v1 stripped) so hand-edited variants of the same server — e.g.
-  // `http://host:8000`, `http://host:8000/`, `http://host:8000/v1` — share one
-  // engine, plus the header fingerprint so different credential sets on one URL
-  // stay separate. The engine stores the canonical URL for fetching; the key is
-  // its registry identity.
-  const identity = serverIdentity(serverUrl, requestHeaders);
-  const canonical = identity.serverUrl;
-  const key = identity.fingerprint;
-  let engine = engineRegistry.get(key);
+  const canonical = normalizeServerUrl(serverUrl);
+  const headers = sanitizeRequestHeaders(requestHeaders ?? {});
+  let engine = engineRegistry.get(serverId);
   if (!engine) {
-    engine = new ServerMetricsEngine(canonical, identity.requestHeaders, serverType, modelIds, output);
-    engine.setRegistryKey(key);
-    engineRegistry.set(key, engine);
+    engine = new ServerMetricsEngine(canonical, headers, serverType, modelIds, output);
+    engine.setServerId(serverId);
+    engineRegistry.set(serverId, engine);
   } else {
-    // Headers need no refresh: they are part of the registry key, so an engine
-    // found here already holds exactly the sanitized set this lookup describes.
-    // Update backend type on re-use so a dashboard/deep-dive opened for a
-    // non-vLLM server probes online via that backend's own endpoint, even if the
-    // engine was first created before the type was known.
+    // The entry id is the key, so every field behind it is ordinary mutable
+    // state: push the caller's set on every lookup. Update Auth writes
+    // settings, then any view refresh or explicit refreshEngineHeaders carries
+    // the new auth; a hand-edited serverUrl/serverType follows on the next
+    // refresh the same way. No re-keying — the id never moves.
+    engine.setUrl(canonical);
+    engine.setHeaders(headers);
     engine.setServerType(serverType);
     engine.setOutput(output);
   }
@@ -737,43 +741,18 @@ export function getMetricsEngine(
 }
 
 /**
- * Move one metrics engine onto its new identity after Update Auth, if it exists.
- * Unlike {@link getMetricsEngine}, this never creates an engine — it exists so
- * header-only updates don't leak a zero-subscriber registry entry. No-op when no
- * engine is registered under the PREVIOUS identity.
- *
- * The caller passes the headers of a single model (before → after), because
- * Update Auth MERGES into each model's existing headers: models on one URL that
- * already differ keep differing, so each changed identity gets its own call.
- * Stamping one model's headers on every engine of the URL would hand model A's
- * credentials to model B's open Deep-Dive.
- *
- * When the transition lands on an identity another engine already owns (two
- * identities converging on one credential set), the existing engine wins and this
- * one is left unregistered: any view still subscribed to it keeps being served
- * (with the new auth) and it retires itself when the last of them unsubscribes.
- * A Deep-Dive panel needs no help here — it holds no subscription between
- * readings, so re-opening it picks the engine for the new identity.
- *
- * @param serverUrl - The vLLM server URL (canonicalized internally)
- * @param previousHeaders - The model's headers before the update (its old identity)
- * @param nextHeaders - Its new headers (sanitized internally, as at request time)
+ * Push freshly rotated credentials into the engine of one registry entry, if it
+ * exists. Update Auth must never CREATE a zero-subscriber engine (an engine only
+ * exists while a dashboard/deep-dive is subscribed), so this is update-if-present
+ * by entry id — no old-identity lookup, no re-keying: the id is stable across
+ * any header change.
  */
-export function updateMetricsEngineHeaders(
-  serverUrl: string,
-  previousHeaders: Record<string, string> | undefined,
+export function refreshEngineHeaders(
+  serverId: string,
   nextHeaders: Record<string, string>,
 ): void {
-  const oldKey = serverIdentity(serverUrl, previousHeaders).fingerprint;
-  const engine = engineRegistry.get(oldKey);
-  if (!engine) return;
-  const identity = serverIdentity(serverUrl, nextHeaders);
-  engine.setHeaders(identity.requestHeaders);
-  const newKey = identity.fingerprint;
-  if (oldKey === newKey) return;
-  engineRegistry.delete(oldKey);
-  engine.setRegistryKey(newKey);
-  if (!engineRegistry.has(newKey)) engineRegistry.set(newKey, engine);
+  const engine = engineRegistry.get(serverId);
+  if (engine) engine.setHeaders(sanitizeRequestHeaders(nextHeaders));
 }
 
 // ─── Unified Fetch ──────────────────────────────────────────────────

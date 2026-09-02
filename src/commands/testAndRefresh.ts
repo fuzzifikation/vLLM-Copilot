@@ -7,8 +7,9 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveServerType, modelServerIdentity } from '../config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveServerType } from '../config.js';
 import type { ModelConfig } from '../config.js';
+import type { ServerEntry } from '../serverRegistry.js';
 import type { VllmModel } from '../types.js';
 
 import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../messageConverter.js';
@@ -44,27 +45,27 @@ interface ServerGroup {
 }
 
 /**
- * Group model configs by server identity (normalized URL + effective headers) so
- * each unique server is probed once instead of N times. Models WITHOUT a serverUrl
- * each get their own singleton group so they can be reported individually — they
- * would otherwise all share the empty-URL identity.
+ * Group model configs by the registry ENTRY their `server` ref points at, so
+ * each unique server is probed once instead of N times — the entry id IS the
+ * server identity. Models whose `server` reference does not resolve each get
+ * their own singleton group so they can be reported individually.
  * @internal Exported for testing.
  */
-export function groupModelsByServer(models: ModelConfig[]): ServerGroup[] {
+export function groupModelsByServer(models: ModelConfig[], servers: ServerEntry[]): ServerGroup[] {
   const groups = new Map<string, ServerGroup>();
   models.forEach((model, index) => {
-    if (!model.serverUrl) {
+    const resolved = resolveServerConfig(model, servers);
+    if (!resolved) {
       groups.set(`__nourl__${index}`, { serverUrl: '', requestHeaders: {}, models: [model] });
       return;
     }
-    const identity = modelServerIdentity(model);
-    const existing = groups.get(identity.fingerprint);
+    const existing = groups.get(model.server);
     if (existing) {
       existing.models.push(model);
     } else {
-      groups.set(identity.fingerprint, {
-        serverUrl: identity.serverUrl,
-        requestHeaders: identity.requestHeaders,
+      groups.set(model.server, {
+        serverUrl: resolved.serverUrl,
+        requestHeaders: resolved.requestHeaders,
         models: [model],
       });
     }
@@ -105,10 +106,10 @@ function checkNetworkGatingSettings(): string[] {
 /**
  * Test all configured models and refresh the model list.
  *
- * Models are grouped by unique server (normalized URL + auth headers),
- * so each server is queried exactly once via GET /v1/models. The output
- * is a single consolidated status message — one line per server — rather
- * than one popup per model config.
+ * Models are grouped by the registry ENTRY their `server` field references
+ * (entry id is the identity), so each entry is queried exactly once via
+ * GET /v1/models. The output is a single consolidated status message — one
+ * line per entry — rather than one popup per model config.
  *
  * If a server is reachable and at least one configured model matches a
  * served model, that's reported as "OK" and the matching model(s) go into
@@ -128,6 +129,7 @@ export function registerTestAndRefreshModelsCommand(
   return vscode.commands.registerCommand('vllm-copilot.testAndRefreshModels', async () => {
     const cfg = await getConfig(context);
     const models = cfg.models || [];
+    const servers = cfg.servers || [];
 
     if (models.length === 0) {
       const pick = await vscode.window.showInformationMessage(
@@ -138,14 +140,17 @@ export function registerTestAndRefreshModelsCommand(
       return;
     }
 
-    // ── 1. Group models by unique server fingerprint (URL + auth headers) ──
-    // Servers with identical URL and headers share one fetch instead of N.
-    const groups = groupModelsByServer(models);
+    // ── 1. Group models by their referenced registry entry (see the header
+    // comment: one probe batch per entry, never merged across entries) ──
+    // Models on two entries that merely share a connection probe separately:
+    // two entries are two servers by doctrine, however redundant validateConfig
+    // calls them.
+    const groups = groupModelsByServer(models, servers);
 
     // ── 2. Test each unique server once (parallel) ──
     const serverTasks = groups.map(async (group): Promise<ServerTestResult> => {
       if (!group.serverUrl) {
-        // Models without a serverUrl — they cannot be tested.
+        // Models whose server reference does not resolve — they cannot be tested.
         return {
           serverUrl: '',
           status: 'error',
@@ -153,9 +158,9 @@ export function registerTestAndRefreshModelsCommand(
           matched: [],
           parked: group.models.map(m => ({
             config: m,
-            vllmModelId: resolveVllmModelId(m) || m.id || '(unnamed)',
+            vllmModelId: resolveVllmModelId(m) ?? '(unnamed)',
           })),
-          errorMessage: 'No serverUrl configured',
+          errorMessage: 'No resolvable server configured',
         };
       }
 
@@ -173,7 +178,7 @@ export function registerTestAndRefreshModelsCommand(
             matched: [],
             parked: group.models.map(m => ({
               config: m,
-              vllmModelId: resolveVllmModelId(m) || m.id || '(unnamed)',
+              vllmModelId: resolveVllmModelId(m) ?? '(unnamed)',
             })),
             errorMessage: `Authentication failed (HTTP ${resp.status})`,
           };
@@ -187,7 +192,7 @@ export function registerTestAndRefreshModelsCommand(
             matched: [],
             parked: group.models.map(m => ({
               config: m,
-              vllmModelId: resolveVllmModelId(m) || m.id || '(unnamed)',
+              vllmModelId: resolveVllmModelId(m) ?? '(unnamed)',
             })),
             errorMessage: `HTTP ${resp.status}`,
           };
@@ -206,7 +211,7 @@ export function registerTestAndRefreshModelsCommand(
         const parked: Array<{ config: ModelConfig; vllmModelId: string }> = [];
 
         for (const model of group.models) {
-          const vllmModelId = resolveVllmModelId(model) || model.id || '';
+          const vllmModelId = resolveVllmModelId(model) ?? '';
           if (!vllmModelId) {
             parked.push({ config: model, vllmModelId: '(unnamed)' });
             continue;
@@ -222,7 +227,7 @@ export function registerTestAndRefreshModelsCommand(
             let ctxError: string | undefined;
             try {
               const limits = await resolveRuntimeLimits(
-                resolveServerType(model),
+                resolveServerType(model, servers),
                 group.serverUrl,
                 group.requestHeaders ?? {},
                 vllmModelId
@@ -273,7 +278,7 @@ export function registerTestAndRefreshModelsCommand(
           matched: [],
           parked: group.models.map(m => ({
             config: m,
-            vllmModelId: resolveVllmModelId(m) || m.id || '(unnamed)',
+            vllmModelId: resolveVllmModelId(m) ?? '(unnamed)',
           })),
           // A certificate-ish failure gets the short suggestion: network test +
           // maybe the setting. One bucket, no deeper classification.
@@ -292,9 +297,9 @@ export function registerTestAndRefreshModelsCommand(
     // server = one line, not ten popups. Unreachable/auth-failed servers are
     // grouped into a single failure popup instead of one toast per server.
     const okResults = serverResults.filter(r => r.status === 'ok');
-    // Only server-ful errors are genuine network failures. A server-less config
-    // (no serverUrl) is a configuration error, not a network problem — it must not
-    // trigger the network-gating warning or the deep-diagnostic offer.
+    // Only server-ful errors are genuine network failures. A config whose server
+    // ref does not resolve is a configuration error, not a network problem — it
+    // must not trigger the network-gating warning or the deep-diagnostic offer.
     const errResults = serverResults.filter(r => r.status === 'error' && r.serverUrl);
     const serverlessResults = serverResults.filter(r => r.status === 'error' && !r.serverUrl);
     const anyFailure = errResults.length > 0;
@@ -357,15 +362,16 @@ export function registerTestAndRefreshModelsCommand(
       );
     }
 
-    // 3b2. ONE warning for server-less configs (configuration error, not network).
+    // 3b2. ONE warning for configs with an unresolvable server (configuration
+    //    error, not network).
     if (serverlessResults.length > 0) {
       const lines = serverlessResults.flatMap(r =>
         r.modelConfigs.map(c =>
-          `✗ ${c.displayName || c.id || resolveVllmModelId(c) || '(unnamed)'} — no serverUrl configured`
+          `✗ ${c.displayName || c.id || resolveVllmModelId(c) || '(unnamed)'} — no resolvable server configured`
         )
       );
       vscode.window.showWarningMessage(
-        lines.length === 1 ? lines[0] : `Models without a serverUrl:\n${lines.join('\n')}`
+        lines.length === 1 ? lines[0] : `Models without a resolvable server:\n${lines.join('\n')}`
       );
     }
 
@@ -434,7 +440,7 @@ export function registerTestAndRefreshModelsCommand(
                 // Use the first model's resolved headers for the diagnostic.
                 (() => {
                   const firstCfg = firstFailed.modelConfigs[0];
-                  return firstCfg ? resolveServerConfig(firstCfg).requestHeaders : {};
+                  return (firstCfg && resolveServerConfig(firstCfg, servers)?.requestHeaders) || {};
                 })(),
               );
               outputChannel.appendLine(formatReport(report));

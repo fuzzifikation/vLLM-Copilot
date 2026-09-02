@@ -26,7 +26,7 @@
 
 import * as vscode from 'vscode';
 import type { ModelConfig } from './config.js';
-import { resolveConfigId } from './config.js';
+import { resolveConfigId, resolveVllmModelId } from './config.js';
 import { resolveOutputLengthVector } from './tokenBudget.js';
 import { loadModelPresets, findPresetForModel, type ModelPreset } from './commands/presets.js';
 import { patchModelConfig, readModels } from './configStore.js';
@@ -38,7 +38,7 @@ const MIGRATION_FLAG = 'vllmCopilot.outputLengthMigration.v1';
 export interface OutputLengthProposal {
   /** Config entry identity (patch lookup key). */
   id: string;
-  serverUrl: string;
+  server: string;
   /** What to show the user in the notification/preview. */
   displayName: string;
   /** Current value (scalar, or undefined = default) — for the before/after preview. */
@@ -49,7 +49,7 @@ export interface OutputLengthProposal {
   /** Preset filename when source === 'preset'. */
   sourceFile?: string;
   /** Field-level patch for `patchModelConfig` (maxOutputTokens + stripped layers). */
-  updates: Omit<Partial<ModelConfig>, 'id' | 'serverUrl'>;
+  updates: Omit<Partial<ModelConfig>, 'id' | 'server'>;
 }
 
 /** Sanitize an arbitrary candidate list into a menu: positive ints, dedupe, descending, ≤8. */
@@ -91,7 +91,7 @@ export function stripModeMaxTokens(
 /**
  * Build the per-model upgrade proposals (pure, offline, no vscode APIs).
  * Entries that already hold a vector, or for which no honest menu can be
- * built, are skipped silently. Malformed entries (no id / no serverUrl) are
+ * built, are skipped silently. Malformed entries (no id / no server) are
  * skipped — the store would refuse them anyway.
  */
 export function planOutputLengthMigration(
@@ -102,15 +102,15 @@ export function planOutputLengthMigration(
   for (const m of models) {
     if (Array.isArray(m.maxOutputTokens)) continue; // already a menu
     const id = resolveConfigId(m);
-    if (!id?.trim() || !m.serverUrl?.trim()) continue;
+    if (!id?.trim() || !m.server?.trim()) continue;
 
-    const updates: Omit<Partial<ModelConfig>, 'id' | 'serverUrl'> = {};
+    const updates: Omit<Partial<ModelConfig>, 'id' | 'server'> = {};
 
     // 1. Preset vector wins outright (user decision — even over a higher user
     //    scalar). The preset's DECLARED order is kept (head = its default);
     //    sanitization only filters/dedupes/caps. Fewer than 2 survivors is not
     //    a menu — fall through to synthesis.
-    const wireId = m.vllmModelId || m.id;
+    const wireId = resolveVllmModelId(m);
     const preset = wireId ? findPresetForModel(presets as ModelPreset[], wireId) : undefined;
     const presetMenu = Array.isArray(preset?.config.maxOutputTokens)
       ? resolveOutputLengthVector(preset!.config.maxOutputTokens as number[])
@@ -120,7 +120,7 @@ export function planOutputLengthMigration(
       updates.maxOutputTokens = presetMenu;
       if (strippedModes !== undefined) updates.modelModes = strippedModes as Partial<ModelConfig>['modelModes'];
       proposals.push({
-        id, serverUrl: m.serverUrl, displayName: m.displayName || id,
+        id, server: m.server, displayName: m.displayName || id,
         from: m.maxOutputTokens, to: presetMenu,
         source: 'preset', sourceFile: preset.sourceFile, updates,
       });
@@ -147,7 +147,7 @@ export function planOutputLengthMigration(
       updates.defaultParams = (Object.keys(restParams).length > 0 ? restParams : '') as Partial<ModelConfig>['defaultParams'];
     }
     proposals.push({
-      id, serverUrl: m.serverUrl, displayName: m.displayName || id,
+      id, server: m.server, displayName: m.displayName || id,
       from: m.maxOutputTokens, to: synthesized, source: 'synthesized', updates,
     });
   }
@@ -178,7 +178,7 @@ async function applyProposals(proposals: readonly OutputLengthProposal[]): Promi
   // Sequential on purpose: patchModelConfig is read-modify-write on the whole
   // models array — parallel calls would clobber each other's writes.
   for (const p of proposals) {
-    await patchModelConfig({ id: p.id, serverUrl: p.serverUrl }, p.updates);
+    await patchModelConfig({ id: p.id, server: p.server }, p.updates);
   }
 }
 

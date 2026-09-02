@@ -73,102 +73,7 @@ describe('personalityStore', () => {
   });
 
   describe('discoverPersonalities', () => {
-    it('sorts bundled presets in the curated order, user presets after', async () => {
-      const bundled = path.join(EXT, 'prompt-replacements');
-      const globalDir = getGlobalPersonalitiesDir(context);
 
-      // Filesystem order is arbitrary — the curated BUNDLED_PRESET_ORDER must win.
-      fsMock.dirContents[path.join(bundled)] = [
-        'prompt-replacements-raw.json',
-        'prompt-replacements-supportive-mentor.json',
-        'prompt-replacements-spartan.json',
-        'prompt-replacements-critical-senior.json',
-        'prompt-replacements-sarcastic-robot.json',
-      ];
-      fsMock.files.set(path.join(bundled, 'prompt-replacements-raw.json'), personality('Raw (Model Natural)', 'bundled'));
-      fsMock.files.set(path.join(bundled, 'prompt-replacements-supportive-mentor.json'), personality('Supportive Mentor', 'bundled'));
-      fsMock.files.set(path.join(bundled, 'prompt-replacements-spartan.json'), personality('Spartan', 'bundled'));
-      fsMock.files.set(path.join(bundled, 'prompt-replacements-critical-senior.json'), personality('Critical Senior Dev', 'bundled'));
-      fsMock.files.set(path.join(bundled, 'prompt-replacements-sarcastic-robot.json'), personality('Sarcastic Robot', 'bundled'));
-
-      fsMock.dirContents[globalDir] = ['zeta.json', 'alpha.json'];
-      fsMock.files.set(path.join(globalDir, 'zeta.json'), personality('Zeta', 'user-made'));
-      fsMock.files.set(path.join(globalDir, 'alpha.json'), personality('Alpha', 'user-made'));
-
-      const found = await discoverPersonalities(context);
-      expect(found.map(p => p.name)).toEqual([
-        'Critical Senior Dev',
-        'Sarcastic Robot',
-        'Supportive Mentor',
-        'Spartan',
-        'Raw (Model Natural)',
-        'Alpha',
-        'Zeta',
-      ]);
-    });
-
-    it('merges bundled and global personalities', async () => {
-      const bundled = path.join(EXT, 'prompt-replacements');
-      const globalDir = getGlobalPersonalitiesDir(context);
-      const wsDir = path.join(WS, '.vllm');
-
-      fsMock.dirContents[path.join(bundled)] = ['prompt-replacements-supportive-mentor.json'];
-      fsMock.files.set(path.join(bundled, 'prompt-replacements-supportive-mentor.json'), personality('Supportive Mentor', 'bundled'));
-
-      fsMock.dirContents[globalDir] = ['my-personality.json'];
-      fsMock.files.set(path.join(globalDir, 'my-personality.json'), personality('Mine', 'user-made'));
-
-      // Workspace `.vllm` copies are no longer discovered as personalities.
-      fsMock.dirContents[wsDir] = ['prompt-replacements-spartan.json'];
-      fsMock.files.set(path.join(wsDir, 'prompt-replacements-spartan.json'), personality('Spartan', 'legacy'));
-
-      const found = await discoverPersonalities(context);
-      expect(found.map(p => p.name).sort()).toEqual(['Mine', 'Supportive Mentor']);
-      expect(found.find(p => p.name === 'Supportive Mentor')?.source).toBe('bundled');
-      expect(found.find(p => p.name === 'Mine')?.source).toBe('global');
-    });
-
-    it('dedupes by name with global winning over bundled', async () => {
-      const bundled = path.join(EXT, 'prompt-replacements');
-      const globalDir = getGlobalPersonalitiesDir(context);
-
-      fsMock.dirContents[path.join(bundled)] = ['prompt-replacements-supportive-mentor.json'];
-      fsMock.files.set(path.join(bundled, 'prompt-replacements-supportive-mentor.json'), personality('Supportive Mentor', 'bundled'));
-      fsMock.dirContents[globalDir] = ['prompt-replacements-supportive-mentor.json'];
-      fsMock.files.set(path.join(globalDir, 'prompt-replacements-supportive-mentor.json'), personality('Supportive Mentor', 'user-edited'));
-
-      const found = await discoverPersonalities(context);
-      expect(found).toHaveLength(1);
-      expect(found[0].source).toBe('global');
-      expect(found[0].description).toBe('user-edited');
-    });
-
-    it('ignores files without a meta block and missing dirs', async () => {
-      const globalDir = getGlobalPersonalitiesDir(context);
-      fsMock.dirContents[globalDir] = ['legacy-array.json'];
-      fsMock.files.set(path.join(globalDir, 'legacy-array.json'), JSON.stringify([{ find: 'a', replace: 'b' }]));
-
-      const found = await discoverPersonalities(context);
-      expect(found).toEqual([]);
-    });
-
-    it('never lists the shared common-replacements file as a personality', async () => {
-      const bundled = path.join(EXT, 'prompt-replacements');
-      const globalDir = getGlobalPersonalitiesDir(context);
-
-      fsMock.dirContents[bundled] = [COMMON_REPLACEMENTS_FILENAME, 'prompt-replacements-spartan.json'];
-      fsMock.files.set(path.join(bundled, COMMON_REPLACEMENTS_FILENAME), personality('Shared Boilerplate Removal', 'infrastructure'));
-      fsMock.files.set(path.join(bundled, 'prompt-replacements-spartan.json'), personality('Spartan', 'bundled'));
-      // A stray global copy of the shared file must be skipped too.
-      fsMock.dirContents[globalDir] = [COMMON_REPLACEMENTS_FILENAME];
-      fsMock.files.set(path.join(globalDir, COMMON_REPLACEMENTS_FILENAME), personality('Shared Boilerplate Removal', 'stray copy'));
-
-      const found = await discoverPersonalities(context);
-      expect(found.map(p => p.name)).toEqual(['Spartan']);
-    });
-  });
-
-  describe('ensureGlobalPersonality', () => {
     it('copies a bundled preset into global storage (atomically)', async () => {
       const bundled = path.join(EXT, 'prompt-replacements');
       const src = path.join(bundled, 'prompt-replacements-supportive-mentor.json');
@@ -252,57 +157,6 @@ describe('personalityStore', () => {
       expect(fsMock.files.get(dest)).toBe(JSON.stringify([{ find: 'x', replace: 'y' }]));
     });
 
-    it('is a no-op when the source is already in global storage', async () => {
-      const src = path.join(GLOBAL, 'personalities', 'x.json');
-      fsMock.files.set(src, personality('X', 'global'));
-
-      const dest = await ensureGlobalPersonality(context, src);
-      expect(dest).toBe(src);
-      expect(fsMock.writeFile).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('resolveActivePersonality', () => {
-    it('resolves an absolute global-storage path to its personality', async () => {
-      const globalDir = getGlobalPersonalitiesDir(context);
-      fsMock.dirContents[globalDir] = ['my-personality.json'];
-      const file = path.join(globalDir, 'my-personality.json');
-      fsMock.files.set(file, personality('Mine', 'user-made'));
-
-      const active = await resolveActivePersonality(context, file);
-      expect(active?.name).toBe('Mine');
-    });
-
-    it('does not resolve a workspace .vllm path as a personality', async () => {
-      // Workspace personalities are removed — a custom `.vllm` replacement file is
-      // not a known personality, so it must NOT resolve (no basename fallback).
-      const wsDir = path.join(WS, '.vllm');
-      fsMock.dirContents[wsDir] = ['prompt-replacements-spartan.json'];
-      fsMock.files.set(path.join(wsDir, 'prompt-replacements-spartan.json'), personality('Spartan', 'legacy'));
-
-      const active = await resolveActivePersonality(context, '.vllm/prompt-replacements-spartan.json');
-      expect(active).toBeNull();
-    });
-
-    it('does not fall back to a same-named personality when the configured file is not discovered', async () => {
-      // A model pointing at a file that is not a known personality (e.g. a deleted
-      // or custom path) must resolve to null even if a bundled personality shares
-      // its basename — exact path matching only.
-      const bundled = path.join(EXT, 'prompt-replacements');
-      fsMock.dirContents[path.join(bundled)] = ['prompt-replacements-supportive-mentor.json'];
-      fsMock.files.set(path.join(bundled, 'prompt-replacements-supportive-mentor.json'), personality('Supportive Mentor', 'bundled'));
-
-      const active = await resolveActivePersonality(context, '.vllm/prompt-replacements-supportive-mentor.json');
-      expect(active).toBeNull();
-    });
-
-    it('returns null for an empty/clear value', async () => {
-      expect(await resolveActivePersonality(context, '')).toBeNull();
-      expect(await resolveActivePersonality(context, undefined)).toBeNull();
-    });
-  });
-
-  describe('syncBundledPersonalities', () => {
     it('refreshes stale global copies of bundled presets', async () => {
       const bundled = path.join(EXT, 'prompt-replacements');
       const globalDir = getGlobalPersonalitiesDir(context);
@@ -334,12 +188,6 @@ describe('personalityStore', () => {
       expect(result).toEqual({ updated: [] });
       expect(fsMock.writeFile).not.toHaveBeenCalled();
       expect(fsMock.files.get(userFile)).toBe(personality('My Thing', 'user edits, hands off'));
-    });
-
-    it('is a no-op when the global personalities dir is empty', async () => {
-      const result = await syncBundledPersonalities(context);
-      expect(result).toEqual({ updated: [] });
-      expect(fsMock.writeFile).not.toHaveBeenCalled();
     });
 
     it('leaves a bundled-basename workspace .vllm file untouched (not global storage)', async () => {

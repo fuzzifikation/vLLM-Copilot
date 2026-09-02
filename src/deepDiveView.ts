@@ -12,16 +12,17 @@
 import * as vscode from 'vscode';
 import { getMetricsEngine } from './vllmMetrics.js';
 import type { ServerRawData, ServerMetrics } from './vllmMetrics.js';
-import { normalizeServerUrl, serverGroupKey, serverIdentity, type ServerType } from './config.js';
+import { normalizeServerUrl, type ServerType } from './config.js';
 
 interface ReadyMessage {
   type: 'ready';
 }
 
-/** Singleton — only one deep-dive panel per server at a time. The URL rides
- *  alongside so a rename can retitle every panel of that server by URL match
- *  (the map key is a one-way identity hash, not reversible to a URL), and
- *  `refresh` lets the command retake the reading of an already-open panel. */
+/** Singleton — only one deep-dive panel per server registry entry at a time.
+ *  The key is the entry id (the same key the metrics engine uses); the URL
+ *  rides alongside so a rename can retitle every panel whose entry shares the
+ *  URL (§5 fans the display name out per URL), and `refresh` lets the command
+ *  retake the reading of an already-open panel. */
 const openPanels = new Map<string, { panel: vscode.WebviewPanel; url: string; refresh: () => void }>();
 
 /**
@@ -39,7 +40,11 @@ export function updateDeepDiveTitle(serverUrl: string, displayName?: string): vo
 }
 
 export function openDeepDive(
+  /** Registry entry id — the panel key and the metrics-engine key. */
+  serverId: string,
+  /** Normalized server URL (caller normalizes; panels display it). */
   serverUrl: string,
+  /** Sanitized auth headers for this entry's credential. */
   requestHeaders: Record<string, string>,
   serverType: ServerType,
   context: vscode.ExtensionContext,
@@ -47,11 +52,10 @@ export function openDeepDive(
   /** User-set server label — used in the panel title instead of the raw URL. */
   displayName?: string,
 ): void {
-  // Panels are keyed by server IDENTITY (normalized URL + header fingerprint)
-  // so `http://host:8000`, `http://host:8000/`, and `http://host:8000/v1` share
-  // one panel — matching the metrics engine — while two identities on one URL
-  // (different per-model credentials) get separate panels with their own auth.
-  const panelKey = serverGroupKey(serverIdentity(serverUrl, requestHeaders).fingerprint);
+  // Panels are keyed by the registry ENTRY id — the same key the metrics
+  // engine uses — so one entry gets exactly one panel and one engine, and two
+  // entries pointing at one URL (different credentials) get separate panels.
+  const panelKey = serverId;
   // If a panel for this server is already open, reveal it. Update the title as
   // well — the title is only set at creation, so a rename while the panel stays
   // open (retainContextWhenHidden) would otherwise show the stale label.
@@ -103,7 +107,7 @@ export function openDeepDive(
     reading?.dispose();
     reading = undefined;
 
-    const engine = getMetricsEngine(serverUrl, requestHeaders, serverType, undefined, outputChannel);
+    const engine = getMetricsEngine(serverId, serverUrl, requestHeaders, serverType, undefined, outputChannel);
     // Cache first so the panel paints instantly; it can still be stale (or
     // missing), so the live cycle below is what actually refreshes the view.
     const cached = engine.getCachedRaw();

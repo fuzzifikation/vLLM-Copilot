@@ -8,7 +8,6 @@ Thanks for looking at the code. Here's how to contribute without wasting everyon
 npm install        # Install dependencies
 npm run compile    # TypeScript compile
 npm test           # Run test suite
-npm run test:coverage  # Run with coverage
 code .             # Launch VS Code, F5 to debug
 ```
 

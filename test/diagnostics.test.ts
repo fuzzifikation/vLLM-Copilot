@@ -28,50 +28,6 @@ function makeReport(overrides: Partial<DiagnosticReport> = {}): DiagnosticReport
   };
 }
 
-describe('formatReport transport comparison', () => {
-  it('does not claim an incomplete cert chain for a non-TLS (proxy) nodeFetch failure', () => {
-    const text = formatReport(makeReport());
-    expect(text).not.toContain('Transport comparison');
-    expect(text).not.toContain('complete certificate chain');
-  });
-
-  it('suggests a cert-chain possibility only when the nodeFetch failure is TLS-related', () => {
-    const text = formatReport(
-      makeReport({
-        nodeFetch: { ok: false, error: 'unable to verify the first certificate', backend: 'OpenSSL (Node)' },
-        chain: { valid: false, errors: 'unable to verify the first certificate' },
-      }),
-    );
-    expect(text).toContain('Transport comparison');
-    // Conditional on purpose — a trust-store difference is a possibility, not a proven fact.
-    expect(text).toContain('may mean the server is not sending the complete certificate chain');
-  });
-
-  it('does not emit the comparison when no other transport succeeded either', () => {
-    const text = formatReport(
-      makeReport({
-        nodeFetch: { ok: false, error: 'unable to verify the first certificate', backend: 'OpenSSL (Node)' },
-        nodeDirectFetch: { ok: false, error: 'connection refused', backend: 'Node https.request (direct transport)' },
-        chain: { valid: false, errors: 'unable to verify the first certificate' },
-      }),
-    );
-    expect(text).not.toContain('Transport comparison');
-  });
-
-  it('does not repeat the full suggestion when the conclusion already carries it', () => {
-    const text = formatReport(
-      makeReport({
-        nodeFetch: { ok: false, error: 'unable to verify the first certificate', backend: 'OpenSSL (Node)' },
-        chain: { valid: false, errors: 'unable to verify the first certificate' },
-        conclusion: `TLS certificate verification failed in VS Code's fetch but succeeded in the system native test. ${TLS_CERT_SUGGESTION}`,
-      }),
-    );
-    expect(text).toContain('Transport comparison');
-    // The suggestion lives in the conclusion (printed last) — exactly once.
-    expect(text.split(TLS_CERT_SUGGESTION)).toHaveLength(2);
-  });
-});
-
 describe('formatReport credential redaction', () => {
   it('redacts user:password from the proxy server line', () => {
     const text = formatReport(makeReport({

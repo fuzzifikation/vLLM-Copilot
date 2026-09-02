@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.36.0-rc0 — The server registry
+
+### Added
+
+- **Servers are a first-class thing you can manage.** A new **vLLM-Copilot: Add Server (no model)** command registers a server on its own, and **Remove Server** sits in the Dashboard's server context menu. Both keep the model list and the registry in sync, so an entry never disappears from under a model.
+
+### Changed
+
+- **Server identity is the registry entry id.** Two entries that share a URL and credentials are separate servers: each gets its own Dashboard node, its own polling, and its own Deep-Dive panel. The backend-type dropdown changes only the server you picked, and Remove Server deletes exactly the entry you right-clicked, never a sibling that merely shares its URL (it still refuses while any model references the entry). Server URLs have one identity: `http://EXAMPLE.com`, `http://example.com`, and `http://example.com:80` name the same server. Model ids created by the Add flow now read `<model> on <server entry id>` (e.g. `... on localhost-8000`) instead of `<model> on <host>` — one host can carry several entries, so the host could hand two models the same id. Existing ids are untouched.
+
+- **Breaking: servers are now a registry.** Server connection settings (`serverUrl`, `requestHeaders`, `serverType`, display label) moved out of each model entry into a new top-level `vllm-copilot.servers` setting; every model entry now has a required `id` and `server` (the registry entry's id) instead. On first start, existing configs migrate automatically: models sharing the same URL + headers become one entry each, credentials that differ stay separate servers. When models sharing one connection declare different backends, the migration warns and names them instead of deciding silently. Models no longer carry `serverUrl`, `requestHeaders`, `serverType`, or `serverDisplayName`. The migration never deletes a settings value: a hand-edited leftover server or model entry is kept and reported in the Output channel. Rolling back means restoring `settings.json` by hand or staying on an older VSIX — there is deliberately no in-product Undo, because restoring the old shape would leave settings this version cannot read.
+
+### Fixed
+
+- **Model settings now live in one place: User settings.** The setting is declared application-scoped. Before, a copy of `vllm-copilot.models` in a workspace `.vscode/settings.json` shadowed every read while all writes went to User settings: add/edit/auth commands wrote where nothing was read.
+
 ## v1.35.2
 
 ### Added

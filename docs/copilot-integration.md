@@ -165,7 +165,7 @@ terminalChat.toolSessionMappings
 
 ## Implications for our implementation
 
-1. **`family` matters** — if we return `family: "qwen3"` but Copilot doesn't recognize it, it may use generic prompts. We auto-discover the family from HuggingFace's `config.model_type` via the Auto-Configure command. A string-matching heuristic in `modelUtils.extractFamily()` serves as fallback. Users can override routing via `modelCapabilityOverrides`:
+1. **`family` matters** — if we return `family: "qwen3"` but Copilot doesn't recognize it, it may use generic prompts. We auto-discover the family from HuggingFace's `config.model_type` via the Auto-Configure command. A string-matching heuristic in `modelUtils.extractFamilyWithSource()` serves as fallback. Users can override routing via `modelCapabilityOverrides`:
    ```json
    "github.copilot.chat.modelCapabilityOverrides": {
      "qwen3_next": "qwen3"

@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM integration for GitHub Copilot and the VS Code Agents window on professional (and self-hosted) servers (supports full featureset of vLLM and Copilot). No subscription, no telemetry. No work content to any third party. Live observability: queue status, KV-cache, throughput, and more, in a full dashboard UI. Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
-  "version": "1.35.3-rc0",
+  "version": "1.36.0-rc0",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -109,7 +109,7 @@
         "toolReferenceName": "vllmModelSchema",
         "canBeReferencedInPrompt": true,
         "userDescription": "Fetch the vLLM-Copilot model configuration schema and guide, for creating or editing vllm-copilot.models entries and model modes.",
-        "modelDescription": "Returns the JSON schema and configuration guide for a vllm-copilot.models model entry (serverUrl, requestHeaders, params, modelModes, defaultMode, etc.), including the parameter resolution chain and valid vLLM request parameters. Use this whenever the user asks you to create, configure, or modify a vLLM-Copilot model or its modes in VS Code settings. May also be triggered explicitly when the user references it in chat via #vllmModelSchema.",
+        "modelDescription": "Returns the JSON schema and configuration guide for vLLM-Copilot's model entries (`vllm-copilot.models`, which reference servers from the `vllm-copilot.servers` registry by id) including params, modelModes, defaultMode, etc., the parameter resolution chain, and valid vLLM request parameters. Use this whenever the user asks you to create, configure, or modify a vLLM-Copilot model or its modes in VS Code settings. May also be triggered explicitly when the user references it in chat via #vllmModelSchema.",
         "icon": "$(json)",
         "tags": [
           "vllm-copilot",
@@ -135,6 +135,11 @@
       {
         "command": "vllm-copilot.addServerModel",
         "title": "Add or Reconfigure Server/Model",
+        "category": "vLLM-Copilot"
+      },
+      {
+        "command": "vllm-copilot.addServer",
+        "title": "Add Server (no model)",
         "category": "vLLM-Copilot"
       },
       {
@@ -230,6 +235,14 @@
         {
           "command": "vllm-copilot.renameServer",
           "when": "false"
+        },
+        {
+          "command": "vllm-copilot.removeServer",
+          "when": "false"
+        },
+        {
+          "command": "vllm-copilot.removeModel",
+          "when": "false"
         }
       ],
       "view/item/context": [
@@ -242,6 +255,11 @@
           "command": "vllm-copilot.renameServer",
           "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive)",
           "group": "1_server@2"
+        },
+        {
+          "command": "vllm-copilot.removeServer",
+          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive || viewItem == serverOnlineRelay || viewItem == serverOfflineRelay)",
+          "group": "1_server@3"
         },
         {
           "command": "vllm-copilot.openDeepDive",
@@ -264,32 +282,54 @@
       {
         "title": "Models",
         "properties": {
-          "vllm-copilot.models": {
+          "vllm-copilot.servers": {
             "type": "array",
+            "scope": "application",
             "default": [],
-            "markdownDescription": "Per-model configuration: server, auth, params, modes. See README Configuration Reference for details.",
+            "markdownDescription": "Server registry: each entry is one server (URL + auth + type), referenced by `id` from `vllm-copilot.models`. Managed via the Dashboard and the vLLM-Copilot commands; hand-editing is possible but the commands keep models and servers in sync. Stored in **User settings only** — the extension always writes there, so a workspace-layer value would be silently ignored.",
             "items": {
               "type": "object",
+              "required": ["id", "serverUrl"],
+              "additionalProperties": false,
               "properties": {
+                "id": {
+                  "type": "string",
+                  "markdownDescription": "Stable identifier models reference via their `server` field (e.g. `it-server-8000`)."
+                },
                 "serverUrl": {
                   "type": "string",
-                  "markdownDescription": "**Required.** The server URL hosting this model (OpenAI-compatible API). Each model targets its own server; there is no global server."
+                  "markdownDescription": "The server URL (OpenAI-compatible API)."
+                },
+                "displayName": {
+                  "type": "string",
+                  "markdownDescription": "**Optional server label** shown in the Dashboard and Model Settings instead of the raw URL."
                 },
                 "serverType": {
                   "type": "string",
-                  "enum": [
-                    "vllm",
-                    "lmstudio",
-                    "llamacpp",
-                    "ollama",
-                    "openrouter"
-                  ],
+                  "enum": ["vllm", "lmstudio", "llamacpp", "ollama", "openrouter"],
                   "default": "vllm",
-                  "markdownDescription": "Backend serving this model. **Default: `vllm`.** Missing/omitted always means `vllm`. Secondary backends (LM Studio, llama.cpp, Ollama, OpenRouter) must be added via the **Add vLLM Server & Model** command or set `serverType` explicitly."
+                  "markdownDescription": "Backend serving this server's models. **Default: `vllm`.**"
                 },
-                "serverDisplayName": {
+                "requestHeaders": {
+                  "type": "object",
+                  "additionalProperties": { "type": "string" },
+                  "markdownDescription": "Extra HTTP headers sent to this server (e.g. `Authorization`)."
+                }
+              }
+            }
+          },
+          "vllm-copilot.models": {
+            "type": "array",
+            "scope": "application",
+            "default": [],
+            "markdownDescription": "Per-model configuration: server reference, params, modes. Server connection facts (URL, auth, type) live in the `vllm-copilot.servers` registry. See README Configuration Reference for details. Stored in **User settings only** — the extension always writes there, so a workspace-layer value would be silently ignored.",
+            "items": {
+              "type": "object",
+              "required": ["id", "server"],
+              "properties": {
+                "server": {
                   "type": "string",
-                  "markdownDescription": "**Optional server label** shown in the Dashboard tree and the Model Settings server dropdown instead of the raw URL (e.g. `\"IT Server for GLM5.2\"`). Server-level: the label of the FIRST model on a server that sets it is used, and **Rename Server** (right-click a server in the Dashboard) writes it to every model sharing that URL. Empty/omitted shows the URL."
+                  "markdownDescription": "**Required.** The `id` of this model's server entry in the `vllm-copilot.servers` registry. There is no global server and models never carry URLs, auth, or type themselves."
                 },
                 "provider": {
                   "type": "string",
@@ -304,14 +344,6 @@
                   ],
                   "markdownDescription": "⚡ **OpenRouter only**: how OpenRouter sorts/chooses among eligible providers when routing is **Auto** (no `provider` pinned). `standard` (default) = price-weighted load balancing; `nitro` = throughput-first + priority tier; `exacto` = quality/tool-calling-first. Ignored when a provider is pinned. Set via the **Routing** dropdown in Model Settings."
                 },
-                "requestHeaders": {
-                  "type": "object",
-                  "default": {},
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "markdownDescription": "HTTP headers sent with every request to this model's server (auth, routing, etc.). **Isolated:** used only for this model's server and never shared with other servers. Put a bearer token as `{ \"Authorization\": \"Bearer <key>\" }` or a gateway key as `{ \"X-API-Key\": \"...\" }`."
-                },
                 "id": {
                   "type": "string",
                   "markdownDescription": "**Unique preset ID** used by VS Code to identify this model preset. Must be unique across all entries. If `vllmModelId` is not set, this value is also used as the vLLM server model identifier."
@@ -322,7 +354,7 @@
                 },
                 "displayName": {
                   "type": "string",
-                  "markdownDescription": "Human-readable name shown in the VS Code model picker. If omitted, the model id is used (e.g. `\"Qwen/Qwen3.6-27B on localhost:8000\"\")."
+                  "markdownDescription": "Human-readable name shown in the VS Code model picker. If omitted, the model id is used (e.g. `\"Qwen/Qwen3.6-27B on localhost-8000\"`)."
                 },
                 "family": {
                   "type": "string",
@@ -482,7 +514,6 @@
     "watch": "tsc -watch -p ./",
     "test": "vitest run",
     "test:typecheck": "tsc -p test/tsconfig.json --noEmit",
-    "test:coverage": "vitest run --coverage",
     "test:integration": "VLLM_INTEGRATION=1 vitest run test/integration",
     "validate-webview-js": "node -e \"const fs=require('fs');const path=require('path');const files=fs.readdirSync('resources').filter(f=>f.endsWith('.js'));files.forEach(f=>{try{const code=fs.readFileSync(path.join('resources',f),'utf8');require('vm').createScript(code);console.log('OK: '+f)}catch(e){console.error('FAIL: '+f+': '+e.message);process.exitCode=1}})\"",
     "license:check": "license-checker-rseidelsohn --production --excludePrivatePackages --onlyAllow \"MIT;ISC;Apache-2.0;BSD-2-Clause;BSD-3-Clause;CC0-1.0;CC-BY-3.0;BlueOak-1.0.0\"",
@@ -491,14 +522,13 @@
     "check:cli-rules": "node scripts/check-cli-rules.mjs",
     "extract:cli-reference": "node scripts/extract-cli-reference.mjs",
     "gen:presets": "node scripts/gen-preset-index.mjs",
-    "build": "npm run license:check && npm run compile && npm run test:typecheck && npm test && npm run test:coverage && npx @vscode/vsce package"
+    "build": "npm run license:check && npm run compile && npm run test:typecheck && npm test && npx @vscode/vsce package"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.7",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^26.1.1",
     "@types/vscode": "^1.128.0",
-    "@vitest/coverage-v8": "^4.1.10",
     "jsdom": "^29.1.1",
     "license-checker-rseidelsohn": "^5.0.1",
     "typescript": "^6.0.3",

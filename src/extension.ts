@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider.js';
-import { getConfig, validateConfig, resolveServerConfig, resolveServerType, normalizeServerUrl } from './config.js';
+import { getConfig, validateConfig, normalizeServerUrl, sanitizeRequestHeaders } from './config.js';
 import { FileLogger } from './logger.js';
-import { registerAddServerModelCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault, ensureAgentHostModelsEnabled } from './autoConfig.js';
+import { registerAddServerModelCommand, registerAddServerCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault, ensureAgentHostModelsEnabled } from './autoConfig.js';
 import { setSessionManagerOutput } from './sessionManager.js';
 import { syncBundledPersonalities } from './personalityStore.js';
-import { readModels } from './configStore.js';
+import { readServers, writeServers } from './configStore.js';
+import { dedupeServerIds } from './serverRegistry.js';
 import {
   registerTestAndRefreshModelsCommand,
   registerDiagnoseConnectionCommand,
@@ -23,6 +24,7 @@ import {
 import { setExtensionVersion } from './diagnostics.js';
 import { initUsageStore } from './usageStore.js';
 import { maybeOfferOutputLengthMigration } from './outputLengthMigration.js';
+import { maybeRunServerRegistryMigration } from './serverRegistryMigration.js';
 import { DashboardTreeProvider } from './dashboard.js';
 import { ServerSettingsViewProvider } from './serverSettingsView.js';
 import { openDeepDive } from './deepDiveView.js';
@@ -123,6 +125,41 @@ export async function activate(context: vscode.ExtensionContext) {
       })
     );
 
+    // Duplicate server ids are an extension-owned invariant: the extension
+    // mints them (generateServerId), so a hand-edited collision is REPAIRED,
+    // not tolerated. The first occurrence keeps its id (exactly what requests
+    // already resolve to, so no model changes server); later duplicates get
+    // counter suffixes and become visible and addressable instead of shadowed
+    // dead config. Runs BEFORE the registry migration, whose connection-reuse
+    // could otherwise bind a migrated model to a shadowed id. Models that
+    // referenced the duplicate id are deliberately NOT repointed — which
+    // entry they "meant" is unresolvable, and their resolution (first entry)
+    // is unchanged by the rename. If the write is blocked, the first-wins
+    // runtime rule still keeps every request honest until the settings heal.
+    {
+      const { servers: repairedServers, renames } = dedupeServerIds(readServers());
+      if (renames.length > 0) {
+        const list = renames.map(r => `"${r.from}" → "${r.to}"`).join(', ');
+        outputChannel.appendLine(`[INFO] Server registry: duplicate ids repaired: ${list}.`);
+        try {
+          await writeServers(repairedServers);
+          void vscode.window.showInformationMessage(
+            `vLLM-Copilot: duplicate server ids found in settings — renamed so every entry stays usable: ${list}.`
+          );
+        } catch (err) {
+          outputChannel.appendLine(
+            `[ERROR] Server registry repair could not write the renamed ids — until settings.json is fixed, requests reach the FIRST entry of each duplicate id. ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    }
+
+    // One-time, silent server registry migration: moves per-model server facts
+    // into vllm-copilot.servers and rewrites models to { server } refs. Must
+    // complete before the output-length offer below, which addresses models by
+    // { id, server } — a ref that only exists after the rewrite.
+    await maybeRunServerRegistryMigration(context, outputChannel);
+
     // One-time activation summary
     const fullConfig = await getConfig(context);
     outputChannel.appendLine(`[INFO] vLLM-Copilot activated (${fullConfig.models.length} model(s) configured)`);
@@ -196,6 +233,7 @@ export async function activate(context: vscode.ExtensionContext) {
       registerTestAndRefreshModelsCommand(context, activeProvider, outputChannel),
       registerDiagnoseConnectionCommand(context, outputChannel),
       registerAddServerModelCommand(context, activeProvider, outputChannel),
+      registerAddServerCommand(outputChannel),
       registerAutoConfigureModelCommand(context, activeProvider, outputChannel),
       registerConfigureUtilityModelCommand(outputChannel),
       registerOpenLogFileCommand(fileLogger),
@@ -213,28 +251,15 @@ export async function activate(context: vscode.ExtensionContext) {
     // Deep-Dive: open editor-area webview for a single server
     context.subscriptions.push(
       vscode.commands.registerCommand('vllm-copilot.openDeepDive', async (arg?: any) => {
-        const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
-        if (!serverUrl) {
-          vscode.window.showErrorMessage('Server URL not provided.');
+        // The dashboard tree item carries the registry ENTRY id — never match by
+        // URL: one URL can host several credential identities, and URL-matching
+        // would open the panel with whichever entry happens to be first.
+        const entry = readServers().find(s => s.id === arg?.serverId);
+        if (!entry) {
+          vscode.window.showErrorMessage('Server not found — it may have been removed. Refresh the Dashboard.');
           return;
         }
-        // When launched from the dashboard tree node, the item carries this
-        // server identity's EXACT credentials (per-model headers — a URL may host
-        // several identities). Fall back to the first model pointing at the URL
-        // for programmatic/string invocations.
-        const fromTreeItem = typeof arg !== 'string' && arg?.requestHeaders;
-        const models = readModels();
-        // A hand-typed URL may be spelled differently than the stored one
-        // (`http://host:8000/v1` vs `http://host:8000`), so every lookup below
-        // compares NORMALIZED urls and shares one matcher — backend type,
-        // credentials and display name must come from the same set of models.
-        const normalizedArg = normalizeServerUrl(serverUrl);
-        const sameServer = (m: { serverUrl?: string }) =>
-          !!m.serverUrl && normalizeServerUrl(m.serverUrl) === normalizedArg;
-        const firstModel = models.find(sameServer);
-        const serverType = fromTreeItem
-          ? (arg.serverType ?? 'vllm')
-          : resolveServerType(firstModel);
+        const serverType = entry.serverType ?? 'vllm';
         // Deep-Dive is a vLLM metrics view — non-vLLM backends don't expose
         // /metrics, so the panel would be all empty rows. Guard even though the
         // context menu already hides it for non-vLLM servers (defense in depth).
@@ -244,21 +269,12 @@ export async function activate(context: vscode.ExtensionContext) {
           );
           return;
         }
-        const headers = fromTreeItem
-          ? arg.requestHeaders
-          : (firstModel ? resolveServerConfig(firstModel).requestHeaders : {});
-        // Display name: carried on the tree item when present; otherwise look
-        // it up (first non-empty, trimmed, never OpenRouter) from the models on
-        // this URL — covers string AND bare-object programmatic invocations.
-        const carried = typeof arg === 'object' && typeof arg?.serverDisplayName === 'string'
-          ? arg.serverDisplayName.trim()
-          : undefined;
-        const displayName = carried || models.find(m =>
-            sameServer(m)
-            && m.serverType !== 'openrouter'
-            && m.serverDisplayName?.trim()
-          )?.serverDisplayName?.trim();
-        openDeepDive(serverUrl, headers, serverType, context, outputChannel, displayName);
+        // We already hold the entry; normalize it directly instead of looking it
+        // up again by id.
+        const serverUrl = normalizeServerUrl(entry.serverUrl);
+        const requestHeaders = sanitizeRequestHeaders(entry.requestHeaders ?? {});
+        const displayName = entry.serverType === 'openrouter' ? undefined : entry.displayName?.trim() || undefined;
+        openDeepDive(entry.id, serverUrl, requestHeaders, serverType, context, outputChannel, displayName);
       }),
     );
 

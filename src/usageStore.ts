@@ -34,6 +34,7 @@
 import * as vscode from 'vscode';
 import type { WireMetrics } from './types.js';
 import { findModelConfig, type ModelConfig } from './config.js';
+import { readServers } from './configStore.js';
 
 // ─── Last request ─────────────────────────────────────────────────────────
 
@@ -397,8 +398,9 @@ export function findModelCost(
   serverUrl: string,
   modelId: string,
 ): CostRates | undefined {
-  // The (serverUrl, wire id) match itself lives in findModelConfig (config.ts).
-  return findModelConfig(models, serverUrl, modelId)?.cost;
+  // The (serverUrl, wire id) match itself lives in findModelConfig (config.ts);
+  // the registry is read here so callers keep passing the plain URL.
+  return findModelConfig(models, readServers(), serverUrl, modelId)?.cost;
 }
 
 /** Precision-aware amount formatting (no currency decoration). */

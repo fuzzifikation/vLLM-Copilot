@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as vscode from 'vscode';
+import * as fs from 'fs/promises';
+import * as path from 'path';
 import {
+  loadModelPresets,
   mergePresetWithUserConfig,
   findPresetForModel,
   stripJsonComments,
@@ -9,6 +13,12 @@ import {
 } from '../src/commands/presets.js';
 import { parseHeadersInput } from '../src/commands/serverAuth.js';
 import type { ModelConfig } from '../src/config.js';
+
+/**
+ * Preset parsing and matching (commands/presets.ts) plus the header-input parser
+ * shared by the add-server flows. Named for what it tests: autoConfig.ts is only
+ * a re-export barrel.
+ */
 
 /** Test-only convenience: guard-validated config payload, or null. */
 const parsePresetJson = (text: string): PresetConfig | null =>
@@ -116,7 +126,7 @@ describe('parsePresetFile (format v2)', () => {
   });
 
   it('PRESET_CONFIG_KEYS excludes identity and transport fields', () => {
-    for (const forbidden of ['id', 'serverUrl', 'requestHeaders', 'serverType', 'provider']) {
+    for (const forbidden of ['id', 'server', 'serverUrl', 'requestHeaders', 'serverType', 'provider']) {
       expect(PRESET_CONFIG_KEYS.has(forbidden)).toBe(false);
     }
     for (const allowed of ['vllmModelId', 'modelModes', 'defaultParams', 'estimateCharsPerToken']) {
@@ -218,7 +228,7 @@ describe('mergePresetWithUserConfig', () => {
   };
 
   it('returns preset unchanged when no user config exists', () => {
-    const userConfig: ModelConfig = { id: 'test/model' };
+    const userConfig: ModelConfig = { id: 'test/model', server: 'test-server' };
     const merged = mergePresetWithUserConfig(presetConfig, userConfig);
 
     expect(merged.id).toBe('test/model');
@@ -230,6 +240,7 @@ describe('mergePresetWithUserConfig', () => {
   it('preset replaces all user modelModes (no preservation of old modes)', () => {
     const userConfig: ModelConfig = {
       id: 'test/model',
+      server: 'test-server',
       modelModes: {
         'Custom Mode': { temperature: 0.1, top_p: 0.5 },
       },
@@ -246,6 +257,7 @@ describe('mergePresetWithUserConfig', () => {
   it('preset wins over all overlapping user modelModes', () => {
     const userConfig: ModelConfig = {
       id: 'test/model',
+      server: 'test-server',
       modelModes: {
         'Think': { enable_thinking: true, temperature: 0.01 },
         'Custom Mode': { temperature: 0.1 },
@@ -261,6 +273,7 @@ describe('mergePresetWithUserConfig', () => {
   it('preset fully replaces top-level fields regardless of user values', () => {
     const userConfig: ModelConfig = {
       id: 'test/model',
+      server: 'test-server',
       displayName: 'My Custom Name',
       maxOutputTokens: 999,
       capabilities: {
@@ -288,6 +301,7 @@ describe('mergePresetWithUserConfig', () => {
     };
     const userConfig: ModelConfig = {
       id: 'test/model',
+      server: 'test-server',
       modelModes: {
         'User Mode': { temperature: 0.5 },
       },
@@ -301,7 +315,7 @@ describe('mergePresetWithUserConfig', () => {
 
   it('handles both preset and user having no modelModes', () => {
     const emptyPreset: PresetConfig = { vllmModelId: 'test/model' };
-    const emptyUser: ModelConfig = { id: 'test/model' };
+    const emptyUser: ModelConfig = { id: 'test/model', server: 'test-server' };
     const merged = mergePresetWithUserConfig(emptyPreset, emptyUser);
 
     expect(merged.modelModes).toBeUndefined();
@@ -314,11 +328,12 @@ describe('mergePresetWithUserConfig', () => {
       maxOutputTokens: 32768,
     };
     // The user configured the model under a short server alias.
-    const userConfig: ModelConfig = { id: 'zai-glm-52', vllmModelId: 'zai-glm-52' };
+    const userConfig: ModelConfig = { id: 'zai-glm-52', server: 'user-server', vllmModelId: 'zai-glm-52' };
     const merged = mergePresetWithUserConfig(preset, userConfig);
 
     // Identity stays the user's; preset only contributes the other fields.
     expect(merged.id).toBe('zai-glm-52');
+    expect(merged.server).toBe('user-server');
     expect(merged.vllmModelId).toBe('zai-glm-52');
     expect(merged.displayName).toBe('GLM-5.2');
     expect(merged.maxOutputTokens).toBe(32768);
@@ -326,7 +341,7 @@ describe('mergePresetWithUserConfig', () => {
 
   it('drops vllmModelId when the user config has none', () => {
     const preset: PresetConfig = { vllmModelId: 'repo/Model', maxOutputTokens: 100 };
-    const userConfig: ModelConfig = { id: 'my-model' }; // no vllmModelId
+    const userConfig: ModelConfig = { id: 'my-model', server: 'test-server' }; // no vllmModelId
     const merged = mergePresetWithUserConfig(preset, userConfig);
 
     expect(merged.id).toBe('my-model');
@@ -410,53 +425,87 @@ describe('findPresetForModel — substring matching on curated patterns', () => 
   });
 });
 
-describe('stripJsonComments', () => {
-  it('strips full-line comments above the JSON object', () => {
-    const input = `// Model config\n// Source: docs\n{\n  "id": "test/model"\n}`;
-    const result = stripJsonComments(input);
-    expect(JSON.parse(result)).toEqual({ id: 'test/model' });
+describe('loadModelPresets', () => {
+  const encode = (s: string) => new TextEncoder().encode(s);
+  let savedDir: any;
+  let savedFile: any;
+
+  beforeEach(() => {
+    const ws = (vscode as any).workspace;
+    savedDir = ws._mockFsReadDirectory;
+    savedFile = ws._mockFsReadFile;
   });
 
-  it('strips inline comments after a value', () => {
-    const input = `{\n  "id": "test/model", // the model id\n  "maxOutputTokens": 100\n}`;
-    const result = stripJsonComments(input);
-    expect(JSON.parse(result)).toEqual({ id: 'test/model', maxOutputTokens: 100 });
+  afterEach(() => {
+    const ws = (vscode as any).workspace;
+    ws._mockFsReadDirectory = savedDir;
+    ws._mockFsReadFile = savedFile;
   });
 
-  it('does NOT strip // inside string values (e.g. URLs)', () => {
-    const input = `{\n  "url": "https://huggingface.co/model"\n}`;
-    const result = stripJsonComments(input);
-    expect(JSON.parse(result)).toEqual({ url: 'https://huggingface.co/model' });
+  it('loads valid preset JSON and skips non-JSON and malformed entries', async () => {
+    (vscode as any).workspace._mockFsReadDirectory = () =>
+      Promise.resolve([
+        ['Good-Preset.json', vscode.FileType.File],
+        ['notes.txt', vscode.FileType.File],
+        ['subdir', vscode.FileType.Directory],
+        ['Broken-Preset.json', vscode.FileType.File],
+      ]);
+    (vscode as any).workspace._mockFsReadFile = (uri: string) => {
+      if (String(uri).endsWith('Good-Preset.json')) {
+        return Promise.resolve(
+          encode('{ "presetVersion": 1, "match": ["org/Model"], "config": { "vllmModelId": "org/Model", "modelModes": { "balanced": {} } } }'),
+        );
+      }
+      if (String(uri).endsWith('Broken-Preset.json')) {
+        return Promise.resolve(encode('not json @@@'));
+      }
+      return Promise.resolve(new Uint8Array());
+    };
+
+    const presets = await loadModelPresets(vscode.Uri.file('/ext'));
+
+    expect(presets).toHaveLength(1);
+    expect(presets[0].sourceFile).toBe('Good-Preset.json');
+    expect(presets[0].config.vllmModelId).toBe('org/Model');
   });
 
-  it('strips a comment that follows a string value containing //', () => {
-    const input = `{\n  "url": "https://example.com", // trailing comment\n  "id": "x"\n}`;
-    const result = stripJsonComments(input);
-    expect(JSON.parse(result)).toEqual({ url: 'https://example.com', id: 'x' });
+  it('returns [] when the model-configs directory cannot be read', async () => {
+    (vscode as any).workspace._mockFsReadDirectory = () =>
+      Promise.reject(new Error('ENOENT'));
+
+    const presets = await loadModelPresets(vscode.Uri.file('/ext'));
+    expect(presets).toEqual([]);
   });
 
-  it('handles escaped quotes inside string values', () => {
-    const input = `{\n  "text": "a \\"quoted // slash\\" value"\n}`;
-    const result = stripJsonComments(input);
-    expect(JSON.parse(result)).toEqual({ text: 'a "quoted // slash" value' });
+  it('skips a preset whose file read fails', async () => {
+    (vscode as any).workspace._mockFsReadDirectory = () =>
+      Promise.resolve([['Good-Preset.json', vscode.FileType.File]]);
+    (vscode as any).workspace._mockFsReadFile = () =>
+      Promise.reject(new Error('EACCES'));
+
+    const presets = await loadModelPresets(vscode.Uri.file('/ext'));
+    expect(presets).toEqual([]);
   });
 
-  it('handles escaped backslash immediately before a quote', () => {
-    // "path": "C:\\" — the string ends after the escaped backslash; the // is a real comment
-    const input = `{\n  "path": "C:\\\\", // windows path\n  "id": "x"\n}`;
-    const result = stripJsonComments(input);
-    expect(JSON.parse(result)).toEqual({ path: 'C:\\', id: 'x' });
-  });
+  it('skips the generated index.json — it is the remote list, not a preset', async () => {
+    // index.json ships inside model-configs/ (served from the repo). It is
+    // valid JSON; without the explicit skip it would be read and parsed on
+    // every load only for the v2 guard to reject it.
+    (vscode as any).workspace._mockFsReadDirectory = () =>
+      Promise.resolve([
+        ['index.json', vscode.FileType.File],
+        ['Good-Preset.json', vscode.FileType.File],
+      ]);
+    (vscode as any).workspace._mockFsReadFile = () =>
+      Promise.resolve(encode('{ "presetVersion": 1, "match": ["org/Model"], "config": { "vllmModelId": "org/Model", "modelModes": { "balanced": {} } } }'));
 
-  it('leaves comment-free JSON unchanged', () => {
-    const input = `{\n  "id": "test/model",\n  "maxOutputTokens": 100\n}`;
-    const result = stripJsonComments(input);
-    expect(JSON.parse(result)).toEqual({ id: 'test/model', maxOutputTokens: 100 });
-  });
+    const presets = await loadModelPresets(vscode.Uri.file('/ext'));
 
-  it('preserves a single slash that is not part of a comment', () => {
-    const input = `{\n  "ratio": "1/2"\n}`;
-    const result = stripJsonComments(input);
-    expect(JSON.parse(result)).toEqual({ ratio: '1/2' });
+    expect(presets).toHaveLength(1);
+    expect(presets[0].sourceFile).toBe('Good-Preset.json');
   });
 });
+
+// ── shipped preset regression ──────────────────────────────────────────────
+
+const PRESET_PATH = path.resolve(__dirname, '../model-configs/Poolside-Laguna-S-2.1.json');

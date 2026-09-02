@@ -39,6 +39,7 @@ function makeOutput(): any { return { appendLine: (line: string) => process.env.
 function stubConfig() {
   vi.spyOn(configModule, 'getConfig').mockResolvedValue({
     models: [],
+    servers: [],
     enableFileLogging: false,
   });
 }

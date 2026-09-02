@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import * as vscode from 'vscode';
 import { replaceModelConfig, patchModelConfig, readModels, writeModels, type IdentifiedModelConfig, type ModelIdentity } from '../src/configStore.js';
 import { ModelConfig } from '../src/config.js';
@@ -18,7 +20,7 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
   let existingConfig: ModelConfig[];
   let updateSpy: ReturnType<typeof vi.fn>;
 
-  // Always yields an identified config (id + vllmModelId + serverUrl). The cast is
+  // Always yields an identified config (id + vllmModelId + server). The cast is
   // the helper's contract: identity tests deliberately construct invalid objects.
   const baseConfig = (overrides: Partial<ModelConfig> = {}): IdentifiedModelConfig =>
     makeModelConfig({ displayName: 'Test Model', ...overrides }) as IdentifiedModelConfig;
@@ -64,25 +66,17 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     );
   });
 
-  it('preserves the server display name when the replacement omits it', async () => {
-    // Rename Server labels the box; presets and auto-configure go through this
-    // replace path and must never wipe the user's label.
-    existingConfig = [baseConfig({ serverDisplayName: 'IT Server for GLM5.2' })];
+  it('a different server ref is a different identity — appends instead of updating', async () => {
+    // Post-registry, identity is (id, server). Replacing an entry under a
+    // different server reference must not silently retarget the stored model.
+    existingConfig = [makeModelConfig({ server: 'srv-old', displayName: 'Old' })];
 
-    await replaceModelConfig(baseConfig({ displayName: 'Renamed' }));
-
-    const stored = storedModels();
-    expect(stored[0].displayName).toBe('Renamed');
-    expect(stored[0].serverDisplayName).toBe('IT Server for GLM5.2');
-  });
-
-  it("replace-mode '' on serverDisplayName clears it (explicit clear signal)", async () => {
-    existingConfig = [baseConfig({ serverDisplayName: 'Old Name' })];
-
-    await replaceModelConfig(baseConfig({ serverDisplayName: '' }));
+    await replaceModelConfig({ id: 'test-model', vllmModelId: 'test-model', server: 'srv-new', displayName: 'Retargeted' });
 
     const stored = storedModels();
-    expect('serverDisplayName' in stored[0]).toBe(false);
+    expect(stored).toHaveLength(2); // appended, not updated
+    expect(stored[0]).toEqual(expect.objectContaining({ server: 'srv-old', displayName: 'Old' }));
+    expect(stored[1]).toEqual(expect.objectContaining({ server: 'srv-new', displayName: 'Retargeted' }));
   });
 
   it('clears the replacements file when the new value is an empty string', async () => {
@@ -157,7 +151,7 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     existingConfig = [
       {
         id: 'legacy-model',
-        serverUrl: 'http://localhost:8000',
+        server: 'test-server',
         displayName: 'Legacy',
         systemMessageReplacementsFile: '.vllm/prompt-replacements-spartan.json',
       },
@@ -165,7 +159,7 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
 
     await replaceModelConfig({
       id: 'legacy-model',
-      serverUrl: 'http://localhost:8000',
+      server: 'test-server',
       displayName: 'Legacy Updated',
     });
 
@@ -188,7 +182,7 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     await replaceModelConfig({
       id: 'preset-b',
       vllmModelId: 'shared-model',
-      serverUrl: 'http://localhost:8000',
+      server: 'test-server',
       displayName: 'Preset B (renamed)',
       systemMessageReplacementsFile: '.vllm/prompt-replacements-sarcastic-robot.json',
     });
@@ -214,7 +208,7 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     await replaceModelConfig({
       id: 'preset-b',
       vllmModelId: 'shared-model',
-      serverUrl: 'http://localhost:8000',
+      server: 'test-server',
       displayName: 'Preset B',
     });
 
@@ -227,32 +221,33 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
   // These pin the CURRENT replace contract of replaceModelConfig (configStore) so the
   // configStore unification (step 3b) cannot silently change behavior.
 
-  it('preserves requestHeaders when the new config omits them', async () => {
+  it('drops legacy server-fact keys that linger on the stored entry', async () => {
+    // Pre-registry entries carried serverUrl/requestHeaders. The replacement is
+    // written whole, so those stale keys must not survive a replace.
     existingConfig = [
-      baseConfig({ requestHeaders: { 'X-Existing': 'keep-me' } }),
+      { ...baseConfig(), serverUrl: 'http://localhost:8000', requestHeaders: { 'X-Existing': 'keep-me' } } as unknown as ModelConfig,
     ];
 
     await replaceModelConfig(baseConfig({ displayName: 'Renamed' }));
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
-    expect(stored[0].requestHeaders).toEqual({ 'X-Existing': 'keep-me' });
+    expect('serverUrl' in stored[0]).toBe(false);
+    expect('requestHeaders' in stored[0]).toBe(false);
   });
 
-  it('replaces (not merges) requestHeaders when the new config supplies them', async () => {
+  it('replace-mode replaces (not merges) every model field', async () => {
     existingConfig = [
-      baseConfig({ requestHeaders: { 'X-Old': 'value', 'X-Share': 'both' } }),
+      baseConfig({ defaultParams: { 'X-Old': 'value' as never } }),
     ];
 
     await replaceModelConfig(
-      baseConfig({ requestHeaders: { 'X-New': 'value', 'X-Share': 'updated' } }),
+      baseConfig({ defaultParams: { 'X-New': 'value' as never } }),
     );
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
-    // Supplied headers replace the previous object wholesale — no key merging.
-    expect(stored[0].requestHeaders).toEqual({ 'X-New': 'value', 'X-Share': 'updated' });
-    expect('X-Old' in (stored[0].requestHeaders ?? {})).toBe(false);
+    expect(stored[0].defaultParams).toEqual({ 'X-New': 'value' });
   });
 
   it('drops stale model-specific fields absent from the replacement config', async () => {
@@ -275,27 +270,30 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     expect('maxOutputTokens' in stored[0]).toBe(false);
   });
 
-  it('preserves infra/personal fields (serverUrl, requestHeaders, replacements) while dropping stale model fields', async () => {
+  it('preserves the replacements file while dropping stale model fields and legacy server facts', async () => {
     existingConfig = [
-      baseConfig({
+      {
+        ...baseConfig({
+          systemMessageReplacementsFile: '.vllm/prompt-replacements-spartan.json',
+          family: 'llama',
+          modelModes: { fast: { reasoningEffort: 'low' } },
+        }),
         serverUrl: 'http://localhost:8000',
         requestHeaders: { 'X-Auth': 'secret' },
-        systemMessageReplacementsFile: '.vllm/prompt-replacements-spartan.json',
-        family: 'llama',
-        modelModes: { fast: { reasoningEffort: 'low' } },
-      }),
+      } as unknown as ModelConfig,
     ];
 
-    // Replacement is the preset path: infra/personal survive, model fields drop.
+    // Replacement is the preset path: the replacements file survives, model fields
+    // drop, and legacy server facts do not resurrect (they live on the entry now).
     await replaceModelConfig(baseConfig({ displayName: 'Preset Applied' }));
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
-    expect(stored[0].serverUrl).toBe('http://localhost:8000');
-    expect(stored[0].requestHeaders).toEqual({ 'X-Auth': 'secret' });
     expect(stored[0].systemMessageReplacementsFile).toBe(
       '.vllm/prompt-replacements-spartan.json',
     );
+    expect('serverUrl' in stored[0]).toBe(false);
+    expect('requestHeaders' in stored[0]).toBe(false);
     expect('family' in stored[0]).toBe(false);
     expect('modelModes' in stored[0]).toBe(false);
   });
@@ -304,7 +302,7 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     const newModel = baseConfig({
       id: 'caller-supplied-id',
       vllmModelId: 'wire-model',
-      serverUrl: 'http://localhost:8000',
+      server: 'test-server',
     });
 
     await replaceModelConfig(newModel);
@@ -316,10 +314,10 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     expect(stored[0].id).toBe('caller-supplied-id');
   });
 
-  it('rejects a blank/whitespace serverUrl instead of writing a malformed entry', async () => {
+  it('rejects a blank/whitespace server ref instead of writing a malformed entry', async () => {
     await expect(
-      replaceModelConfig(baseConfig({ serverUrl: '   ' })),
-    ).rejects.toThrow(/serverUrl/);
+      replaceModelConfig(baseConfig({ server: '   ' })),
+    ).rejects.toThrow(/server/);
     expect(updateSpy).not.toHaveBeenCalled();
   });
 
@@ -328,7 +326,7 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     // IdentifiedModelConfig, so the runtime guard (not the type) is under test.
     const { id: _id, vllmModelId: _vllmId, ...noIdentity } = baseConfig();
     await expect(
-      replaceModelConfig({ ...noIdentity, serverUrl: 'http://localhost:8000' } as any),
+      replaceModelConfig({ ...noIdentity, server: 'test-server' } as any),
     ).rejects.toThrow(/identity/);
     expect(updateSpy).not.toHaveBeenCalled();
   });
@@ -382,13 +380,13 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
 
   const identity = (overrides: Partial<ModelIdentity> = {}): ModelIdentity => ({
     id: 'test-model',
-    serverUrl: 'http://localhost:8000',
+    server: 'test-server',
     ...overrides,
   });
 
-  const patch = (model: ModelConfig) => {
-    const { id, serverUrl, ...updates } = model;
-    return patchModelConfig(identity({ id: id || 'test-model', serverUrl }), updates);
+  const patch = (model: Partial<ModelConfig> & { id?: string }) => {
+    const { id, server, ...updates } = model;
+    return patchModelConfig(identity({ id: id || 'test-model', server: server || 'test-server' }), updates);
   };
 
   beforeEach(() => {
@@ -407,14 +405,13 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
 
   const storedModels = (): ModelConfig[] => updateSpy.mock.calls[0][1] as ModelConfig[];
 
-  it('preserves headers, family, defaults, and transport settings when the patch omits them', async () => {
+  it('preserves family, defaults, and transport settings when the patch omits them', async () => {
     existingConfig = [
       {
         id: 'test-model',
         vllmModelId: 'test-model',
-        serverUrl: 'http://localhost:8000',
+        server: 'test-server',
         displayName: 'Test Model',
-        requestHeaders: { 'X-Auth': 'secret' },
         family: 'qwen3_5',
         defaultParams: { temperature: 0.7 },
         defaultMode: 'balanced',
@@ -425,14 +422,13 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
       },
     ];
 
-    await patch({ id: 'test-model', serverUrl: 'http://localhost:8000', displayName: 'Renamed' });
+    await patch({ id: 'test-model', displayName: 'Renamed' });
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
     expect(stored[0]).toEqual(
       expect.objectContaining({
         displayName: 'Renamed',
-        requestHeaders: { 'X-Auth': 'secret' },
         family: 'qwen3_5',
         defaultParams: { temperature: 0.7 },
         defaultMode: 'balanced',
@@ -444,65 +440,64 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
     );
   });
 
-  it('replaces (not merges) requestHeaders when the patch supplies them', async () => {
+  it('applies legit updates when server facts are smuggled into patch updates', async () => {
+    // The webview never sends these; serverUrl/requestHeaders on a model entry
+    // are inert extras now (no reader). patchModelConfig only guards identity
+    // keys (id/server), so smuggled legacy keys ride the shallow merge —
+    // pinned here so a future strict-mode strip is a deliberate choice.
     existingConfig = [
-      {
-        id: 'test-model',
-        vllmModelId: 'test-model',
-        serverUrl: 'http://localhost:8000',
-        requestHeaders: { 'X-Old': 'value', 'X-Share': 'both' },
-      },
+      makeModelConfig({ displayName: 'Clean' }),
     ];
 
-    await patch({
-      id: 'test-model',
-      serverUrl: 'http://localhost:8000',
-      requestHeaders: { 'X-New': 'value', 'X-Share': 'updated' },
-    });
+    await patchModelConfig(identity(), {
+      displayName: 'Sneaky',
+      requestHeaders: { 'X-New': 'value' },
+      serverUrl: 'http://evil:8000',
+    } as any);
 
     const stored = storedModels();
-    expect(stored[0].requestHeaders).toEqual({ 'X-New': 'value', 'X-Share': 'updated' });
-    expect('X-Old' in (stored[0].requestHeaders ?? {})).toBe(false);
+    expect(stored[0].displayName).toBe('Sneaky'); // legit update applied
+    expect((stored[0] as any).requestHeaders).toEqual({ 'X-New': 'value' });
   });
 
-  it('derives the composite id from vllmModelId when id and wire id differ (new entry)', async () => {
+  it('creates a new entry with the identity verbatim (no composite-id derivation)', async () => {
     await patch({
       id: 'preset-a',
+      server: 'a-server',
       vllmModelId: 'wire-model',
-      serverUrl: 'http://a:8000',
       displayName: 'Preset A',
     });
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
-    // buildModelId(serverUrl, wireId) — the wire id wins, not updates.id.
-    expect(stored[0].id).toBe('wire-model on a:8000');
+    // Identity is written exactly as passed — no "<model> on <host>" derivation.
+    expect(stored[0].id).toBe('preset-a');
+    expect(stored[0].server).toBe('a-server');
     expect(stored[0].vllmModelId).toBe('wire-model');
   });
 
   it('falls back to identity.id as the wire id when the patch has no vllmModelId (new entry)', async () => {
-    await patch({ id: 'legacy-model', serverUrl: 'http://b:8000', displayName: 'Legacy' });
+    await patch({ id: 'legacy-model', server: 'b-server', displayName: 'Legacy' });
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
     expect(stored[0].vllmModelId).toBe('legacy-model');
-    expect(stored[0].id).toBe('legacy-model on b:8000');
+    expect(stored[0].id).toBe('legacy-model');
   });
 
   it('reports created:true for a new entry and created:false for an update', async () => {
-    const first = await patch({ id: 'new-model', serverUrl: 'http://localhost:8000' });
+    const first = await patch({ id: 'new-model', server: 'test-server' });
     expect(first.created).toBe(true);
-    // The webview keys by the composite id; a follow-up patch on that id updates.
     const storedId = first.model.id;
 
     existingConfig = [first.model];
-    const second = await patch({ id: storedId, serverUrl: 'http://localhost:8000', displayName: 'Renamed' });
+    const second = await patch({ id: storedId, server: 'test-server', displayName: 'Renamed' });
     expect(second.created).toBe(false);
     expect(second.model.displayName).toBe('Renamed');
   });
 
   it('does not mutate the caller updates object', async () => {
-    const updates = { id: 'new-model', serverUrl: 'http://localhost:8000', displayName: 'New' };
+    const updates = { id: 'new-model', server: 'test-server', displayName: 'New' };
     const snapshot = { ...updates };
     await patch(updates);
     expect(updates).toEqual(snapshot);
@@ -513,7 +508,7 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
       {
         id: 'test-model',
         vllmModelId: 'test-model',
-        serverUrl: 'http://localhost:8000',
+        server: 'test-server',
         displayName: 'Test Model',
       },
     ];
@@ -555,15 +550,15 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
   it("4a2: patch-mode '' clears the OpenRouter provider back to Auto (regression)", async () => {
     existingConfig = [
       {
-        id: 'test-model', vllmModelId: 'test-model', serverUrl: 'https://openrouter.ai/api',
-        serverType: 'openrouter', provider: 'gmicloud/fp8',
+        id: 'test-model', vllmModelId: 'test-model', server: 'or-server',
+        provider: 'gmicloud/fp8',
       },
     ];
 
     // Selecting "Auto" in the Provider dropdown sends '' — the store must map
     // '' → delete so the key is REMOVED (undefined/omitted = Auto), not
     // persisted as `provider: ""`.
-    await patchModelConfig(identity({ serverUrl: 'https://openrouter.ai/api' }), { provider: '' });
+    await patchModelConfig(identity({ server: 'or-server' }), { provider: '' });
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
@@ -590,7 +585,7 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
     ];
     const toastSpy = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(undefined);
 
-    await patch({ id: 'test-model', serverUrl: 'http://localhost:8000', displayName: 'Renamed' });
+    await patch({ id: 'test-model', server: 'test-server', displayName: 'Renamed' });
 
     expect(toastSpy).not.toHaveBeenCalled();
     expect(updateSpy).toHaveBeenCalledTimes(1); // the only write
@@ -606,12 +601,12 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
       update: updateSpy,
     };
 
-    await patch({ id: 'test-model', serverUrl: 'http://localhost:8000', displayName: 'Renamed' });
+    await patch({ id: 'test-model', server: 'test-server', displayName: 'Renamed' });
 
     expect(original).toEqual(snapshot); // array reference and entry both unchanged
   });
 
-  it('3c: ignores id/serverUrl smuggled into updates — identity is immutable at runtime', async () => {
+  it('3c: ignores id/server smuggled into updates — identity is immutable at runtime', async () => {
     existingConfig = [
       makeModelConfig({ id: 'real-id', vllmModelId: 'real-model', displayName: 'Original' }),
     ];
@@ -619,20 +614,20 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
     // The Omit type boundary forbids this; the runtime must ignore it too.
     await patchModelConfig(
       identity({ id: 'real-id' }),
-      { id: 'hijack', serverUrl: 'http://evil:8000', displayName: 'Hijacked' } as any,
+      { id: 'hijack', server: 'evil-server', displayName: 'Hijacked' } as any,
     );
 
     const stored = storedModels();
     expect(stored).toHaveLength(1);
     expect(stored[0].id).toBe('real-id');
-    expect(stored[0].serverUrl).toBe('http://localhost:8000');
+    expect(stored[0].server).toBe('test-server');
     expect(stored[0].displayName).toBe('Hijacked'); // legit update still applied
   });
 
-  it('rejects a blank/whitespace serverUrl without writing', async () => {
+  it('rejects a blank/whitespace server ref without writing', async () => {
     await expect(
-      patchModelConfig(identity({ serverUrl: '   ' }), { displayName: 'X' }),
-    ).rejects.toThrow(/serverUrl/);
+      patchModelConfig(identity({ server: '   ' }), { displayName: 'X' }),
+    ).rejects.toThrow(/server/);
     expect(updateSpy).not.toHaveBeenCalled();
   });
 
@@ -672,8 +667,8 @@ describe('readModels / writeModels (single settings access path)', () => {
 
   it('writes the complete array to the Global target', async () => {
     const models = [
-      makeModelConfig({ id: 'a', serverUrl: 'http://a:8000' }),
-      makeModelConfig({ id: 'b', serverUrl: 'http://b:8000' }),
+      makeModelConfig({ id: 'a', server: 'srv-a' }),
+      makeModelConfig({ id: 'b', server: 'srv-b' }),
     ];
     await writeModels(models);
     expect(updateSpy).toHaveBeenCalledWith('models', models, vscode.ConfigurationTarget.Global);
@@ -691,5 +686,24 @@ describe('readModels / writeModels (single settings access path)', () => {
 
   it('reads the stored array without normalizing entries', () => {
     expect(readModels()).toBe(existingConfig);
+  });
+});
+
+describe('settings contribution — scope contract', () => {
+  // configStore ALWAYS writes ConfigurationTarget.Global. Without
+  // "scope": "application" these settings are window-scoped, so a workspace
+  // layer could shadow every read while every write landed in user settings —
+  // the migration would then mark itself done over still-effective legacy
+  // values, and add/edit/auth commands would write where nobody reads.
+  // Pinning the scope in package.json is what makes read/write see one layer.
+  it('models and servers are application-scoped', () => {
+    const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url));
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+    const props = Object.assign(
+      {},
+      ...pkg.contributes.configuration.map((section: any) => section.properties),
+    );
+    expect(props['vllm-copilot.models'].scope).toBe('application');
+    expect(props['vllm-copilot.servers'].scope).toBe('application');
   });
 });

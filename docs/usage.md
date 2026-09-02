@@ -40,7 +40,7 @@ Both the **Last Request** and **Token Usage and Cost** nodes are fed by the same
 
 ### Keying
 
-Everything keys on the **normalized server URL → wire model ID** (`vllmModelId`, falling back to `id`). The same model on two servers is two distinct counters; two presets pointing at the same wire model on one server share one counter. The dashboard normalizes `model.serverUrl` before lookup (scheme-less / trailing-slash / `/v1` forms all resolve), matching the store's write key.
+Everything keys on the **normalized server URL → wire model ID** (`vllmModelId`, falling back to `id`). The same model on two servers is two distinct counters; two presets pointing at the same wire model on one server share one counter. The dashboard resolves each model's server through the registry and normalizes the resulting URL before lookup (scheme-less / trailing-slash / `/v1` forms all resolve), matching the store's write key.
 
 ### Two count planes + start timestamps
 
@@ -106,6 +106,6 @@ This fixed a **pre-existing bug**: the Last Request node was previously written 
 | Dashboard tree (Last Request, Token Usage and Cost, Reset, Set Cost) | `src/dashboard.ts` |
 | Set Cost / Reset commands | `src/commands.ts` |
 | Config schema (`cost` field) | `src/config.ts`, `package.json` |
-| Tests | `test/usageStore.test.ts`, `test/dashboard.test.ts`, `test/configureCost.test.ts` |
+| Tests | `test/usageStore.test.ts` (persistence + migration + cost-input guards) |
 
 **Related:** [Configuration Reference → Token Usage & Cost](configuration-reference.md#token-usage--cost) for the full config schema; [feature-ideas.md](feature-ideas.md) tracks the feature's evolution.

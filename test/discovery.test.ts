@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { discoverModels } from '../src/provider/discovery.js';
 import type { ProviderClient } from '../src/provider/contracts.js';
+import type { ServerEntry } from '../src/serverRegistry.js';
 
 function makeOutput(): vscode.OutputChannel & { appendLine: ReturnType<typeof vi.fn> } {
   return {
@@ -27,19 +28,20 @@ function makeClient(
 }
 
 const server = 'http://localhost:8000';
+const servers: ServerEntry[] = [{ id: 'srv', serverUrl: server }];
 
 describe('discoverModels', () => {
-  it('skips models without a serverUrl and warns', async () => {
+  it('skips models whose server reference does not resolve and warns', async () => {
     const output = makeOutput();
-    const models = await discoverModels([{ id: 'm1' }], makeClient(), output);
+    const models = await discoverModels([{ id: 'm1', server: 'missing' }], servers, makeClient(), output);
     expect(models).toHaveLength(0);
-    expect(lines(output)).toContain('has no serverUrl and will be skipped');
+    expect(lines(output)).toContain('references unknown server "missing" and will be skipped');
   });
 
   it('returns empty when there are no overrides', async () => {
     const output = makeOutput();
     const client = makeClient();
-    const models = await discoverModels([], client, output);
+    const models = await discoverModels([], servers, client, output);
     expect(models).toHaveLength(0);
   });
 
@@ -48,7 +50,8 @@ describe('discoverModels', () => {
   it('a model whose server does not answer is dropped from the picker (no fabrication)', async () => {
     const output = makeOutput();
     const models = await discoverModels(
-      [{ id: 'm1', serverUrl: server }],
+      [{ id: 'm1', server: 'srv' }],
+      servers,
       makeClient({ getModelContextWindow: async () => { throw new Error('no context window'); } }),
       output,
     );
@@ -62,7 +65,8 @@ describe('discoverModels', () => {
   it('preserves the resolver detail, only naming transport failures as such', async () => {
     const output = makeOutput();
     await discoverModels(
-      [{ id: 'm1', serverUrl: server }],
+      [{ id: 'm1', server: 'srv' }],
+      servers,
       makeClient({ getModelContextWindow: async () => {
         throw new Error('llamacpp model "qwen" has no context window: GET /props did not report default_generation_settings.n_ctx.');
       } }),
@@ -80,7 +84,8 @@ describe('discoverModels', () => {
     const spy = vi.fn(async () => ({ contextWindow: 8192 }));
     const onModelDiscovered = vi.fn();
     const models = await discoverModels(
-      [{ id: 'm1', serverUrl: server, family: 'test-family' }],
+      [{ id: 'm1', server: 'srv', family: 'test-family' }],
+      servers,
       { getModelContextWindow: spy },
       output,
       onModelDiscovered,
@@ -101,9 +106,10 @@ describe('discoverModels', () => {
     const selectedModeByModel = new Map<string, string>([['m1', 'Think Max']]);
     const models = await discoverModels(
       [{
-        id: 'm1', serverUrl: server, family: 'test-family',
+        id: 'm1', server: 'srv', family: 'test-family',
         modelModes: { 'Think Max': { max_tokens: 2000 } },
       }],
+      servers,
       makeClient({ getModelContextWindow: async () => ({ contextWindow: 8192 }) }),
       output,
       undefined,
@@ -123,10 +129,11 @@ describe('discoverModels', () => {
     // so Copilot never received updated limits for preset-configured models.
     const models = await discoverModels(
       [{
-        id: 'm1', serverUrl: server, family: 'test-family',
+        id: 'm1', server: 'srv', family: 'test-family',
         maxOutputTokens: 32768, // preset-style model-level budget
         modelModes: { 'Think Max': { max_tokens: 2000 } },
       }],
+      servers,
       makeClient({ getModelContextWindow: async () => ({ contextWindow: 8192 }) }),
       output,
       undefined,
@@ -143,9 +150,10 @@ describe('discoverModels', () => {
     const selectedModeByModel = new Map<string, string>([['m1', 'Big']]);
     const models = await discoverModels(
       [{
-        id: 'm1', serverUrl: server, family: 'test-family',
+        id: 'm1', server: 'srv', family: 'test-family',
         modelModes: { Big: { max_tokens: 50000 } },
       }],
+      servers,
       makeClient({ getModelContextWindow: async () => ({ contextWindow: 8192 }) }),
       output,
       undefined,
@@ -159,7 +167,8 @@ describe('discoverModels', () => {
   it('keeps the model-wide budget when no mode is selected', async () => {
     const output = makeOutput();
     const models = await discoverModels(
-      [{ id: 'm1', serverUrl: server, family: 'test-family', modelModes: { 'Think Max': { max_tokens: 2000 } } }],
+      [{ id: 'm1', server: 'srv', family: 'test-family', modelModes: { 'Think Max': { max_tokens: 2000 } } }],
+      servers,
       makeClient({ getModelContextWindow: async () => ({ contextWindow: 8192 }) }),
       output,
     );
@@ -175,9 +184,10 @@ describe('discoverModels', () => {
     // defaultParams.max_tokens produced a bar that disagreed with the wire.
     const models = await discoverModels(
       [{
-        id: 'm1', serverUrl: server, family: 'test-family',
+        id: 'm1', server: 'srv', family: 'test-family',
         defaultParams: { max_tokens: 2000 },
       }],
+      servers,
       makeClient({ getModelContextWindow: async () => ({ contextWindow: 8192 }) }),
       output,
     );
@@ -191,10 +201,11 @@ describe('discoverModels', () => {
     const selectedModeByModel = new Map<string, string>([['m1', 'Big']]);
     const models = await discoverModels(
       [{
-        id: 'm1', serverUrl: server, family: 'test-family',
+        id: 'm1', server: 'srv', family: 'test-family',
         defaultParams: { max_tokens: 2000 },
         modelModes: { Big: { max_tokens: 5000 } },
       }],
+      servers,
       makeClient({ getModelContextWindow: async () => ({ contextWindow: 8192 }) }),
       output,
       undefined,
@@ -216,9 +227,10 @@ describe('discoverModels', () => {
     });
     const models = await discoverModels(
       [
-        { id: 'good', serverUrl: server, family: 'test-family' },
-        { id: 'bad', serverUrl: 'http://other:8000' },
+        { id: 'good', server: 'srv', family: 'test-family' },
+        { id: 'bad', server: 'other' },
       ],
+      [...servers, { id: 'other', serverUrl: 'http://other:8000' }],
       client,
       output,
     );
@@ -234,9 +246,10 @@ describe('discoverModels', () => {
     const output = makeOutput();
     const models = await discoverModels(
       [
-        { id: 'dup', serverUrl: server, family: 'test-family' },
-        { id: 'dup', serverUrl: server, family: 'test-family' },
+        { id: 'dup', server: 'srv', family: 'test-family' },
+        { id: 'dup', server: 'srv', family: 'test-family' },
       ],
+      servers,
       makeClient(),
       output,
     );

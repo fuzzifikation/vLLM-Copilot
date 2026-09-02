@@ -45,7 +45,7 @@ interface Captured {
 /** Default no-op fake client satisfying {@link ProviderClient}. */
 function fakeClient(overrides: Partial<ProviderClient> = {}): ProviderClient {
   return {
-    getConfigCached: async () => ({ models: [], enableFileLogging: false } as VllmConfig),
+    getConfigCached: async () => ({ models: [], servers: [], enableFileLogging: false } as VllmConfig),
     invalidateConfigCache: vi.fn(),
     getModelContextWindow: async () => ({ contextWindow: 0 }),
     chatCompletionStream: async function* () {},
@@ -58,7 +58,12 @@ function fakeClient(overrides: Partial<ProviderClient> = {}): ProviderClient {
  * StreamEvents per `chatCompletionStream` call. The last entry is reused if the loop
  * makes more calls than provided.
  */
-function setupProvider(streams: StreamEvent[][], autoContinueRetries = 1, modelExtras: Record<string, unknown> = {}) {
+function setupProvider(
+  streams: StreamEvent[][],
+  autoContinueRetries = 1,
+  modelExtras: Record<string, unknown> = {},
+  serverExtras: Record<string, unknown> = {},
+) {
   const captured: Captured[] = [];
   let call = 0;
   const spy = vi.fn((_modelId: string, messages: any[], options: Record<string, unknown>) => {
@@ -69,7 +74,8 @@ function setupProvider(streams: StreamEvent[][], autoContinueRetries = 1, modelE
   });
   const client = fakeClient({
     getConfigCached: async () => ({
-      models: [{ id: 'm', serverUrl: 'http://localhost:8000', autoContinueRetries, ...modelExtras }],
+      models: [{ id: 'm', server: 'srv', autoContinueRetries, ...modelExtras }],
+      servers: [{ id: 'srv', serverUrl: 'http://localhost:8000', ...serverExtras }],
     } as VllmConfig),
     chatCompletionStream: spy as any,
   });
@@ -163,6 +169,7 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
         [ev({ content: '\n1. Do it', finishReason: null as any }), ev({ finishReason: 'stop' })],
       ],
       1,
+      {},
       { serverType: 'llamacpp' },
     );
     const progress = { report: vi.fn() };
@@ -259,7 +266,8 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
     const output = makeOutput();
     const client = fakeClient({
       getConfigCached: async () => ({
-        models: [{ id: 'm', serverUrl: 'http://localhost:8000', autoContinueRetries: 1 }],
+        models: [{ id: 'm', server: 'srv', autoContinueRetries: 1 }],
+        servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }],
       } as VllmConfig),
       chatCompletionStream: async function* () {
         yield ev({ finishReason: 'stop' });
@@ -320,7 +328,8 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
       let call = 0;
       const client = fakeClient({
         getConfigCached: async () => ({
-          models: [{ id: 'm', serverUrl: 'http://localhost:8000', autoContinueRetries: 1 }],
+          models: [{ id: 'm', server: 'srv', autoContinueRetries: 1 }],
+        servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }],
         } as VllmConfig),
         chatCompletionStream: vi.fn(async function* (): AsyncGenerator<StreamEvent> {
           call++;
@@ -369,9 +378,11 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
       0,
       {
         vllmModelId: 'deepseek/deepseek-v4-pro-0813',
+        routingMode: 'nitro',
+      },
+      {
         serverUrl: 'https://openrouter.ai/api',
         serverType: 'openrouter',
-        routingMode: 'nitro',
       },
     );
     const progress = { report: vi.fn() };
@@ -427,7 +438,7 @@ describe('remote-install guard', () => {
       extension: { extensionKind: vscode.ExtensionKind.Workspace },
     };
     const provider = new VllmChatModelProvider(context as any, makeOutput(), undefined, {
-      client: fakeClient({ getConfigCached: async () => ({ models: [], enableFileLogging: false } as VllmConfig) }),
+      client: fakeClient({ getConfigCached: async () => ({ models: [], servers: [], enableFileLogging: false } as VllmConfig) }),
     });
 
     const progress = { report: vi.fn() };
@@ -457,7 +468,7 @@ describe('remote-install guard', () => {
       extension: { extensionKind: vscode.ExtensionKind.UI },
     };
     const provider = new VllmChatModelProvider(context as any, makeOutput(), undefined, {
-      client: fakeClient({ getConfigCached: async () => ({ models: [], enableFileLogging: false } as VllmConfig) }),
+      client: fakeClient({ getConfigCached: async () => ({ models: [], servers: [], enableFileLogging: false } as VllmConfig) }),
     });
 
     const progress = { report: vi.fn() };

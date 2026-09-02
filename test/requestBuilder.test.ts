@@ -22,7 +22,11 @@ describe('buildRequest', () => {
         { role: vscode.LanguageModelChatMessageRole.User, content: [new vscode.LanguageModelTextPart('hi')] },
       ] as any,
       opts(),
-      { models: [], enableFileLogging: false },
+      {
+        models: [{ id: 'm', server: 'srv' }],
+        servers: [{ id: 'srv', serverUrl: '' }],
+        enableFileLogging: false,
+      },
       output,
     );
 
@@ -30,10 +34,10 @@ describe('buildRequest', () => {
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'hi' },
     ]);
-    // No override: wire id falls back to model id; serverUrl is empty (the
-    // client layer normalizes '' to localhost, not the request builder).
+    // Bare override (no vllmModelId): wire id falls back to model id. An empty
+    // registry URL normalizes to the default localhost at resolution time.
     expect(result.vllmModelId).toBe('m');
-    expect(result.serverConfig.serverUrl).toBe('');
+    expect(result.serverConfig.serverUrl).toBe('http://localhost:8000');
     // Output budget re-asserted from the model's context-window-derived max.
     expect(result.mergedOptions.max_tokens).toBe(100);
     // Transport defaults apply when the override does not set them.
@@ -47,9 +51,10 @@ describe('buildRequest', () => {
       opts(),
       {
         models: [{
-          id: 'm', vllmModelId: 'wire-model', serverUrl: 'http://host:8000',
+          id: 'm', vllmModelId: 'wire-model', server: 'srv',
           maxOutputTokens: 50, streamInactivityTimeout: 99, initialResponseTimeoutMs: 42,
         }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
         enableFileLogging: false,
       },
       output,
@@ -71,7 +76,11 @@ describe('buildRequest', () => {
       model,
       [] as any,
       opts({ modelOptions: { max_tokens: 999, temperature: 0.5 } }),
-      { models: [], enableFileLogging: false },
+      {
+        models: [{ id: 'm', server: 'srv' }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
+        enableFileLogging: false,
+      },
       output,
     );
     expect(result.mergedOptions.max_tokens).toBe(100);
@@ -86,9 +95,10 @@ describe('buildRequest', () => {
       opts({ modelConfiguration: { reasoningEffort: 'deep' } }),
       {
         models: [{
-          id: 'm', serverUrl: 'http://host:8000',
+          id: 'm', server: 'srv',
           modelModes: { deep: { max_tokens: 250, temperature: 0.1 } },
         }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
         enableFileLogging: false,
       },
       output,
@@ -106,9 +116,10 @@ describe('buildRequest', () => {
       opts({ modelConfiguration: { reasoningEffort: 'deep' } }),
       {
         models: [{
-          id: 'm', serverUrl: 'http://host:8000',
+          id: 'm', server: 'srv',
           modelModes: { deep: { max_tokens: 99999 } },
         }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
         enableFileLogging: false,
       },
       output,
@@ -124,9 +135,10 @@ describe('buildRequest', () => {
       opts({ modelConfiguration: { reasoningEffort: 'deep' } }),
       {
         models: [{
-          id: 'm', serverUrl: 'http://host:8000',
+          id: 'm', server: 'srv',
           modelModes: { deep: { max_tokens: 200 } },
         }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
         enableFileLogging: false,
       },
       output,
@@ -142,11 +154,12 @@ describe('buildRequest', () => {
     const advModel = (mo: number, mi: number) => ({ id: 'm', maxOutputTokens: mo, maxInputTokens: mi }) as any;
     const vectorOverride = {
       models: [{
-        id: 'm', serverUrl: 'http://host:8000',
+        id: 'm', server: 'srv',
         maxOutputTokens: [4096, 2048],
         defaultParams: { max_tokens: 1000 },
         modelModes: { deep: { max_tokens: 3000 } },
       }],
+      servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
       enableFileLogging: false,
     } as any;
 
@@ -229,9 +242,10 @@ describe('buildRequest', () => {
       opts({ modelConfiguration: { reasoningEffort: 'deep' } }),
       {
         models: [{
-          id: 'm', serverUrl: 'http://host:8000',
+          id: 'm', server: 'srv',
           modelModes: { deep: { max_tokens: 99999 } },
         }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
         enableFileLogging: false,
       },
       output,
@@ -246,9 +260,10 @@ describe('buildRequest', () => {
       opts({ modelConfiguration: { reasoningEffort: 'deep' }, modelOptions: { max_tokens: 999 } }),
       {
         models: [{
-          id: 'm', serverUrl: 'http://host:8000',
+          id: 'm', server: 'srv',
           modelModes: { deep: { temperature: 0.1 } },
         }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
         enableFileLogging: false,
       },
       output,
@@ -265,10 +280,11 @@ describe('buildRequest', () => {
       opts({ modelConfiguration: { reasoningEffort: 'deep' } }),
       {
         models: [{
-          id: 'm', serverUrl: 'http://host:8000',
+          id: 'm', server: 'srv',
           defaultParams: { temperature: 0.5, top_p: 0.9 },
           modelModes: { deep: { temperature: 0.1 } },
         }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
         enableFileLogging: false,
       },
       output,
@@ -287,7 +303,11 @@ describe('buildRequest', () => {
         tools: [{ name: 'f', description: 'does f', inputSchema: { type: 'object' } }],
         toolMode: vscode.LanguageModelChatToolMode.Required,
       }),
-      { models: [], enableFileLogging: false },
+      {
+        models: [{ id: 'm', server: 'srv' }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
+        enableFileLogging: false,
+      },
       output,
     );
 
@@ -299,7 +319,11 @@ describe('buildRequest', () => {
   });
 
   it('omits tools and tool_choice when none are provided', () => {
-    const result = buildRequest(model, [] as any, opts(), { models: [], enableFileLogging: false }, output);
+    const result = buildRequest(model, [] as any, opts(), {
+      models: [{ id: 'm', server: 'srv' }],
+      servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
+      enableFileLogging: false,
+    }, output);
     expect(result.mergedOptions.tools).toBeUndefined();
     expect(result.mergedOptions.tool_choice).toBeUndefined();
   });
@@ -311,9 +335,9 @@ describe('buildRequest', () => {
       opts(),
       {
         models: [{
-          id: 'm', vllmModelId: 'wire-model', serverUrl: 'https://openrouter.ai/api',
-          serverType: 'openrouter', provider: 'gmicloud/fp8',
+          id: 'm', vllmModelId: 'wire-model', server: 'or', provider: 'gmicloud/fp8',
         }],
+        servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
         enableFileLogging: false,
       },
       output,
@@ -330,7 +354,8 @@ describe('buildRequest', () => {
       [] as any,
       opts(),
       {
-        models: [{ id: 'm', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
+        models: [{ id: 'm', server: 'or' }],
+        servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
         enableFileLogging: false,
       },
       output,
@@ -345,7 +370,8 @@ describe('buildRequest', () => {
       [] as any,
       opts(),
       {
-        models: [{ id: 'm', serverUrl: 'http://host:8000', provider: 'together' }],
+        models: [{ id: 'm', server: 'srv', provider: 'together' }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
         enableFileLogging: false,
       },
       output,
@@ -362,7 +388,8 @@ describe('buildRequest', () => {
       [] as any,
       opts(),
       {
-        models: [{ id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter', routingMode: 'nitro' }],
+        models: [{ id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', server: 'or', routingMode: 'nitro' }],
+        servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
         enableFileLogging: false,
       },
       output,
@@ -380,9 +407,9 @@ describe('buildRequest', () => {
       opts(),
       {
         models: [{
-          id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', serverUrl: 'https://openrouter.ai/api',
-          serverType: 'openrouter', provider: 'deepseek', routingMode: 'exacto',
+          id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', server: 'or', provider: 'deepseek', routingMode: 'exacto',
         }],
+        servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
         enableFileLogging: false,
       },
       output,
@@ -400,7 +427,8 @@ describe('buildRequest', () => {
       [] as any,
       opts(),
       {
-        models: [{ id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter', routingMode: 'standard' }],
+        models: [{ id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', server: 'or', routingMode: 'standard' }],
+        servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
         enableFileLogging: false,
       },
       output,
@@ -414,7 +442,8 @@ describe('buildRequest', () => {
       [] as any,
       opts(),
       {
-        models: [{ id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', serverUrl: 'http://host:8000', routingMode: 'nitro' }],
+        models: [{ id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', server: 'srv', routingMode: 'nitro' }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
         enableFileLogging: false,
       },
       output,

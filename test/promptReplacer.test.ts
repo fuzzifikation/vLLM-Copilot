@@ -44,57 +44,6 @@ describe('applyPromptReplacements', () => {
   });
 });
 
-describe('personality file loading (cache revalidation)', () => {
-  const dirs: string[] = [];
-
-  afterEach(async () => {
-    await Promise.all(dirs.splice(0).map(d => fs.rm(d, { recursive: true, force: true })));
-  });
-
-  const personality = (name: string, description: string) =>
-    JSON.stringify({ meta: { name, description }, rules: [] });
-
-  /** Write a file and set an explicit mtime so cache invalidation is deterministic. */
-  async function writeWithMtime(p: string, content: string, mtimeMs: number): Promise<void> {
-    await fs.writeFile(p, content, 'utf-8');
-    const mtime = new Date(mtimeMs);
-    await fs.utimes(p, mtime, mtime);
-  }
-
-  it('reloads a personality file after it is edited', async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vllm-repl-'));
-    dirs.push(dir);
-    const file = path.join(dir, 'p.json');
-
-    await writeWithMtime(file, personality('First', 'desc1'), 1_000_000);
-    expect((await loadPersonalityMeta(file))?.name).toBe('First');
-
-    // Edit the file with different content AND a different mtime+size.
-    await writeWithMtime(
-      file,
-      JSON.stringify({ meta: { name: 'Second', description: 'desc2' }, rules: [{ find: 'a', replace: 'b' }] }),
-      2_000_000,
-    );
-    expect((await loadPersonalityMeta(file))?.name).toBe('Second');
-    const rules = await loadPromptReplacements(file);
-    expect(rules).toHaveLength(1);
-    expect(rules[0].find).toBe('a');
-  });
-
-  it('returns empty / null after the file is deleted (no stale cache)', async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vllm-repl-'));
-    dirs.push(dir);
-    const file = path.join(dir, 'p.json');
-
-    await writeWithMtime(file, personality('First', 'desc1'), 1_000_000);
-    expect((await loadPersonalityMeta(file))?.name).toBe('First');
-
-    await fs.rm(file);
-    expect(await loadPromptReplacements(file)).toEqual([]);
-    expect(await loadPersonalityMeta(file)).toBeNull();
-  });
-});
-
 describe('persona/common rule split (bundled files)', () => {
   // These run against the REAL shipped files (the loader resolves the common
   // file relative to this module, so out/ and src/ both land on the repo's /

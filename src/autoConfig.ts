@@ -4,6 +4,6 @@
  * that extension.ts keeps a single stable import surface. No business logic
  * lives here — it is a thin command-registration facade.
  */
-export { registerAddServerModelCommand } from './commands/addServerFlow.js';
+export { registerAddServerModelCommand, registerAddServerCommand } from './commands/addServerFlow.js';
 export { registerAutoConfigureModelCommand } from './commands/autoConfigureFlow.js';
 export { ensureByokUtilityDefault, ensureAgentHostModelsEnabled, registerConfigureUtilityModelCommand } from './commands/byok.js';

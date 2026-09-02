@@ -88,6 +88,7 @@ export function buildRequest(
   // silently — a known, accepted coupling.
   const modelConfiguration = (options as any).modelConfiguration as Record<string, unknown> | undefined;
   const modelOverrides = config.models || [];
+  const servers = config.servers || [];
   const override = resolveOverrideForModel(modelOverrides, model.id);
 
   const selectedMode = typeof modelConfiguration?.reasoningEffort === 'string'
@@ -143,11 +144,15 @@ export function buildRequest(
     pickerTokens,
   );
 
+  // Backend type for this model's entry, resolved ONCE — every consumer below
+  // (provider pinning, routing mode, transport config) asks the same question.
+  const serverType = resolveServerType(override, servers);
+
   // OpenRouter provider pinning: when the model is OpenRouter and the user has
   // selected a provider (the exact `tag` from the endpoints API), force routing
   // to that provider with `provider: { only: [tag] }`. The tag is used verbatim —
   // never derived, never guessed. `undefined`/omitted = Auto (no `provider` key).
-  const providerTag = resolveServerType(override) === 'openrouter' ? override?.provider : undefined;
+  const providerTag = serverType === 'openrouter' ? override?.provider : undefined;
   if (providerTag) {
     mergedOptions.provider = { only: [providerTag] };
     output.appendLine(`[INFO] Model "${model.id}" → OpenRouter provider pinned: "${providerTag}" (provider.only)`);
@@ -173,7 +178,7 @@ export function buildRequest(
   // routing mode never fragments the dashboard's counters. A pinned provider
   // disables the mode (sorting a single provider is meaningless), so no suffix.
   const wireModelId = resolveVllmModelId(override) || model.id;
-  const isOpenRouter = resolveServerType(override) === 'openrouter';
+  const isOpenRouter = serverType === 'openrouter';
   const routingMode = override?.routingMode;
   let vllmModelId = wireModelId;
   if (isOpenRouter && !providerTag && routingMode && routingMode !== 'standard') {
@@ -181,16 +186,21 @@ export function buildRequest(
     output.appendLine(`[INFO] Model "${model.id}" → OpenRouter routing mode "${routingMode}" (wire id ${vllmModelId})`);
   }
 
-  // Resolve per-model server config (serverUrl + isolated request headers + transport
-  // + backend type). Missing serverType resolves to 'vllm' — zero behavior change
-  // for existing configs, while secondary backends get protocol-aware adaptation.
-  const resolved = resolveServerConfig(override);
+  // Resolve per-model server config (URL + isolated request headers + transport
+  // + backend type) via the registry. A model whose `server` ref does not
+  // resolve is unreachable — fail loudly rather than send to an empty URL.
+  const resolved = resolveServerConfig(override, servers);
+  if (!resolved) {
+    throw new Error(
+      `Model "${model.id}" references an unknown server — no registry entry matches its "server" ref. Fix the reference or re-add the server.`
+    );
+  }
   const settings = resolveModelSettings(override);
   const serverConfig: ServerConfig = {
     ...resolved,
     streamInactivityTimeout: settings.streamInactivityTimeout,
     initialResponseTimeoutMs: settings.initialResponseTimeoutMs,
-    serverType: resolveServerType(override),
+    serverType,
   };
 
   // Log which headers are being sent (keys only, not values) for diagnostics

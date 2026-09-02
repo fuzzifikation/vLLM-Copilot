@@ -60,14 +60,3 @@ export function extractFamilyWithSource(modelId: string): ExtractedFamily {
   const fallback = slashIndex > 0 ? modelId.slice(0, slashIndex).toLowerCase() : modelId.toLowerCase();
   return { family: fallback, fromFallback: true };
 }
-
-/**
- * Extract a short family name from a full model ID.
- * e.g. "meta-llama/Llama-3-70B-Instruct" → "llama"
- *
- * Pure wrapper around {@link extractFamilyWithSource} for callers that do not
- * need to distinguish the fallback case.
- */
-export function extractFamily(modelId: string): string {
-  return extractFamilyWithSource(modelId).family;
-}

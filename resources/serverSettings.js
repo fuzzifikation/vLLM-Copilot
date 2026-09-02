@@ -38,10 +38,10 @@
   // and the personality dropdown + capture toggle (auto-save via their own handlers).
   // Modal inputs live outside #root, so they are naturally excluded.
   document.addEventListener('input', e => {
-    if (e.target.closest && e.target.closest('#root') && !e.target.closest('#sSel, #mSel, #personalitySel, #captureCb')) markDirty();
+    if (e.target.closest && e.target.closest('#root') && !e.target.closest('#sSel, #mSel, #sTypeSel, #personalitySel, #captureCb')) markDirty();
   });
   document.addEventListener('change', e => {
-    if (e.target.closest && e.target.closest('#root') && !e.target.closest('#sSel, #mSel, #personalitySel, #captureCb')) markDirty();
+    if (e.target.closest && e.target.closest('#root') && !e.target.closest('#sSel, #mSel, #sTypeSel, #personalitySel, #captureCb')) markDirty();
   });
 
   // Set before posting a 'save' and consumed by the next 'data' message. A save is
@@ -188,6 +188,15 @@
     return sv ? sv.url : '';
   }
 
+  // Registry entry id for the current target: the selected model's own `server`
+  // when it has one (configured models and render-time stubs always do), the
+  // selected group's primary entry as fallback.
+  function selServerId() {
+    if (S.mc && S.mc.server) return S.mc.server;
+    const sv = S.servers.find(s => s.key === S.selServer) || S.servers[0];
+    return sv ? sv.serverId : '';
+  }
+
   function showModal(html, onOk) {
     const overlay = document.getElementById('modal');
     const body = document.getElementById('modalBody');
@@ -245,11 +254,9 @@
       ...(sv.serverModelIds || [])
         .filter(serverId => !configKeys.has(serverId) && !coveredWire.has(serverId))
         .map(serverId => ({ value: serverId, configured: false, mc: {
-          vllmModelId: serverId, id: serverId, serverUrl: sv.url,
-          // Backend auto-detected from the server's /v1/models (max_model_len → vllm,
-          // owned_by "llamacpp" → llamacpp). Absent when there's no honest signal —
-          // then serverType is left unset and the select defaults to vllm.
-          ...(sv.detectedServerType ? { serverType: sv.detectedServerType } : {})
+          // Unconfigured stub: saving it creates the entry on the group's
+          // primary registry entry. Backend type lives on the entry, not here.
+          vllmModelId: serverId, id: serverId, server: sv.serverId
         } })),
     ];
 
@@ -282,22 +289,21 @@
       urlSeen[s.url] = n;
       // Prefer the user-set server display name over the URL — trimmed, and
       // never for OpenRouter relays (fixed managed endpoint, not renamable).
-      const relay = (s.models || []).some(function (m) { return m && m.serverType === 'openrouter'; });
+      const relay = s.serverType === 'openrouter';
       const nm = relay ? '' : String(s.serverDisplayName || '').trim();
       const base = nm || s.url;
       const label = urlCount[s.url] > 1 ? base + ' (identity ' + n + ')' : base;
       h += '<option value="' + E(s.key) + '"' + (s.key === S.selServer ? ' selected' : '') + '>' + E(label) + '</option>';
     });
     h += '</select>';
-    // Backend type: every released config is vLLM. Secondary backends are opt-in.
-    // A select persists serverType; unset stays undefined (→ vLLM by policy).
-    // For unconfigured server models the select is pre-set from the backend
-    // auto-detected via /v1/models (max_model_len → vllm, owned_by "llamacpp" → llamacpp).
+    // Backend type comes from the registry entry; unset shows vllm (policy
+    // default). Changing it writes the ENTRY immediately (own 'setServerType'
+    // message, excluded from the model-form dirty tracking) — never the model.
     // serverType describes the SERVER, so it sits next to the Server selector —
     // general → specific (serverType → Server → Model).
-    h += '<label>Server Type</label><select id="sTypeSel" data-f="serverType">' +
+    h += '<label>Server Type</label><select id="sTypeSel">' +
       ['vllm', 'openrouter', 'llamacpp', 'lmstudio', 'ollama'].map(t =>
-        '<option value="' + t + '"' + (mc.serverType === t ? ' selected' : '') + '>' + t + '</option>').join('') +
+      '<option value="' + t + '"' + ((sv.serverType || sv.detectedServerType || 'vllm') === t ? ' selected' : '') + '>' + t + '</option>').join('') +
       '</select>';
     h += '<label>Model (vllmModelId)</label><select id="mSel">';
     // Option VALUE is the extension `id` (the key for personalities/settings);
@@ -331,7 +337,7 @@
     // keyed by wire id in S.providersByModel). The option value is the exact API
     // `tag` — never derived. "Auto" (empty) = let OpenRouter route. If the list
     // is unavailable (fetch failed), only "Auto" shows; nothing is fabricated.
-    if (mc.serverType === 'openrouter') {
+    if (sv.serverType === 'openrouter') {
       const wire = mc.vllmModelId || mc.id || '';
       const endpoints = (S.providersByModel || {})[wire] || [];
       h += '<label>Provider</label><select data-f="provider">';
@@ -436,6 +442,11 @@
 
     document.getElementById('sSel').onchange = () => { S.selServer = document.getElementById('sSel').value; render(); };
     document.getElementById('mSel').onchange = () => { S.selModel = document.getElementById('mSel').value; render(); };
+    // Server type is an entry-level fact — applying it posts immediately and the
+    // host's 'vllm-copilot.servers' listener answers with a fresh re-render.
+    document.getElementById('sTypeSel').onchange = () => {
+      vscode.postMessage({ type: 'setServerType', server: selServerId(), serverType: document.getElementById('sTypeSel').value });
+    };
     // Routing mode only makes sense when routing is Auto. The Provider dropdown
     // and Routing dropdown are sibling fields, so react to the provider's LIVE
     // selection — no save-and-re-render needed to enable/disable routing.
@@ -463,8 +474,8 @@
         // The host answers with a full re-render; the data handler preserves the
         // draft (merges state) whenever the form is dirty, so no flag is needed here.
         vscode.postMessage(targetPath === ''
-          ? { type: 'applyPersonality', serverUrl: selServerUrl(), id: S.selModel, clear: true }
-          : { type: 'applyPersonality', serverUrl: selServerUrl(), id: S.selModel, sourcePath: sourcePath });
+          ? { type: 'applyPersonality', server: selServerId(), id: S.selModel, clear: true }
+          : { type: 'applyPersonality', server: selServerId(), id: S.selModel, sourcePath: sourcePath });
       };
     }
     const captureCb = document.getElementById('captureCb');
@@ -482,18 +493,12 @@
     setDirtyUI();
     const autoCfgBtn = document.getElementById('autoConfigureBtn');
     if (autoCfgBtn) autoCfgBtn.onclick = () => {
-      const sv = S.servers.find(s => s.key === S.selServer);
-      vscode.postMessage({
-        type: 'autoConfigure',
-        serverUrl: selServerUrl(),
-        id: S.selModel,
-        identityModelId: sv && sv.models && sv.models[0] ? configKey(sv.models[0]) : undefined,
-      });
+      vscode.postMessage({ type: 'autoConfigure', server: selServerId(), id: S.selModel });
     };
     const rmBtn = document.getElementById('removeModelBtn');
     if (rmBtn) rmBtn.onclick = async () => {
       if (await webviewConfirm('Remove model "' + S.selModel + '" from ' + selServerUrl() + '?')) {
-        vscode.postMessage({ type: 'removeModel', serverUrl: selServerUrl(), id: S.selModel });
+        vscode.postMessage({ type: 'removeModel', server: selServerId(), id: S.selModel });
       }
     };
   }
@@ -694,7 +699,8 @@
       if (v !== undefined) dp[k] = v;
     });
     u.defaultParams = Object.keys(dp).length ? dp : ''; // '' = explicit clear (all params removed)
-    u.serverUrl = selServerUrl();
+    // `server` rides along on u from the {...mc} spread — configured models and
+    // stubs both carry the registry entry id. Identity fields stay identity fields.
     u.vllmModelId = mc.vllmModelId || mc.id;
     u.id = mc.id || mc.vllmModelId;
     pendingSave = true;

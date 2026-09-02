@@ -4,8 +4,8 @@
  */
 
 import * as vscode from 'vscode';
-import { getConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, modelServerIdentity, serverGroupKey, type ModelConfig, type ServerType } from './config.js';
-import { readModels } from './configStore.js';
+import { getConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, resolveVllmModelId, type ModelConfig, type ServerType } from './config.js';
+import { readModels, readServers } from './configStore.js';
 import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
 import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from './openRouter.js';
 import {
@@ -14,6 +14,7 @@ import {
   getModelStartedAt,
   type UsageCounts, type CostRates,
 } from './usageStore.js';
+import { firstEntryById } from './serverRegistry.js';
 
 // ─── Tree Items ──────────────────────────────────────────────────────
 
@@ -36,23 +37,17 @@ function isoDate(value?: string | null): string | undefined {
 /** A server node in the tree (collapsible, shows metrics as children) */
 class ServerTreeItem extends vscode.TreeItem {
   /**
-   * @param key - Stable identity key (URL + header fingerprint hash). Two models
-   *   sharing a URL with different credentials get distinct keys — the tree id
-   *   and metrics are per identity.
-   * @param requestHeaders - This identity's exact credentials, carried so the
-   *   Deep-Dive command uses the right ones (never the first model's).
+   * @param serverId - Registry entry id. The entry IS the server identity: the
+   *   tree id, the engine key, and the Deep-Dive panel key are all this value.
    * @param displayLabel - Optional disambiguated label (e.g. `s:8000 (identity 2)`) when
-   *   multiple identities share one URL; defaults to `shortUrl(serverUrl)` or the
+   *   several entries point at one URL; defaults to `shortUrl(serverUrl)` or the
    *   user-set `serverDisplayName`.
    * @param serverDisplayName - The user-set label WITHOUT any identity suffix —
    *   carried so the Deep-Dive command can title its panel with the clean name.
    */
   constructor(
-    public readonly key: string,
-    /** Identity fingerprint (URL + headers) — matches the engine registry key. */
-    public readonly fp: string,
     public readonly serverUrl: string,
-    public readonly requestHeaders: Record<string, string>,
+    public readonly serverId: string,
     public readonly metrics: ServerMetrics,
     public readonly serverType?: ServerType,
     displayLabel?: string,
@@ -65,7 +60,7 @@ class ServerTreeItem extends vscode.TreeItem {
 
     super(displayName, vscode.TreeItemCollapsibleState.Collapsed);
     this.iconPath = statusIcon;
-    this.id = `server:${key}`;
+    this.id = `server:${serverId}`;
     // OpenRouter is a relay, not a server: /v1/models is the whole catalog (not
     // "the server's models") and any context window here is one arbitrary
     // configured model's — wrong scope to present as server-wide. Suppress both
@@ -124,12 +119,12 @@ class OpenRouterAccountTreeItem extends vscode.TreeItem {
     public readonly account: OpenRouterAccount,
     /** Total-budget info from /api/v1/credits (may be undefined on a failed probe). */
     public readonly credits: OpenRouterCredits | undefined,
-    /** Identity fingerprint — the account is per-key, so two identities on one URL differ. */
-    public readonly fp: string,
+    /** Registry entry id — the account belongs to this entry's credential. */
+    public readonly serverId: string,
   ) {
     super('Account', vscode.TreeItemCollapsibleState.Collapsed);
     this.iconPath = new vscode.ThemeIcon('account');
-    this.id = `openRouterAccount:${serverGroupKey(fp)}`;
+    this.id = `openRouterAccount:${serverId}`;
     const remaining = account.limit_remaining;
     // Prefer the real budget (credits loaded − used) for the one-liner; fall back
     // to the per-key remaining / free-tier / monthly usage when that's absent.
@@ -171,8 +166,8 @@ class OpenRouterModelTreeItem extends vscode.TreeItem {
     modelLabel: string,
     /** Pinned provider label shown as the collapsed description — or undefined (nothing). */
     providerLabel: string | undefined,
-    /** Identity fingerprint — the model belongs to exactly one credential identity. */
-    public readonly fp: string,
+    /** Registry entry id — the model belongs to this entry's models. */
+    public readonly serverId: string,
     /** The configured output budget (for the tooltip when clamped). */
     configuredOutput?: number,
     /** The effective (clamped) output ceiling after ALL binding constraints. */
@@ -188,7 +183,7 @@ class OpenRouterModelTreeItem extends vscode.TreeItem {
     this.iconPath = clamped
       ? new vscode.ThemeIcon('alert', new vscode.ThemeColor('charts.yellow'))
       : new vscode.ThemeIcon('symbol-class');
-    this.id = `openRouterModel:${serverGroupKey(fp)}:${modelId}`;
+    this.id = `openRouterModel:${serverId}:${modelId}`;
     // `clamped` requires at least one numeric binding cause, and every cause sets
     // `effectiveOutput` (catalog → the ceiling; provider → min with it), so both
     // numbers are always present when clamped. Defensive: if that invariant ever
@@ -380,13 +375,12 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
   private _onDidChangeTreeData = new vscode.EventEmitter<vscode.TreeItem | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-  /** Active engine subscriptions: one per server identity (URL + headers). */
+  /** Active engine subscriptions: one per server registry entry. */
   private subscriptions: Array<{
-    key: string;
-    /** Identity fingerprint (URL + headers) — matches the engine registry key. */
-    fp: string;
+    /** Registry entry id — node id, engine key, and what Deep-Dive resolves. */
+    serverId: string;
+    /** Normalized URL, for the shared-URL label suffix only. */
     url: string;
-    requestHeaders: Record<string, string>;
     serverType?: ServerType;
     /** User-set server label (first non-empty among the group's models), or undefined. */
     serverDisplayName?: string;
@@ -466,58 +460,57 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       if (!this.visible || epoch !== this.refreshEpoch) {
         return;
       }
-      // Group models by server IDENTITY (URL + header fingerprint), not URL
-      // alone. Headers are per-model in this project — two models sharing a URL
-      // with different credentials/scopes are DIFFERENT logical servers and each
-      // gets its own engine, poller, and tree node (one model's credentials must
-      // never drive a sibling's metrics). Collect ALL wire ids per identity — the
-      // engine needs them to resolve the per-backend context window (non-vLLM
-      // only; OpenRouter relay models can have different windows).
-      const identityMap = new Map<string, {
-        url: string;
-        requestHeaders: Record<string, string>;
-        modelIds: string[];
-        serverType?: ServerType;
-        serverDisplayName?: string;
-      }>();
+      // The dashboard is a projection of the server REGISTRY: every entry is a
+      // node, whether or not any model references it (that is what "Add Server
+      // (no model)" promises). Nodes key by ENTRY ID — the registry's unique
+      // identity — iterating servers[] in array order so node order follows
+      // settings order. No URL/header grouping: an entry IS a server. A model
+      // whose `server` ref does not resolve is skipped here; `validateConfig`
+      // (activation) and discovery (every refresh) name it.
+      const servers = config.servers || [];
+      // First entry wins per id — the shared rule next to the runtime
+      // resolver (`resolveServer` uses `servers.find`). A hand-edited registry
+      // with duplicate ids is reported by `validateConfig`; the dashboard must
+      // never attach a model to a shadowed duplicate the requests ignore.
+      const entriesById = firstEntryById(servers);
+      // entry id → accumulated wire ids (models resolving to this entry).
+      const modelIdsByEntry = new Map<string, string[]>();
       for (const model of config.models) {
-        // A model without a URL is unreachable and has no identity to group by.
-        if (!model.serverUrl) continue;
-        const identity = modelServerIdentity(model);
-        const fp = identity.fingerprint;
-        let group = identityMap.get(fp);
-        if (!group) {
-          group = { url: identity.serverUrl, requestHeaders: identity.requestHeaders, modelIds: [], serverType: model.serverType };
-          identityMap.set(fp, group);
-        }
-        const wireId = model.vllmModelId ?? model.id;
-        if (wireId) group.modelIds.push(wireId);
-        if (!group.serverType && model.serverType) group.serverType = model.serverType;
-        // Single normalization/filtering point for the display name: trimmed
-        // (whitespace-only hand-edits never render as blank labels) and skipped
-        // for OpenRouter (the fixed relay endpoint is not renamable).
-        const name = model.serverType === 'openrouter'
-          ? undefined
-          : model.serverDisplayName?.trim();
-        if (!group.serverDisplayName && name) group.serverDisplayName = name;
+        const entry = entriesById.get(model.server);
+        if (!entry) continue;
+        const wireId = resolveVllmModelId(model);
+        if (!wireId) continue;
+        let list = modelIdsByEntry.get(entry.id);
+        if (!list) { list = []; modelIdsByEntry.set(entry.id, list); }
+        list.push(wireId);
       }
 
-      for (const [fp, group] of identityMap) {
-        const key = serverGroupKey(fp);
-        const engine = getMetricsEngine(group.url, group.requestHeaders, group.serverType ?? 'vllm', group.modelIds, this.outputChannel);
+      // One engine, one node, per ENTRY (first-wins per id), in servers[] array
+      // order. The engine registry is keyed by entry id — no hashing, no
+      // grouping, and an Update Auth header change can never orphan a poller.
+      for (const entry of entriesById.values()) {
+        // Node label from the entry: trimmed, skipped for OpenRouter (the
+        // fixed relay endpoint is not renamable). Whitespace-only never renders.
+        const name = entry.serverType === 'openrouter' ? undefined : entry.displayName?.trim();
+        const engine = getMetricsEngine(
+          entry.id,
+          entry.serverUrl,
+          entry.requestHeaders,
+          entry.serverType ?? 'vllm',
+          modelIdsByEntry.get(entry.id) ?? [],
+          this.outputChannel,
+        );
         const sub = engine.subscribe((aggregated) => {
           // Update cached metrics and schedule a single re-render
-          const entry = this.subscriptions.find(s => s.key === key);
-          if (entry) entry.metrics = aggregated;
+          const live = this.subscriptions.find(s => s.serverId === entry.id);
+          if (live) live.metrics = aggregated;
           this.fireTreeUpdate();
         });
         this.subscriptions.push({
-          key,
-          fp,
-          url: group.url,
-          requestHeaders: group.requestHeaders,
-          serverType: group.serverType,
-          serverDisplayName: group.serverDisplayName,
+          serverId: entry.id,
+          url: normalizeServerUrl(entry.serverUrl),
+          serverType: entry.serverType,
+          serverDisplayName: name || undefined,
           metrics: engine.getCachedAggregated() ?? emptyFallbackMetrics(),
           dispose: sub.dispose,
         });
@@ -554,9 +547,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     if (!element) {
       const items: vscode.TreeItem[] = [this.getPollIntervalTreeItem()];
       // Label precedence: user-set serverDisplayName first, else shortUrl. The
-      // `(identity N)` suffix keys off URL-sharing identities ONLY — never off
-      // label equality — so two identically-NAMED credential groups on one URL
-      // stay distinguishable instead of collapsing back into look-alike nodes.
+      // `(identity N)` suffix keys off URL-sharing ENTRIES ONLY — never off
+      // label equality — so two identically-NAMED entries on one URL stay
+      // distinguishable instead of collapsing back into look-alike nodes.
       const urlCount = new Map<string, number>();
       for (const sub of this.subscriptions) urlCount.set(sub.url, (urlCount.get(sub.url) ?? 0) + 1);
       const urlSeen = new Map<string, number>();
@@ -569,13 +562,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         // suffix, and passing undefined here would make ServerTreeItem fall
         // back to shortUrl — silently dropping a configured display name.
         const label = shared ? `${base} (identity ${n})` : base;
-        return new ServerTreeItem(sub.key, sub.fp, sub.url, sub.requestHeaders, sub.metrics, sub.serverType, label, sub.serverDisplayName);
+        return new ServerTreeItem(sub.url, sub.serverId, sub.metrics, sub.serverType, label, sub.serverDisplayName);
       });
       return [...items, ...servers, new AddServerTreeItem(), new TestRefreshTreeItem()];
     }
 
     if (element instanceof ServerTreeItem) {
-      return this.getServerMetricsChildren(element.metrics, element.serverUrl, element.serverType, element.fp);
+      return this.getServerMetricsChildren(element.metrics, element.serverUrl, element.serverType, element.serverId);
     }
 
     if (element instanceof ModelsTreeItem) {
@@ -605,7 +598,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     return [];
   }
 
-  private getServerMetricsChildren(m: ServerMetrics, serverUrl?: string, serverType?: ServerType, fp?: string): vscode.TreeItem[] {
+  private getServerMetricsChildren(m: ServerMetrics, serverUrl?: string, serverType?: ServerType, serverId?: string): vscode.TreeItem[] {
     const items: vscode.TreeItem[] = [];
     if (!m.online) {
       return [new MetricTreeItem('Error', m.error || 'Connection failed', 'error')];
@@ -626,9 +619,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     const isOpenRouterRelay = serverType === 'openrouter';
     if (isOpenRouterRelay) {
       if (m.account) {
-        items.push(new OpenRouterAccountTreeItem(serverUrl ?? '', m.account, m.credits, fp ?? ''));
+        items.push(new OpenRouterAccountTreeItem(serverUrl ?? '', m.account, m.credits, serverId ?? ''));
       }
-      items.push(...this.getRelayModelTreeItems(serverUrl ?? '', fp ?? ''));
+      items.push(...this.getRelayModelTreeItems(serverUrl ?? '', serverId ?? ''));
     } else {
       if (m.models.length > 0) {
         items.push(new ModelsTreeItem(m.models));
@@ -746,10 +739,10 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     if (serverUrl) {
       // consumeStream writes the store keyed by the NORMALIZED server URL
       // (resolveServerConfig → normalizeServerUrl). The dashboard's serverUrl
-      // here is the raw `model.serverUrl` — a config may legally use a
-      // scheme-less, trailing-slash, or /v1 form — so normalize before the
-      // lookup, otherwise the Last Request node silently vanishes for those
-      // forms.
+      // is a registry entry's URL — usually already normalized, but hand-edited
+      // entries may legally use a scheme-less, trailing-slash, or /v1 form —
+      // so normalize before the lookup, otherwise the Last Request node
+      // silently vanishes for those forms.
       const lastRequest = getLastRequest(normalizeServerUrl(serverUrl));
       if (lastRequest) {
         items.push(new LastRequestTreeItem(
@@ -778,7 +771,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       }
 
       // Cumulative Token Usage — live via onUsageStoreDidChange (see constructor).
-      // `serverUrl` here is the raw `model.serverUrl`; the store keys by the
+      // `serverUrl` here is a registry entry's URL; the store keys by the
       // NORMALIZED URL (same as the Last Request lookup above), so normalize
       // before the read or the node silently vanishes for scheme-less/slash/v1 forms.
       const normalizedUrl = normalizeServerUrl(serverUrl);
@@ -857,12 +850,12 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
   /** One collapsible node per configured relay model (direct children of the
    *  OpenRouter server node). Each shows its own context window in the
    *  description and model-level rows on expand. */
-  private getRelayModelTreeItems(serverUrl: string, fp: string): OpenRouterModelTreeItem[] {
-    const models = this.getRelayModels(fp);
+  private getRelayModelTreeItems(serverUrl: string, serverId: string): OpenRouterModelTreeItem[] {
+    const models = this.getRelayModels(serverId);
     const seen = new Set<string>();
     const items: OpenRouterModelTreeItem[] = [];
     for (const model of models) {
-      const modelId = model.vllmModelId ?? model.id;
+      const modelId = resolveVllmModelId(model);
       if (!modelId || seen.has(modelId)) continue; // dedupe shared wire ids
       seen.add(modelId);
       const label = model.displayName || model.id || modelId;
@@ -872,7 +865,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       const pinnedProvider = model.provider;
       let providerLabel: string | undefined;
       if (pinnedProvider) {
-        const endpoints = this.relayProviders(fp, modelId);
+        const endpoints = this.relayProviders(serverId, modelId);
         const pinned = endpoints?.find(ep => ep.tag === pinnedProvider);
         providerLabel = pinned
           ? pinned.providerName + (pinned.quantization && pinned.quantization !== 'unknown' ? ` (${pinned.quantization})` : '')
@@ -884,14 +877,14 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       // `/endpoints`). Whoever clamps below the configured budget shows the
       // Attention icon + honest tooltip. Display-only — settings never rewritten.
       const configuredOutput = resolveModelSettings(model).maxOutputTokens;
-      const catalogCeiling = this.relayEffectiveOutput(fp, modelId);
+      const catalogCeiling = this.relayEffectiveOutput(serverId, modelId);
       const clampCauses: OutputClampCause[] = [];
       let effectiveOutput = catalogCeiling;
       if (catalogCeiling !== undefined && catalogCeiling < configuredOutput) {
         clampCauses.push({ kind: 'catalog', ceiling: catalogCeiling });
       }
       if (pinnedProvider) {
-        const endpoints = this.relayProviders(fp, modelId);
+        const endpoints = this.relayProviders(serverId, modelId);
         const pinned = endpoints?.find(ep => ep.tag === pinnedProvider);
         const providerCap = pinned?.maxCompletionTokens;
         if (typeof providerCap === 'number' && providerCap > 0 && providerCap < configuredOutput) {
@@ -901,7 +894,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
           if (effectiveOutput === undefined || providerCap < effectiveOutput) effectiveOutput = providerCap;
         }
       }
-      items.push(new OpenRouterModelTreeItem(serverUrl, modelId, label, providerLabel, fp, configuredOutput, effectiveOutput, clampCauses));
+      items.push(new OpenRouterModelTreeItem(serverUrl, modelId, label, providerLabel, serverId, configuredOutput, effectiveOutput, clampCauses));
     }
     return items;
   }
@@ -909,14 +902,14 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
   /** Children of an OpenRouter model node: provider, pricing, context, caps, modes, cost, usage. */
   private getOpenRouterModelChildren(e: OpenRouterModelTreeItem): MetricTreeItem[] {
     const items: MetricTreeItem[] = [];
-    const entry = this.getRelayModels(e.fp)
-      .find(m => (m.vllmModelId ?? m.id) === e.modelId);
+    const entry = this.getRelayModels(e.serverId)
+      .find(m => resolveVllmModelId(m) === e.modelId);
 
     // Provider — the exact provider OpenRouter routes to (pinned in Model
     // Settings), matched by tag against the `/endpoints` list. FIRST row: the
     // routing identity is the most important fact about the model.
     const pinnedProvider = entry?.provider;
-    const endpoints = this.relayProviders(e.fp, e.modelId);
+    const endpoints = this.relayProviders(e.serverId, e.modelId);
     const pinned = pinnedProvider
       ? endpoints?.find(ep => ep.tag === pinnedProvider)
       : undefined;
@@ -1006,7 +999,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     // (from the engine resolve) and the saved output budget. Both belong together:
     // they define the model's usable envelope. "Total" prefixes the context so it
     // balances the following "Output" (Total context vs output budget).
-    const contextWindow = this.relayContextWindow(e.fp, e.modelId);
+    const contextWindow = this.relayContextWindow(e.serverId, e.modelId);
     // maxOutputTokens may be a vector (Output length menu) — the head is the
     // advertised budget; the rest are pickable options, shown in the tooltip.
     const maxOutputRaw = entry?.maxOutputTokens;
@@ -1252,7 +1245,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     // still needs its Overall row visible).
     const modelIds = Array.from(new Set([...Object.keys(usage.today), ...Object.keys(usage.allTime)])).sort();
     return modelIds.map(modelId => {
-      const entry = findModelConfig(models, e.serverUrl, modelId);
+      const entry = findModelConfig(models, readServers(), e.serverUrl, modelId);
       const label = entry?.displayName || entry?.id || modelId;
       // Cost: actual reported (OpenRouter) when present, else the per-1M estimate.
       const { today, overall, currency } = this.modelCostFor(e.serverUrl, modelId, entry?.cost);
@@ -1285,33 +1278,30 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     ];
   }
 
-  /** Configured OpenRouter models for a relay server IDENTITY (URL + headers).
-   *  Two identities sharing a URL have different credentials, so each model
-   *  belongs to exactly one identity and appears only under its own node. */
-  private getRelayModels(fp: string): ModelConfig[] {
-    return readModels()
-      .filter(m => m.serverType === 'openrouter')
-      .filter(m => modelServerIdentity(m).fingerprint === fp);
+  /** Configured models referencing this relay ENTRY (models point at the
+   *  registry by `server`, so this is a plain reference lookup). */
+  private getRelayModels(serverId: string): ModelConfig[] {
+    return readModels().filter(m => m.server === serverId);
   }
 
   /** The cached per-model context window for a relay model, if resolved. */
-  private relayContextWindow(fp: string, modelId: string): number | undefined {
+  private relayContextWindow(serverId: string, modelId: string): number | undefined {
     return this.subscriptions
-      .find(s => s.fp === fp)
+      .find(s => s.serverId === serverId)
       ?.metrics.contextByModel?.[modelId];
   }
 
   /** The cached provider list (with per-1M pricing) for a relay model, if fetched. */
-  private relayProviders(fp: string, modelId: string): OpenRouterModelEndpoint[] | undefined {
+  private relayProviders(serverId: string, modelId: string): OpenRouterModelEndpoint[] | undefined {
     return this.subscriptions
-      .find(s => s.fp === fp)
+      .find(s => s.serverId === serverId)
       ?.metrics.providersByModel?.[modelId];
   }
 
   /** The cached effective output ceiling for a relay model, if resolved. */
-  private relayEffectiveOutput(fp: string, modelId: string): number | undefined {
+  private relayEffectiveOutput(serverId: string, modelId: string): number | undefined {
     return this.subscriptions
-      .find(s => s.fp === fp)
+      .find(s => s.serverId === serverId)
       ?.metrics.outputByModel?.[modelId];
   }
 

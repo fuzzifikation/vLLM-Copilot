@@ -127,7 +127,7 @@ Since the model list is small (typically < 20 entries) and the server is local/c
 ## 🛡️ Centralized Engine Header Update Path
 
 **Category:** Painkiller (correctness)
-**Status:** Implemented — `registerUpdateServerAuthCommand` now calls `updateMetricsEngineHeaders()` (update-if-present) to push new headers to any existing engine. See CHANGELOG v1.32.1.
+**Status:** Implemented — `registerUpdateServerAuthCommand` pushes new headers to any existing engine (update-if-present; since the rc0 identity change that is `refreshEngineHeaders(entryId, …)`, and the engine keeps its key). See CHANGELOG v1.32.1.
 
 ---
 
@@ -318,7 +318,7 @@ Proposed shape — models reference a server by id instead of copying it:
 ```jsonc
 "vllm-copilot.servers": [{
   "id": "gw-shared",
-  "serverUrl": "https://gw.example-corp.com",
+  "serverUrl": "https://gw.example-corp.com/team-a/inference/gw-shared",
   "requestHeaders": { "X-API-Key": "..." },
   "displayName": "IT Server for GLM5.2",   // moves here from serverDisplayName
   "serverType": "vllm"
@@ -331,7 +331,7 @@ Proposed shape — models reference a server by id instead of copying it:
 
 **Why it's worth it:**
 - **Auth becomes a single source of truth** — one stored copy per server instead of one per model. (Honest caveat verified in the review: *rotation* already works today, because `Update Auth` and `Rename Server` fan out URL-wide across every model on that URL. The registry fixes ownership and settings.json hygiene, not reach — see server-registry.md §1.)
-- ~~**Server identity becomes `id`, not a header-value fingerprint**~~ — **rejected in the plan (server-registry.md §5).** The `serverFingerprint`/`serverGroupKey` machinery (dashboard grouping, settings view, deep-dive keys, metrics-engine pooling, credential isolation, usage-store keys, `buildModelId`) stays keyed on the resolved `(url, headers)` pair; the registry id is a *write target*, not an identity. So the "deletes most of the identity machinery" saving in the cost estimate below **does not materialise** — only the *computation* of the pair moves into the resolver.
+- **Server identity becomes `id`, not a header-value fingerprint** — first rejected in the plan (server-registry.md §5, 2026-08-31), then **adopted in 1.36.0-rc0 anyway** after the LOC audit showed the fingerprint apparatus (fingerprint, entry fingerprint, identity pair, sha256 group key, engine re-keying) cost ~150 lines to answer a write-time dedupe question and hashed credentials into map keys. Dashboard grouping, settings view, deep-dive keys and metrics-engine pooling now key on the entry id; connection equality survives only as a plain write-time comparison (`entryMatchesConnection`). The "deletes most of the identity machinery" saving did materialise, one release late.
 - **Future server-level knobs get a home** — TLS options, per-server poll interval, proxy settings stop needing a per-model storage debate.
 - **`serverDisplayName` migrates cleanly** onto the server record; the shipped dashboard/rename logic keeps working against the registry (~70% portable).
 
@@ -345,7 +345,8 @@ what made the design a hybrid. Revision 4 dropped them, and that *shrank* the pl
    from a feature" failure class is caught by `tsc` instead of by a hand-written audit plus
    tests. See [server-registry.md](./server-registry.md) §2.
 3. ~~**Opt-in migrate command, never auto-rewrite**~~ → one-shot **forced** migration at
-   activation, marker-guarded, snapshot + `Undo Server Registry Migration` command, notification
+   activation, marker-guarded, forensic pre-write snapshot (no Undo command — restoring the legacy
+   shape would produce settings the current version cannot use), notification
    and output-channel log (§6). Still never from `onDidChangeConfiguration`.
 
 **Costs / open decisions:**

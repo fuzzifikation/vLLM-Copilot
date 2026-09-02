@@ -148,7 +148,7 @@ vLLM-Copilot gives companies (and individuals) controlled access to GitHub Copil
 **No subscription. No third party receives work content beyond the configured inference server. No affiliation. No central service. No telemetry.** GitHub Copilot supplies the familiar chat, tools, model picker, and other interaction features. Prompts, code, and company data go only to the configured inference server, never to GitHub Copilot or GitHub. Other extension traffic carries no work content; it is limited to model metadata, configuration, metrics, and service status.
 
 - **Multi-server at scale**: add any number of vLLM servers and use their models interchangeably. Each server and model keeps its own endpoint, auth, sampling, and token budget, giving you isolation across teams, environments, or credentials.
-- **Per-model credentials**: every model entry carries its own `requestHeaders` / auth, so different scopes and keys are managed independently rather than sharing one global key.
+- **Per-server credentials**: auth lives on server entries in the `vllm-copilot.servers` registry (`requestHeaders`), which models reference by `server` id — different scopes and keys are managed independently per server rather than sharing one global key.
 - **Cost tracking per model**: cumulative token and USD spend (Today / Overall), with OpenRouter models preferring their **actual reported cost** (`usage.cost`).
 - **Reliability for daily use**: models misbehave, and this extension repairs it (see [Robustness](#robustness) below), alongside bounded `Retry-After` handling, TLS/proxy/cert diagnostics, and chat session cleanup.
 
@@ -303,7 +303,7 @@ Beyond the basics, vLLM request-body parameters give you full request control: `
 | **Ollama** | ✅ Core | Same as llama.cpp; `tool_choice` values are dropped (the parameter isn't supported by Ollama's API), tool calling itself works |
 | **OpenRouter** | ✅ Managed remote | Fixed endpoint `https://openrouter.ai/api`; host-only detection; model picked from the ~415-model catalog |
 
-The backend is auto-detected on Add Server and in Model Settings; set it explicitly per model via `serverType`.
+The backend is auto-detected on Add Server and in Model Settings; set it explicitly per server via the registry entry's `serverType`.
 
 **Every backend gets:** native Copilot integration (chat, tools, vision, streaming), model modes, output length picker, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue on empty responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
 

@@ -4,23 +4,32 @@
 
 > **Copilot can write this for you:** the extension registers an on-demand **Language Model Tool** (`vllm-copilot_model_schema`) that hands Copilot Chat the model-entry JSON schema plus the parameter resolution rules. Just ask in chat — e.g. *"configure my Qwen3.6 model with Think / No Think modes"* — and Copilot will generate a valid `vllm-copilot.models` entry. The tool serves the bundled `schemas/vllm-copilot-models.schema.json`; no workspace files are created. If your AI doesn't pick it up automatically, force-attach it by typing `#vllmModelSchema` in the chat input.
 
-All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are five top-level settings: `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), `vllm-copilot.enableFileLogging` (request/response logs), `vllm-copilot.logBodyLimit` (log truncation), and `vllm-copilot.dashboard.pollIntervalMs` (metrics polling). Everything else lives on each model entry.
+All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are six top-level settings: `vllm-copilot.servers` (array of **server entries** — endpoints, auth, backend type), `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), `vllm-copilot.enableFileLogging` (request/response logs), `vllm-copilot.logBodyLimit` (log truncation), and `vllm-copilot.dashboard.pollIntervalMs` (metrics polling).
 
-**Each model entry is self-contained** — it carries its own `serverUrl`, `requestHeaders`, token budgets, capabilities, and params.
+**Servers and models are separate.** A server entry owns `serverUrl`, `requestHeaders`, `serverType` and its display label; a model entry references its server by `server` id and owns everything model-scoped (token budgets, capabilities, params). There is no default or global server: a registry entry is used only because a model references it.
 
 ---
+
+## Server Entry Fields (`vllm-copilot.servers`)
+
+| Field | Default | Description |
+|-------|:-------:|-------------|
+| `id` | — | **Required.** Unique key referenced by each model's `server`. The Add flow generates a slug from the host/port (e.g. `localhost-8000`; colliding slugs get `-2`, `-3`, …). The id is the server's identity (dashboard node, metrics engine, Deep-Dive panel) and its stable write target. |
+| `serverUrl` | — | **Required.** Server URL (OpenAI-compatible). |
+| `serverType` | `vllm` | Backend protocol. `vllm` \| `lmstudio` \| `llamacpp` \| `ollama` \| `openrouter`. **Set automatically by Add Server**, and auto-detected in Model Settings for unconfigured servers. Missing always means `vllm`. Manual third-party entries must set this — the extension never probes at runtime. |
+| `displayName` | — | Optional **server label** shown in the Dashboard tree and the Model Settings server dropdown instead of the raw URL (e.g. `"IT Server for GLM5.2"`). Set with **Rename Server** (right-click a server node in the Dashboard). Empty/omitted shows the URL. |
+| `requestHeaders` | `{}` | HTTP headers for this server (auth, routing). **Isolated** — never shared across entries. |
+
+Two entries may share one URL: identity is the URL + sanitized-headers pair, so the same endpoint behind different credentials is two distinct servers, each probed and tracked with its own auth.
 
 ## Model Entry Fields
 
 | Field | Default | Description |
 |-------|:-------:|-------------|
-| `serverUrl` | — | **Required.** Server URL (OpenAI-compatible). Each model targets its own server. |
-| `serverType` | `vllm` | Backend protocol. `vllm` \| `lmstudio` \| `llamacpp` \| `ollama` \| `openrouter`. **Set automatically by Add Server**, and auto-detected in Model Settings for unconfigured models (from `/v1/models`, or a configured sibling's type). Missing always means `vllm`. Manual third-party entries must set this — the extension never probes at runtime. |
-| `serverDisplayName` | — | Optional **server label** shown in the Dashboard tree and the Model Settings server dropdown instead of the raw URL (e.g. `"IT Server for GLM5.2"`). Server-scoped, stored per model: the first non-empty value among the models sharing a server identity (URL + headers) wins; **Rename Server** (right-click a server node in the Dashboard) writes it to every model sharing that URL, so hand-edited partial configs may differ. Empty/omitted shows the URL. Not applicable to OpenRouter. |
+| `id` | — | **Required.** Unique entry key. Add flow sets this to `"<model> on <host>"`. |
+| `server` | — | **Required.** The `id` of this model's entry in `vllm-copilot.servers`. Models never carry URLs, auth headers, server types, or server labels. A dangling ref (no such entry) makes the model unusable — fix the ref or re-run **Add vLLM Server & Model**. |
 | `provider` | — | ⚡ **OpenRouter only.** The exact provider slug (from `GET /api/v1/models/{id}/endpoints`) to force routing to that provider via `provider: { only: [slug] }`. Use the **Provider** dropdown in Model Settings — never hand-derive. Omitted/empty = Auto. |
 | `routingMode` | `standard` | ⚡ **OpenRouter only.** How OpenRouter sorts/chooses among eligible providers when routing is **Auto** (no `provider` pinned): `standard` (price-weighted load balancing, no suffix), `nitro` (throughput-first + priority tier → wire id `:nitro`), `exacto` (quality/tool-calling-first → wire id `:exacto`). Ignored when a provider is pinned. Set via the **Routing** dropdown in Model Settings. |
-| `requestHeaders` | `{}` | HTTP headers for this server (auth, routing). **Isolated** — never shared across servers. |
-| `id` | — | **Required.** Unique entry key. Add flow sets this to `"<model> on <host>"`. |
 | `vllmModelId` | same as `id` | Actual model ID on the vLLM server (for aliases). |
 | `displayName` | same as `id` | Human-readable name in the model picker. |
 | `family` | auto-detected | Model family (e.g. `qwen3_5`, `llama`). From HuggingFace or extracted from model ID. |
@@ -163,9 +172,9 @@ The price sits on the **model line** (its collapsed summary: `$11.51 today and $
 ```jsonc
 "vllm-copilot.models": [
   {
-    "id": "deepseek-v4 on localhost:8000",
+    "id": "deepseek-v4 on localhost-8000",
     "vllmModelId": "DeepSeek/V4-Flash",
-    "serverUrl": "http://localhost:8000",
+    "server": "localhost-8000",
     "cost": {
       "input": 0.14,        // $ per 1M fresh (uncached) input tokens
       "output": 0.28,       // $ per 1M output tokens (includes reasoning)
@@ -188,14 +197,17 @@ The price sits on the **model line** (its collapsed summary: `$11.51 today and $
 
 ## Typical Example
 
-A working chat model — minimum viable config. No modes, no custom params, just authorizes a model on a server. Everything else uses defaults (`maxOutputTokens: 4096`; sampling params are omitted so the server's defaults apply):
+A working chat model — minimum viable config. No modes, no custom params, just a model pointing at a registered server. Everything else uses defaults (`maxOutputTokens: 4096`; sampling params are omitted so the server's defaults apply):
 
 ```json
+"vllm-copilot.servers": [
+  { "id": "localhost-8000", "serverUrl": "http://localhost:8000" }
+],
 "vllm-copilot.models": [
   {
-    "id": "Qwen/Qwen3.6-27B on localhost:8000",
+    "id": "Qwen/Qwen3.6-27B on localhost-8000",
     "vllmModelId": "Qwen/Qwen3.6-27B",
-    "serverUrl": "http://localhost:8000"
+    "server": "localhost-8000"
   }
 ]
 ```
@@ -209,21 +221,30 @@ A working chat model — minimum viable config. No modes, no custom params, just
 > ⚠️ **This is a syntax reference, not a recommended starting point.** Do not copy these values — they cover every supported field/param so you can see the JSON shape. For real starting points, use **Add vLLM Server & Model** or see the [Typical Example](#typical-example) above.
 
 ```jsonc
+"vllm-copilot.servers": [
+  {
+    "id": "localhost-8000",                            // required; referenced by each model's "server"
+    "serverUrl": "http://localhost:8000",              // required
+    "serverType": "vllm",                              // vllm | lmstudio | llamacpp | ollama | openrouter (default vllm)
+    "displayName": "IT Server for GLM5.2",             // optional Dashboard label (Rename Server writes this)
+    "requestHeaders": {                                // auth/routing; never shared across entries
+      "Authorization": "Bearer <your-token>"
+    }
+  }
+],
+```
+
+```jsonc
 "vllm-copilot.models": [
   {
     // ── Identity ───────────────────────────────────────────
-    "id": "Qwen/Qwen3.6-27B on localhost:8000",   // required; unique preset key (Add flow: "<model> on <host>")
+    "id": "Qwen/Qwen3.6-27B on localhost-8000",   // required; unique preset key (Add flow: "<model> on <server entry id>")
     "vllmModelId": "Qwen/Qwen3.6-27B",            // server-side model ID (use for aliases)
     "displayName": "Qwen 3.6 27B (debug)",            // picker label
     "family": "qwen3_5",                               // picker grouping; auto-detected from HF
 
-    // ── Server & auth (per-model, isolated) ──────────────
-    "serverUrl": "http://localhost:8000",             // required
-    "serverDisplayName": "IT Server for GLM5.2",      // optional Dashboard label (Rename Server sets this on all sibling models)
-    "requestHeaders": {                               // auth/routing; never shared across servers
-      "Authorization": "Bearer <your-token>",
-      "X-Custom-Header": "<your-value>"
-    },
+    // ── Server (registry reference) ─────────────────────────
+    "server": "localhost-8000",                        // required; id of this model's entry in vllm-copilot.servers
 
     // ── Token budgets ─────────────────────────────────────
     // `max_model_len` (context window) is auto-discovered from /v1/models — do NOT set it here.
@@ -336,15 +357,24 @@ A working chat model — minimum viable config. No modes, no custom params, just
 
 ## Multiple Servers with Isolated Auth
 
-Each model targets its own server; a server's `requestHeaders` are used only for that server and never shared:
+Each server entry carries its own `requestHeaders`; they are never shared. The same URL can even be registered twice under different credentials — that is two distinct servers, each probed and called with its own auth:
 
 ```json
-{
-  "id": "remote-model",
-  "vllmModelId": "Some/Model",
-  "serverUrl": "https://remote-vllm.example.com",
-  "requestHeaders": { "Authorization": "Bearer <token>" }
-}
+"vllm-copilot.servers": [
+  {
+    "id": "remote-gpu",
+    "serverUrl": "https://remote-vllm.example.com",
+    "requestHeaders": { "Authorization": "Bearer <token-A>" }
+  },
+  {
+    "id": "remote-gpu-audit",
+    "serverUrl": "https://remote-vllm.example.com",
+    "requestHeaders": { "Authorization": "Bearer <token-B>" }
+  }
+],
+"vllm-copilot.models": [
+  { "id": "audit-model", "vllmModelId": "Some/Model", "server": "remote-gpu-audit" }
+]
 ```
 
 ---
@@ -404,7 +434,7 @@ Or set the path manually on the model entry:
   "vllm-copilot.models": [
     {
       "id": "my-model",
-      "serverUrl": "http://localhost:8000",
+      "server": "localhost-8000",
       "systemMessageReplacementsFile": "C:/.../globalStorage/vllm-copilot/personalities/prompt-replacements-supportive-mentor.json"
     }
   ]
@@ -460,8 +490,8 @@ Relative paths resolve against the **workspace root**; absolute paths (like the 
 | Requests fail on a corporate network | Set VS Code's `http.proxy` setting (e.g. `http://proxy.corp:8080`). The extension uses VS Code's patched `globalThis.fetch` (installed by the extension host at startup), which respects `http.proxy`, `http.noProxy`, and the `HTTP(S)_PROXY` environment variables per-request. Loopback hosts are always bypassed. The patched fetch loads the OS certificate store (`http.systemCertificates`, on by default), so TLS-inspecting proxies and internally-issued server certs work without extra setup. The patch is gated by `http.proxySupport` (default `override`) and `http.fetchAdditionalSupport` (default `true`) — both must stay enabled. |
 | `fetch failed` / certificate errors behind a reverse proxy | The certificate may be expired, self-signed, or trusted differently by your OS than by VS Code. If it is valid and trusted by your OS, try `"http.systemCertificatesNode": true` in your user settings and reload the window (`Developer: Reload Window`), or run **Diagnose Connection** to confirm. Note: `http.proxyStrictSSL: false` does **not** disable TLS verification for fetch (undici always verifies). |
 | `UNABLE_TO_VERIFY_LEAF_SIGNATURE` / `SELF_SIGNED_CERT_IN_CHAIN` on a corporate reverse proxy | The proxy may not be sending the intermediate CA, or the OS and Node trust stores differ. If your certificate is valid and trusted by the OS, try VS Code's own `"http.systemCertificatesNode": true` setting, or run **Diagnose Connection**. See [Known limitations](#known-limitations) below. |
-| 401 Unauthorized | The model's `requestHeaders` are wrong — edit the model entry or re-run **Add vLLM Server & Model** |
-| No models in picker | Run **Test & Refresh Models**. Verify each model has a `serverUrl` and that `GET /v1/models` returns entries |
+| 401 Unauthorized | The server entry's `requestHeaders` are wrong — edit the entry in `vllm-copilot.servers` (or use **Update Auth**) or re-run **Add vLLM Server & Model** |
+| No models in picker | Run **Test & Refresh Models**. Verify each model's `server` matches a `vllm-copilot.servers` entry and that `GET /v1/models` returns entries |
 | Copilot spins forever | Check Output channel (`View → Output → vLLM-Copilot`) for errors |
 | Tool calls fail | Start vLLM with `--enable-auto-tool-choice --tool-call-parser <parser>` |
 | Thinking mode doesn't think | Start vLLM with `--reasoning-parser <parser>` |

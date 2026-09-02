@@ -38,7 +38,7 @@ Usage and system-message capture continue after a failed write, with no one-time
 ## Accepted product decisions
 
 - **Raw headers in opt-in local logs/diagnostics** — intentional, user-controlled, stays on the user's machine. Optional sanitized export/warning is backlog, not a blocker.
-- **Per-model server identity** — each model carries its own `serverUrl`/`requestHeaders`; there is no global server.
+- **Server registry** — servers are entries in the global `vllm-copilot.servers` registry (`serverUrl`/`requestHeaders`/`serverType` live there); models only reference an entry via `server`. There is no global/default server: nothing resolves an entry without a model reference. The entry id is the identity unit everywhere (grouping, engines, panels); URL+headers equality is only consulted at write time (`entryMatchesConnection`).
 
 ## Grade
 

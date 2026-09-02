@@ -33,11 +33,11 @@ The detailed guide to vLLM-Copilot. The [README](../README.md) is the quick pitc
 
 Three ideas explain most of how the extension is designed.
 
-### 1. Every model entry is self-contained
+### 1. Servers and models are separate
 
-There is **no global server**. Each entry in `vllm-copilot.models` carries its own `serverUrl`, `requestHeaders` (auth), token budgets, capabilities, and params. A single model entry points at exactly one server; the same physical server can back many entries. Different teams, environments, or credentials stay isolated because nothing is shared between entries.
+Servers live in their own registry, `vllm-copilot.servers`: each entry owns a `serverUrl`, optional `requestHeaders` (auth), `serverType`, and display label. Every entry in `vllm-copilot.models` references exactly one server by its `server` id and carries its own token budgets, capabilities, and params — never URLs or auth. The same server entry can back many models; the same URL can exist as two entries under different credentials. Different teams, environments, or credentials stay isolated because nothing is shared between entries. There is **no global/default server**: an entry is only used because a model references it.
 
-The only global settings are diagnostics and logging (`vllm-copilot.systemMessageCapture`, `vllm-copilot.enableFileLogging`, `vllm-copilot.logBodyLimit`) and the dashboard poll interval (`vllm-copilot.dashboard.pollIntervalMs`).
+The only other global settings are diagnostics and logging (`vllm-copilot.systemMessageCapture`, `vllm-copilot.enableFileLogging`, `vllm-copilot.logBodyLimit`) and the dashboard poll interval (`vllm-copilot.dashboard.pollIntervalMs`).
 
 ### 2. Parameter resolution chain
 
@@ -67,7 +67,7 @@ Each backend's context window is read from its own documented endpoint (see the 
 | **Ollama** | ✅ Core | Same as llama.cpp; `tool_choice` values are dropped (Ollama's API doesn't support the parameter), tool calling itself works |
 | **OpenRouter** | ✅ Managed remote | Fixed endpoint `https://openrouter.ai/api`; model picked from the ~415-model catalog |
 
-The backend is auto-detected when you add a server and in Model Settings; it can also be set explicitly per model via `serverType` (`vllm` \| `lmstudio` \| `llamacpp` \| `ollama` \| `openrouter`).
+The backend is auto-detected when you add a server and in Model Settings; it can also be set explicitly per server entry via `serverType` (`vllm` \| `lmstudio` \| `llamacpp` \| `ollama` \| `openrouter`).
 
 ### What every backend gets
 
@@ -89,16 +89,15 @@ All settings live under `vllm-copilot` in VS Code Settings (`Ctrl+,` → search 
 
 | Setting | Purpose |
 |---------|---------|
-| `vllm-copilot.models` | The array of per-model entries (server, auth, params, modes, cost). |
+| `vllm-copilot.servers` | The registry of server entries (`id`, `serverUrl`, optional auth headers, backend type, label). |
+| `vllm-copilot.models` | The array of per-model entries (server reference, params, modes, cost). |
 | `vllm-copilot.systemMessageCapture` | Capture unique Copilot system messages to `.vllm/system-messages.json` (for building replacements). |
 | `vllm-copilot.enableFileLogging` | Write request/response logs to a daily file (see **Open Log File**). |
 | `vllm-copilot.logBodyLimit` | Maximum characters of request/response bodies to log per entry. `0` = no truncation. |
 | `vllm-copilot.dashboard.pollIntervalMs` | Dashboard metrics polling interval (default 15000 ms). |
 
-Everything else lives on each model entry. The important fields:
+Server entries carry **`serverUrl`** (required), **`requestHeaders`** (auth/routing, isolated per entry), optional **`serverType`** and **`displayName`**. Model entries reference their server via **`server`** (the entry's `id`). The important model fields:
 
-- **`serverUrl`** — required. The server hosting this model.
-- **`requestHeaders`** — HTTP headers for auth/routing. Isolated per server.
 - **`id`** / **`vllmModelId`** — entry key vs. actual model ID on the server (allows aliases).
 - **`maxOutputTokens`** / **`maxInputTokens`** — output cap and the computed input budget.
 - **`defaultParams`** — model-wide baseline request params (snake_case vLLM body keys).
@@ -116,11 +115,14 @@ Full reference with every field, defaults, and the complete parameter table: **[
 The **Add vLLM Server & Model** command generates this automatically. A minimal hand-written entry looks like:
 
 ```json
+"vllm-copilot.servers": [
+  { "id": "localhost-8000", "serverUrl": "http://localhost:8000" }
+],
 "vllm-copilot.models": [
   {
-    "id": "Qwen/Qwen3.6-27B-FP8 on localhost:8000",
+    "id": "Qwen/Qwen3.6-27B-FP8 on localhost-8000",
     "vllmModelId": "Qwen/Qwen3.6-27B-FP8",
-    "serverUrl": "http://localhost:8000"
+    "server": "localhost-8000"
   }
 ]
 ```
@@ -245,7 +247,7 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 | **Update Auth** | Rotate API key or change auth headers for a server (right-click on server node). |
 | **vLLM Deep-Dive** | Open the per-server metrics webview (right-click a vLLM server node). |
 | **Remove Model** | Remove a single configured model (button in Model Settings). |
-| **Remove Server** | Remove a configured server and all its models (command palette, with confirm). |
+| **Remove Server** | Remove the right-clicked server entry only (with confirm). Refuses while any model still references it; other registry entries on the same URL are untouched. |
 | **Open Log File** | Open today's debug log. |
 | **Clear Log Files** | Delete all debug logs except the active one. |
 | **Diagnose Connection** | Deep TLS/proxy/DNS/cert diagnostic report (utilities). |

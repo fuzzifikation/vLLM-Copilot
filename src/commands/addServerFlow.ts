@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import type { ModelConfig, ServerType } from '../config.js';
-import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, toPublicModelConfig } from '../config.js';
-import { replaceModelConfig, readModels, type IdentifiedModelConfig } from '../configStore.js';
+import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, toPublicModelConfig, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders } from '../config.js';
+import { replaceModelConfig, readModels, readServers, writeServers, type IdentifiedModelConfig } from '../configStore.js';
+import type { ServerEntry } from '../serverRegistry.js';
+import { entryMatchesConnection, firstEntryById, generateServerId, resolveServer } from '../serverRegistry.js';
 import type { VllmModel } from '../types.js';
 import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../messageConverter.js';
 import { detectServerType } from '../runtimeLimits.js';
@@ -91,6 +93,144 @@ export async function persistAddedModel(
 }
 
 /**
+ * Find-or-create the registry entry for a server connection (normalized URL +
+ * auth). Matching is by {@link entryMatchesConnection}: an existing entry with
+ * the same URL + headers is reused (its id and label are preserved; a backend
+ * type it does not have yet is filled in from `serverType`, never overwritten);
+ * otherwise a new entry is appended with a URL-derived id from
+ * {@link generateServerId} and the registry is written whole-array.
+ *
+ * Returns the id the caller puts on the model's `server` field, plus whether
+ * THIS call created the entry — callers that can abandon the save must roll
+ * back entries they created, never pre-existing ones. Models never carry
+ * server facts — URL, auth, type and label live only on the registry.
+ * @internal Exported for the auto-configure flow.
+ */
+export async function ensureServerEntry(options: {
+  serverUrl: string;
+  requestHeaders?: Record<string, string>;
+  serverType?: ServerType;
+  preferredId?: string;
+}): Promise<{ id: string; created: boolean }> {
+  const normalizedUrl = normalizeServerUrl(options.serverUrl);
+  const headers = sanitizeRequestHeaders(options.requestHeaders ?? {});
+  const servers = readServers();
+  // Scan only the VISIBLE entries (first wins per id, the shared rule next to
+  // `resolveServer`): matching a shadowed duplicate would hand the model an id
+  // that resolves at runtime to the FIRST entry's credentials, not the ones
+  // just matched. `indexOf` (identity, not id) targets the type backfill at
+  // exactly the entry found, never an id-twin.
+  const visible = [...firstEntryById(servers).values()];
+  const existing = visible.find(s => entryMatchesConnection(s, normalizedUrl, headers));
+  if (existing) {
+    // Fill in a MISSING backend type on reuse. "Add Server" registers without
+    // probing, so an entry can legitimately arrive type-less; when a model is
+    // later added, the detected type must land, or an Ollama/LM Studio server
+    // is spoken to as vLLM forever. Writing an unset field is not a change to
+    // anything the user declared — an existing `serverType` is never touched.
+    if (options.serverType && existing.serverType === undefined) {
+      const at = servers.indexOf(existing);
+      await writeServers(
+        servers.map((s, i) => (i === at ? { ...s, serverType: options.serverType } : s))
+      );
+    }
+    return { id: existing.id, created: false };
+  }
+
+  const takenIds = new Set(servers.map(s => s.id));
+  const id = options.preferredId && !takenIds.has(options.preferredId)
+    ? options.preferredId
+    : generateServerId(normalizedUrl, takenIds);
+  const newEntry: ServerEntry = {
+    id,
+    serverUrl: normalizedUrl,
+    ...(options.serverType ? { serverType: options.serverType } : {}),
+    ...(Object.keys(headers).length > 0 ? { requestHeaders: headers } : {}),
+  };
+  await writeServers([...servers, newEntry]);
+  return { id, created: true };
+}
+
+/**
+ * Rotate freshly entered credentials into an EXISTING registry entry instead of
+ * connection-matching the entered auth into (possibly) a different one.
+ *
+ * Used by 'Replace Config': the replaced model must keep its `server` ref,
+ * because `replaceModelConfig` matches on (`resolveConfigId`, `server`) — a ref
+ * derived from the re-entered key would point at a new entry and the store would
+ * APPEND a second model with the same id. Credentials belong to the entry (which
+ * other models may share), so the new key/headers merge into it exactly like
+ * Update Auth does. Returns the entry id to reference, or `undefined` when the
+ * entry is gone (caller falls back to {@link ensureServerEntry}).
+ */
+async function rotateEntryAuth(
+  entryId: string | undefined,
+  enteredHeaders: Record<string, string>,
+  output: vscode.OutputChannel,
+): Promise<string | undefined> {
+  if (!entryId) return undefined;
+  const servers = readServers();
+  const entry = servers.find(s => s.id === entryId);
+  if (!entry) return undefined;
+  const existingHeaders = sanitizeRequestHeaders(entry.requestHeaders ?? {});
+  const merged = mergeAuthHeaders(existingHeaders, sanitizeRequestHeaders(enteredHeaders));
+  if (merged && !sameHeaders(merged, existingHeaders)) {
+    await writeServers(servers.map(s => (s.id === entryId ? { ...s, requestHeaders: merged } : s)));
+    // The write happens BEFORE the model confirm (the config to review needs a
+    // resolved server), so a later "Copy JSON"/dismiss leaves the rotated
+    // credentials in place. That must not be a secret: credentials on a shared
+    // entry are a fact about the server, not about the abandoned model.
+    output.appendLine(`[INFO] Rotated credentials into server entry "${entryId}" (Replace Config).`);
+  }
+  return entryId;
+}
+
+/**
+ * Roll back a registry entry that was created for a model whose confirm was
+ * dismissed. An entry no model references is just live credentials parked in
+ * global settings with no purpose, so it is removed — but only when genuinely
+ * unreferenced, so an entry the flow REUSED (or that another model picked up
+ * meanwhile) is left alone. "Copy JSON" does NOT roll back: the copied config
+ * references the entry.
+ */
+async function discardUnreferencedServerEntry(entryId: string | undefined): Promise<void> {
+  if (!entryId) return;
+  const servers = readServers();
+  if (!servers.some(s => s.id === entryId)) return;
+  if (readModels().some(m => m.server === entryId)) return;
+  await writeServers(servers.filter(s => s.id !== entryId));
+}
+
+/**
+ * Persist an added model; on a blocked settings write (invalid settings.json —
+ * `config.update` rejects), roll back a registry entry this flow created and
+ * surface the failure instead of reporting a save that never landed. Without
+ * this the confirm passes, the model write throws past the command, and the
+ * freshly created entry — live credentials and all — sits in settings with no
+ * model referencing it. Returns true only when the model is actually stored.
+ */
+async function persistAddedModelOrRollback(
+  finalConfig: IdentifiedModelConfig,
+  modelId: string,
+  createdServerId: string | undefined,
+  onSaved: (() => void) | undefined,
+  output: vscode.OutputChannel
+): Promise<boolean> {
+  try {
+    await persistAddedModel(finalConfig, onSaved);
+    return true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[ERROR] Could not save model "${modelId}" to settings: ${msg}`);
+    await discardUnreferencedServerEntry(createdServerId);
+    void vscode.window.showErrorMessage(
+      `vLLM-Copilot: could not save "${modelId}" to settings.${createdServerId ? ' The newly created server entry was rolled back.' : ''} ${msg}`
+    );
+    return false;
+  }
+}
+
+/**
  * Show the final confirm dialog for a newly added model, then save it (or copy
  * its JSON) and offer a window reload. Shared by the preset and HuggingFace
  * branches of the Add flow, and by the auto-configure command's "unconfigured
@@ -105,6 +245,12 @@ export async function persistAddedModel(
  * Copy JSON escape hatch: the user can read the real file instead of our
  * paste of it. HuggingFace/OpenRouter discovery keeps the review-before-save
  * modal: a sniffed config is guesswork and deserves eyes.
+ *
+ * `createdServerId`: id of a registry entry this flow created for the model. If
+ * the confirm is DISMISSED — or the settings write fails after it — the entry is
+ * rolled back ({@link discardUnreferencedServerEntry}) so a cancelled or broken
+ * add never leaves orphaned credentials in settings. "Copy JSON" keeps it: the
+ * copied `server` ref points at that entry.
  * @internal Exported for the auto-configure flow.
  */
 export async function confirmAndSaveAddedModel(
@@ -114,7 +260,8 @@ export async function confirmAndSaveAddedModel(
   detail: string,
   output: vscode.OutputChannel,
   onSaved?: () => void,
-  presetFile?: string
+  presetFile?: string,
+  createdServerId?: string
 ): Promise<boolean> {
   output.appendLine(`[INFO] Add server ${serverUrl} → ${modelId}:`);
   output.appendLine(detail);
@@ -122,7 +269,9 @@ export async function confirmAndSaveAddedModel(
 
   if (presetFile !== undefined) {
     // Informed consent was already given in the modal preset dialog — save now.
-    await persistAddedModel(finalConfig, onSaved);
+    if (!(await persistAddedModelOrRollback(finalConfig, modelId, createdServerId, onSaved, output))) {
+      return false;
+    }
     const fileLabel = presetFile.startsWith('remote:')
       ? `${presetFile.slice('remote:'.length)} (from vLLM-Copilot/main)`
       : presetFile;
@@ -142,17 +291,32 @@ export async function confirmAndSaveAddedModel(
   );
 
   if (action === 'Save to Settings') {
-    await persistAddedModel(finalConfig, onSaved);
+    if (!(await persistAddedModelOrRollback(finalConfig, modelId, createdServerId, onSaved, output))) {
+      return false;
+    }
     vscode.window.showInformationMessage(`Model "${modelId}" added.`);
     return true;
   } else if (action === 'Copy JSON') {
     await vscode.env.clipboard.writeText(JSON.stringify(finalConfig, null, 2));
+    // An entry this flow created is deliberately KEPT here: the copied config's
+    // `server` ref points at it, so rolling it back would hand the user a
+    // dangling ref. A zero-model entry is a legal state ("Add Server" creates
+    // one on purpose) and Remove Server deletes it again.
+    if (createdServerId) {
+      output.appendLine(
+        `[INFO] Copied config for "${modelId}" — registry entry "${createdServerId}" kept, the copied "server" ref points at it.`
+      );
+    }
     vscode.window.showInformationMessage('Model config copied to clipboard.');
+    return false;
   } else {
     output.appendLine('[INFO] Model add cancelled — confirm dismissed.');
     output.show(true);
+    // Dismissed with nothing saved: an entry this flow created would sit in
+    // settings unreferenced, holding live credentials nobody asked to keep.
+    await discardUnreferencedServerEntry(createdServerId);
+    return false;
   }
-  return false;
 }
 
 // ── OpenRouter onboarding branch ────────────────────────────────────────────
@@ -395,11 +559,15 @@ export async function runOpenRouterAddFlow(
   );
 
   // 4. Duplicate detection against the FIXED API base (mirrors the vLLM path).
+  //    Models reference the registry, so "on the OpenRouter server" resolves
+  //    through each model's server entry — not a URL field on the model.
   const apiBase = normalizeServerUrl(OPENROUTER_API_BASE); // 'https://openrouter.ai/api'
+  const registeredServers = readServers();
   const existingOpenRouterModels = existingModels.filter(
-    (m) => m.serverUrl && normalizeServerUrl(m.serverUrl) === apiBase
+    (m) => resolveServer(m.server, registeredServers)?.serverUrl === apiBase
   );
   let replaceExistingId: string | undefined;
+  let replaceTargetServer: string | undefined;
   const sameModelEntries = existingOpenRouterModels.filter((m) => resolveVllmModelId(m) === requestedId);
   if (sameModelEntries.length > 0) {
     // Multiple configs may share one wire id — disambiguate before replacing.
@@ -437,26 +605,48 @@ export async function runOpenRouterAddFlow(
       return; // cancelled
     }
     replaceExistingId = resolveConfigId(target);
+    replaceTargetServer = target.server;
   }
 
-  // 5. Assemble, confirm, save. `id` is composite on the fixed host so two
-  //    OpenRouter models stay distinct; `vllmModelId` is the raw wire id.
+  // 5. Assemble, confirm, save. `id` is composite on the registry entry id so
+  //    two OpenRouter models stay distinct; `vllmModelId` is the raw wire id.
+  //    The API key + URL live on the `openrouter` registry entry; the model
+  //    carries only the `server` reference. On 'Replace Config' the replaced
+  //    model KEEPS its entry and the new key rotates into it (Update Auth
+  //    doctrine) — a ref derived from the entered key would append a duplicate
+  //    instead of replacing. An entry created here is rolled back if the
+  //    confirm is abandoned.
+  let openRouterServerId: string;
+  let createdServerId: string | undefined;
+  const replaceServerId = replaceExistingId
+    ? await rotateEntryAuth(replaceTargetServer, requestHeaders, output)
+    : undefined;
+  if (replaceServerId) {
+    openRouterServerId = replaceServerId;
+  } else {
+    const entry = await ensureServerEntry({
+      serverUrl: OPENROUTER_API_BASE,
+      requestHeaders,
+      serverType: 'openrouter',
+      preferredId: 'openrouter',
+    });
+    openRouterServerId = entry.id;
+    if (entry.created) createdServerId = entry.id;
+  }
   const finalConfig: IdentifiedModelConfig = {
-    id: replaceExistingId ?? buildModelId(OPENROUTER_API_BASE, requestedId),
+    id: replaceExistingId ?? buildModelId(openRouterServerId, requestedId),
     vllmModelId: requestedId,
     displayName: info.displayName ?? requestedId,
-    serverUrl: OPENROUTER_API_BASE,
-    serverType: 'openrouter',
+    server: openRouterServerId,
     capabilities: info.capabilities,
     ...(info.modelModes ? { modelModes: info.modelModes } : {}),
     ...(info.defaultMode ? { defaultMode: info.defaultMode } : {}),
     ...(info.defaultParams ? { defaultParams: info.defaultParams } : {}),
     ...(info.cost ? { cost: info.cost } : {}),
     ...(info.runtimeLimits.maxOutputTokens !== undefined ? { maxOutputTokens: info.runtimeLimits.maxOutputTokens } : {}),
-    ...(Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {}),
   };
 
-  await confirmAndSaveAddedModel(finalConfig, requestedId, OPENROUTER_API_BASE, buildOpenRouterSummary(info), output, onSaved);
+  await confirmAndSaveAddedModel(finalConfig, requestedId, OPENROUTER_API_BASE, buildOpenRouterSummary(info), output, onSaved, undefined, createdServerId);
 }
 
 /**
@@ -512,14 +702,19 @@ async function handleServerFailure(
     return true; // cancelled → stop
   }
 
+  // URL + auth live on the registry entry; the stub model references it by id.
+  // The stub saves unconditionally — no abandon-rollback — but a blocked
+  // settings write still rolls back an entry this call created.
+  const { id: serverId, created } = await ensureServerEntry({ serverUrl, requestHeaders });
   const finalConfig: IdentifiedModelConfig = {
-    id: buildModelId(serverUrl, modelId),
+    id: buildModelId(serverId, modelId),
     vllmModelId: modelId,
-    serverUrl,
-    ...(Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {}),
+    server: serverId,
   };
 
-  await persistAddedModel(finalConfig, onSaved);
+  if (!(await persistAddedModelOrRollback(finalConfig, modelId, created ? serverId : undefined, onSaved, output))) {
+    return true;
+  }
   output.appendLine(`[INFO] Saved stub config for "${modelId}" on ${serverUrl} — server was unreachable.`);
   vscode.window.showInformationMessage(
     `Stub saved for "${modelId}" on ${serverUrl}. Right-click → Auto-Configure when the server is reachable.`
@@ -528,7 +723,87 @@ async function handleServerFailure(
 }
 
 /**
- * Guided command: add a vLLM server (URL + optional headers), discover its models,
+ * Register a server in the registry WITHOUT adding a model. The Add-model
+ * flows roll back a registry entry whose model was never saved, so without
+ * this command a zero-model entry could not be created on purpose at all.
+ * The entry IS the artifact here — it is what the user asked for, so it is
+ * written once, directly, with no confirm/rollback dance.
+ */
+export function registerAddServerCommand(output: vscode.OutputChannel): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.addServer', async () => {
+    const urlInput = await vscode.window.showInputBox({
+      title: 'Add vLLM Server (1/2)',
+      prompt: 'Enter a server URL (vLLM, LM Studio, llama.cpp, Ollama) to register without a model',
+      placeHolder: 'https://host:8000',
+      ignoreFocusOut: true,
+      validateInput: validateServerUrlInput,
+    });
+    if (!urlInput) {
+      output.appendLine('[INFO] Add server cancelled — no URL entered.');
+      return;
+    }
+    const serverUrl = normalizeServerUrl(urlInput);
+    if (isOpenRouterUrl(serverUrl)) {
+      // OpenRouter entries only make sense with a catalog-picked model; the
+      // dedicated add flow owns that branch.
+      void vscode.window.showInformationMessage(
+        'OpenRouter is set up with "Add or Reconfigure Server/Model" — it always adds a model.'
+      );
+      return;
+    }
+
+    const requestHeaders = await promptForServerAuth({
+      apiKeyTitle: 'Add vLLM Server (2/2)',
+      apiKeyPrompt: '(optional) vLLM API key, sent as an Authorization header. Leave empty if the server has none.',
+      apiKeyPlaceholder: 'abc123... or leave empty',
+      headersTitle: 'Add vLLM Server (2/2)',
+      headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty for none.',
+      headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
+    });
+    if (requestHeaders === undefined) {
+      output.appendLine('[INFO] Add server cancelled — auth prompt abandoned.');
+      return;
+    }
+
+    const { id, created } = await ensureServerEntry({ serverUrl, requestHeaders });
+    if (!created) {
+      void vscode.window.showInformationMessage(
+        `Server ${serverUrl} is already registered as "${id}".`
+      );
+      return;
+    }
+    output.appendLine(`[INFO] Registered server "${id}" (${serverUrl}) — no model yet.`);
+    const pick = await vscode.window.showInformationMessage(
+      `Server "${id}" registered. It stays out of the model picker until a model references it.`,
+      'Add a Model'
+    );
+    if (pick === 'Add a Model') {
+      await vscode.commands.executeCommand('vllm-copilot.addServerModel');
+    }
+  });
+}
+
+/**
+ * Reject anything `new URL()` can't parse or that has no hostname. Without this,
+ * `generateServerId` throws on garbage like "foo bar", and a host-less "http://"
+ * silently becomes the localhost:8000 default (normalizeServerUrl's fallback).
+ */
+export function validateServerUrlInput(value: string): string | undefined {
+  const raw = value.trim();
+  if (!raw) return 'Server URL is required';
+  let url: URL;
+  try {
+    url = new URL(raw.includes('://') ? raw : `http://${raw}`);
+  } catch {
+    return `"${raw}" is not a valid URL — e.g. https://host:8000`;
+  }
+  if (!url.hostname) return 'Enter a full server URL, e.g. https://host:8000';
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return 'Use an http(s) server URL';
+  return undefined;
+}
+
+/**
+ * Guided command: add a server (URL + optional headers), discover its models,
  * auto-configure the chosen one, and save it as a per-model entry. This is the
  * end-to-end flow for onboarding a second server without hand-editing settings.json.
  */
@@ -546,7 +821,7 @@ export function registerAddServerModelCommand(
       prompt: 'Enter a server URL (vLLM, LM Studio, llama.cpp, Ollama), or an openrouter.ai URL — a model-page URL pre-fills the model picker',
       placeHolder: 'https://host:8000  ·  https://openrouter.ai  ·  https://openrouter.ai/author/model',
       ignoreFocusOut: true,
-      validateInput: (v) => (v.trim() ? undefined : 'Server URL is required'),
+      validateInput: validateServerUrlInput,
     });
     if (!urlInput) {
       output.appendLine('[INFO] Add Server cancelled — no URL entered.');
@@ -569,9 +844,11 @@ export function registerAddServerModelCommand(
       return;
     }
 
-    // Check if this server already exists
+    // Check if this server already exists. Models reference the registry by
+    // `server` id — resolve each model's entry to compare by URL.
+    const registeredServers = readServers();
     const existingServerModels = existingModels.filter(
-      m => m.serverUrl && normalizeServerUrl(m.serverUrl) === serverUrl
+      m => resolveServer(m.server, registeredServers)?.serverUrl === serverUrl
     );
 
     if (existingServerModels.length > 0) {
@@ -658,12 +935,13 @@ export function registerAddServerModelCommand(
     const newVllmId = modelId;
     const sameModelEntries = existingServerModels.filter(m => resolveVllmModelId(m) === newVllmId);
 
-    // The extension-side identity of the entry we are replacing, if any. When
-    // 'Replace Config' is chosen the existing id (which may be a custom
-    // preset-derived id) must be retained: `replaceModelConfig` matches on
-    // `resolveConfigId` + server URL, so building a fresh composite id here
-    // would make it append a duplicate instead of replacing.
+    // The extension-side identity of the entry we are replacing, if any, plus
+    // its server ref. When 'Replace Config' is chosen both must be retained:
+    // `replaceModelConfig` matches on (`resolveConfigId`, `server`), so a fresh
+    // composite id OR a ref re-derived from the entered credentials would make
+    // it append a duplicate instead of replacing.
     let replaceExistingId: string | undefined;
+    let replaceTargetServer: string | undefined;
     if (sameModelEntries.length > 0) {
       // Multiple configs may legitimately share one wire id on a server (e.g. a
       // preset-derived entry beside a discovered composite entry). Replacing the
@@ -701,6 +979,7 @@ export function registerAddServerModelCommand(
         return; // cancelled
       }
       replaceExistingId = resolveConfigId(target);
+      replaceTargetServer = target.server;
     }
 
     const discoveryResult = await resolveModelConfigForAddSafely(
@@ -714,22 +993,41 @@ export function registerAddServerModelCommand(
       return;
     }
 
-    // Attach the server + headers. `id` is composite ("<model> on <host>") so the
-    // same model on two servers stays distinct; `vllmModelId` remains the raw wire identity.
-    // When replacing an existing entry the existing id is kept so the store replaces
-    // rather than appends (the composite would only match if it was already the stored id).
+    // Attach the server via the registry. A sibling model on the same URL +
+    // auth reuses that server's entry id (connection match in ensureServerEntry)
+    // instead of duplicating the entry; only a genuinely new connection gets a
+    // fresh URL-derived id. `id` is composite ("<model> on <entry-id>") so the
+    // same model on two servers stays distinct; `vllmModelId` remains the raw
+    // wire identity. On 'Replace Config' the model KEEPS the replaced entry and the
+    // re-entered credentials are rotated into it (Update Auth doctrine) — a ref
+    // derived from the new key would append a duplicate instead of replacing.
+    // An entry created here is rolled back if the confirm is abandoned.
+    let serverId: string;
+    let createdServerId: string | undefined;
+    const replaceServerId = replaceExistingId
+      ? await rotateEntryAuth(replaceTargetServer, hasHeaders ? requestHeaders : {}, output)
+      : undefined;
+    if (replaceServerId) {
+      serverId = replaceServerId;
+    } else {
+      const entry = await ensureServerEntry({
+        serverUrl,
+        requestHeaders: hasHeaders ? requestHeaders : {},
+        serverType: detectedServerType,
+      });
+      serverId = entry.id;
+      if (entry.created) createdServerId = entry.id;
+    }
     const finalConfig: IdentifiedModelConfig = {
       ...discoveryResult.modelConfig,
-      id: replaceExistingId ?? buildModelId(serverUrl, modelId),
+      id: replaceExistingId ?? buildModelId(serverId, modelId),
       vllmModelId: modelId,
-      serverUrl,
-      serverType: detectedServerType,
-      ...(hasHeaders ? { requestHeaders } : {}),
+      server: serverId,
     };
     if (discoveryResult.suggestedMaxOutputTokens !== undefined && finalConfig.maxOutputTokens === undefined) {
       finalConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
     }
 
-    await confirmAndSaveAddedModel(finalConfig, modelId, serverUrl, discoveryResult.summary.join('\n'), output, () => provider.clearCache(), discoveryResult.presetFile);
+    await confirmAndSaveAddedModel(finalConfig, modelId, serverUrl, discoveryResult.summary.join('\n'), output, () => provider.clearCache(), discoveryResult.presetFile, createdServerId);
   });
 }

@@ -48,12 +48,12 @@ These apply to any codebase.
 
 ## This Repository: vLLM-Copilot-2
 
-### Architecture: No Global Server Settings
-- **ALL servers are per-model.** Each model entry in `vllm-copilot.models` has its own `serverUrl` and `requestHeaders`.
-- **The ONLY global setting is `enableFileLogging`.**
-- There is NO global `serverUrl`, `apiKey`, `requestHeaders`, or sampling params.
-- The discovery logic must NOT probe a "global server" — it groups models by their per-model `serverUrl` and discovers from each server independently.
-- `VllmConfig.serverUrl`, `VllmConfig.apiKey`, `VllmConfig.requestHeaders` are **deprecated legacy fields** kept only for one-time migration. They must not be used at runtime.
+### Architecture: Server Registry, Models Reference It
+- **Servers are registry entries.** The top-level `vllm-copilot.servers` setting is an explicit lookup table of server entries (`id`, `serverUrl`, optional `requestHeaders`, `serverType`, `displayName`). Each model entry in `vllm-copilot.models` has a required `id` and `server` (the registry entry's id) — models never carry URLs, auth headers, server types, or server labels.
+- **The only global settings are the `servers` registry and `enableFileLogging`.**
+- There is NO global `serverUrl`, `apiKey`, `requestHeaders`, or sampling params. The registry is not "a global server" — it is a table; nothing may resolve a server unless a model references its entry.
+- The discovery logic must NOT probe a "global server" — it groups models by their `server` reference (resolved through the registry) and discovers from each server independently.
+- There are NO deprecated legacy fields on `VllmConfig` — `serverUrl`, `apiKey`, and `requestHeaders` were removed outright by the registry migration. Nothing may resolve a server unless a model references its entry.
 
 ### Version Compatibility
 - **Only support newest versions.** Don't add workarounds for old versions unless explicitly requested. This goes for vLLM, VS Code, Copilot.
@@ -61,8 +61,14 @@ These apply to any codebase.
 
 ### Build & Test
 - **Compile:** `npm run compile` (runs `tsc -p ./`).
-- **Test:** `npm test` (Vitest). Coverage: `npm run test:coverage`.
+- **Test:** `npm test` (Vitest). Tests exist only as tripwires for real breakage (wire format, settings.json writes, provider lifecycle) — no coverage metric, no ceremony tests.
 - **Package a VSIX:** `npm run build` (compiles, tests, then packages with vsce).
+
+### Changelog Policy
+- **Only issues a user actually experienced in a SHIPPED version get a `Fixed` entry.** A bug that was introduced and fixed within the same unreleased cycle is work-in-progress, not news — no entry, ever.
+- **New features deserve entries.** Internal refactors and implementation details do not.
+- **Never compare against never-shipped intermediate behavior** ("before, during this rc, X happened"). If no user ever saw it, it never happened.
+- Be terse in the changelog - this is for users to read. The commit messages can be verbose - those are for AI to read.
 
 ### Key Storage
 - All keys (vLLM API and HTTP headers) are stored in plain text in settings. This is fine. Do not surface this as an error. Putting secrets into secret storage maybe worthwhile for something but not here. This is a key project decision and if the Laptop of a user gets compromised and password hacked, it will be simple to get the keys from secret storage. So the only reason would be screenshots that are pasted on the internet. Well - so far it is easier to work with keys in plaintext. Do not surfact this error when code reviewing.
@@ -87,7 +93,7 @@ Copilot → provider.ts (VllmChatModelProvider) → vllmClient.ts → vLLM serve
 | `src/messageConverter.ts` | VS Code ↔ OpenAI/vLLM message format conversion. |
 | `src/streamReader.ts` | SSE stream reader. Uses `eventsource-parser` for spec-compliant line parsing + inactivity timeout. |
 | `src/sseParser.ts` | vLLM-specific SSE layer: JSON parse of `data:` chunks + tool call accumulation. Sits on top of `streamReader.ts`. |
-| `src/sessionManager.ts` | Session state management across turns. |
+| `src/sessionManager.ts` | Copilot session janitor: purges stale chat-session state from VS Code's storage (Clear Copilot Sessions command). No model/turn state. |
 | `src/tokenBudget.ts` | Token budgeting for input context windows. |
 | `src/modelInfo.ts` | Builds `LanguageModelChatInformation` from server + override configs. |
 | `src/modelUtils.ts` | Model ID/family detection utilities. |
@@ -133,7 +139,7 @@ Non-negotiable for this codebase:
 
 Things this codebase has been burned by — don't repeat:
 
-- **Global server probing at discovery.** There is no global server. Discovery groups models by per-model `serverUrl`. Do not add a "global server" fetch path.
+- **Global server probing at discovery.** There is no global server. The registry is a lookup table, not a default. Discovery groups models by their `server` reference. Do not add a "global server" fetch path.
 - **Duplicate config caching.** Only `VllmClient` caches config. Other files read through it.
 - **SSE parsing in the provider.** `streamReader.ts` owns SSE line parsing (via `eventsource-parser`); `sseParser.ts` owns JSON parsing + tool call accumulation. `provider.ts` consumes structured events.
 - **Hand-rolled SSE parsing.** The prior hand-rolled parser was replaced with `eventsource-parser` (battle-tested, used by Vercel AI SDK). Do not revert to manual line parsing.

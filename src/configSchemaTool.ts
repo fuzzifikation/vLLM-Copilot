@@ -29,14 +29,14 @@ export interface ConfigSchemaToolInput {
 
 const GUIDE = `# vLLM-Copilot Model Configuration Guide
 
-You are editing the \`vllm-copilot.models\` array in the user's VS Code \`settings.json\`.
+You are editing the \`vllm-copilot.models\` array in the user's VS Code \`settings.json\`. Server connection facts live in a SEPARATE \`vllm-copilot.servers\` registry — models reference a server by id.
 
 ## Core rules
-- Each entry is self-contained: its own \`serverUrl\`, \`requestHeaders\`, params, and modes. There is NO global server and no global API key.
-- Required: \`serverUrl\` (OpenAI-compatible endpoint) and \`id\` (unique entry key).
-- \`serverType\` defaults to \`vllm\`; set it explicitly for \`lmstudio\`, \`llamacpp\`, \`ollama\`, or \`openrouter\`.
-- \`serverDisplayName\` (optional): human-friendly label shown in the Dashboard instead of the URL. Server-scoped — when setting it manually, use the SAME value on every entry sharing a \`serverUrl\` (the Rename Server command does this automatically). Never set it on OpenRouter entries.
-- Put auth as \`requestHeaders\` on the entry, e.g. \`{ "Authorization": "Bearer <key>" }\`.
+- Two arrays: \`vllm-copilot.servers\` is the server registry — every server lives exactly once with \`id\`, \`serverUrl\`, and optional \`serverType\`, \`displayName\`, \`requestHeaders\`. \`vllm-copilot.models\` holds model entries that reference a server through its \`server\` id. There is NO global server and no global API key.
+- Required on a model: \`id\` (unique entry key) and \`server\` (a registered server entry id). Server facts (\`serverUrl\`, \`requestHeaders\`, \`serverType\`, \`displayName\`) belong ONLY on the registry entry — never on a model.
+- Required on a server entry: \`id\` (unique, human-readable — e.g. \`localhost-8000\`) and \`serverUrl\` (OpenAI-compatible endpoint). \`serverType\` defaults to \`vllm\`; set it on the ENTRY for \`lmstudio\`, \`llamacpp\`, \`ollama\`, or \`openrouter\`.
+- Auth goes on the server entry's \`requestHeaders\`, e.g. \`{ "Authorization": "Bearer <api-key>" }\`. Models never carry credentials.
+- A model whose \`server\` id is not registered is skipped with a warning — never guess or hand-invent ids; add the entry to \`vllm-copilot.servers\` first.
 
 ## Parameter resolution (highest wins)
 server defaults (unset params omitted) → entry.\`defaultParams\` → the selected entry.\`modelModes[<selected mode>]\`
@@ -62,22 +62,32 @@ This is the KNOWN vLLM vocabulary — other keys are also accepted and passed th
 vLLM-only (NOT accepted by OpenAI-compatible cloud backends such as OpenRouter): top_k, min_p, repetition_penalty, length_penalty, stop_token_ids, include_stop_str_in_output, ignore_eos, skip_special_tokens, spaces_between_special_tokens, truncate_prompt_tokens, thinking_token_budget, bad_words, repetition_detection, structured_outputs, chat_template_kwargs, allowed_token_ids.
 
 ## Example (reasoning model, per-mode sampling)
+One server entry in the registry, one model referencing it by id:
 \`\`\`json
-{
-  "serverUrl": "http://localhost:8000/v1",
-  "id": "MyModel on localhost:8000",
-  "vllmModelId": "org/MyModel",
-  "displayName": "MyModel",
-  "serverType": "vllm",
-  "maxOutputTokens": 32768,
-  "requestHeaders": { "Authorization": "Bearer <key>" },
-  "defaultParams": { "temperature": 0.7, "top_p": 0.95 },
-  "modelModes": {
-    "Think": { "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true }, "temperature": 1.0, "top_p": 0.95 },
-    "No Think": { "chat_template_kwargs": { "enable_thinking": false }, "temperature": 0.7, "top_p": 0.8 }
-  },
-  "defaultMode": "Think"
-}
+"vllm-copilot.servers": [
+  {
+    "id": "localhost-8000",
+    "serverUrl": "http://localhost:8000/v1",
+    "serverType": "vllm",
+    "displayName": "Home box",
+    "requestHeaders": { "Authorization": "Bearer <api-key>" }
+  }
+],
+"vllm-copilot.models": [
+  {
+    "id": "MyModel on localhost-8000",
+    "server": "localhost-8000",
+    "vllmModelId": "org/MyModel",
+    "displayName": "MyModel",
+    "maxOutputTokens": 32768,
+    "defaultParams": { "temperature": 0.7, "top_p": 0.95 },
+    "modelModes": {
+      "Think": { "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true }, "temperature": 1.0, "top_p": 0.95 },
+      "No Think": { "chat_template_kwargs": { "enable_thinking": false }, "temperature": 0.7, "top_p": 0.8 }
+    },
+    "defaultMode": "Think"
+  }
+]
 \`\`\`
 `;
 

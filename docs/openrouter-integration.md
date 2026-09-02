@@ -43,7 +43,7 @@ Only onboarding and metadata normalization are vendor-specific. Everything downs
 Add flow / Auto-Configure
   → GET /api/v1/models            (the catalog — public, unauthenticated)
   → normalizeOpenRouterModel      (exact-id match, build config fields)
-  → save per-model config         (serverUrl, wire id, headers, modes, limits, cost)
+  → save server entry + model     (registry entry, wire id, modes, limits, cost)
 
 Chat request
   → buildRequest                  (provider.only + routing suffix applied here)
