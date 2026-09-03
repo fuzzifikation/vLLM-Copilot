@@ -29,6 +29,15 @@
  * Auto-continue retries are counted per HTTP request: a continuation request
  * genuinely re-sends the context and generates new tokens, so each completion
  * that carries a usage payload is recorded.
+ *
+ * Identity ruling (complexity audit P14-1, 2026-09-03): usage is keyed by
+ * normalized server URL BY DESIGN: counters follow the machine, not the
+ * credential. Two registry entries that share one serverUrl (e.g. different
+ * API keys) get separate metrics engines and dashboard nodes but share these
+ * token/cost counters and the Last Request capture. Re-keying by registry
+ * entry id would rewrite historical totals; the config shape that would
+ * notice is rare and the merged view ("what this box burned") is the useful
+ * one.
  */
 
 import * as vscode from 'vscode';

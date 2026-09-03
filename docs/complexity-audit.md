@@ -1472,9 +1472,11 @@ downloadable, so a miss proves the skip, not a fetch failure);
 seeded (falls straight through to auto-discovery);
 `CONFIG_SCHEMA_TOOL_NAME`'s test import was already dead - nothing to move.
 Incinerator bonus: `test/openRouter.test.ts` carried seven dead imports.
-Deviation to ratify: `isVersionAtLeast`'s direct pins (none existed in the
-suite, only a dead import) are gone for good - the version gate is now
-covered only implicitly by the host-version the vscode mock reports.
+Deviation RATIFIED BY USER 2026-09-03: `isVersionAtLeast`'s direct pins
+(none existed in the suite, only a dead import) are gone for good - the
+version gate is covered implicitly by the host-version the vscode mock
+reports, and a pin for a constant above the supported floor is ceremony.
+(Also ratified same day: the U6 `runChainBuildWindows` keep.)
 [NOTE 2026-09-03: this section's header was destroyed by an interrupted
 edit that stitched it into U8's last sentence; reconstructed from the
 surviving body. Reviewer-round corrections preserved.]
@@ -1713,20 +1715,20 @@ Finding IDs are `P<path>-<n>`; cluster labels are single letters A-F.
 | P4-1 | 4 | three-tier tool-arg parse | — | **waived** (Intent) |
 | P4-2 | 4 | accumulation vs repair in different files | — | **waived** (parser stays vscode-free) |
 | P12-1 | 12 | deep-dive stale closure stomps live engine headers (CONFIRMED BUG) | med-high | **accepted — fixed 2026-09-03** (`deepDiveView.ts`: `openPanels` now holds live `PanelArgs`, command updates them on every invocation, `refresh()` reads the holder; compile + 824 tests green) |
-| P6-2 | 6 | resolver storm: per-model probes, OR catalog N× download, testAndRefresh 1+N (includes P16-1) | low-med | pending (recommend accept, core of the resolver-layer unit) |
-| P13-2 | 13 | shared `listServerModels` core for the display/lookup probes (webview badge, testAndRefresh, metrics) | low-med | pending (recommend accept with P6-2 as one unit) |
-| P16-2 | 16 | OR catalog validation sync-by-comment | low-med | pending (recommend accept with the unit) |
+| P6-2 | 6 | resolver storm: per-model probes, OR catalog N× download, testAndRefresh 1+N (includes P16-1) | low-med | **ACCEPTED 2026-09-03** (executing as the resolver unit, with behavior-change blessing) |
+| P13-2 | 13 | shared `listServerModels` core for the display/lookup probes (webview badge, testAndRefresh, metrics) | low-med | **ACCEPTED 2026-09-03** (resolver unit) |
+| P16-2 | 16 | OR catalog validation sync-by-comment | low-med | **ACCEPTED 2026-09-03** (resolver unit) |
 | P6-1 | 6 | output-budget rule computed twice + picker floor x4 (reviewer round: provider.ts:300, config.ts:242, config.ts:279, tokenBudget.ts:93; extends P1-1) | low-med | pending (recommend: shared `normalizePickerTokens` only) |
-| P9-1 | 9 | webview's own raw /v1/models probe, LM Studio/Ollama-blind badge | low-med | pending (dies with P13-2) |
+| P9-1 | 9 | webview's own raw /v1/models probe, LM Studio/Ollama-blind badge | low-med | **ACCEPTED 2026-09-03** (resolver unit, dies with P13-2) |
 | P8-1 | 8 | duplicate-model gate fork, vLLM path re-prompts the just-typed key | low-med | pending (behavior fix included) |
 | P8-2 | 8 | OpenRouter config+summary assembly mirrored by comment | low | pending |
 | P8-4 | 8 | two unprotected `ensureServerEntry` awaits -> generic error surfacing | low | pending (~6-line wrap) |
 | P11-1 | 11 | poll default 15000 duplicated | low | pending (R-5: export `getPollSettingMs`, dashboard calls it - kills the duplicated read wholesale; rides U7) |
 | P11-2 | 11 | dashboard rebuilds engines on any vllm-copilot.* change | low | pending (one-line scope) |
 | P13-1 | 13 | diagnostics probe URL hand-built at 3 call sites | low | pending (waive candidate) |
-| P14-1 | 14 | usage keyed by URL vs engines keyed by entry id (shared-URL entries merge counters) | med | pending PRODUCT RULING (document vs re-key) |
+| P14-1 | 14 | usage keyed by URL vs engines keyed by entry id (shared-URL entries merge counters) | med | **RULED 2026-09-03: document.** Usage follows the box, not the credential; documented in the `usageStore.ts` header, zero behavior change. |
 | P16-3 | 16 | is-OpenRouter answered by URL and by field | low | pending (recommend accept + doc comment) |
-| P16-4 | 16 | OR account/credits twin bodies, catalog URL from two sources | low | pending (bundle with P16-2) |
+| P16-4 | 16 | OR account/credits twin bodies, catalog URL from two sources | low | **ACCEPTED 2026-09-03** (resolver unit) |
 | P17-1 | 17 | four bundled-path sites, duplicated twin predicate | low | pending (small helper) |
 
 Note (2026-09-03 deep read): P7-1's scope was first refined to "RMW cycle
