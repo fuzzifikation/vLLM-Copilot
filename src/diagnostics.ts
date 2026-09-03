@@ -334,31 +334,29 @@ async function runChainBuildWindows(url: string): Promise<CertChainResult> {
 // ── macOS / Linux: curl ─────────────────────────────────────────────────
 
 /** Detect curl's TLS backend from `curl --version`. */
-async function detectCurlBackend(): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync('curl', ['--version'], { timeout: 5000 });
-    // curl --version output varies by platform:
-    //   macOS:    curl 8.7.1 (x86_64-apple-darwin23.0) libcurl/8.7.1 (Secure Transport) ...
-    //   Linux:   curl 7.81.0 (x86_64-pc-linux-gnu) libcurl/7.81.0 OpenSSL/3.0.2 ...
-    //   Linux:   curl 7.74.0 (x86_64-pc-linux-gnu) libcurl/7.74.0 GnuTLS/3.7.3 ...
-    //   Windows: curl 8.0.1 (Windows) libcurl/8.0.1 Schannel ...
-    // The first (...) is the platform, not the TLS backend. Search for
-    // known backend names in the full output instead.
-    if (/Secure Transport/i.test(stdout)) return 'Secure Transport';
-    if (/OpenSSL/i.test(stdout)) return 'OpenSSL';
-    if (/GnuTLS/i.test(stdout)) return 'GnuTLS';
-    if (/Schannel/i.test(stdout)) return 'Schannel';
-    if (/wolfSSL/i.test(stdout)) return 'wolfSSL';
-    if (/mbedTLS/i.test(stdout)) return 'mbedTLS';
-    return 'unknown';
-  } catch {
-    return 'unknown';
-  }
-}
-
 /** macOS / Linux: Run curl to test the endpoint. */
 async function runCurlTest(url: string, headers?: Record<string, string>): Promise<FetchResult> {
-  const backend = await detectCurlBackend();
+  // TLS backend as reported by `curl --version`, probed first (absorbed from
+  // the former detectCurlTest helper — single caller). Output varies by
+  // platform:
+  //   macOS:    curl 8.7.1 (x86_64-apple-darwin23.0) libcurl/8.7.1 (Secure Transport) ...
+  //   Linux:   curl 7.81.0 (x86_64-pc-linux-gnu) libcurl/7.81.0 OpenSSL/3.0.2 ...
+  //   Windows: curl 8.0.1 (Windows) libcurl/8.0.1 Schannel ...
+  // The first (...) is the platform, not the TLS backend — so search for
+  // known backend names in the full output instead.
+  let backend = 'unknown';
+  try {
+    const { stdout } = await execFileAsync('curl', ['--version'], { timeout: 5000 });
+    if (/Secure Transport/i.test(stdout)) backend = 'Secure Transport';
+    else if (/OpenSSL/i.test(stdout)) backend = 'OpenSSL';
+    else if (/GnuTLS/i.test(stdout)) backend = 'GnuTLS';
+    else if (/Schannel/i.test(stdout)) backend = 'Schannel';
+    else if (/wolfSSL/i.test(stdout)) backend = 'wolfSSL';
+    else if (/mbedTLS/i.test(stdout)) backend = 'mbedTLS';
+  } catch {
+    // backend stays 'unknown' — the fetch result matters more than its label
+  }
+
   const args = [
     '--silent', '--show-error',
     '--write-out', '\n%{http_code}',
@@ -415,16 +413,6 @@ async function detectWinHttpProxy(): Promise<ProxyInfo> {
       error: err instanceof Error ? err.message : String(err),
     };
   }
-}
-
-/** Get OS-level proxy info. Returns undefined if not applicable on this platform. */
-async function getProxyInfo(): Promise<ProxyInfo | undefined> {
-  if (process.platform === 'win32') {
-    return detectWinHttpProxy();
-  }
-  // macOS/Linux: could read system proxy from networksetup or gsettings,
-  // but for now focus on Windows where corporate proxy is most common.
-  return undefined;
 }
 
 // ── Windows IE proxy settings (registry) ────────────────────────────────
@@ -547,23 +535,7 @@ async function runChainBuildOpenSSL(url: string): Promise<CertChainResult> {
   }
 }
 
-// ── Platform dispatch ───────────────────────────────────────────────────
-
-/** Run the platform-native fetch test. Returns undefined if not supported. */
-async function runSystemFetch(
-  url: string,
-  headers?: Record<string, string>,
-): Promise<FetchResult | undefined> {
-  switch (process.platform) {
-    case 'win32':
-      return runPowerShellTest(url, headers);
-    case 'darwin':
-    case 'linux':
-      return runCurlTest(url, headers);
-    default:
-      return undefined;
-  }
-}
+// ── Direct Node transport ───────────────────────────────────────────────
 
 /**
  * Run a direct Node http/https request using the Node core API.
@@ -617,32 +589,6 @@ async function runDirectNodeFetch(
   }
 }
 
-/** Run cert chain inspection. Returns undefined if not supported. */
-async function runChainInspection(url: string): Promise<CertChainResult | undefined> {
-  switch (process.platform) {
-    case 'win32':
-      return runChainBuildWindows(url);
-    case 'darwin':
-    case 'linux':
-      return runChainBuildOpenSSL(url);
-    default:
-      return undefined;
-  }
-}
-
-/** Human-readable label for the platform-native fetch test. */
-function systemFetchLabel(): string {
-  switch (process.platform) {
-    case 'win32':
-      return 'PowerShell (SChannel / .NET)';
-    case 'darwin':
-    case 'linux':
-      return 'System curl';
-    default:
-      return 'System fetch';
-  }
-}
-
 /**
  * Run a full diagnostic against the given endpoint URL.
  *
@@ -680,7 +626,13 @@ export async function runDiagnostics(
   const [dns, tcp, systemFetch, nodeFetchResult, nodeDirectFetch] = await Promise.all([
     checkDns(parsedUrl.hostname),
     checkTcp(parsedUrl.hostname, port),
-    runSystemFetch(url, requestHeaders),
+    // Platform-native fetch test (absorbed dispatch — the former
+    // runSystemFetch wrapper only existed to switch on platform).
+    process.platform === 'win32'
+      ? runPowerShellTest(url, requestHeaders)
+      : process.platform === 'darwin' || process.platform === 'linux'
+        ? runCurlTest(url, requestHeaders)
+        : Promise.resolve(undefined),
     (async (): Promise<FetchResult> => {
       try {
         const resp = await fetch(url, {
@@ -701,7 +653,13 @@ export async function runDiagnostics(
   const tlsError = isTlsError;
   let chain: CertChainResult | undefined;
   if (tlsError(nodeFetch) || tlsError(systemFetch) || tlsError(nodeDirectFetch)) {
-    chain = await runChainInspection(url);
+    // Platform-native cert chain inspection (absorbed dispatch — the former
+    // runChainInspection wrapper only existed to switch on platform).
+    chain = process.platform === 'win32'
+      ? await runChainBuildWindows(url)
+      : process.platform === 'darwin' || process.platform === 'linux'
+        ? await runChainBuildOpenSSL(url)
+        : undefined;
   }
 
   // Collect settings once for conclusion logic and report.
@@ -711,7 +669,9 @@ export async function runDiagnostics(
   // IE proxy settings (Windows registry) — Group Policy can set these silently.
   // Both are independent — run in parallel.
   const [proxyInfo, ieProxyInfo] = await Promise.all([
-    getProxyInfo(),
+    // OS-level proxy configuration: Windows WinHTTP only (macOS/Linux could
+    // read networksetup/gsettings, but corporate proxies are a Windows story).
+    process.platform === 'win32' ? detectWinHttpProxy() : Promise.resolve(undefined),
     detectIeProxySettings(),
   ]);
 
@@ -803,25 +763,28 @@ export async function runDiagnostics(
   };
 }
 
-/** Format a fetch result for display. */
-function formatFetchResult(label: string, r?: FetchResult): string[] {
-  if (!r) {
-    return [`— ${label} —`, '  (not available on this platform)', ''];
-  }
-  const backend = r.backend ? ` [${r.backend}]` : '';
-  if (r.ok) {
-    return [`— ${label} —`, `  HTTP ${r.status ?? 'OK'} (success)${backend}`, ''];
-  }
-  // Distinguish "got an HTTP error response" from "connection failed"
-  if (r.status !== undefined) {
-    return [`— ${label} —`, `  HTTP ${r.status}${r.error ? ` — ${r.error}` : ''}${backend}`, ''];
-  }
-  return [`— ${label} —`, `  connection failed${r.error ? `: ${r.error}` : ''}${backend}`, ''];
-}
-
 /** Format a report as a human-readable string for the Output channel. */
 export function formatReport(r: DiagnosticReport): string {
   const lines: string[] = [];
+  // One transport-result formatter (absorbed from formatFetchResult — its
+  // only consumers are the three transport sections below). Distinguishes
+  // "got an HTTP error response" from "connection failed".
+  const fmt = (label: string, res?: FetchResult): void => {
+    if (!res) {
+      lines.push(`— ${label} —`, '  (not available on this platform)', '');
+      return;
+    }
+    const backend = res.backend ? ` [${res.backend}]` : '';
+    if (res.ok) {
+      lines.push(`— ${label} —`, `  HTTP ${res.status ?? 'OK'} (success)${backend}`, '');
+      return;
+    }
+    if (res.status !== undefined) {
+      lines.push(`— ${label} —`, `  HTTP ${res.status}${res.error ? ` — ${res.error}` : ''}${backend}`, '');
+      return;
+    }
+    lines.push(`— ${label} —`, `  connection failed${res.error ? `: ${res.error}` : ''}${backend}`, '');
+  };
   lines.push('---');
   lines.push('vLLM-Copilot — Network Diagnostics');
   lines.push('---');
@@ -896,13 +859,19 @@ export function formatReport(r: DiagnosticReport): string {
     }
     lines.push('');
   }
-  // Platform-native fetch
-  lines.push(...formatFetchResult(systemFetchLabel(), r.systemFetch));
+  // Platform-native fetch (label absorbed from systemFetchLabel, keyed off
+  // the report's own platform — same values, no second process.platform read)
+  const systemLabel = r.platform === 'win32'
+    ? 'PowerShell (SChannel / .NET)'
+    : r.platform === 'darwin' || r.platform === 'linux'
+      ? 'System curl'
+      : 'System fetch';
+  fmt(systemLabel, r.systemFetch);
   // Node fetch
-  lines.push(...formatFetchResult('Node fetch (VS Code patched fetch)', r.nodeFetch));
+  fmt('Node fetch (VS Code patched fetch)', r.nodeFetch);
   // Direct Node transport (http/https.request) — same Node core modules,
   // but without the Fetch API layer. Useful to isolate Fetch-specific failures.
-  lines.push(...formatFetchResult('Node direct transport (http/https.request)', r.nodeDirectFetch));
+  fmt('Node direct transport (http/https.request)', r.nodeDirectFetch);
   // Add a brief comparison note when transports disagree AND the failure is
   // TLS-related. Without the TLS gate, a proxy-routing failure (patched fetch
   // fails through the proxy, the direct transport bypasses it and succeeds)

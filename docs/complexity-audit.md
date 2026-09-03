@@ -1327,6 +1327,16 @@ date branch). Fractional-seconds and future-date pins dropped per structure-wins
 ruling. fetchRetry.ts 193 -> 168 lines.
 [TC-mild: fetchRetry.test reroutes]
 
+**U6 diagnostics de-zoo. EXECUTED 2026-09-03.** Dead: `getProxyInfo`,
+`runSystemFetch`, `runChainInspection`, `systemFetchLabel` (dispatch wrappers
+inlined at their runDiagnostics/formatReport call sites), `detectCurlBackend`
+(absorbed into `runCurlTest`), `formatFetchResult` (formatReport local
+closure, 3 sites). Label now keys off `r.platform` (the report's own record)
+instead of a fresh `process.platform` read. Executor deviation WAIVED:
+`runChainBuildWindows` (22-line exec-based builder) stays a function called
+from the inlined dispatch - absorbing it into the runDiagnostics spine would
+bloat the flow-spine function, the opposite of the pass-1 per-case verdict
+that kept `runChainBuildOpenSSL` (70). Census 412 -> 406 (-6 exactly).
 **U6 diagnostics de-zoo (self-contained flow, no cross-module risk).**
 Verified: 18 of 24 functions are single-caller breadcrumbs of one flow.
 Recommended split (per-case judgment, god-function refusal):
