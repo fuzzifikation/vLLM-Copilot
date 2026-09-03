@@ -9,13 +9,13 @@
 import * as vscode from 'vscode';
 import { jsonrepair } from 'jsonrepair';
 import { parse as parsePartialJson, disableErrorLogging } from 'best-effort-json-parser';
-import { collectErrorMessages } from './errorEnvelope.js';
+import { collectErrorMessages } from '../shared/errorEnvelope.js';
 import type {
   FinalizedToolCall,
   OpenAIChatMessage,
   OpenAIToolCall,
   OpenAIContentPart,
-} from './types.js';
+} from '../types.js';
 
 // best-effort-json-parser logs parse errors to console by default; silence it so
 // our own [WARN] log is the single source of truth for unparseable args.
@@ -77,7 +77,12 @@ export function convertMessages(
             type: 'function',
             function: {
               name: part.name,
-              arguments: JSON.stringify(part.input),
+              // `?? {}` mirrors the outbound guard in sseParser
+              // (finalizePendingToolCalls): JSON.stringify(undefined) returns
+              // undefined and the KEY silently vanishes — the wire contract
+              // says arguments is a string, and a missing key invites a
+              // pydantic 400 on strict backends.
+              arguments: JSON.stringify(part.input ?? {}),
             },
           });
         }
@@ -295,6 +300,20 @@ export function describeError(err: unknown): string {
 }
 
 /**
+ * The transport-failure text rule (audit P2-4): the server was never reached.
+ * ONE membership check over a flattened error-chain text (name + message +
+ * causes, see {@link iterateCauses}) - the orchestrator decides cache
+ * invalidation with it and {@link formatError} chooses the "Cannot connect"
+ * copy with it. Two implementations here would drift into each other: error
+ * copy claiming connectivity while the stale model list survives, or inverse.
+ */
+export function isTransportFailureText(combinedChainText: string): boolean {
+  return combinedChainText.includes('ECONNREFUSED')
+    || combinedChainText.includes('fetch failed')
+    || combinedChainText.includes('ENOTFOUND');
+}
+
+/**
  * Format an error for user-facing display. Maps common network/server failures
  * to actionable messages.
  * Handles both Error objects and plain string throws (fetch abort returns a string!).
@@ -346,7 +365,7 @@ export function formatError(err: unknown): string {
       try {
         const parsed = JSON.parse(text.slice(brace)) as { error?: unknown };
         const messages = collectErrorMessages(parsed.error);
-        if (messages.length > 0) message = messages.join(' — ');
+        if (messages.length > 0) message = messages.join(' - ');
       } catch {
         // Truncated or non-JSON — fall through to the tolerant regex.
       }
@@ -357,13 +376,15 @@ export function formatError(err: unknown): string {
       if (msgMatch && msgMatch[1] && msgMatch[1].trim()) parts.push(msgMatch[1]);
       const rawMatch = text.match(/"raw"\s*:\s*"((?:[^"\\]|\\.)*)/);
       if (rawMatch && rawMatch[1] && rawMatch[1].trim()) parts.push(rawMatch[1]);
-      if (parts.length > 0) message = [...new Set(parts)].join(' — ');
+      if (parts.length > 0) message = [...new Set(parts)].join(' - ');
     }
     if (message === undefined) {
       // 2. HTTP status text ("Payment Required", "Unauthorized", …), trimmed at
       //    the body separator, any newline, or the 5xx-retry suffix.
       const rest = text.slice(m.index! + m[0].length).replace(/^:\s*/, '');
-      const end = [rest.indexOf('—'), rest.indexOf('{'), rest.indexOf('\n')]
+      // Cut at the body separator (" - ", see fetchRetry's status line), the
+      // JSON body, or a newline — whichever comes first.
+      const end = [rest.indexOf(' - '), rest.indexOf('{'), rest.indexOf('\n')]
         .filter(i => i >= 0)
         .reduce((min, i) => Math.min(min, i), rest.length);
       const statusText = rest.slice(0, end).trim().replace(/ from server$/, '');
@@ -375,7 +396,7 @@ export function formatError(err: unknown): string {
 
   // Transport-level failures — the server never answered, so there is no HTTP
   // status: connectivity, context limits, stream truncation, unexpected closes.
-  if (combined.includes('ECONNREFUSED') || combined.includes('fetch failed') || combined.includes('ENOTFOUND')) {
+  if (isTransportFailureText(combined)) {
     return `Cannot connect to the server. Make sure it's running and the URL is correct (${msg}).`;
   }
   if (combined.includes('context length') || combined.includes('max_model_len') || combined.includes('maximum context')) {

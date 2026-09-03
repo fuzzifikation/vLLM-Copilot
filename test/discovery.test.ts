@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { discoverModels } from '../src/provider/discovery.js';
 import type { ProviderClient } from '../src/provider/contracts.js';
-import type { ServerEntry } from '../src/serverRegistry.js';
+import type { ServerEntry } from '../src/state/serverRegistry.js';
 
 function makeOutput(): vscode.OutputChannel & { appendLine: ReturnType<typeof vi.fn> } {
   return {

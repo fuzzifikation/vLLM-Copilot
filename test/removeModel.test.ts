@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { registerRemoveModelCommand } from '../src/commands.js';
-import type { ModelConfig } from '../src/config.js';
+import { registerRemoveModelCommand } from '../src/commands/commands.js';
+import type { ModelConfig } from '../src/state/config.js';
 
 /**
  * Command-level tests for vllm-copilot.removeModel (the Server Settings

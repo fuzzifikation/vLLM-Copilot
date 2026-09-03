@@ -10,8 +10,8 @@
 import * as vscode from 'vscode';
 import { processSSEChunk, finalizePendingToolCalls } from './sseParser.js';
 import { createParser, type EventSourceMessage } from 'eventsource-parser';
-import type { StreamEvent } from './types.js';
-import type { FileLogger } from './logger.js';
+import type { StreamEvent } from '../types.js';
+import type { FileLogger } from '../shared/logger.js';
 
 export interface StreamReaderOptions {
   /** Inactivity timeout in ms. 0 = disabled (wait indefinitely). */
@@ -200,12 +200,17 @@ export async function* readSseStream(
         if (errCode === 'ERR_STREAM_PREMATURE_CLOSE' || rawMsg === 'Premature close') {
           throw new Error('Connection closed prematurely by the network or a reverse proxy');
         }
-        // Native fetch/ReadableStream throws "terminated" when the underlying stream
-        // is closed/cancelled — this is what happens when a server or reverse proxy
-        // (Cloudflare, etc.) closes the connection mid-stream. Node's undici uses
-        // "terminated" instead of ERR_STREAM_PREMATURE_CLOSE for native ReadableStream.
+        // undici's `TypeError: terminated` fires when something calls
+        // .terminate() on the response stream — always an INTENTIONAL action.
+        // VS Code's internal fetch does exactly this after reading files during
+        // tool orchestration (no cancellation token fired), and postStream's
+        // isGracefulTermination() matches this exact name + message to log the
+        // turn quietly. Wrapping it here destroyed that evidence and turned a
+        // normal cancel into a scary proxy error, so pass the original error
+        // through untouched. Genuine network kills surface as
+        // ERR_STREAM_PREMATURE_CLOSE / "Premature close", handled above.
         if (rawMsg === 'terminated') {
-          throw new Error('Connection closed prematurely by the network or a reverse proxy');
+          throw err instanceof Error ? err : new Error(rawMsg);
         }
         throw new Error(`Stream error during read: ${rawMsg}`);
       }

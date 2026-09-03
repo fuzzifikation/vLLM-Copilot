@@ -32,12 +32,12 @@ module.exports = {
       name: 'state-layer-no-ui-or-commands',
       severity: 'error',
       comment:
-        'The state layer (configStore, serverRegistry, serverCore, config, migrations) is read by everyone and depends on nobody above it. If this fires, the state layer grew a reach into the command or UI layer - inversion, fix by moving the consumer logic up. KNOWN EXCEPTION: outputLengthMigration -> commands/presets is logged as P5-2 in docs/complexity-audit.md (keep/defer); it is allowed below and dies when that finding executes.',
+        'The state layer (src/state/: configStore, serverRegistry, serverCore, config) and the boot migrations (src/migrations/) are read by everyone and depend on nobody above them - no commands, no UI, no provider, no usage, no persona, no backends, not even the file logger. If this fires, the state layer grew a reach into a layer above it - inversion, fix by moving the consumer logic down (a pure connection fact belongs in serverCore). KNOWN EXCEPTION: migrations/outputLengthMigration -> commands/presets is logged as P5-2 in docs/complexity-audit.md (keep/defer); it is allowed below and dies when that finding executes.',
       from: {
-        path: '^src/(configStore|serverRegistry|serverCore|config|registryMigration|serverRegistryMigration|outputLengthMigration)\\.ts$',
+        path: '^src/(state|migrations)/[^/]+\\.ts$',
       },
       to: {
-        path: '^src/(commands|commands/|dashboard|deepDiveView|serverSettingsView|vllmMetrics|diagnostics|usageStore|usageReporting|logger|provider|provider/)[./]',
+        path: '^src/(commands/|ui/|usage/|persona/|provider/|backends/|shared/logger)',
         pathNot: ['^src/commands/presets\\.(ts|js)$'],
       },
     },
@@ -45,10 +45,10 @@ module.exports = {
       name: 'provider-no-ui',
       severity: 'error',
       comment:
-        'The request pipeline (provider/**) must never reach into dashboard/webview/metrics/diagnostics UI surfaces. It may read state (configStore) and record usage (usageStore) - those are data, not views.',
-      from: { path: '^src/provider\\.ts$|^src/provider/[^/]+\\.ts$' },
+        'The request pipeline (src/provider/) must never reach into dashboard/webview/metrics/diagnostics UI surfaces or command modules. It may read state (src/state/) and record usage (src/usage/) - those are data, not views.',
+      from: { path: '^src/provider/[^/]+\\.ts$' },
       to: {
-        path: '^src/(dashboard|deepDiveView|serverSettingsView|vllmMetrics|diagnostics|commands|commands/)[./]',
+        path: '^src/(ui|commands)/',
       },
     },
   ],

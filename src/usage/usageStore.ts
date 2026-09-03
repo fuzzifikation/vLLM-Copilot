@@ -38,12 +38,23 @@
  * entry id would rewrite historical totals; the config shape that would
  * notice is rare and the merged view ("what this box burned") is the useful
  * one.
+ *
+ * Storage: the canonical cumulative blob is `usage.json` in the profile-wide
+ * globalStorage directory — the only storage surface every window genuinely
+ * re-reads. `globalState` is NOT cross-window live: the ext-host Memento is a
+ * per-window cache (VS Code delivers `$acceptValue` updates only for
+ * settings-sync-registered keys), so whole-snapshot writes there silently
+ * destroyed another window's counters. Persists now MERGE against the file
+ * (delta replay, see mergePersisted) and keep the memento as a downgrade
+ * mirror only.
  */
 
+import * as fs from 'fs/promises';
+import * as path from 'path';
 import * as vscode from 'vscode';
-import type { WireMetrics } from './types.js';
-import { findModelConfig, type ModelConfig } from './config.js';
-import { readServers } from './configStore.js';
+import type { WireMetrics } from '../types.js';
+import { findModelConfig, type ModelConfig } from '../state/config.js';
+import { readServers } from '../state/configStore.js';
 
 // ─── Last request ─────────────────────────────────────────────────────────
 
@@ -101,7 +112,7 @@ export type UsageServerMap = Record<string, Record<string, UsageCounts>>;
 /** serverUrl → modelId → accumulated actual cost (USD, from OpenRouter usage.cost). */
 export type UsageCostMap = Record<string, Record<string, number>>;
 
-/** Persisted shape under `globalState` (versioned for forward migration). */
+/** Persisted shape (`usage.json`, mirrored to `globalState`; versioned for forward migration). */
 interface PersistedUsage {
   version: 3;
   allTime: UsageServerMap;
@@ -149,6 +160,14 @@ let startedAt: Record<string, Record<string, number>> = {};
 let allTimeCost: UsageCostMap = {};
 let daysCost: Record<string, UsageCostMap> = {};
 let globalState: vscode.Memento | undefined;
+/** Profile-wide canonical usage file (globalStorage/usage.json). Undefined
+ *  when no globalStorageUri exists (test fakes) — then the store degrades to
+ *  the legacy memento-only behavior. */
+let usageFilePath: string | undefined;
+/** This window's memory at its last SUCCESSFUL persist — the basis for the
+ *  next persist's delta. Left stale on a failed write, which makes the next
+ *  persist an implicit retry of the lost delta. */
+let lastWritten: PersistedUsage | undefined;
 let writeQueue: Promise<void> = Promise.resolve();
 let logError: (msg: string) => void = () => {};
 const emitter = new vscode.EventEmitter<void>();
@@ -189,39 +208,53 @@ function accumulateCost(map: UsageCostMap, serverUrl: string, modelId: string, c
 
 // ─── Init / load / persist ────────────────────────────────────────────────
 
-/** Load persisted usage from globalState (best-effort; corrupt/missing → fresh). */
-function load(): void {
-  const raw = globalState?.get<unknown>(STORAGE_KEY);
-  if (raw && typeof raw === 'object') {
-    // Loose shape — the blob is an unknown external value, not a typed
-    // PersistedUsage. `version` is a plain number here so v1/v2/v3 are all
-    // comparable (PersistedUsage's literal `version: 3` would reject `=== 2`).
-    const p = raw as {
-      version?: number;
-      allTime?: UsageServerMap;
-      days?: Record<string, UsageServerMap>;
-      startedAt?: Record<string, Record<string, number>>;
-      allTimeCost?: UsageCostMap;
-      daysCost?: Record<string, UsageCostMap>;
+/**
+ * Parse a persisted blob (file OR memento — unknown external value, loose
+ * shape). `version` is a plain number so v1/v2/v3 are all comparable
+ * (PersistedUsage's literal `version: 3` would reject `=== 2`). v1 upgrades in
+ * place (startedAt defaults to {}); v2 → v3 is additive — the cost planes
+ * default to {} so old token records migrate unchanged with no fabricated
+ * actual cost. Field guards check SHAPE (not just presence): a corrupt blob
+ * with a truthy primitive allTime would otherwise crash the first
+ * recordRequest with a strict-mode TypeError. Unrecognizable → undefined
+ * (corrupt means start fresh, never crash).
+ */
+function parsePersisted(raw: unknown): PersistedUsage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const p = raw as {
+    version?: number;
+    allTime?: UsageServerMap;
+    days?: Record<string, UsageServerMap>;
+    startedAt?: Record<string, Record<string, number>>;
+    allTimeCost?: UsageCostMap;
+    daysCost?: Record<string, UsageCostMap>;
+  };
+  const isPlainObj = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v);
+  if ((p.version === 1 || p.version === 2 || p.version === 3)
+    && isPlainObj(p.allTime) && isPlainObj(p.days)) {
+    return {
+      version: 3,
+      allTime: p.allTime,
+      days: p.days,
+      startedAt: isPlainObj(p.startedAt) ? p.startedAt : {},
+      allTimeCost: isPlainObj(p.allTimeCost) ? p.allTimeCost : {},
+      daysCost: isPlainObj(p.daysCost) ? p.daysCost : {},
     };
-    // version 1 is upgraded in place (startedAt defaults to {}); v2 → v3 is
-    // additive — the cost planes default to {} so old token records migrate
-    // unchanged with no fabricated actual cost. The field guard checks SHAPE
-    // (not just presence): a corrupt blob with a truthy primitive allTime would
-    // otherwise crash the first recordRequest with a strict-mode TypeError.
-    const isPlainObj = (v: unknown): v is Record<string, unknown> =>
-      typeof v === 'object' && v !== null && !Array.isArray(v);
-    if ((p.version === 1 || p.version === 2 || p.version === 3)
-      && isPlainObj(p.allTime) && isPlainObj(p.days)) {
-      allTime = p.allTime;
-      days = p.days;
-      startedAt = p.startedAt ?? {};
-      allTimeCost = p.allTimeCost ?? {};
-      daysCost = p.daysCost ?? {};
-    }
   }
-  // Prune expired day buckets. Cost buckets use the same window — otherwise
-  // the persisted blob grows one bucket per day indefinitely.
+  return undefined;
+}
+
+/** Install a persisted snapshot into memory and prune expired day buckets.
+ *  Cost buckets use the same window — otherwise the blob grows one bucket per
+ *  day indefinitely. */
+function adoptPersisted(p: PersistedUsage | undefined): void {
+  if (!p) return;
+  allTime = p.allTime;
+  days = p.days;
+  startedAt = p.startedAt;
+  allTimeCost = p.allTimeCost;
+  daysCost = p.daysCost;
   const cutoff = dayKey(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
   for (const key of Object.keys(days)) {
     if (key < cutoff) delete days[key];
@@ -231,34 +264,195 @@ function load(): void {
   }
 }
 
+// ─── Cross-window merge ────────────────────────────────────────────
+
+type LeafPlane<T> = Record<string, Record<string, T>>;
+
+/** Delta-merge one server→model plane: disk + (memory − ours), clamped at 0
+ *  (cross-window reset races must not mint negative totals). Fully-zero
+ *  count leaves drop out — absent ≡ zero for tokens. */
+function mergeCountsPlane(disk: UsageServerMap, memory: UsageServerMap, ours: UsageServerMap): UsageServerMap {
+  const out: UsageServerMap = {};
+  for (const srv of new Set([...Object.keys(disk), ...Object.keys(memory)])) {
+    const d = disk[srv] ?? {}, m = memory[srv] ?? {}, o = ours[srv] ?? {};
+    const entry: Record<string, UsageCounts> = {};
+    for (const id of new Set([...Object.keys(d), ...Object.keys(m)])) {
+      const dv = { ...emptyCounts(), ...d[id] };
+      const mv = { ...emptyCounts(), ...m[id] };
+      const ov = { ...emptyCounts(), ...o[id] };
+      const v: UsageCounts = {
+        prompt: Math.max(0, dv.prompt + mv.prompt - ov.prompt),
+        completion: Math.max(0, dv.completion + mv.completion - ov.completion),
+        cached: Math.max(0, dv.cached + mv.cached - ov.cached),
+        reasoning: Math.max(0, dv.reasoning + mv.reasoning - ov.reasoning),
+      };
+      if (v.prompt || v.completion || v.cached || v.reasoning) entry[id] = v;
+    }
+    if (Object.keys(entry).length > 0) out[srv] = entry;
+  }
+  return out;
+}
+
+/** Delta-merge one actual-cost plane. Leaves merging to ≤ 0 drop out: a
+ *  cost erased by a reset must not linger masquerading as a reported-zero
+ *  (free-model) entry — a genuinely free model re-reports usage.cost 0 on its
+ *  next request anyway. */
+function mergeCostPlane(disk: UsageCostMap, memory: UsageCostMap, ours: UsageCostMap): UsageCostMap {
+  const out: UsageCostMap = {};
+  for (const srv of new Set([...Object.keys(disk), ...Object.keys(memory)])) {
+    const d = disk[srv] ?? {}, m = memory[srv] ?? {}, o = ours[srv] ?? {};
+    const entry: Record<string, number> = {};
+    for (const id of new Set([...Object.keys(d), ...Object.keys(m)])) {
+      const v = (d[id] ?? 0) + (m[id] ?? 0) - (o[id] ?? 0);
+      if (v > 0) entry[id] = v;
+    }
+    if (Object.keys(entry).length > 0) out[srv] = entry;
+  }
+  return out;
+}
+
+/** startedAt plane: earliest stamp wins; a key this window dropped via reset
+ *  (present in `ours`, absent from `memory`) is dropped from the merge too. */
+function mergeStartedAt(
+  disk: LeafPlane<number>, memory: LeafPlane<number>, ours: LeafPlane<number>,
+): LeafPlane<number> {
+  const out: LeafPlane<number> = {};
+  for (const srv of new Set([...Object.keys(disk), ...Object.keys(memory), ...Object.keys(ours)])) {
+    const d = disk[srv] ?? {}, m = memory[srv] ?? {}, o = ours[srv] ?? {};
+    const entry: Record<string, number> = {};
+    for (const id of new Set([...Object.keys(d), ...Object.keys(m), ...Object.keys(o)])) {
+      if (o[id] !== undefined && m[id] === undefined) continue; // reset by this window
+      const stamps = [d[id], m[id]].filter((x): x is number => x !== undefined);
+      if (stamps.length > 0) entry[id] = Math.min(...stamps);
+    }
+    if (Object.keys(entry).length > 0) out[srv] = entry;
+  }
+  return out;
+}
+
+/** Merge one day-keyed plane via a leaf merger. */
+function mergeDayPlane<T>(
+  disk: Record<string, LeafPlane<T>>,
+  memory: Record<string, LeafPlane<T>>,
+  ours: Record<string, LeafPlane<T>>,
+  merge: (d: LeafPlane<T>, m: LeafPlane<T>, o: LeafPlane<T>) => LeafPlane<T>,
+): Record<string, LeafPlane<T>> {
+  const out: Record<string, LeafPlane<T>> = {};
+  for (const k of new Set([...Object.keys(disk), ...Object.keys(memory)])) {
+    const m = merge(disk[k] ?? {}, memory[k] ?? {}, ours[k] ?? {});
+    if (Object.keys(m).length > 0) out[k] = m;
+  }
+  return out;
+}
+
 /**
- * Persist the full snapshot, serialized through a write queue. `globalState.update`
- * is async, so two rapid `recordRequest` calls could otherwise interleave
- * read-modify-write and lose an update. Chaining guarantees writes land in order.
- * The snapshot is deep-copied at schedule time so later mutations cannot bleed
- * into an in-flight write.
+ * The merge rule: `disk + (memory − lastWritten)`. `lastWritten` is this
+ * window's memory at its last successful persist, so the replayed delta is
+ * exactly what this window ADDED (or erased, via reset) since then — never
+ * the whole baseline, which would double-count everything another window
+ * already persisted (lineage safety). No disk snapshot (fresh file) → memory
+ * is the truth. After merging, expired day buckets are pruned on the DISK
+ * side too: the file may hold buckets this window never loaded, and merging
+ * would otherwise resurrect them forever.
+ *
+ * Residual race (documented, accepted): two windows whose read/write
+ * interleave within the same few milliseconds can still lose one delta — a
+ * window-sized data loss becomes a millisecond-sized one, which is the best
+ * the public storage APIs allow.
  */
-function schedulePersist(): void {
-  if (!globalState) return;
-  const snapshot: PersistedUsage = JSON.parse(JSON.stringify({
+function mergePersisted(
+  disk: PersistedUsage | undefined, memory: PersistedUsage, ours: PersistedUsage,
+): PersistedUsage {
+  if (!disk) return memory;
+  const merged: PersistedUsage = {
+    version: 3,
+    allTime: mergeCountsPlane(disk.allTime, memory.allTime, ours.allTime),
+    days: mergeDayPlane(disk.days, memory.days, ours.days, mergeCountsPlane),
+    startedAt: mergeStartedAt(disk.startedAt, memory.startedAt, ours.startedAt),
+    allTimeCost: mergeCostPlane(disk.allTimeCost, memory.allTimeCost, ours.allTimeCost),
+    daysCost: mergeDayPlane(disk.daysCost, memory.daysCost, ours.daysCost, mergeCostPlane),
+  };
+  const cutoff = dayKey(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  for (const k of Object.keys(merged.days)) {
+    if (k < cutoff) delete merged.days[k];
+  }
+  for (const k of Object.keys(merged.daysCost)) {
+    if (k < cutoff) delete merged.daysCost[k];
+  }
+  return merged;
+}
+
+/** Deep clone of the current cumulative memory — what the next persist replays. */
+function snapshotMemory(): PersistedUsage {
+  return JSON.parse(JSON.stringify({
     version: 3, allTime, days, startedAt, allTimeCost, daysCost,
   })) as PersistedUsage;
+}
+
+/** FRESH disk read — the entire point of the file backend: unlike the memento
+ *  cache, this sees another window's last write. Missing/corrupt → undefined
+ *  (the next persist recreates the file from memory; self-healing). */
+async function readUsageFile(p: string): Promise<PersistedUsage | undefined> {
+  try {
+    return parsePersisted(JSON.parse(await fs.readFile(p, 'utf8')));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Temp-file + rename: the replace is atomic (Windows included), so a window
+ *  reading mid-write sees either the old or the new blob, never a half file.
+ *  The tmp name carries the pid so two windows never share a scratch file. */
+async function writeUsageFile(p: string, data: PersistedUsage): Promise<void> {
+  await fs.mkdir(path.dirname(p), { recursive: true });
+  const tmp = `${p}.${process.pid}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(data), 'utf8');
+  await fs.rename(tmp, p);
+}
+
+/**
+ * Persist through the serialized write queue. `globalState.update` and the
+ * file write are async, so two rapid `recordRequest` calls could otherwise
+ * interleave read-modify-write and lose an update; chaining guarantees writes
+ * land in order. The snapshot is taken AT WRITE TIME (the queue serializes
+ * them, so the next persist simply replays this window's delta since the last
+ * successful write). Both surfaces get the SAME merged blob: the file is
+ * canonical (freshly read), the memento a downgrade mirror. On any failure
+ * `lastWritten` stays stale so the next persist retries the lost delta.
+ */
+function schedulePersist(): void {
+  if (!globalState && !usageFilePath) return;
   writeQueue = writeQueue
-    .then(() => globalState!.update(STORAGE_KEY, snapshot))
+    .then(async () => {
+      const memory = snapshotMemory();
+      const disk = usageFilePath ? await readUsageFile(usageFilePath) : undefined;
+      const merged = mergePersisted(disk, memory, lastWritten ?? memory);
+      if (usageFilePath) await writeUsageFile(usageFilePath, merged);
+      if (globalState) await globalState.update(STORAGE_KEY, merged);
+      lastWritten = memory;
+    })
     .catch(err => logError(`[usage] persist failed: ${err instanceof Error ? err.message : String(err)}`));
 }
 
 /**
- * Initialize the store. Called once from `activate()` before any request can
- * complete. Returns a Disposable that releases the change event.
+ * Initialize the store. Called once from `activate()` (awaited) before any
+ * request can complete. Load order: the shared `usage.json` wins; when it is
+ * absent the legacy `globalState` blob is adopted (one-time migration — the
+ * next persist writes it back as the file). Returns a Disposable that
+ * releases the change event.
  */
-export function initUsageStore(
+export async function initUsageStore(
   context: vscode.ExtensionContext,
   outputChannel: vscode.OutputChannel,
-): { dispose(): void } {
+): Promise<{ dispose(): void }> {
   globalState = context.globalState;
   logError = msg => outputChannel.appendLine(`[ERROR] ${msg}`);
-  load();
+  usageFilePath = context.globalStorageUri
+    ? path.join(context.globalStorageUri.fsPath, 'usage.json')
+    : undefined;
+  const fromFile = usageFilePath ? await readUsageFile(usageFilePath) : undefined;
+  adoptPersisted(fromFile ?? parsePersisted(context.globalState.get(STORAGE_KEY)));
+  lastWritten = snapshotMemory();
   return { dispose: () => emitter.dispose() };
 }
 
@@ -344,6 +538,11 @@ export function getModelStartedAt(serverUrl: string, modelId: string): number | 
  * Clear accumulated usage for a scope. `'all'` clears every server; an object
  * clears one server only. Last Request is deliberately NOT cleared (it remains
  * the useful last prompt). Persists and fires the change event.
+ *
+ * Cross-window note: the persist merge replays this window's DELETION (the
+ * delta goes negative), so a live second window's counters survive in its own
+ * memory and reappear on its next persist. In the single-window case — the
+ * normal case — this is a full reset.
  */
 export function resetUsage(scope: 'all' | { serverUrl: string }): void {
   if (scope === 'all') {
@@ -499,6 +698,8 @@ export function resetUsageStoreForTests(): void {
   allTimeCost = {};
   daysCost = {};
   globalState = undefined;
+  usageFilePath = undefined;
+  lastWritten = undefined;
   writeQueue = Promise.resolve();
   logError = () => {};
 }

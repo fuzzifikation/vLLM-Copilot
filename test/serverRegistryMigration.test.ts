@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as vscode from 'vscode';
-import { maybeRunServerRegistryMigration } from '../src/serverRegistryMigration.js';
-import type { LegacyModelConfig } from '../src/registryMigration.js';
+import { maybeRunServerRegistryMigration } from '../src/migrations/serverRegistryMigration.js';
+import type { LegacyModelConfig } from '../src/migrations/registryMigration.js';
 
 const FLAG = 'vllmCopilot.serverRegistryMigration.v1';
 
@@ -76,11 +76,14 @@ describe('maybeRunServerRegistryMigration', () => {
     expect(globalStateUpdates).toHaveLength(0);
   });
 
-  it('sets the marker without writing anything when models is empty', async () => {
+  it('leaves the marker unset when models is empty — an empty read can also mean unreadable settings', async () => {
     settings.models = [];
     await maybeRunServerRegistryMigration(context, output as never);
     expect(writes).toHaveLength(0);
-    expect(stateStore[FLAG]).toBe('done');
+    // Marker stays UNSET: a malformed settings.json also surfaces an empty
+    // read, and a done-marker would permanently skip adoption of the user's
+    // legacy models after they repair the file.
+    expect(stateStore[FLAG]).toBeUndefined();
   });
 
   it('adopts one server per URL group and rewrites models to server refs', async () => {

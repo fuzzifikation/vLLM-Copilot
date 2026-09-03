@@ -15,21 +15,22 @@
  */
 
 import * as vscode from 'vscode';
-import { buildEndpoint, normalizeServerUrl, sanitizeRequestHeaders, type ServerType } from './config.js';
-import { buildRequestHeaders } from './fetchRetry.js';
-import { resolveRuntimeLimits } from './runtimeLimits.js';
+import { buildEndpoint, normalizeServerUrl, sanitizeRequestHeaders, type ServerType } from '../state/config.js';
+import { buildRequestHeaders } from '../shared/fetchRetry.js';
+import { resolveRuntimeLimits } from '../backends/runtimeLimits.js';
 import {
   fetchOpenRouterAccount,
   fetchOpenRouterCredits,
   getOpenRouterModelEndpointsCached,
-  resolveOpenRouterLimitsFromCatalog,
+  normalizeOpenRouterFromCatalog,
   PermanentContextError,
   OpenRouterModelNotFoundError,
   type OpenRouterAccount,
   type OpenRouterCredits,
   type OpenRouterModelData,
   type OpenRouterModelEndpoint,
-} from './openRouter.js';
+  parseOpenRouterCatalogData,
+} from '../backends/openRouter.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -405,7 +406,11 @@ export class ServerMetricsEngine {
    * different box in settings keeps getting polled at its old address.
    */
   setUrl(serverUrl: string): void {
+    if (this.serverUrl === serverUrl) return;
     this.serverUrl = serverUrl;
+    // A different box may serve the same wire id with a different context
+    // window: per-model resolutions are per-box truth, not per-entry truth.
+    this.clearResolvedLimits();
   }
 
   /** Latest aggregated metrics (synchronous, may be null before first poll). */
@@ -449,7 +454,17 @@ export class ServerMetricsEngine {
 
   /** Update the backend type in-place (called by getMetricsEngine on re-use). */
   setServerType(serverType: ServerType): void {
+    if (this.serverType === serverType) return;
     this.serverType = serverType;
+    // A different backend resolves limits on an entirely different endpoint.
+    this.clearResolvedLimits();
+  }
+
+  /** Per-model resolved limits describe the PREVIOUS url/backend: drop them. */
+  private clearResolvedLimits(): void {
+    this.resolvedContextByModel.clear();
+    this.resolvedOutputByModel.clear();
+    this.contextRetryAtByModel.clear();
   }
 
   /** Attach/refresh the output channel (called by getMetricsEngine on re-use). */
@@ -555,7 +570,7 @@ export class ServerMetricsEngine {
               // configured budget — single authority for runtime limits, no
               // re-derivation in the view layer.
               const limits = openRouterCatalog
-                ? resolveOpenRouterLimitsFromCatalog(openRouterCatalog, modelId)
+                ? normalizeOpenRouterFromCatalog(openRouterCatalog, modelId).runtimeLimits
                 : await resolveRuntimeLimits(this.serverType, this.serverUrl, this.requestHeaders, modelId);
               resolved = limits.contextWindow;
               // Cache the output ceiling with the same discipline as context:
@@ -828,22 +843,20 @@ async function fetchAllEndpoints(
   let parsedModels: Array<Record<string, unknown>> = [];
   let malformedOpenRouterCatalog = false;
   if (serverType === 'openrouter' && v1ModelsRes?.ok) {
-    // OpenRouter's /v1/models IS the authoritative catalog. Apply the same
-    // boundary as fetchOpenRouterCatalog() to EVERY successful response,
-    // including an empty body: a 200/204 that is not `{ data: [...] }` is a
-    // malformed protocol response, never a healthy empty catalog — otherwise a
-    // broken relay body would read as an online server with no models. Entries
-    // without a string id are dropped (they can never match an exact id).
-    let data: unknown;
-    if (modelsText) {
-      data = parseJsonSafe<{ data?: unknown }>(modelsText)?.data;
-    }
-    if (!Array.isArray(data)) {
+    // OpenRouter's /v1/models IS the authoritative catalog. The SAME boundary
+    // as fetchOpenRouterCatalog() applies to EVERY successful response,
+    // including an empty body (shared parser, audit P16-2 — this rule used to
+    // be sync'd by comment, one drift from a lying dashboard): a 200/204 that
+    // is not `{ data: [...] }` is a malformed protocol response, never a
+    // healthy empty catalog — otherwise a broken relay body would read as an
+    // online server with no models. Entries without a string id are dropped.
+    const catalog = modelsText
+      ? parseOpenRouterCatalogData<Record<string, unknown>>(parseJsonSafe<unknown>(modelsText))
+      : undefined;
+    if (catalog === undefined) {
       malformedOpenRouterCatalog = true;
     } else {
-      parsedModels = (data as Array<Record<string, unknown>>).filter(
-        (m) => !!m && typeof m === 'object' && typeof (m as { id?: unknown }).id === 'string',
-      );
+      parsedModels = catalog;
     }
   } else if (modelsText) {
     const modelsData = parseJsonSafe<{ data?: Array<Record<string, unknown>> }>(modelsText);

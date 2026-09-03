@@ -15,7 +15,7 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'path';
-import { applyPromptReplacements, getBundledCommonReplacementsPath } from '../src/promptReplacer.js';
+import { applyPromptReplacements, getBundledCommonReplacementsPath } from '../src/persona/promptReplacer.js';
 
 interface RawRule { ruleName?: string; find: string; replace: string; scope?: string }
 

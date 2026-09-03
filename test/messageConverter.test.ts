@@ -4,7 +4,7 @@ import {
   messageToText,
   convertMessages,
   parseToolCallArgs,
-} from '../src/messageConverter.js';
+} from '../src/provider/messageConverter.js';
 
 // Helpers to build messages with the mocked vscode classes.
 function userMsg(content: any[]): vscode.LanguageModelChatRequestMessage {

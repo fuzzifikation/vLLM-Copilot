@@ -6,9 +6,10 @@ import {
   PermanentContextError,
   OpenRouterModelNotFoundError,
   OPENROUTER_API_BASE,
+  resetOpenRouterCaches,
   type OpenRouterModelData,
   type OpenRouterModelInfo,
-} from '../src/openRouter.js';
+} from '../src/backends/openRouter.js';
 
 /**
  * `parseOpenRouterModelRef`, `normalizeOpenRouterModel` and
@@ -434,6 +435,9 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
   }
 
   beforeEach(() => {
+    // The catalog memo (and provider-list caches) must not leak across tests:
+    // every test stubs its own catalog response and expects a real fetch.
+    resetOpenRouterCaches();
     fetchSpy = vi.spyOn(globalThis, 'fetch');
   });
   afterEach(() => {
@@ -531,5 +535,22 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
     mockCatalogFetch();
     const limits = await resolveOpenRouterRuntimeLimits('openai/gpt-4');
     expect(limits).toEqual({ contextWindow: 8192, maxOutputTokens: 4096 });
+  });
+
+  it('the catalog memo collapses back-to-back fetches into ONE download (P16-1)', async () => {
+    const spy = mockCatalogFetch();
+    const [a, b] = await Promise.all([fetchOpenRouterCatalog(), fetchOpenRouterCatalog()]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(a).toBe(b);
+    expect(a.map((m) => m.id)).toContain('openai/gpt-4');
+  });
+
+  it('a failed catalog is never memoized: the next call re-fetches live', async () => {
+    const spy = mockCatalogFetch();
+    spy.mockRejectedValueOnce(new Error('boom'));
+    spy.mockRejectedValueOnce(new Error('boom')); // fetchWithRetry's second attempt
+    await expect(fetchOpenRouterCatalog()).rejects.toThrow();
+    spy.mockImplementation(() => Promise.resolve(catalogResponse()));
+    await expect(fetchOpenRouterCatalog()).resolves.toHaveLength(5);
   });
 });

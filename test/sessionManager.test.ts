@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { userDataRootFromGlobalStorage } from '../src/sessionManager.js';
+import { userDataRootFromGlobalStorage } from '../src/shared/sessionManager.js';
 
 describe('userDataRootFromGlobalStorage', () => {
   it('derives the active user-data root without assuming a VS Code product name', () => {

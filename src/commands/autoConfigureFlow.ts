@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
-import type { ModelConfig } from '../config.js';
-import { resolveConfigId, resolveVllmModelId, buildModelId } from '../config.js';
-import { replaceModelConfig, readModels, readServers, type IdentifiedModelConfig } from '../configStore.js';
-import { resolveServer } from '../serverRegistry.js';
+import type { ModelConfig } from '../state/config.js';
+import { resolveConfigId, resolveVllmModelId, buildModelId } from '../state/config.js';
+import { replaceModelConfig, readModels, readServers, type IdentifiedModelConfig } from '../state/configStore.js';
+import { resolveServer } from '../state/serverRegistry.js';
 import { resolveModelConfigForAddSafely } from './hfDiscovery.js';
 import { confirmAndSaveAddedModel, type ClearCacheProvider } from './addServerFlow.js';
 
@@ -151,6 +151,16 @@ export function registerAutoConfigureModelCommand(
       // are inert here.
       maxInputTokens: modelConfig.maxInputTokens,
       estimateCharsPerToken: modelConfig.estimateCharsPerToken,
+      // User decisions, not model facts (the presets.ts doctrine): the
+      // configured cost, the OpenRouter pin/routing choice, and a user-chosen
+      // label survive a re-configure. replaceModelConfig strips top-level
+      // undefined, so the ?? fallbacks below mean: user value wins, discovery
+      // fills the gap. Without this, one Auto-Configure silently deletes the
+      // cost that anchors the whole dashboard history.
+      cost: modelConfig.cost ?? discoveryResult.modelConfig.cost,
+      provider: modelConfig.provider ?? discoveryResult.modelConfig.provider,
+      routingMode: modelConfig.routingMode ?? discoveryResult.modelConfig.routingMode,
+      displayName: modelConfig.displayName ?? discoveryResult.modelConfig.displayName,
     };
     if (discoveryResult.suggestedMaxOutputTokens !== undefined && newConfig.maxOutputTokens === undefined) {
       newConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;

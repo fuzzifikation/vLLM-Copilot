@@ -1,5 +1,14 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
-import { detectServerType, resolveRuntimeLimits } from '../src/runtimeLimits.js';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { clearRuntimeLimitsCache, detectServerType, listServerModels, resolveRuntimeLimits } from '../src/backends/runtimeLimits.js';
+import { resetOpenRouterCaches } from '../src/backends/openRouter.js';
+
+// The resolver's short-TTL memo (and the OpenRouter catalog memo behind the
+// openrouter case) must never survive a test boundary: each test stubs its
+// own fetch and expects the resolver to actually call it.
+beforeEach(() => {
+  clearRuntimeLimitsCache();
+  resetOpenRouterCaches();
+});
 
 /**
  * runtimeLimits.ts: per-backend runtime context-window resolution and server-type
@@ -375,3 +384,137 @@ describe('detectServerType', () => {
 
 // /v1/models signature detection moved to serverSettingsView.test.ts: the
 // logic merged into resolveDetectedServerType (its only production caller).
+
+// ─── Short-TTL memo (audit P6-2: per-model probe storms collapse to one) ───
+
+describe('resolveRuntimeLimits memo (P6-2)', () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const vllmOk = () =>
+    jsonResponse(200, { data: [{ id: 'm1', object: 'model', owned_by: 'test', max_model_len: 4096 }] });
+
+  it('parallel resolves of one server+model share ONE fetch (the discovery burst this exists for)', async () => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(vllmOk()));
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => resolveRuntimeLimits('vllm', 'http://test', {}, 'm1')),
+    );
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(results.every((r) => r.contextWindow === 4096)).toBe(true);
+  });
+
+  it('different headers on one URL never share a resolution (credential separation)', async () => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(vllmOk()));
+    await resolveRuntimeLimits('vllm', 'http://test', { Authorization: 'Bearer a' }, 'm1');
+    await resolveRuntimeLimits('vllm', 'http://test', { Authorization: 'Bearer b' }, 'm1');
+    await resolveRuntimeLimits('vllm', 'http://test', { Authorization: 'Bearer a' }, 'm1');
+    // Two probes (a and b); the third call reuses a's resolution.
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('failures are not sticky: the successful list probe is reused briefly, a clear re-probes live', async () => {
+    let first = true;
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      const res = first ? jsonResponse(200, { data: [] }) : vllmOk();
+      first = false;
+      return Promise.resolve(res);
+    });
+    await expect(resolveRuntimeLimits('vllm', 'http://test', {}, 'm1')).rejects.toThrow(/no runtime context window/);
+    // The failed LOOKUP is not cached, but the list fetch it made SUCCEEDED and
+    // is memoized for the TTL: the immediate retry sees the same empty answer
+    // WITHOUT re-probing. This is the accepted 5 s staleness window.
+    await expect(resolveRuntimeLimits('vllm', 'http://test', {}, 'm1')).rejects.toThrow(/no runtime context window/);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // A settings edit / Test & Refresh drops both layers: live re-probe finds it.
+    clearRuntimeLimitsCache();
+    const limits = await resolveRuntimeLimits('vllm', 'http://test', {}, 'm1');
+    expect(limits.contextWindow).toBe(4096);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('clearRuntimeLimitsCache forces a fresh probe (the settings-edit / Test & Refresh path)', async () => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(vllmOk()));
+    await resolveRuntimeLimits('vllm', 'http://test', {}, 'm1');
+    clearRuntimeLimitsCache();
+    await resolveRuntimeLimits('vllm', 'http://test', {}, 'm1');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('different models on one server share ONE list fetch, sequentially (the F1 layer)', async () => {
+    // The lookup memo is keyed by model, so this is the list layer's job:
+    // ten configured models on one box = ONE /v1/models per pass, even
+    // resolved one after another (the Test & Refresh order).
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(jsonResponse(200, {
+        data: [
+          { id: 'm1', object: 'model', owned_by: 'test', max_model_len: 4096 },
+          { id: 'm2', object: 'model', owned_by: 'test', max_model_len: 8192 },
+        ],
+      })),
+    );
+    const a = await resolveRuntimeLimits('vllm', 'http://test', {}, 'm1');
+    const b = await resolveRuntimeLimits('vllm', 'http://test', {}, 'm2');
+    expect(a.contextWindow).toBe(4096);
+    expect(b.contextWindow).toBe(8192);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0][0])).toBe('http://test/v1/models');
+  });
+});
+
+// ─── listServerModels (audit P13-2 shared probe core) ──────────────────────
+
+describe('listServerModels (P13-2)', () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('vLLM shape: ids + the detection fields, from /v1/models', async () => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(jsonResponse(200, {
+        data: [
+          { id: 'a', object: 'model', owned_by: 'vllm', max_model_len: 1234 },
+          { id: 'b', object: 'model', owned_by: 'llamacpp' },
+        ],
+      })),
+    );
+    const entries = await listServerModels('vllm', 'http://test');
+    expect(String(fetchSpy.mock.calls[0][0])).toBe('http://test/v1/models');
+    expect(entries).toEqual([
+      { id: 'a', ownedBy: 'vllm', maxModelLen: 1234 },
+      { id: 'b', ownedBy: 'llamacpp', maxModelLen: undefined },
+    ]);
+  });
+
+  it('LM Studio lists model KEYS from its own endpoint and never fakes a vLLM signature', async () => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(jsonResponse(200, { models: [{ key: 'org/mdl', max_context_length: 8192 }] })),
+    );
+    const entries = await listServerModels('lmstudio', 'http://test');
+    expect(String(fetchSpy.mock.calls[0][0])).toBe('http://test/api/v1/models');
+    // No ownedBy/maxModelLen: the backend detector must not read a vLLM/llama.cpp
+    // signature out of an LM Studio probe (that would flip detection to 'vllm').
+    expect(entries).toEqual([{ id: 'org/mdl' }]);
+  });
+
+  it('Ollama lists loaded models from api/ps', async () => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(jsonResponse(200, { models: [{ model: 'qwen3:latest', context_length: 4096 }] })),
+    );
+    const entries = await listServerModels('ollama', 'http://test');
+    expect(String(fetchSpy.mock.calls[0][0])).toBe('http://test/api/ps');
+    expect(entries).toEqual([{ id: 'qwen3:latest' }]);
+  });
+
+  it('HTTP failure carries the status (auth classification) and never retries: live-status probe', async () => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(alwaysReturn(403) as any);
+    await expect(listServerModels('vllm', 'http://test')).rejects.toMatchObject({ status: 403 });
+    // Unlike the resolver, the probe core must NOT burn a retry - the old raw
+    // probes never retried either, and a backoff in front of a progress UI is a lie.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});

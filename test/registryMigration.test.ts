@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planRegistryMigration, type LegacyModelConfig } from '../src/registryMigration.js';
+import { planRegistryMigration, type LegacyModelConfig } from '../src/migrations/registryMigration.js';
 
 const DEFAULT_TEST_SERVER_URL = 'http://localhost:8000';
 
@@ -197,7 +197,11 @@ describe('planRegistryMigration', () => {
           serverId: 'my-box',
           serverUrl: DEFAULT_TEST_SERVER_URL,
           modelIds: ['a', 'b'],
-          protocols: ['llamacpp', 'ollama'],
+          // 'vllm' is the REUSED entry's own effective protocol (no serverType
+          // = vLLM, and a reused entry is never mutated). It must appear in the
+          // union: it is what both members will actually speak, and it is the
+          // protocol that silently overrides both declared types otherwise.
+          protocols: ['llamacpp', 'ollama', 'vllm'],
         },
       ]);
     });

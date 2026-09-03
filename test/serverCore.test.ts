@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders } from '../src/serverCore.js';
+import { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders } from '../src/state/serverCore.js';
 
 /**
  * serverCore.ts is the leaf module every server identity flows through, so it is

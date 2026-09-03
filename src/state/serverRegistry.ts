@@ -5,7 +5,7 @@
  */
 
 import type { ServerType } from './config.js';
-import { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders } from './serverCore.js';
+import { isUsableServerUrl, normalizeServerUrl, sanitizeRequestHeaders, sameHeaders } from './serverCore.js';
 
 /** A registered server. The only place server facts live. */
 export interface ServerEntry {
@@ -31,11 +31,16 @@ export interface EffectiveServer {
 
 /**
  * Resolve a server id to the effective connection facts for a model.
- * Returns `undefined` when the id is not registered.
+ * Returns `undefined` when the id is not registered OR the entry carries no
+ * usable URL — a blank/hand-mangled `serverUrl` normalizes to the
+ * localhost:8000 sentinel, and resolving it would silently send the entry's
+ * headers (credentials included) to a machine the user never named. Such an
+ * entry is unreachable on purpose; `validateConfig` reports it. See
+ * `isUsableServerUrl` in serverCore.ts.
  */
 export function resolveServer(serverId: string, servers: ServerEntry[]): EffectiveServer | undefined {
   const entry = servers.find(s => s.id === serverId);
-  if (!entry) return undefined;
+  if (!entry || !isUsableServerUrl(entry.serverUrl)) return undefined;
   return {
     serverUrl: normalizeServerUrl(entry.serverUrl),
     requestHeaders: sanitizeRequestHeaders(entry.requestHeaders ?? {}),

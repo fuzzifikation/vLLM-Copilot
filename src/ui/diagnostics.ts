@@ -24,7 +24,7 @@
 import * as vscode from 'vscode';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { describeError, TLS_CERT_SUGGESTION } from './messageConverter.js';
+import { describeError, TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -615,7 +615,7 @@ export async function runDiagnostics(
       env: collectEnv(),
       nodeFetch: { ok: false, error: 'Invalid URL' },
       nodeDirectFetch: { ok: false, error: 'Invalid URL', backend: 'Node direct transport' },
-      conclusion: 'Invalid URL — cannot diagnose.',
+      conclusion: 'Invalid URL - cannot diagnose.',
     };
 
   }
@@ -650,9 +650,8 @@ export async function runDiagnostics(
 
   // Chain inspection — if ANY fetch failed with a TLS error, inspect the chain.
   // This ensures we catch TLS issues even when they only appear in one transport.
-  const tlsError = isTlsError;
   let chain: CertChainResult | undefined;
-  if (tlsError(nodeFetch) || tlsError(systemFetch) || tlsError(nodeDirectFetch)) {
+  if (isTlsError(nodeFetch) || isTlsError(systemFetch) || isTlsError(nodeDirectFetch)) {
     // Platform-native cert chain inspection (absorbed dispatch — the former
     // runChainInspection wrapper only existed to switch on platform).
     chain = process.platform === 'win32'
@@ -685,7 +684,7 @@ export async function runDiagnostics(
   // there is no TLS.
   let conclusion: string;
 
-  const nodeTlsError = tlsError(nodeFetch);
+  const nodeTlsError = isTlsError(nodeFetch);
   // "System TLS succeeded" = system fetch got ANY HTTP response (even 401/500).
   // A 401 from the system means TLS worked — the cert verified, auth didn't.
   const systemTlsSucceeded = systemFetch?.status !== undefined;
@@ -696,10 +695,10 @@ export async function runDiagnostics(
 
   if (nodeFetch.ok) {
     // VS Code fetch got a 2xx — server is up.
-    conclusion = `Server is reachable and ${tlsOkPhrase}. If Copilot chat still fails, the issue is in model config, streaming, or request format — not connectivity.`;
+    conclusion = `Server is reachable and ${tlsOkPhrase}. If Copilot chat still fails, the issue is in model config, streaming, or request format - not connectivity.`;
   } else if (nodeFetch.status === 401 || nodeFetch.status === 403) {
     // VS Code fetch got through TLS and received an HTTP response — TLS works.
-    conclusion = `Server is reachable and ${tlsOkPhrase}. The request was rejected with 401/403 — the API key or requestHeaders are missing or incorrect.`;
+    conclusion = `Server is reachable and ${tlsOkPhrase}. The request was rejected with 401/403 - the API key or requestHeaders are missing or incorrect.`;
   } else if (nodeFetch.status === 407) {
     // Proxy authentication required.
     conclusion = `Server is reachable and ${tlsOkPhrase}, but a proxy returned HTTP 407 (Proxy Authentication Required). Check http.proxy and proxy credentials.`;
@@ -892,7 +891,7 @@ export function formatReport(r: DiagnosticReport): string {
       lines.push('  See the certificate chain section for details.');
     }
     // The conclusion (printed last) already embeds the full suggestion whenever
-    // this block fires — `tlsError` is the same gate in both places, so don't
+    // this block fires — `isTlsError` is the same gate in both places, so don't
     // repeat it here. Guard for hand-built reports whose conclusion lacks it.
     if (!r.conclusion.includes('http.systemCertificatesNode')) {
       lines.push(`  ${TLS_CERT_SUGGESTION}`);

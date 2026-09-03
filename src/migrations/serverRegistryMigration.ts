@@ -14,8 +14,8 @@
  */
 
 import * as vscode from 'vscode';
-import type { ModelConfig } from './config.js';
-import { readModels, readServers, writeModels, writeServers } from './configStore.js';
+import type { ModelConfig } from '../state/config.js';
+import { readModels, readServers, writeModels, writeServers } from '../state/configStore.js';
 import { planRegistryMigration, type LegacyModelConfig } from './registryMigration.js';
 
 const MIGRATION_FLAG = 'vllmCopilot.serverRegistryMigration.v1';
@@ -59,8 +59,14 @@ export async function maybeRunServerRegistryMigration(
     // ModelConfig shape, and treating it as such would defeat the migration.
     const models = readModels() as unknown as LegacyModelConfig[];
     if (models.length === 0) {
-      // Fresh install: models will be created in the new shape from the start.
-      await context.globalState.update(MIGRATION_FLAG, 'done');
+      // Nothing to migrate right now — but do NOT set the marker. When
+      // settings.json is malformed, VS Code serves NO user values, so an
+      // empty read here is indistinguishable from "the user's legacy models
+      // exist but are temporarily unreadable". Marking done then would orphan
+      // those models forever once the file is repaired (the marker is the
+      // only thing this check consults next activation). Deferring costs a
+      // trivial empty re-check per activation on fresh installs, and a repair
+      // gets adopted on the next activation — which is the whole point.
       return;
     }
 
@@ -118,7 +124,7 @@ export async function maybeRunServerRegistryMigration(
       // Settings write blocked (e.g. invalid settings.json) — no marker, so
       // the next activation retries the idempotent plan from scratch.
       const msg = err instanceof Error ? err.message : String(err);
-      void vscode.window.showErrorMessage(`vLLM-Copilot: could not adopt your servers into settings — will retry next start. ${msg}`);
+      void vscode.window.showErrorMessage(`vLLM-Copilot: could not adopt your servers into settings, will retry next start. ${msg}`);
       output.appendLine(`[WARN] Server registry migration write failed: ${msg}`);
       return;
     }

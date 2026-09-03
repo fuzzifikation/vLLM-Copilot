@@ -12,7 +12,7 @@
 import * as vscode from 'vscode';
 import { getMetricsEngine } from './vllmMetrics.js';
 import type { ServerRawData, ServerMetrics } from './vllmMetrics.js';
-import { normalizeServerUrl, type ServerType } from './config.js';
+import type { ServerType } from '../state/config.js';
 
 interface ReadyMessage {
   type: 'ready';
@@ -34,22 +34,21 @@ interface PanelArgs {
 
 /** Singleton — only one deep-dive panel per server registry entry at a time.
  *  The key is the entry id (the same key the metrics engine uses); the live
- *  URL rides in `args` so a rename can retitle every panel whose entry shares
- *  the URL (§5 fans the display name out per URL), and `refresh` lets the
- *  command retake the reading of an already-open panel. */
+ *  URL/headers/type ride in `args` because `refresh` re-reads them from the
+ *  holder on every invocation, and Rename Server retitles the panel through
+ *  this same entry-id key. */
 const openPanels = new Map<string, { panel: vscode.WebviewPanel; args: PanelArgs; refresh: () => void }>();
 
 /**
- * Retitle every open Deep-Dive panel for a server (matched by normalized URL).
- * Called after Rename Server so panels that stay open across the rename
- * (`retainContextWhenHidden`) don't keep a stale label until reopened.
+ * Retitle one open Deep-Dive panel after Rename Server. Rename addresses
+ * exactly one registry entry and panels are keyed by entry id, so the panel
+ * lookup is that same key — no URL matching (that belonged to the fan-out
+ * era). Falls back to the panel's live URL when the name was cleared.
  */
-export function updateDeepDiveTitle(serverUrl: string, displayName?: string): void {
-  const normalized = normalizeServerUrl(serverUrl);
-  for (const entry of openPanels.values()) {
-    if (normalizeServerUrl(entry.args.serverUrl) === normalized) {
-      entry.panel.title = `vLLM Deep-Dive: ${displayName || entry.args.serverUrl}`;
-    }
+export function updateDeepDiveTitle(serverId: string, displayName?: string): void {
+  const holder = openPanels.get(serverId);
+  if (holder) {
+    holder.panel.title = `vLLM Deep-Dive: ${displayName || holder.args.serverUrl}`;
   }
 }
 

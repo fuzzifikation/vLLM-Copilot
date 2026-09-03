@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.36.0-rc0 — The server registry
+## v1.36.0-rc1 — The server registry
 
 ### Added
 
@@ -10,6 +10,8 @@
 
 - **Server identity is the registry entry id.** Two entries that share a URL and credentials are separate servers: each gets its own Dashboard node, its own polling, and its own Deep-Dive panel. The backend-type dropdown changes only the server you picked, and Remove Server deletes exactly the entry you right-clicked, never a sibling that merely shares its URL (it still refuses while any model references the entry). Server URLs have one identity: `http://EXAMPLE.com`, `http://example.com`, and `http://example.com:80` name the same server. Model ids created by the Add flow now read `<model> on <server entry id>` (e.g. `... on localhost-8000`) instead of `<model> on <host>` — one host can carry several entries, so the host could hand two models the same id. Existing ids are untouched.
 
+- **Rename Server renames exactly the server you right-click.** The label used to be written to every entry sharing the URL, and OpenRouter entries could not be renamed at all, so two OpenRouter keys or two gateway tenants on one URL always wore the same name (or none). Every entry now carries its own label, relays included, matching how Remove Server and the backend dropdown already address entries. Update Auth still targets the whole URL.
+
 - **Breaking: servers are now a registry.** Server connection settings (`serverUrl`, `requestHeaders`, `serverType`, display label) moved out of each model entry into a new top-level `vllm-copilot.servers` setting; every model entry now has a required `id` and `server` (the registry entry's id) instead. On first start, existing configs migrate automatically: models sharing the same URL + headers become one entry each, credentials that differ stay separate servers. When models sharing one connection declare different backends, the migration warns and names them instead of deciding silently. Models no longer carry `serverUrl`, `requestHeaders`, `serverType`, or `serverDisplayName`. The migration never deletes a settings value: a hand-edited leftover server or model entry is kept and reported in the Output channel. Rolling back means restoring `settings.json` by hand or staying on an older VSIX — there is deliberately no in-product Undo, because restoring the old shape would leave settings this version cannot read.
 
 ### Fixed
@@ -17,6 +19,8 @@
 - **Model settings now live in one place: User settings.** The setting is declared application-scoped. Before, a copy of `vllm-copilot.models` in a workspace `.vscode/settings.json` shadowed every read while all writes went to User settings: add/edit/auth commands wrote where nothing was read.
 - **Deep Dive no longer revives old credentials.** With a server's Deep Dive panel open, rotating its auth (Update Auth) and then invoking Deep Dive again pushed the pre-rotation key back into the shared connection: dashboards and requests using that server ran on the stale key. An open panel now follows the server's current credentials.
 - **OpenRouter provider list refreshes after key rotation.** The provider list fetched from OpenRouter was cached for the whole session and never dropped when servers or models changed, so the picker could keep listing the old key's providers. Server and model edits now flush the cache.
+- **Discovery and Test & Refresh stop hammering your servers.** One pass used to ask each server once *per configured model* for the same answer: ten models on one vLLM box meant ten identical `/v1/models` requests, and on OpenRouter the full ~500 KB model catalog was downloaded once per model per pass. A pass now fetches each server's model list once and every model on that server reads the same answer; OpenRouter's catalog is downloaded once per minute instead of once per model. Cached answers expire on their own (5 seconds, OpenRouter 60) and any settings change or Test & Refresh drops them, so a model you loaded a moment ago still shows up on the next pass.
+- **Model Settings lists real models for LM Studio and Ollama servers.** The "server-hosted models" list came from the OpenAI model endpoint only, which those backends answer poorly or not at all. Each backend is now asked on its own documented endpoint (Ollama reports its loaded models, which is what would actually serve you). Test & Refresh matching consults those same endpoints: an Ollama model now matches when it is loaded (before, a pulled-but-unloaded model could match and then fail to resolve a context window), an LM Studio model when it is downloaded.
 
 ## v1.35.2
 

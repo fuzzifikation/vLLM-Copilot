@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveRequestParams, type ModelConfig } from '../src/config.js';
+import { resolveRequestParams, type ModelConfig } from '../src/state/config.js';
 
 /**
  * Structured output is now a raw vLLM request param (`structured_outputs`) carried

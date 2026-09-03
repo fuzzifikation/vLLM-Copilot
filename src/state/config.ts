@@ -1,14 +1,14 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { resolveOutputBudgetScalar } from './tokenBudget.js';
-import { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders } from './serverCore.js';
+import { resolveOutputBudgetScalar } from '../shared/tokenBudget.js';
+import { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders, isOpenRouterUrl, isUsableServerUrl } from './serverCore.js';
 import { entryMatchesConnection, resolveServer } from './serverRegistry.js';
 
 // The connection primitives live in serverCore.ts (leaf module) so config.ts
 // and serverRegistry.ts can share them without an import cycle — that cycle
 // used to force a duplicated resolver here. Re-exported for existing consumers.
 // Server identity is the registry ENTRY ID; nothing here derives one.
-export { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders };
+export { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders, isOpenRouterUrl, isUsableServerUrl };
 
 /**
  * The backend that serves this model. Every model targets its own server; the
@@ -20,6 +20,11 @@ export { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders };
  * the Add Server flow or manual config.
  */
 export type ServerType = 'vllm' | 'lmstudio' | 'llamacpp' | 'ollama' | 'openrouter';
+
+/** The enum values above as a runtime array — settings.json is hand-editable,
+ *  so validateConfig checks `serverType` against THIS, not against the type
+ *  system that stopped existing the moment the user opened the file. */
+export const KNOWN_SERVER_TYPES: readonly ServerType[] = ['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter'];
 
 export interface ModelConfig {
   /**
@@ -202,11 +207,12 @@ export interface ResolvedModelSettings {
  * (highest wins): `DEFAULT_REQUEST_PARAMS` ← `runtimeOptions` ← model `defaultParams`
  * ← selected mode.
  *
- * `runtimeOptions` carries the caller's non-user layer — Copilot's `modelOptions`
- * plus the resolved `max_tokens` budget — so the model's own `defaultParams`/mode
- * always win over Copilot's runtime defaults. The caller re-asserts `max_tokens`,
- * `tools`, and `tool_choice` after this call so those safety-critical fields
- * always win over user-configured params.
+ * `runtimeOptions` carries the caller's non-user layer — Copilot's
+ * `modelOptions` — so the model's own `defaultParams`/mode always win over
+ * Copilot's runtime defaults. The caller re-asserts `max_tokens`, `tools`, and
+ * `tool_choice` after this call so those safety-critical fields always win
+ * over user-configured params; no `max_tokens` is seeded into the layering at
+ * all (the output budget is decided after it, see `resolveMaxTokensForRequest`).
  */
 export function resolveRequestParams(
   override: ModelConfig | undefined,
@@ -220,6 +226,40 @@ export function resolveRequestParams(
     Object.assign(merged, override.modelModes[selectedMode]);
   }
   return merged;
+}
+
+/**
+ * The token-count normalization rule: a finite number becomes at least 1,
+ * floored; anything else (absent dropdown, non-finite, non-number) is
+ * `undefined`. ONE implementation of the output-length floor (audit P6-1) —
+ * the provider's picker tracking, the configured-budget resolver, and the
+ * wire clamp all read through here, so the advertising and the request can
+ * never disagree about what a pick means.
+ */
+export function normalizePickerTokens(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(1, Math.floor(value))
+    : undefined;
+}
+
+/**
+ * Read Copilot's model-picker state — the `modelConfiguration` field of the
+ * `chatProvider` proposal, absent from stable `@types/vscode` (pairs with
+ * `configurationSchema` in modelInfo.ts): the selected model mode plus the
+ * normalized output-length pick. ONE reader for both consumers (audit P1-1):
+ * the provider tracks the selection for metadata re-registration, the request
+ * builder uses it for params and the output budget; their private parses had
+ * already drifted apart. The `any` read here means a future proposal drop
+ * compiles clean and the mode picker fails silently — known, accepted coupling.
+ */
+export function readPickerSelection(options: unknown): { selectedMode?: string; pickerTokens?: number } {
+  const modelConfiguration = (options as { modelConfiguration?: Record<string, unknown> })
+    .modelConfiguration;
+  const mode = modelConfiguration?.reasoningEffort;
+  return {
+    selectedMode: typeof mode === 'string' ? mode : undefined,
+    pickerTokens: normalizePickerTokens(modelConfiguration?.maxOutputTokens),
+  };
 }
 
 /**
@@ -237,9 +277,8 @@ export function resolveConfiguredMaxTokens(
   selectedMode: string | undefined,
 ): number | undefined {
   const modeTokens = selectedMode ? override?.modelModes?.[selectedMode]?.max_tokens : undefined;
-  const defaultTokens = override?.defaultParams?.max_tokens;
-  const tokens = typeof modeTokens === 'number' ? modeTokens : typeof defaultTokens === 'number' ? defaultTokens : undefined;
-  return typeof tokens === 'number' && Number.isFinite(tokens) ? Math.max(1, Math.floor(tokens)) : undefined;
+  const tokens = typeof modeTokens === 'number' ? modeTokens : override?.defaultParams?.max_tokens;
+  return normalizePickerTokens(tokens);
 }
 
 /**
@@ -275,9 +314,7 @@ export function resolveMaxTokensForRequest(
   modelContextWindow: number,
   pickerTokens?: number,
 ): number {
-  const normalizedPicker = typeof pickerTokens === 'number' && Number.isFinite(pickerTokens)
-    ? Math.max(1, Math.floor(pickerTokens))
-    : undefined;
+  const normalizedPicker = normalizePickerTokens(pickerTokens);
   const requested = Math.min(
     normalizedPicker ?? resolveConfiguredMaxTokens(override, selectedMode) ?? modelMaxOutputTokens,
     modelMaxOutputTokens,
@@ -466,12 +503,12 @@ export function buildEndpoint(baseUrl: string, path: string): string {
  * are a separate concern — users add those as custom request headers. Returns an
  * empty object when no key is set.
  *
- * ⚠️ **Scope: write paths only.** This function is used only by the Add Server,
- * Update Auth, and migration code paths (`commands/addServerFlow.ts`, `commands.ts`)
- * to construct headers from user-provided key input. Runtime chat requests do
- * NOT call this — auth comes from the registry entry's `requestHeaders`,
- * resolved via `resolveServerConfig`. Wiring this into runtime code would
- * silently add or omit the wrong headers.
+ * ⚠️ **Scope: write paths only.** Its only caller is `commands/serverAuth.ts`
+ * (the auth prompt and header-merge sites) constructing headers from
+ * user-provided key input. Runtime chat requests do NOT call this — auth comes
+ * from the registry entry's `requestHeaders`, resolved via
+ * `resolveServerConfig`. Wiring this into runtime code would silently add or
+ * omit the wrong headers.
  */
 export function buildAuthHeaders(apiKey?: string): Record<string, string> {
   if (!apiKey) return {};
@@ -548,7 +585,10 @@ export function validateConfig(config: VllmConfig): string[] {
   const byUrl = new Map<string, { id: string; entry: import('./serverRegistry.js').ServerEntry }[]>();
   for (const entry of config.servers) {
     const id = entry.id;
-    if (!id) {
+    // typeof, not just truthiness: a hand-edited numeric id would sail past
+    // `!id` and then never match any string `model.server` at resolve time —
+    // the resolver compares with ===, so reject non-strings here.
+    if (typeof id !== 'string' || !id) {
       warnings.push('A server registry entry is missing its id — models cannot reference it.');
       continue;
     }
@@ -556,9 +596,25 @@ export function validateConfig(config: VllmConfig): string[] {
       warnings.push(`Server registry: duplicate id "${id}" — each server entry must have a unique id.`);
     }
     serverIds.add(id);
+    // serverType is validated too (the strictly cosmetic routingMode gets an
+    // enum check — the field that picks the whole wire protocol must not get
+    // less). Unknown values still pass through to runtime (vLLM fallback),
+    // but the user hears about it.
+    if (entry.serverType !== undefined && !KNOWN_SERVER_TYPES.includes(entry.serverType)) {
+      warnings.push(`Server registry: entry "${id}" has serverType "${String(entry.serverType)}" — expected one of ${KNOWN_SERVER_TYPES.join(', ')}. Requests fall back to vLLM behavior.`);
+    }
+    // A blank or host-less serverUrl normalizes to the localhost:8000 sentinel,
+    // which would silently route this entry's headers (credentials included)
+    // to a machine the user never named. The runtime resolver already refuses
+    // such entries (resolveServer → undefined); say so, or the user just
+    // wonders why every model on this entry fails to connect.
+    if (!isUsableServerUrl(entry.serverUrl)) {
+      warnings.push(`Server registry: entry "${id}" has no usable serverUrl — models referencing it cannot connect. Set "serverUrl" to a real host.`);
+      continue;
+    }
     // Same URL + same auth = the same connection. Allowed (each id is a valid
     // write target), but one entry is redundant — warn, never auto-merge.
-    if (entry.serverUrl?.trim()) {
+    {
       const url = normalizeServerUrl(entry.serverUrl);
       const headers = sanitizeRequestHeaders(entry.requestHeaders ?? {});
       const bucket = byUrl.get(url) ?? [];
@@ -761,6 +817,10 @@ const CLEARABLE_ON_EMPTY: readonly (keyof ModelConfig)[] = [
   'systemMessageReplacementsFile',
   'provider',
   'routingMode',
+  // The output-length migration emits `''` when every mode only carried
+  // `max_tokens` (stripModeMaxTokens) — without this entry the string would
+  // persist where the schema and every consumer demand an object or absence.
+  'modelModes',
 ] as const;
 
 /**
@@ -771,9 +831,10 @@ const CLEARABLE_ON_EMPTY: readonly (keyof ModelConfig)[] = [
  * previous value, which is what makes "undefined preserves, '' clears" work in
  * both save paths.
  *
- * Shared by {@link replaceModelConfig} (configStore.ts) and the webview's patch
- * path (serverSettingsView.ts) so the clear semantics live in one place. Mutates
- * and returns the entry (callers always pass a freshly-built object).
+ * Shared by every `configStore.ts` write path ({@link replaceModelConfig} and
+ * `patchModelConfig`) so the clear semantics live in one place — webview saves
+ * reach it through those store paths, never directly. Mutates and returns the
+ * entry (callers always pass a freshly-built object).
  */
 export function normalizeModelEntry(entry: ModelConfig): ModelConfig {
   const rec = entry as unknown as Record<string, unknown>;

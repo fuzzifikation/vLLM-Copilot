@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { VllmChatModelProvider } from '../src/provider.js';
+import { VllmChatModelProvider } from '../src/provider/provider.js';
 import type { ProviderClient } from '../src/provider/contracts.js';
-import type { VllmConfig } from '../src/config.js';
-import { getLastRequest } from '../src/usageStore.js';
+import type { VllmConfig } from '../src/state/config.js';
+import { getLastRequest } from '../src/usage/usageStore.js';
 import type { StreamEvent } from '../src/types.js';
 
 /**

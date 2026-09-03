@@ -20,7 +20,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { loadPersonalityMeta, clearPersonalityCache, COMMON_REPLACEMENTS_FILENAME } from './promptReplacer.js';
-import { resolveWorkspaceRelativePath } from './config.js';
+import { resolveWorkspaceRelativePath } from '../state/config.js';
 
 export type PersonalitySource = 'bundled' | 'global';
 
@@ -55,6 +55,13 @@ export function getGlobalPersonalitiesDir(context: vscode.ExtensionContext): str
   return path.join(context.globalStorageUri.fsPath, PERSONALITIES_DIR);
 }
 
+/** The extension-shipped personality JSONs (authoritative bundled presets).
+ * ONE join (audit P17-1) — discovery, copy-in, and upgrade re-sync all read
+ * through here so a packaging path change is a one-line edit. */
+function getBundledPersonalitiesDir(context: vscode.ExtensionContext): string {
+  return path.join(context.extensionUri.fsPath, 'prompt-replacements');
+}
+
 /**
  * Discover all personalities from the two sources, deduped by name.
  *
@@ -67,7 +74,7 @@ export async function discoverPersonalities(
   context: vscode.ExtensionContext
 ): Promise<PersonalityEntry[]> {
   const sources: Array<{ dir: string; source: PersonalitySource }> = [
-    { dir: path.join(context.extensionUri.fsPath, 'prompt-replacements'), source: 'bundled' },
+    { dir: getBundledPersonalitiesDir(context), source: 'bundled' },
     { dir: getGlobalPersonalitiesDir(context), source: 'global' },
   ];
 
@@ -174,11 +181,7 @@ export async function ensureGlobalPersonality(
 
   // Bundled presets always win — resolve the authoritative content from the
   // extension dir and overwrite the global copy unconditionally.
-  const bundledSource = path.join(
-    context.extensionUri.fsPath,
-    'prompt-replacements',
-    path.basename(sourcePath)
-  );
+  const bundledSource = path.join(getBundledPersonalitiesDir(context), path.basename(sourcePath));
   let isBundled = false;
   try {
     await fs.access(bundledSource);
@@ -263,7 +266,7 @@ export async function syncBundledPersonalities(
   context: vscode.ExtensionContext
 ): Promise<{ updated: string[] }> {
   const dir = getGlobalPersonalitiesDir(context);
-  const bundledDir = path.join(context.extensionUri.fsPath, 'prompt-replacements');
+  const bundledDir = getBundledPersonalitiesDir(context);
 
   let names: string[];
   try {

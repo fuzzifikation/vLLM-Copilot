@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { formatError, iterateCauses } from '../messageConverter.js';
+import { formatError, iterateCauses } from './messageConverter.js';
 import type { StreamOutcome } from './contracts.js';
 
 /** Emit a diagnostic to the Output channel only. */
@@ -34,7 +34,7 @@ export function reportPostStreamDiagnostics(
     diag(
       output,
       'WARN',
-      `${model.id}: raw <thinking> tags detected in content — vLLM is likely missing a matching ` +
+      `${model.id}: raw <thinking> tags detected in content - vLLM is likely missing a matching ` +
       `--reasoning-parser (e.g. qwen3, deepseek_r1). Reasoning is being rendered as plain text and ` +
       `may be stripped by the chat view. Start vLLM with the correct --reasoning-parser to separate it.`
     );
@@ -86,7 +86,7 @@ export function reportPostStreamDiagnostics(
 
     let hint: string;
     if (finishReason === 'length') {
-      hint = 'It hit the max output token limit before producing any text — increase maxOutputTokens.';
+      hint = 'It hit the max output token limit before producing any text - increase maxOutputTokens.';
     } else if (finishReason === 'content_filter') {
       hint = 'The server blocked the response (content filter).';
     } else if (hadReasoning) {

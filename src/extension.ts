@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import { VllmChatModelProvider } from './provider.js';
-import { getConfig, validateConfig, normalizeServerUrl, sanitizeRequestHeaders } from './config.js';
-import { FileLogger } from './logger.js';
+import { VllmChatModelProvider } from './provider/provider.js';
+import { getConfig, validateConfig, normalizeServerUrl, sanitizeRequestHeaders } from './state/config.js';
+import { FileLogger } from './shared/logger.js';
 import { registerAddServerModelCommand, registerAddServerCommand } from './commands/addServerFlow.js';
 import { registerAutoConfigureModelCommand } from './commands/autoConfigureFlow.js';
 import {
@@ -9,11 +9,12 @@ import {
   ensureByokUtilityDefault,
   ensureAgentHostModelsEnabled,
 } from './commands/byok.js';
-import { setSessionManagerOutput } from './sessionManager.js';
-import { syncBundledPersonalities } from './personalityStore.js';
-import { readServers, writeServers } from './configStore.js';
-import { dedupeServerIds } from './serverRegistry.js';
-import { resetOpenRouterProviderListCache } from './openRouter.js';
+import { setSessionManagerOutput } from './shared/sessionManager.js';
+import { syncBundledPersonalities } from './persona/personalityStore.js';
+import { readServers, writeServers } from './state/configStore.js';
+import { dedupeServerIds } from './state/serverRegistry.js';
+import { resetOpenRouterCaches } from './backends/openRouter.js';
+import { getPollSettingMs } from './ui/vllmMetrics.js';
 import {
   registerDiagnoseConnectionCommand,
   registerOpenLogFileCommand,
@@ -25,17 +26,17 @@ import {
   registerRemoveModelCommand,
   registerResetUsageCommand,
   registerConfigureCostCommand,
-} from './commands.js';
+} from './commands/commands.js';
 import { registerTestAndRefreshModelsCommand } from './commands/testAndRefresh.js';
 import { registerSetModelPersonalityCommand } from './commands/personality.js';
-import { setExtensionVersion } from './diagnostics.js';
-import { initUsageStore } from './usageStore.js';
-import { maybeOfferOutputLengthMigration } from './outputLengthMigration.js';
-import { maybeRunServerRegistryMigration } from './serverRegistryMigration.js';
-import { DashboardTreeProvider } from './dashboard.js';
-import { ServerSettingsViewProvider } from './serverSettingsView.js';
-import { openDeepDive } from './deepDiveView.js';
-import { registerConfigSchemaTool } from './configSchemaTool.js';
+import { setExtensionVersion } from './ui/diagnostics.js';
+import { initUsageStore } from './usage/usageStore.js';
+import { maybeOfferOutputLengthMigration } from './migrations/outputLengthMigration.js';
+import { maybeRunServerRegistryMigration } from './migrations/serverRegistryMigration.js';
+import { DashboardTreeProvider } from './ui/dashboard.js';
+import { ServerSettingsViewProvider } from './ui/serverSettingsView.js';
+import { openDeepDive } from './ui/deepDiveView.js';
+import { registerConfigSchemaTool } from './shared/configSchemaTool.js';
 
 const VENDOR_ID = 'vllm-copilot';
 let provider: VllmChatModelProvider | undefined;
@@ -90,8 +91,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Initialize usage store (last request + cumulative token/cost tracking).
     // Must run before any request can complete so the persisted counters load
-    // and the change event is live for the dashboard.
-    context.subscriptions.push(initUsageStore(context, outputChannel));
+    // and the change event is live for the dashboard. Awaited: the load may
+    // read the shared usage.json from disk before the first request records.
+    context.subscriptions.push(await initUsageStore(context, outputChannel));
 
     // Initialize file logger
     fileLogger = new FileLogger(context, outputChannel);
@@ -137,7 +139,7 @@ export async function activate(context: vscode.ExtensionContext) {
         // write path (commands, webview, hand-edited settings.json) fires
         // this event, so this is the one choke point that covers them all.
         if (e.affectsConfiguration('vllm-copilot.servers') || e.affectsConfiguration('vllm-copilot.models')) {
-          resetOpenRouterProviderListCache();
+          resetOpenRouterCaches();
         }
       })
     );
@@ -181,12 +183,6 @@ export async function activate(context: vscode.ExtensionContext) {
     const fullConfig = await getConfig(context);
     outputChannel.appendLine(`[INFO] vLLM-Copilot activated (${fullConfig.models.length} model(s) configured)`);
 
-    // Validate config values
-    const warnings = validateConfig(fullConfig);
-    for (const w of warnings) {
-      outputChannel.appendLine(`[WARN] Config: ${w}`);
-    }
-
     // Heal stale global copies of bundled presets. Personalities are copied to
     // global storage when applied and referenced by absolute path from there;
     // without this sync, models kept the rules from whenever the personality
@@ -227,6 +223,21 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.lm.registerLanguageModelChatProvider(VENDOR_ID, activeProvider)
     );
+
+    // Config validation runs AFTER provider registration and inside its own
+    // try: it is a courtesy report on hand-edited settings, never a gate on
+    // the extension's life. Running it before the provider existed meant one
+    // thrower here reached activate()'s outer catch and left the session
+    // extension-dead over one unquoted setting value.
+    try {
+      for (const w of validateConfig(fullConfig)) {
+        outputChannel.appendLine(`[WARN] Config: ${w}`);
+      }
+    } catch (err) {
+      outputChannel.appendLine(
+        `[WARN] Config validation failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
 
     // One-time offer: give pre-1.35 model entries an Output length menu
     // (offline — preset match + the user's own max_tokens values only).
@@ -273,7 +284,7 @@ export async function activate(context: vscode.ExtensionContext) {
         // would open the panel with whichever entry happens to be first.
         const entry = readServers().find(s => s.id === arg?.serverId);
         if (!entry) {
-          vscode.window.showErrorMessage('Server not found — it may have been removed. Refresh the Dashboard.');
+          vscode.window.showErrorMessage('Server not found: it may have been removed. Refresh the Dashboard.');
           return;
         }
         const serverType = entry.serverType ?? 'vllm';
@@ -287,10 +298,11 @@ export async function activate(context: vscode.ExtensionContext) {
           return;
         }
         // We already hold the entry; normalize it directly instead of looking it
-        // up again by id.
+        // up again by id. The guard above admits vLLM entries only, so there is
+        // no backend special case here — every server is renamable.
         const serverUrl = normalizeServerUrl(entry.serverUrl);
         const requestHeaders = sanitizeRequestHeaders(entry.requestHeaders ?? {});
-        const displayName = entry.serverType === 'openrouter' ? undefined : entry.displayName?.trim() || undefined;
+        const displayName = entry.displayName?.trim() || undefined;
         openDeepDive(entry.id, serverUrl, requestHeaders, serverType, context, outputChannel, displayName);
       }),
     );
@@ -316,7 +328,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
       vscode.commands.registerCommand('vllm-copilot.setPollInterval', async () => {
-        const current = vscode.workspace.getConfiguration('vllm-copilot.dashboard').get<number>('pollIntervalMs', 15000);
+        const current = getPollSettingMs();
         const input = await vscode.window.showInputBox({
           prompt: 'Set polling interval (e.g. 15s, 30s, 1m)',
           ignoreFocusOut: true,

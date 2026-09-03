@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
-import type { ModelConfig, ServerType } from '../config.js';
-import { buildEndpoint } from '../config.js';
-import { describeError } from '../messageConverter.js';
-import { resolveRuntimeLimits } from '../runtimeLimits.js';
-import { autoConfigureOpenRouterModel } from '../openRouter.js';
-import { fetchRemotePreset } from '../presetRemote.js';
+import type { ModelConfig, ServerType } from '../state/config.js';
+import { buildEndpoint } from '../state/config.js';
+import { describeError } from '../provider/messageConverter.js';
+import { resolveRuntimeLimits } from '../backends/runtimeLimits.js';
+import { autoConfigureOpenRouterModel } from '../backends/openRouter.js';
+import { fetchRemotePreset } from './presetRemote.js';
 import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig, presetBlobUrl } from './presets.js';
 
 /**
@@ -90,6 +90,7 @@ async function autoConfigureModel(
   serverUrl: string,
   requestHeaders?: Record<string, string>,
   serverType: ServerType = 'vllm',
+  serverRoot?: string,
 ): Promise<AutoConfigResult> {
   const summary: string[] = [];
   // `server: ''` is a placeholder — the caller (Add/Auto-configure flow) resolves
@@ -98,11 +99,19 @@ async function autoConfigureModel(
 
   // 1. Fetch served-model info for `root` (HF-repo link only — the context
   //    window itself comes from the shared resolver below).
-  let vllmInfo: VllmModelInfo | null = null;
-  try {
-    vllmInfo = await fetchVllmModelInfo(modelId, serverUrl, requestHeaders);
-  } catch (err) {
-    summary.push(`⚠ Could not fetch model info from server: ${describeError(err)}`);
+  // When the caller already holds the served model's `root` (the Add flow
+  // probed /v1/models for its picker), reuse it instead of fetching the same
+  // answer a second time (audit P8-7); the standalone re-configure path still
+  // probes here.
+  let hfBase: string | undefined = serverRoot;
+  if (hfBase === undefined) {
+    let vllmInfo: VllmModelInfo | null = null;
+    try {
+      vllmInfo = await fetchVllmModelInfo(modelId, serverUrl, requestHeaders);
+    } catch (err) {
+      summary.push(`⚠ Could not fetch model info from server: ${describeError(err)}`);
+    }
+    hfBase = vllmInfo?.root ?? undefined;
   }
   let suggestedMaxOutputTokens: number | undefined;
   // Context resolution is MANDATORY — no context, no model (strict policy).
@@ -118,25 +127,17 @@ async function autoConfigureModel(
 
   // Use the base HF repo (root) for HF lookups — quantized variants (e.g. `qwen3.6-27b-fp8`)
   // don't exist on HF; only the base model (`Qwen/Qwen3.6-27B`) does.
-  const hfLookupId = vllmInfo?.root ?? modelId;
+  const hfLookupId = hfBase ?? modelId;
 
   // 2. Fetch generation_config.json and HuggingFace model info in parallel.
-  // Use Promise.allSettled so a network error on one source doesn't crash the
-  // entire auto-configure — both are supplementary data sources.
-  const results = await Promise.allSettled([
+  // Both fetchers swallow every failure into `null` themselves, so a dead
+  // supplementary source degrades to "no extra data" and never rejects —
+  // plain Promise.all is the honest shape here (audit P8-6 deleted the
+  // unreachable allSettled rejection branches).
+  const [genConfig, hfInfo] = await Promise.all([
     fetchGenerationConfig(hfLookupId),
     fetchHuggingFaceModel(hfLookupId),
   ]);
-
-  const genConfig = results[0].status === 'fulfilled' ? results[0].value : null;
-  const hfInfo = results[1].status === 'fulfilled' ? results[1].value : null;
-
-  if (results[0].status === 'rejected') {
-    summary.push(`⚠ Error fetching generation config: ${describeError(results[0].reason)}`);
-  }
-  if (results[1].status === 'rejected') {
-    summary.push(`⚠ Error fetching HuggingFace model info: ${describeError(results[1].reason)}`);
-  }
 
   if (genConfig) {
     const defaults: string[] = [];
@@ -184,7 +185,14 @@ async function autoConfigureModel(
     const isVisionModelType = visionModelTypes.some(t => modelType.toLowerCase().includes(t));
 
     if (visionPipelineTags.includes(hfInfo.pipeline_tag || '') || isVisionModelType) {
-      modelConfig.capabilities = { toolCalling: true, imageInput: true };
+      // Vision proves imageInput and NOTHING else. toolCalling belongs to the
+      // chat-template check below: claiming it here made the template's
+      // detected-absence branch (guarded on `=== undefined`) structurally
+      // unreachable, so a vision model whose template has no tool markers was
+      // saved with toolCalling: true while the summary printed "No tool
+      // calling markers in chat template" — config contradicting its own report.
+      modelConfig.capabilities ??= {};
+      modelConfig.capabilities.imageInput = true;
       const detectedBy = hfInfo.pipeline_tag
         ? `pipeline: ${hfInfo.pipeline_tag}`
         : `model_type: ${modelType}`;
@@ -427,15 +435,16 @@ export async function resolveModelConfigForAdd(
     }
   }
 
-  // HuggingFace auto-discovery. `autoConfigureModel` will fetch `root` from the
-  // vLLM server and use it for HF lookups when `modelId` is a quantized variant.
+  // HuggingFace auto-discovery. The caller-supplied `serverRoot` (or, if the
+  // caller has none, a `root` probe inside) drives HF lookups when `modelId`
+  // is a quantized/aliased variant.
   return vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
       title: `Auto-configuring ${modelId}...`,
       cancellable: false,
     },
-    async () => autoConfigureModel(modelId, serverUrl, requestHeaders, serverType)
+    async () => autoConfigureModel(modelId, serverUrl, requestHeaders, serverType, serverRoot)
   );
 }
 

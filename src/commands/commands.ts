@@ -8,25 +8,25 @@
  */
 
 import * as vscode from 'vscode';
-import type { VllmChatModelProvider } from './provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders } from './config.js';
-import type { ModelConfig } from './config.js';
-import { firstEntryById, type ServerEntry } from './serverRegistry.js';
-import { patchModelConfig, readModels, readServers, writeModels, writeServers } from './configStore.js';
-import { promptForServerAuth } from './commands/serverAuth.js';
-import { FileLogger } from './logger.js';
-import { describeError } from './messageConverter.js';
-import { runDiagnostics, formatReport } from './diagnostics.js';
+import type { VllmChatModelProvider } from '../provider/provider.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders } from '../state/config.js';
+import type { ModelConfig } from '../state/config.js';
+import { firstEntryById, type ServerEntry } from '../state/serverRegistry.js';
+import { patchModelConfig, readModels, readServers, writeModels, writeServers } from '../state/configStore.js';
+import { promptForServerAuth } from './serverAuth.js';
+import { FileLogger } from '../shared/logger.js';
+import { describeError } from '../provider/messageConverter.js';
+import { runDiagnostics, formatReport } from '../ui/diagnostics.js';
 import {
   discoverWorkspaces,
   cleanWorkspace,
   SessionPickedItem,
   WorkspaceEntry,
-} from './sessionManager.js';
-import { refreshEngineHeaders } from './vllmMetrics.js';
-import { updateDeepDiveTitle } from './deepDiveView.js';
-import { resetUsage, getServersWithUsage } from './usageStore.js';
-import { isOpenRouterUrl } from './openRouter.js';
+} from '../shared/sessionManager.js';
+import { refreshEngineHeaders } from '../ui/vllmMetrics.js';
+import { updateDeepDiveTitle } from '../ui/deepDiveView.js';
+import { resetUsage, getServersWithUsage } from '../usage/usageStore.js';
+import { isOpenRouterUrl } from '../state/config.js';
 
 /**
  * Diagnose connection issues for a single model.
@@ -106,7 +106,7 @@ export function registerOpenLogFileCommand(fileLogger: FileLogger): vscode.Dispo
       await vscode.window.showTextDocument(doc);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      vscode.window.showErrorMessage(`Could not open log file at: ${logPath} — ${reason}`);
+      vscode.window.showErrorMessage(`Could not open log file at: ${logPath} - ${reason}`);
     }
   });
 }
@@ -197,7 +197,7 @@ export function registerCleanSessionsCommand(
     }
 
     const msg = dbErrors > 0
-      ? `Cleaned ${totalKeys} key(s), removed ${totalChatDirs} chat dir(s), ${totalChatSessions} chatSessions dir(s), ${totalChatEditing} chatEditingSessions dir(s).\n\n⚠ ${dbErrors} workspace(s) had database errors — key removal may be incomplete. Close all Copilot chat sessions and retry.\n\nRestart VS Code for changes to take effect.`
+      ? `Cleaned ${totalKeys} key(s), removed ${totalChatDirs} chat dir(s), ${totalChatSessions} chatSessions dir(s), ${totalChatEditing} chatEditingSessions dir(s).\n\n⚠ ${dbErrors} workspace(s) had database errors - key removal may be incomplete. Close all Copilot chat sessions and retry.\n\nRestart VS Code for changes to take effect.`
       : `Cleaned ${totalKeys} key(s), removed ${totalChatDirs} chat dir(s), ${totalChatSessions} chatSessions dir(s), ${totalChatEditing} chatEditingSessions dir(s).\n\nRestart VS Code for changes to take effect.`;
 
     vscode.window.showInformationMessage(msg, 'OK');
@@ -273,7 +273,7 @@ export function registerUpdateServerAuthCommand(
       .filter(({ s }) => normalizeServerUrl(s.serverUrl) === normalizedUrl);
     if (targetIdx.length === 0) {
       const names = targets.map(t => t.id).join(', ');
-      vscode.window.showWarningMessage(`Server "${names}" is no longer registered — nothing updated.`);
+      vscode.window.showWarningMessage(`Server "${names}" is no longer registered. Nothing updated.`);
       return;
     }
     const updatedServers = currentServers.slice();
@@ -316,11 +316,16 @@ export function registerUpdateServerAuthCommand(
 }
 
 /**
- * Rename a server for display: sets `displayName` on the server registry entry
- * for the given server URL. The Dashboard tree shows that name instead of the
- * bare host; empty input clears it (the URL is shown again).
- * Triggered from right-click context menu on a server node in the dashboard.
- * Not applicable to OpenRouter — openrouter.ai is a fixed managed relay.
+ * Rename a server for display: writes `displayName` on exactly ONE registry
+ * entry — the one the user addressed. Entry id is the identity everywhere
+ * else (Dashboard node, Deep-Dive, Remove Server, backend dropdown) and
+ * rename is no exception: two entries sharing a URL (two OpenRouter keys,
+ * two gateway tenants) each carry their own label. Every backend is
+ * renamable, relays included — one rule for every entry, no special cases.
+ * Triggered from the context menu on a server node; tree items carry
+ * `serverId`. Bare-URL programmatic calls address the first entry on that
+ * URL (and the log names the entry). Empty input clears the name (the URL
+ * is shown again).
  */
 export function registerRenameServerCommand(
   _context: vscode.ExtensionContext,
@@ -328,39 +333,28 @@ export function registerRenameServerCommand(
   outputChannel: vscode.OutputChannel,
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.renameServer', async (arg?: any) => {
-    // VS Code passes the tree item for context menus; extract the server URL.
+    // VS Code passes the tree item for context menus. The entry id it carries
+    // is the address; a bare URL string (programmatic call) falls back to the
+    // first entry on that normalized URL.
     const serverUrl = typeof arg === 'string' ? arg : arg?.serverUrl;
-    if (!serverUrl) {
+    const serverId =
+      typeof arg === 'object' && typeof arg?.serverId === 'string' ? arg.serverId : undefined;
+    if (!serverUrl && !serverId) {
       vscode.window.showErrorMessage('Server URL not provided.');
       return;
     }
 
-    // The registry entries own the name. A command arg identifies a SERVER, so
-    // reject when no entry matches — never silently rename nothing. The write
-    // fans out to EVERY entry sharing this URL (§5), so the OpenRouter refusal
-    // must consider all of them, and the prefill comes from the entry the user
-    // actually right-clicked (tree items carry `serverId`; fall back to the
-    // first URL match for bare-URL programmatic calls).
     const servers = readServers();
-    const normalizedUrl = normalizeServerUrl(serverUrl);
-    const matches = servers.filter(s => normalizeServerUrl(s.serverUrl) === normalizedUrl);
-    if (matches.length === 0) {
-      vscode.window.showWarningMessage(`No registered server found for ${serverUrl}.`);
+    const addressed = serverId
+      ? servers.find(s => s.id === serverId)
+      : servers.find(s => normalizeServerUrl(s.serverUrl) === normalizeServerUrl(serverUrl ?? ''));
+    if (!addressed) {
+      // Stale tree item / programmatic call with a wrong address: fail loudly,
+      // never silently rename nothing.
+      vscode.window.showWarningMessage(`No registered server found for ${serverId ?? serverUrl}.`);
       return;
     }
-    const addressed =
-      (typeof arg === 'object' && typeof arg?.serverId === 'string'
-        ? servers.find(s => s.id === arg.serverId)
-        : undefined) ?? matches[0];
-    // Never rename OpenRouter: the relay label is fixed. Check the entries'
-    // declared types (a non-openrouter.ai relay URL counts too) — the URL check
-    // alone would miss custom OpenRouter-compatible endpoints.
-    if (isOpenRouterUrl(serverUrl) || matches.some(e => e.serverType === 'openrouter')) {
-      vscode.window.showInformationMessage(
-        'Rename Server does not apply to OpenRouter — openrouter.ai is a fixed managed relay.'
-      );
-      return;
-    }
+    const targetUrl = normalizeServerUrl(addressed.serverUrl);
 
     // Pre-prompt read serves ONLY the input prefill — the authoritative read
     // happens after the await below, so a settings edit made while the prompt
@@ -371,57 +365,50 @@ export function registerRenameServerCommand(
     const name = await vscode.window.showInputBox({
       ignoreFocusOut: true,
       title: 'Rename Server',
-      prompt: `Display name for ${serverUrl} in the vLLM Dashboard. Empty clears the name.`,
+      prompt: `Display name for server "${addressed.id}" (${targetUrl}) in the vLLM Dashboard. Empty clears the name.`,
       placeHolder: 'e.g. IT Server for GLM5.2',
       value: current,
     });
     if (name === undefined) {
-      outputChannel.appendLine(`[INFO] Rename Server cancelled for ${serverUrl}.`);
+      outputChannel.appendLine(`[INFO] Rename Server cancelled for "${addressed.id}".`);
       return; // cancelled
     }
 
-    // Re-read AFTER the prompt: the registry may have changed while it was open.
-    // Fan out to EVERY entry sharing the normalized URL (the name labels the
-    // box, not one entry). Empty/whitespace CLEARS by deleting the key — this
-    // write path bypasses entry sanitization, so persisting '' would be a bug.
-    // Entries already at the target value are returned untouched (identity
-    // preserved) so an unchanged registry produces no write.
+    // Re-read AFTER the prompt: the registry may have changed while it was
+    // open; only the addressed entry is written. Empty/whitespace CLEARS by
+    // deleting the key — this write path bypasses entry sanitization, so
+    // persisting '' would be a bug. Untouched entries keep their object
+    // identity (an unchanged registry produces no churn).
     const existingServers = readServers();
+    const index = existingServers.findIndex(s => s.id === addressed.id);
+    if (index === -1) {
+      // Distinct from no-op: the entry vanished mid-prompt — a stale tree
+      // item must not look like a successful rename.
+      vscode.window.showWarningMessage(`No registered server found for "${addressed.id}".`);
+      return;
+    }
     const trimmedName = name.trim();
-    let matched = 0;
-    let changed = 0;
-    const nextServers = existingServers.map(s => {
-      if (normalizeServerUrl(s.serverUrl) !== normalizedUrl) return s;
-      matched++;
-      if ((s.displayName ?? '') === trimmedName) return s;
-      changed++;
-      const next = { ...s };
-      if (trimmedName === '') delete next.displayName;
-      else next.displayName = trimmedName;
-      return next;
-    });
-    if (matched === 0) {
-      // Distinct from no-op: the entry vanished mid-prompt — a stale tree item
-      // or a programmatic call with a wrong URL should fail loudly.
-      vscode.window.showWarningMessage(`No registered server found for ${serverUrl}.`);
+    const entry = existingServers[index];
+    if ((entry.displayName ?? '') === trimmedName) {
+      vscode.window.showInformationMessage(`No changes for server "${addressed.id}".`);
       return;
     }
-    if (changed === 0) {
-      vscode.window.showInformationMessage(`No changes for ${serverUrl}.`);
-      return;
-    }
+    const next = { ...entry };
+    if (trimmedName === '') delete next.displayName;
+    else next.displayName = trimmedName;
+    const nextServers = existingServers.map((s, i) => (i === index ? next : s));
 
     await writeServers(nextServers);
     provider.clearCache();
-    // Retitle any open Deep-Dive panels for this server immediately — without
-    // this they keep the old label until closed and reopened.
-    updateDeepDiveTitle(serverUrl, trimmedName || undefined);
+    // Retitle this entry's open Deep-Dive panel immediately — without this it
+    // keeps the old label until closed and reopened.
+    updateDeepDiveTitle(addressed.id, trimmedName || undefined);
     if (trimmedName) {
-      outputChannel.appendLine(`[INFO] Renamed server ${serverUrl} to "${trimmedName}" (applied to ${matched} entr${matched === 1 ? 'y' : 'ies'}).`);
-      vscode.window.showInformationMessage(`Server renamed to "${trimmedName}".`);
+      outputChannel.appendLine(`[INFO] Renamed server "${addressed.id}" (${targetUrl}) to "${trimmedName}".`);
+      vscode.window.showInformationMessage(`Server "${addressed.id}" renamed to "${trimmedName}".`);
     } else {
-      outputChannel.appendLine(`[INFO] Cleared display name for ${serverUrl} (applied to ${matched} entr${matched === 1 ? 'y' : 'ies'}).`);
-      vscode.window.showInformationMessage(`Display name cleared — showing the URL again.`);
+      outputChannel.appendLine(`[INFO] Cleared display name for server "${addressed.id}" (${targetUrl}).`);
+      vscode.window.showInformationMessage(`Display name cleared, showing the URL again.`);
     }
   });
 }

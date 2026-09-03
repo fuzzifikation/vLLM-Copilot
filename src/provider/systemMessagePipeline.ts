@@ -1,14 +1,14 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { resolveOverrideForModel, resolveWorkspaceRelativePath, type VllmConfig } from '../config.js';
-import { messageToText } from '../messageConverter.js';
+import { resolveOverrideForModel, resolveWorkspaceRelativePath, type VllmConfig } from '../state/config.js';
+import { messageToText } from './messageConverter.js';
 import {
   loadPromptReplacements,
   applyPromptReplacements,
   getBundledCommonReplacementsPath,
   type PromptReplacement,
-} from '../promptReplacer.js';
+} from '../persona/promptReplacer.js';
 
 /**
  * Capture entry for a single system message, written to .vllm/system-messages.json.
@@ -124,8 +124,23 @@ export class SystemMessagePipeline {
             // stays untouched). Order is load-bearing: persona rules run FIRST, because
             // persona replace-rules anchor on text that the shared remove-rules delete
             // (e.g. the short/impersonal line also lives inside the safety blocks).
-            const personaRules = await loadPromptReplacements(replacementsFile);
-            const commonRules = await loadPromptReplacements(getBundledCommonReplacementsPath());
+            // The two loads are INDEPENDENT try/catches on purpose: the common file is
+            // shared infrastructure, and one corrupt prompt-replacements-common.json
+            // (bad VSIX, hand edit, disk rot) must degrade to persona-only rules — not
+            // throw away the persona rules that parsed fine and silently revert every
+            // model to the vanilla prompt.
+            let personaRules: PromptReplacement[] = [];
+            try {
+              personaRules = await loadPromptReplacements(replacementsFile);
+            } catch (err) {
+              this.output.appendLine(`[WARN] Personality replacements failed to load, continuing without it: ${err instanceof Error ? err.message : String(err)}`);
+            }
+            let commonRules: PromptReplacement[] = [];
+            try {
+              commonRules = await loadPromptReplacements(getBundledCommonReplacementsPath());
+            } catch (err) {
+              this.output.appendLine(`[WARN] Shared common-replacements failed to load, continuing persona-only: ${err instanceof Error ? err.message : String(err)}`);
+            }
             replacements = [...personaRules, ...commonRules];
             if (replacements.length > 0) {
               this.output.appendLine(

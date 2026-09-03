@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { ConfigurationTarget } from 'vscode';
-import { registerRemoveServerCommand } from '../src/commands.js';
+import { registerRemoveServerCommand } from '../src/commands/commands.js';
 
 /**
  * Tests for "Remove Server". The command is ENTRY-ID-addressed (§5, 1.36.0-rc0

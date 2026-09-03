@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildAuthHeaders, resolveServerType, resolveModelSettings, resolveMaxTokensForRequest, buildModelId, toPublicModelConfig, type ModelConfig } from '../src/config.js';
-import type { ServerEntry } from '../src/serverRegistry.js';
+import { buildAuthHeaders, resolveServerType, resolveModelSettings, resolveMaxTokensForRequest, buildModelId, toPublicModelConfig, type ModelConfig } from '../src/state/config.js';
+import type { ServerEntry } from '../src/state/serverRegistry.js';
 
 // ── resolveMaxTokensForRequest ──────────────────────────────────────────
 

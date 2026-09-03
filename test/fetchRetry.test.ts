@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fetchWithRetry } from '../src/fetchRetry.js';
+import { fetchWithRetry } from '../src/shared/fetchRetry.js';
 
 /**
  * fetchWithRetry retry classification. Regression tests for the real Node/undici
@@ -80,9 +80,9 @@ describe('fetchWithRetry abort handling', () => {
       .mockResolvedValueOnce(new Response('upstream down', { status: 502, statusText: 'Bad Gateway' }));
 
     await expect(fetchWithRetry('http://test', {}, {}, (w) => retryWarnings.push(w)))
-      .rejects.toThrow('HTTP 502: Bad Gateway — upstream down (after retry)');
+      .rejects.toThrow('HTTP 502: Bad Gateway - upstream down (after retry)');
 
-    expect(retryWarnings).toEqual(['HTTP 502: Bad Gateway — upstream down']);
+    expect(retryWarnings).toEqual(['HTTP 502: Bad Gateway - upstream down']);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 

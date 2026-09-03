@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
 import { VllmClient } from './vllmClient.js';
-import { SystemMessagePipeline } from './provider/systemMessagePipeline.js';
-import { discoverModels } from './provider/discovery.js';
-import { runChatResponse } from './provider/streamOrchestrator.js';
-import type { ProviderClient } from './provider/contracts.js';
-import { resolveOverrideForModel, resolveModelSettings } from './config.js';
-import type { FileLogger } from './logger.js';
+import { SystemMessagePipeline } from './systemMessagePipeline.js';
+import { discoverModels } from './discovery.js';
+import { runChatResponse } from './streamOrchestrator.js';
+import type { ProviderClient } from './contracts.js';
+import { resolveOverrideForModel, resolveModelSettings, readPickerSelection } from '../state/config.js';
+import type { FileLogger } from '../shared/logger.js';
 import { messageToText } from './messageConverter.js';
 
 export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, vscode.Disposable {
@@ -289,16 +289,9 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
 
     // Track the selected model mode and output length so re-registered metadata
     // (and Copilot's context-window bar) reflects the picked output budget. Read
-    // before delegating — the request builder uses the same `modelConfiguration`
-    // field to select the mode's request params and the request's max_tokens.
-    const modelConfiguration = (options as any).modelConfiguration as Record<string, unknown> | undefined;
-    const selectedMode = typeof modelConfiguration?.reasoningEffort === 'string'
-      ? modelConfiguration.reasoningEffort
-      : undefined;
-    const pickerTokensRaw = modelConfiguration?.maxOutputTokens;
-    const selectedLength = typeof pickerTokensRaw === 'number' && Number.isFinite(pickerTokensRaw)
-      ? Math.max(1, Math.floor(pickerTokensRaw))
-      : undefined;
+    // before delegating — the request builder reads the same picker state through
+    // the same shared reader (single parse, single normalization).
+    const { selectedMode, pickerTokens: selectedLength } = readPickerSelection(options);
     this.trackConfigSelection(model.id, selectedMode, selectedLength);
 
     await runChatResponse(

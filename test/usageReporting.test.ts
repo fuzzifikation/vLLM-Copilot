@@ -1,10 +1,24 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import * as vscode from 'vscode';
-import { createUsageDataPart, logTokenUsage } from '../src/usageReporting.js';
+import { reportTokenUsage } from '../src/usage/usageReporting.js';
 
-describe('createUsageDataPart', () => {
+// Drive the wire shape through its only real consumer: a fake Copilot progress
+// sink. (The standalone part-builder was absorbed into reportTokenUsage.)
+function report(usage: {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  prompt_tokens_details?: Record<string, number>;
+}): vscode.LanguageModelDataPart {
+  const parts: vscode.LanguageModelDataPart[] = [];
+  reportTokenUsage({ report: part => parts.push(part as vscode.LanguageModelDataPart) }, usage);
+  expect(parts).toHaveLength(1);
+  return parts[0];
+}
+
+describe('reportTokenUsage', () => {
   it('produces a LanguageModelDataPart with MIME type "usage"', () => {
-    const part = createUsageDataPart({
+    const part = report({
       prompt_tokens: 100,
       completion_tokens: 50,
       total_tokens: 150,
@@ -15,7 +29,7 @@ describe('createUsageDataPart', () => {
   });
 
   it('uses snake_case keys (not camelCase)', () => {
-    const part = createUsageDataPart({
+    const part = report({
       prompt_tokens: 100,
       completion_tokens: 50,
       total_tokens: 150,
@@ -32,7 +46,7 @@ describe('createUsageDataPart', () => {
   });
 
   it('includes prompt_tokens_details with cached_tokens', () => {
-    const part = createUsageDataPart({
+    const part = report({
       prompt_tokens: 100,
       completion_tokens: 50,
       total_tokens: 150,
@@ -43,7 +57,7 @@ describe('createUsageDataPart', () => {
   });
 
   it('preserves zero values', () => {
-    const part = createUsageDataPart({
+    const part = report({
       prompt_tokens: 0,
       completion_tokens: 0,
       total_tokens: 0,

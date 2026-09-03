@@ -32,10 +32,10 @@
  * - Reasoning is toggled via `reasoning: { enabled, effort }` (Chat Completions).
  */
 
-import { buildEndpoint } from './config.js';
-import type { ModelConfig } from './config.js';
-import { buildRequestHeaders, fetchWithRetry } from './fetchRetry.js';
-import type { RuntimeModelLimits } from './types.js';
+import { buildEndpoint } from '../state/config.js';
+import type { ModelConfig } from '../state/config.js';
+import { buildRequestHeaders, fetchWithRetry } from '../shared/fetchRetry.js';
+import type { RuntimeModelLimits } from '../types.js';
 
 /**
  * A context-window resolve failure that retrying can never fix — the model
@@ -68,22 +68,6 @@ export class OpenRouterModelNotFoundError extends Error {
 
 /** OpenRouter's API base — composes with `buildEndpoint` like any other server. */
 export const OPENROUTER_API_BASE = 'https://openrouter.ai/api';
-
-/**
- * True when a server URL points at OpenRouter's fixed managed remote. Used to
- * route the Add flow into the OpenRouter branch — the "server" is fixed, so the
- * user's URL input is really a *model* reference — and to classify the backend
- * during detection. Host-only: the API base (`openrouter.ai/api`), model-page
- * URLs, and any future openrouter.ai host all match. Scheme-less input returns
- * false (the Add flow normalizes before calling this).
- */
-export function isOpenRouterUrl(serverUrl: string): boolean {
-  try {
-    return new URL(serverUrl).hostname.replace(/^www\./, '').toLowerCase() === 'openrouter.ai';
-  } catch {
-    return false;
-  }
-}
 
 /** Timeout for the catalog metadata GET (same budget as other metadata probes). */
 const METADATA_TIMEOUT_MS = 10000;
@@ -483,21 +467,74 @@ function normalizeOpenRouterModel(
 }
 
 /**
+ * The OpenRouter catalog boundary (audit P16-2): a catalog payload is valid
+ * only when it carries a `data` ARRAY; entries without a string `id` are
+ * dropped (they can never match an exact id, and keeping them would
+ * misreport them as "model not found"). Returns `undefined` for any other
+ * shape — a protocol/proxy failure, never an empty model list. Shared with
+ * the metrics engine's parse so the two views of one response can never
+ * drift (this rule used to be sync'd by comment).
+ *
+ * Generic so each consumer keeps its own entry type (`OpenRouterModelData`
+ * for lookups, plain records for the metrics raw view) without casts.
+ */
+export function parseOpenRouterCatalogData<T = OpenRouterModelData>(payload: unknown): T[] | undefined {
+  const data = (payload as { data?: unknown })?.data;
+  if (!Array.isArray(data)) {
+    return undefined;
+  }
+  return data.filter((m): m is T =>
+    !!m && typeof m === 'object' && typeof (m as { id?: unknown }).id === 'string');
+}
+
+/**
+ * In-flight + short-TTL memo for the catalog (audit P16-1). The catalog is
+ * ~500 KB for ~400 models; before the memo, discovery resolved EVERY
+ * configured OpenRouter model with a fresh full download. The metrics engine
+ * never hits this path (its tick reuses one raw response), and the catalog
+ * changes on OpenRouter's scale (hours), so a minute of staleness is free.
+ * Failures are never cached — the next call re-fetches live.
+ */
+const CATALOG_MEMO_TTL_MS = 60_000;
+
+let catalogMemo: { promise: Promise<OpenRouterModelData[]>; settledAt?: number } | undefined;
+
+/**
  * Fetch OpenRouter's full model catalog (`GET /api/v1/models`) — the
  * authoritative, deterministic source for model metadata. Every model VARIANT is
  * its own entry keyed by its exact `id`, so exact-id matching never conflates a
  * `:free` pick with the paid model. This is what metadata resolution matches
  * against — never a derived slug.
  *
- * The payload is validated: a `200` whose body is not `{ data: [...] }` (or
- * whose `data` is not an array) is treated as a malformed protocol response and
- * THROWS — it is never treated as an empty authoritative catalog. Entries
- * without a string `id` are dropped (they can never match an exact id anyway).
+ * The payload is validated by {@link parseOpenRouterCatalogData}: a `200`
+ * whose body is not `{ data: [...] }` THROWS, it is never treated as an empty
+ * authoritative catalog.
  *
  * Public and unauthenticated. Throws on HTTP/network failure and on malformed
- * payloads; `fetchWithRetry` retries transient failures once.
+ * payloads; `fetchWithRetry` retries transient failures once. Served from the
+ * memo above while fresh.
  */
 export async function fetchOpenRouterCatalog(): Promise<OpenRouterModelData[]> {
+  if (catalogMemo && (catalogMemo.settledAt === undefined || Date.now() - catalogMemo.settledAt < CATALOG_MEMO_TTL_MS)) {
+    return catalogMemo.promise;
+  }
+  const entry: { promise: Promise<OpenRouterModelData[]>; settledAt?: number } =
+    { promise: undefined as unknown as Promise<OpenRouterModelData[]> };
+  entry.promise = fetchCatalogUncached().then(
+    (catalog) => {
+      entry.settledAt = Date.now();
+      return catalog;
+    },
+    (err: unknown) => {
+      if (catalogMemo === entry) catalogMemo = undefined;
+      throw err;
+    },
+  );
+  catalogMemo = entry;
+  return entry.promise;
+}
+
+async function fetchCatalogUncached(): Promise<OpenRouterModelData[]> {
   const url = buildEndpoint(OPENROUTER_API_BASE, 'v1/models');
   const response = await fetchWithRetry(
     url,
@@ -508,17 +545,14 @@ export async function fetchOpenRouterCatalog(): Promise<OpenRouterModelData[]> {
     throw new Error(`HTTP ${response.status} ${response.statusText} from ${url}`);
   }
   const payload = await response.json() as unknown;
-  const data = (payload as { data?: unknown })?.data;
-  if (!Array.isArray(data)) {
+  const entries = parseOpenRouterCatalogData(payload);
+  if (!entries) {
     throw new Error(
       `Malformed OpenRouter catalog from ${url}: expected { data: [...] }, got an invalid payload. ` +
       `This is a transient protocol failure, not an empty model list.`
     );
   }
-  // Defensive: an entry without a string id can never match an exact id, so
-  // drop it rather than risk it being misreported as "model not found".
-  return data.filter((m): m is OpenRouterModelData =>
-    !!m && typeof m === 'object' && typeof (m as { id?: unknown }).id === 'string');
+  return entries;
 }
 
 /**
@@ -754,31 +788,18 @@ export async function getOpenRouterModelEndpointsCached(
 }
 
 /**
- * Clear the shared provider-list cache — values, in-flight dedup, and failure
- * backoff. Production caller: the activation config listener flushes it when
- * `vllm-copilot.servers`/`.models` change, so settings edits (auth rotation,
- * server URL fixes, model add/remove) surface fresh provider lists instead of
- * serving stale entries for the rest of the TTL. Tests reuse it for isolation.
+ * Clear the module-level OpenRouter caches — provider-list values, in-flight
+ * dedup, failure backoff, and the catalog memo. Production caller: the
+ * activation config listener flushes it when `vllm-copilot.servers`/`.models`
+ * change, so settings edits (auth rotation, server URL fixes, model
+ * add/remove) surface fresh provider lists instead of serving stale entries
+ * for the rest of the TTL. Tests reuse it for isolation.
  */
-export function resetOpenRouterProviderListCache(): void {
+export function resetOpenRouterCaches(): void {
   providerListCache.clear();
   providerListInflight.clear();
   providerListRetryAt.clear();
-}
-
-/**
- * Resolve an OpenRouter model's runtime limits from an ALREADY-FETCHED catalog
- * (the metrics engine reuses its relay `/v1/models` probe as the catalog). Same
- * exact-id semantics as {@link fetchOpenRouterModel}, but no extra HTTP call.
- * @throws OpenRouterModelNotFoundError when the id is absent from this snapshot
- *   (the metrics engine rechecks next poll); `PermanentContextError` when an
- *   entry exists but reports no usable context.
- */
-export function resolveOpenRouterLimitsFromCatalog(
-  catalog: OpenRouterModelData[],
-  requestedId: string,
-): RuntimeModelLimits {
-  return normalizeOpenRouterFromCatalog(catalog, requestedId).runtimeLimits;
+  catalogMemo = undefined;
 }
 
 /**
@@ -791,6 +812,48 @@ export async function resolveOpenRouterRuntimeLimits(requestedId: string): Promi
 }
 
 /**
+ * The shared catalog projection (audit P8-2): the optional-field conditional
+ * spreads that BOTH the Add flow and Auto-Configure write into settings.json.
+ * Head fields (id/vllmModelId/displayName/server) stay with each flow because
+ * they genuinely differ. This spread chain is the wire contract for what
+ * OpenRouter catalog data looks like in config — one place to fix, not twins.
+ */
+export function openRouterCatalogConfigFields(info: OpenRouterModelInfo): Partial<ModelConfig> {
+  return {
+    capabilities: info.capabilities,
+    ...(info.modelModes ? { modelModes: info.modelModes } : {}),
+    ...(info.defaultMode ? { defaultMode: info.defaultMode } : {}),
+    ...(info.defaultParams ? { defaultParams: info.defaultParams } : {}),
+    ...(info.cost ? { cost: info.cost } : {}),
+    ...(info.runtimeLimits.maxOutputTokens !== undefined ? { maxOutputTokens: info.runtimeLimits.maxOutputTokens } : {}),
+  };
+}
+
+/**
+ * The shared detail lines of both OpenRouter confirm dialogs (output limit,
+ * caps, modes, rates, expiry). Head lines ("OpenRouter model:", the
+ * context-window line) and flow trailers stay at the call sites; only the
+ * byte-identical middle lives here.
+ */
+export function openRouterInfoDetailLines(info: OpenRouterModelInfo): string[] {
+  const lines: string[] = [];
+  if (info.runtimeLimits.maxOutputTokens !== undefined) {
+    lines.push(`Max output: ${info.runtimeLimits.maxOutputTokens.toLocaleString('en-US')} tokens`);
+  }
+  lines.push(`Tool calling: ${info.capabilities.toolCalling ? 'yes' : 'no'}`);
+  lines.push(`Image input: ${info.capabilities.imageInput ? 'yes' : 'no'}`);
+  if (info.modelModes && Object.keys(info.modelModes).length > 0) {
+    lines.push(`Modes: ${Object.keys(info.modelModes).join(', ')}`);
+    if (info.defaultMode) lines.push(`Default mode: ${info.defaultMode}`);
+  }
+  if (info.cost) {
+    lines.push(`Estimated rates: in ${formatUsdRate(info.cost.input)} · out ${formatUsdRate(info.cost.output)} per 1M tokens`);
+  }
+  if (info.expirationDate) lines.push(`Expires: ${info.expirationDate}`);
+  return lines;
+}
+
+/**
  * Auto-configure an OpenRouter model from its catalog metadata — the ONLY
  * discovery source for this backend. HF chat-template sniffing cannot express
  * OpenRouter's `reasoning` object (effort ladder, mandatory, default_enabled)
@@ -799,8 +862,10 @@ export async function resolveOpenRouterRuntimeLimits(requestedId: string): Promi
  * thinking modes. Presets are keyed to HF repos and skipped here by design
  * (matches the plan's "no OpenRouter presets" decision).
  *
- * Mirrors `runOpenRouterAddFlow`'s config assembly so Add and Auto-Configure
- * cannot drift: same field mapping, same authoritative `maxOutputTokens`.
+ * Settings fields and detail lines come from the shared catalog projections
+ * ({@link openRouterCatalogConfigFields}, {@link openRouterInfoDetailLines})
+ * that the Add flow uses too: one mapping, one authoritative
+ * `maxOutputTokens`, no twin left to drift.
  *
  * @throws when the catalog fetch fails (network), the id is absent from the
  *   catalog, or the model reports no positive context bound — the strict
@@ -817,31 +882,15 @@ export async function autoConfigureOpenRouterModel(
     // OpenRouter models reference the conventional `openrouter` registry entry;
     // the calling flow upserts that entry (create-if-absent) before writing.
     server: 'openrouter',
-    capabilities: info.capabilities,
-    ...(info.modelModes ? { modelModes: info.modelModes } : {}),
-    ...(info.defaultMode ? { defaultMode: info.defaultMode } : {}),
-    ...(info.defaultParams ? { defaultParams: info.defaultParams } : {}),
-    ...(info.cost ? { cost: info.cost } : {}),
-    ...(info.runtimeLimits.maxOutputTokens !== undefined ? { maxOutputTokens: info.runtimeLimits.maxOutputTokens } : {}),
+    ...openRouterCatalogConfigFields(info),
   };
 
-  const summary: string[] = [];
-  summary.push(`Context window (OpenRouter): ${info.runtimeLimits.contextWindow.toLocaleString('en-US')} tokens`);
-  if (info.runtimeLimits.maxOutputTokens !== undefined) {
-    summary.push(`Max output: ${info.runtimeLimits.maxOutputTokens.toLocaleString('en-US')} tokens`);
-  }
-  summary.push(`Tool calling: ${info.capabilities.toolCalling ? 'yes' : 'no'}`);
-  summary.push(`Image input: ${info.capabilities.imageInput ? 'yes' : 'no'}`);
-  if (info.modelModes && Object.keys(info.modelModes).length > 0) {
-    summary.push(`Modes: ${Object.keys(info.modelModes).join(', ')}`);
-    if (info.defaultMode) summary.push(`Default mode: ${info.defaultMode}`);
-  }
-  if (info.cost) {
-    summary.push(`Estimated rates: in ${formatUsdRate(info.cost.input)} · out ${formatUsdRate(info.cost.output)} per 1M tokens`);
-  }
-  if (info.expirationDate) summary.push(`Expires: ${info.expirationDate}`);
-  summary.push('');
-  summary.push('Note: Configured from OpenRouter catalog metadata (authoritative for this backend).');
+  const summary: string[] = [
+    `Context window (OpenRouter): ${info.runtimeLimits.contextWindow.toLocaleString('en-US')} tokens`,
+    ...openRouterInfoDetailLines(info),
+    '',
+    'Note: Configured from OpenRouter catalog metadata (authoritative for this backend).',
+  ];
   return { modelConfig, summary };
 }
 
@@ -884,10 +933,23 @@ const ACCOUNT_TIMEOUT_MS = 10_000;
  * latency to EVERY tick while /api/v1/key is unreachable — for a value that's
  * optional anyway. Failure → undefined, always.
  */
-export async function fetchOpenRouterAccount(
+export function fetchOpenRouterAccount(
   requestHeaders: Record<string, string> = {},
 ): Promise<OpenRouterAccount | undefined> {
-  const url = buildEndpoint(OPENROUTER_API_BASE, 'v1/key');
+  return fetchOpenRouterAccountData<OpenRouterAccount>('v1/key', requestHeaders);
+}
+
+/**
+ * Shared best-effort body for the two account probes (audit P16-4): plain
+ * fetch + timeout, NO retry (the 1.5 s network backoff would stall every
+ * metrics poll while the endpoint is down, for optional values), failure →
+ * `undefined`, always.
+ */
+async function fetchOpenRouterAccountData<T extends object>(
+  path: string,
+  requestHeaders: Record<string, string>,
+): Promise<T | undefined> {
+  const url = buildEndpoint(OPENROUTER_API_BASE, path);
   const headers = buildRequestHeaders(undefined, requestHeaders);
   let response: Response;
   try {
@@ -897,7 +959,7 @@ export async function fetchOpenRouterAccount(
   }
   if (!response.ok) return undefined;
   try {
-    const payload = await response.json() as { data?: OpenRouterAccount };
+    const payload = await response.json() as { data?: T };
     // `typeof [] === 'object'` — reject array-shaped data explicitly.
     if (!payload.data || typeof payload.data !== 'object' || Array.isArray(payload.data)) return undefined;
     return payload.data;
@@ -923,23 +985,8 @@ export interface OpenRouterCredits {
  * discipline as {@link fetchOpenRouterAccount}: plain fetch + timeout, NO retry,
  * failure → undefined (the dashboard hides the rows rather than fabricating).
  */
-export async function fetchOpenRouterCredits(
+export function fetchOpenRouterCredits(
   requestHeaders: Record<string, string> = {},
 ): Promise<OpenRouterCredits | undefined> {
-  const url = buildEndpoint(OPENROUTER_API_BASE, 'v1/credits');
-  const headers = buildRequestHeaders(undefined, requestHeaders);
-  let response: Response;
-  try {
-    response = await fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(ACCOUNT_TIMEOUT_MS) });
-  } catch {
-    return undefined;
-  }
-  if (!response.ok) return undefined;
-  try {
-    const payload = await response.json() as { data?: OpenRouterCredits };
-    if (!payload.data || typeof payload.data !== 'object' || Array.isArray(payload.data)) return undefined;
-    return payload.data;
-  } catch {
-    return undefined;
-  }
+  return fetchOpenRouterAccountData<OpenRouterCredits>('v1/credits', requestHeaders);
 }

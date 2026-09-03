@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { VllmClient } from '../src/vllmClient.js';
-import * as configModule from '../src/config.js';
-import type { VllmConfig } from '../src/config.js';
+import { VllmClient } from '../src/provider/vllmClient.js';
+import * as configModule from '../src/state/config.js';
+import type { VllmConfig } from '../src/state/config.js';
 
 /**
  * VllmClient is a thin facade over ChatTransport, so these tests only cover what

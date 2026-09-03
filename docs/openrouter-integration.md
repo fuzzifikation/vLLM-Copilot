@@ -150,14 +150,9 @@ Per-provider limits change **daily**. Freezing them into `settings.json` would c
 | **Dashboard → model node** | The **symmetric Attention icon** (below). |
 | **Error path** | Any OpenRouter failure surfaces the server HTTP code + formatted message (`constraint_filtered` included) — the generic path, no per-error-type enrichment. |
 
-### Fetch strategy: lazy per-session
+### Fetch strategy: shared short-term cache
 
-Provider lists come from `/api/v1/models/{id}/endpoints`. Fetched **once per session per model**, triggered when:
-
-- the Provider/routing UI opens for that model, or
-- the model is used,
-
-cached in memory for the session, **garbage on reload** — a daily context change is picked up next session. Auto-routed models (no pin) pay nothing extra. The dashboard's metrics engine caches the same per-provider lists for its per-model rows.
+Provider lists come from `/api/v1/models/{id}/endpoints`. Fetched **lazily** — when the Provider/routing UI opens for a model or the model is used — then cached **per model id for 5 minutes**. The cache is shared: concurrent callers share one in-flight request, a failed id is not retried for 60 s, and a failed refresh falls back to the stale list (stale beats nothing). It is flushed whenever servers or models change — an auth rotation surfaces a fresh provider list on the next view instead of the old key's list for the rest of the TTL. Auto-routed models (no pin) pay nothing extra. The dashboard's metrics engine and Model Settings read through this one shared cache, so both views can never disagree about the provider list.
 
 ### The symmetric Attention icon
 

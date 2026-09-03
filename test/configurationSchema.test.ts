@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildModelInfo } from '../src/modelInfo.js';
+import { buildModelInfo } from '../src/provider/modelInfo.js';
 
 // A generous ceiling so mode-only fixtures are never filtered — the length
 // dropdown is emitted ONLY when a vector is declared, so these stay clean.

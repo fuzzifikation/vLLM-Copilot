@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { loadPersonalityMeta, loadPromptReplacements } from '../src/promptReplacer.js';
+import { loadPersonalityMeta, loadPromptReplacements } from '../src/persona/promptReplacer.js';
 
 /**
  * Guards the shipped prompt-replacements/ files: every JSON must parse through

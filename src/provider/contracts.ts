@@ -1,5 +1,5 @@
 import type * as vscode from 'vscode';
-import type { VllmConfig, ServerType } from '../config.js';
+import type { VllmConfig, ServerType } from '../state/config.js';
 import type { OpenAIChatMessage, StreamEvent, VllmChatOptions, RuntimeModelLimits } from '../types.js';
 import type { ServerConfig } from './requestBuilder.js';
 
@@ -15,9 +15,11 @@ import type { ServerConfig } from './requestBuilder.js';
  * client copies `options` into a fresh body and passes `messages` by reference
  * without modifying either.
  *
- * Lives here (not `types.ts`) because it references `VllmConfig`, and `config.ts`
- * imports from `types.ts` — putting it in `types.ts` would create a
- * `config.ts ↔ types.ts` cycle.
+ * Lives here (not `types.ts`) because it is a provider-layer contract, not a
+ * wire format: it references `VllmConfig` (state) and `ServerConfig`
+ * (requestBuilder). `types.ts` stays wire-format-only and knows neither.
+ * (No cycle was ever at stake: nothing under `src/state/**` imports `types.ts`.
+ * The previous sentence claimed exactly that cycle and was wrong.)
  */
 export interface ProviderClient {
   getConfigCached(): Promise<VllmConfig>;
@@ -60,7 +62,7 @@ export interface StreamOutcome {
   hadToolCalls: boolean;
   /** At least one reasoning/thinking part was reported. */
   hadReasoning: boolean;
-  /** Raw `.githubusercontent` tags leaked into content (server is missing a `--reasoning-parser`). */
+  /** Raw `<thinking>` tags leaked into content (server is missing a `--reasoning-parser`). */
   sawRawThinkTags: boolean;
   /** The server's `finish_reason` for the turn, once known. */
   finishReason?: string;

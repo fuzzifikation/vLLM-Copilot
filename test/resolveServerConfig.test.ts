@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { resolveServerConfig, type ModelConfig } from '../src/config.js';
-import type { ServerEntry } from '../src/serverRegistry.js';
+import { resolveServerConfig, type ModelConfig } from '../src/state/config.js';
+import type { ServerEntry } from '../src/state/serverRegistry.js';
 
 /**
  * Registry-based server resolution: a model's `server` ref looks up the

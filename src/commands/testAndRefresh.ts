@@ -6,15 +6,14 @@
  */
 
 import * as vscode from 'vscode';
-import type { VllmChatModelProvider } from '../provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveServerType } from '../config.js';
-import type { ModelConfig } from '../config.js';
-import type { ServerEntry } from '../serverRegistry.js';
-import type { VllmModel } from '../types.js';
-
-import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../messageConverter.js';
-import { resolveRuntimeLimits } from '../runtimeLimits.js';
-import { runDiagnostics, formatReport } from '../diagnostics.js';
+import type { VllmChatModelProvider } from '../provider/provider.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveServerType } from '../state/config.js';
+import type { ModelConfig } from '../state/config.js';
+import type { ServerEntry } from '../state/serverRegistry.js';
+import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
+import { listServerModels, resolveRuntimeLimits, ServerProbeError, type ServerModelEntry } from '../backends/runtimeLimits.js';
+import { runDiagnostics, formatReport } from '../ui/diagnostics.js';
+import { resetOpenRouterCaches } from '../backends/openRouter.js';
 
 /**
  * Result of testing a single unique server (grouped by URL + auth).
@@ -32,7 +31,7 @@ export interface ServerTestResult {
   parked: Array<{ config: ModelConfig; vllmModelId: string }>;
   errorMessage?: string;
   /** The full model list returned by the server (for picker/diagnostic). */
-  serverModelList?: VllmModel[];
+  serverModelList?: ServerModelEntry[];
 }
 
 /**
@@ -58,17 +57,17 @@ function checkNetworkGatingSettings(): string[] {
 
   const proxySupport = config.get<string>('proxySupport', 'override');
   if (proxySupport === 'off') {
-    warnings.push('http.proxySupport is "off" — proxy patch is disabled');
+    warnings.push('http.proxySupport is "off" - proxy patch is disabled');
   }
 
   const fetchAdditionalSupport = config.get<boolean>('fetchAdditionalSupport', true);
   if (fetchAdditionalSupport === false) {
-    warnings.push('http.fetchAdditionalSupport is false — fetch proxy/cert patch is disabled');
+    warnings.push('http.fetchAdditionalSupport is false - fetch proxy/cert patch is disabled');
   }
 
   const systemCertificates = config.get<boolean>('systemCertificates', true);
   if (systemCertificates === false) {
-    warnings.push('http.systemCertificates is false — OS certificate store not used');
+    warnings.push('http.systemCertificates is false - OS certificate store not used');
   }
 
   return warnings;
@@ -139,57 +138,47 @@ export function registerTestAndRefreshModelsCommand(
 
     // ── 2. Test each unique server once (parallel) ──
     const serverTasks = groups.map(async (group): Promise<ServerTestResult> => {
+      // Shared error skeleton: every model parked with its resolved wire id.
+      // Three failure buckets (dead server reference, probe/auth failure,
+      // network/TLS failure) built this identically — one builder now.
+      const errorResult = (errorMessage: string): ServerTestResult => ({
+        serverUrl: group.serverUrl,
+        status: 'error',
+        modelConfigs: group.models,
+        matched: [],
+        parked: group.models.map(m => ({
+          config: m,
+          vllmModelId: resolveVllmModelId(m) ?? '(unnamed)',
+        })),
+        errorMessage,
+      });
+
       if (!group.serverUrl) {
         // Models whose server reference does not resolve — they cannot be tested.
-        return {
-          serverUrl: '',
-          status: 'error',
-          modelConfigs: group.models,
-          matched: [],
-          parked: group.models.map(m => ({
-            config: m,
-            vllmModelId: resolveVllmModelId(m) ?? '(unnamed)',
-          })),
-          errorMessage: 'No resolvable server configured',
-        };
+        return errorResult('No resolvable server configured');
       }
 
       try {
-        const resp = await fetch(buildEndpoint(group.serverUrl, 'v1/models'), {
-          headers: group.requestHeaders,
-          signal: AbortSignal.timeout(10000),
-        });
-
-        if (resp.status === 401 || resp.status === 403) {
-          return {
-            serverUrl: group.serverUrl,
-            status: 'error',
-            modelConfigs: group.models,
-            matched: [],
-            parked: group.models.map(m => ({
-              config: m,
-              vllmModelId: resolveVllmModelId(m) ?? '(unnamed)',
-            })),
-            errorMessage: `Authentication failed (HTTP ${resp.status})`,
-          };
+        // Group probe through the shared backend-aware lister (audit P13-2):
+        // one documented endpoint per backend instead of assuming the OpenAI
+        // shape for everything. The per-model context resolves below now hit
+        // the resolver's short-TTL memo, so a group costs ONE probe, not 1+N.
+        let serverModels: ServerModelEntry[];
+        try {
+          serverModels = await listServerModels(
+            resolveServerType(group.models[0], servers),
+            group.serverUrl,
+            group.requestHeaders,
+          );
+        } catch (probeErr) {
+          const status = probeErr instanceof ServerProbeError ? probeErr.status : undefined;
+          if (status === undefined) throw probeErr; // network/TLS: the outer catch owns the TLS-suggestion bucket
+          return errorResult(
+            status === 401 || status === 403
+              ? `Authentication failed (HTTP ${status})`
+              : describeError(probeErr),
+          );
         }
-
-        if (!resp.ok) {
-          return {
-            serverUrl: group.serverUrl,
-            status: 'error',
-            modelConfigs: group.models,
-            matched: [],
-            parked: group.models.map(m => ({
-              config: m,
-              vllmModelId: resolveVllmModelId(m) ?? '(unnamed)',
-            })),
-            errorMessage: `HTTP ${resp.status}`,
-          };
-        }
-
-        const data = await resp.json() as { data?: VllmModel[] };
-        const serverModels: VllmModel[] = data.data || [];
 
         // Match each configured model against the server's loaded models.
         // EXACT wire-id matching only — `vllmModelId` must be one of the server's
@@ -206,7 +195,7 @@ export function registerTestAndRefreshModelsCommand(
             parked.push({ config: model, vllmModelId: '(unnamed)' });
             continue;
           }
-          const found = serverModels.find((m: VllmModel) => m.id === vllmModelId);
+          const found = serverModels.find((m) => m.id === vllmModelId);
           if (found) {
             // Display-only context, resolved via the SHARED backend resolver
             // (same code path as provider discovery). Independent parsing here would
@@ -261,21 +250,13 @@ export function registerTestAndRefreshModelsCommand(
         }
       } catch (err) {
         const message = describeError(err);
-        return {
-          serverUrl: group.serverUrl,
-          status: 'error',
-          modelConfigs: group.models,
-          matched: [],
-          parked: group.models.map(m => ({
-            config: m,
-            vllmModelId: resolveVllmModelId(m) ?? '(unnamed)',
-          })),
-          // A certificate-ish failure gets the short suggestion: network test +
-          // maybe the setting. One bucket, no deeper classification.
-          errorMessage: isTlsCertificateError(message)
+        // A certificate-ish failure gets the short suggestion: network test +
+        // maybe the setting. One bucket, no deeper classification.
+        return errorResult(
+          isTlsCertificateError(message)
             ? `${message}\n\n${TLS_CERT_SUGGESTION}`
             : message,
-        };
+        );
       }
     });
 
@@ -305,14 +286,14 @@ export function registerTestAndRefreshModelsCommand(
         const ctx = r.matched[0]?.maxModelLen
           ? ` (${r.matched[0].maxModelLen.toLocaleString('en-US')} ctx)`
           : r.matched[0]?.ctxError
-            ? ' (⚠ no context — not served)'
+            ? ' (⚠ no context, not served)'
             : '';
         // A server with at least one match is "OK", but a configured model whose
         // wire id isn't served is silently dropped from the picker — surface it
         // rather than reporting unqualified success.
         const parkedNames = r.parked.map(m => m.vllmModelId).join(', ');
-        const parkedHint = parkedNames ? ` — parked: ${parkedNames}` : '';
-        return `✓ ${r.serverUrl} — ${names}${ctx}${parkedHint}`;
+        const parkedHint = parkedNames ? ` (parked: ${parkedNames})` : '';
+        return `✓ ${r.serverUrl}: ${names}${ctx}${parkedHint}`;
       });
       vscode.window.showInformationMessage(
         lines.length === 1 ? lines[0] : `Reachable servers:\n${lines.join('\n')}`
@@ -328,7 +309,7 @@ export function registerTestAndRefreshModelsCommand(
         const details = r.matched
           .map(m => `${m.vllmModelId}: ${m.ctxError ?? 'no resolvable context'}`)
           .join('\n  ');
-        return `⚠ ${r.serverUrl} — matched but not served:\n  ${details}`;
+        return `⚠ ${r.serverUrl}: matched but not served:\n  ${details}`;
       });
       vscode.window.showWarningMessage(
         lines.length === 1 ? lines[0] : `Models matched but have no resolvable context:\n${lines.join('\n')}`
@@ -338,7 +319,7 @@ export function registerTestAndRefreshModelsCommand(
     // 3b. ONE failure popup — every unreachable/auth-failed server together.
     if (errResults.length > 0) {
       const lines = errResults.map(r => {
-        let line = `✗ ${r.serverUrl} — ${r.errorMessage}`;
+        let line = `✗ ${r.serverUrl}: ${r.errorMessage}`;
         if (r.modelConfigs.length > 1) {
           const modelNames = r.modelConfigs
             .map(m => m.displayName || m.id || resolveVllmModelId(m) || '(unnamed)')
@@ -357,7 +338,7 @@ export function registerTestAndRefreshModelsCommand(
     if (serverlessResults.length > 0) {
       const lines = serverlessResults.flatMap(r =>
         r.modelConfigs.map(c =>
-          `✗ ${c.displayName || c.id || resolveVllmModelId(c) || '(unnamed)'} — no resolvable server configured`
+          `✗ ${c.displayName || c.id || resolveVllmModelId(c) || '(unnamed)'}: no resolvable server configured`
         )
       );
       vscode.window.showWarningMessage(
@@ -386,7 +367,7 @@ export function registerTestAndRefreshModelsCommand(
     //    absence is still worth one line so it is never mistaken for a hang.
     const noMatchEmpty = noMatchResults.filter(r => !(r.serverModelList && r.serverModelList.length > 0));
     if (noMatchEmpty.length > 0) {
-      const lines = noMatchEmpty.map(r => `• ${r.serverUrl} — reachable, but no models served`);
+      const lines = noMatchEmpty.map(r => `• ${r.serverUrl}: reachable, but no models served`);
       vscode.window.showInformationMessage(
         lines.length === 1 ? lines[0] : `Reachable servers with no models:\n${lines.join('\n')}`
       );
@@ -451,6 +432,10 @@ export function registerTestAndRefreshModelsCommand(
       // Clear cached models so the provider re-fetches on next use. Guaranteed
       // to run even if a popup/diagnostic path throws unexpectedly.
       provider.clearCache();
+      // "Refresh" promises live truth on every backend, but the OpenRouter arm
+      // of the resolver reads the catalog memo (60 s TTL) and only this hook
+      // clears it. Without it, a manual refresh re-reads a stale catalog.
+      resetOpenRouterCaches();
     }
   });
 }

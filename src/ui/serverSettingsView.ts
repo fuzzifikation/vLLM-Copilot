@@ -5,17 +5,18 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getConfig, buildEndpoint, findModelConfigIndex, toPublicModelConfig, normalizeServerUrl, sanitizeRequestHeaders, resolveConfigId, resolveVllmModelId, type ModelConfig, type ServerType } from './config.js';
-import { patchModelConfig, readModels, readServers, writeServers, type ModelIdentity } from './configStore.js';
-import { firstEntryById, type ServerEntry } from './serverRegistry.js';
-import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from './openRouter.js';
+import { getConfig, buildEndpoint, findModelConfigIndex, toPublicModelConfig, normalizeServerUrl, sanitizeRequestHeaders, resolveConfigId, resolveVllmModelId, KNOWN_SERVER_TYPES, type ModelConfig, type ServerType } from '../state/config.js';
+import { patchModelConfig, readModels, readServers, writeServers, type ModelIdentity } from '../state/configStore.js';
+import { firstEntryById, type ServerEntry } from '../state/serverRegistry.js';
+import { listServerModels } from '../backends/runtimeLimits.js';
+import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from '../backends/openRouter.js';
 
 import {
   discoverPersonalities,
   ensureGlobalPersonality,
   resolveActivePersonality,
   getGlobalPersonalitiesDir,
-} from './personalityStore.js';
+} from '../persona/personalityStore.js';
 
 // Ordered by frequency of use: common sampling → length → penalties → output control → niche.
 const KNOWN_PARAMS: Record<string, { label: string; type: 'number' | 'string' | 'json'; options?: string[] }> = {
@@ -278,38 +279,33 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
         const url = normalizeServerUrl(entry.serverUrl);
         const entryType = entry.serverType;
         const requestHeaders = sanitizeRequestHeaders(entry.requestHeaders ?? {});
-        // Fetch server model IDs from /v1/models (same endpoint Add Server probes).
-        // Also detect the backend from the response so unconfigured models can be
-        // added with the correct backend instead of silently defaulting to vllm.
+        // Server-reported model ids via the shared backend-aware lister
+        // (audit P9-1/P13-2): LM Studio is listed by its model-key endpoint and
+        // Ollama by its loaded-models endpoint, so the badge is no longer
+        // silently blind for backends without a meaningful /v1/models. The
+        // vLLM/llama.cpp/OpenRouter branch of the lister answers the same
+        // /v1/models the old raw probe did, and carries the fields the backend
+        // detector below reads.
         const serverModelIds: string[] = [];
-        let entries: Array<{ id?: string; owned_by?: string; max_model_len?: number }> = [];
+        let entries: Array<{ owned_by?: string; max_model_len?: number }> = [];
         try {
-          const resp = await fetch(buildEndpoint(url, 'v1/models'), {
-            headers: requestHeaders,
-            signal: AbortSignal.timeout(5000),
-          });
-          if (resp.ok) {
-            entries = (await resp.json() as { data?: Array<{ id?: string; owned_by?: string; max_model_len?: number }> }).data ?? [];
-          } else {
-            this.outputChannel.appendLine(`[WARN] Model Settings: /v1/models probe returned HTTP ${resp.status} for ${url} — server-reported models hidden.`);
+          const listed = await listServerModels(entryType ?? 'vllm', url, requestHeaders);
+          for (const m of listed) {
+            serverModelIds.push(m.id);
+            entries.push({ owned_by: m.ownedBy, max_model_len: m.maxModelLen });
           }
         } catch (err) {
-          this.outputChannel.appendLine(`[WARN] Model Settings: /v1/models probe failed for ${url}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-        for (const m of entries) {
-          if (m.id) serverModelIds.push(m.id);
+          this.outputChannel.appendLine(`[WARN] Model Settings: model list probe failed for ${url}: ${err instanceof Error ? err.message : String(err)} — server-reported models hidden.`);
         }
         // /v1/models can only identify vLLM and llama.cpp. LM Studio / Ollama have no
         // /v1/models signature — when the endpoint signal is inconclusive (or unreachable),
         // fall back to the entry's persisted serverType.
         const detectedServerType = resolveDetectedServerType(entries, [entry]);
-        // Mirror the dashboard's single normalization point for the display name:
-        // trimmed (whitespace-only hand-edits never render as blank labels) and
-        // skipped for OpenRouter relays (fixed endpoint, not renamable). The
-        // webview's relay-guard stays as defense-in-depth, not the source of truth.
-        const serverDisplayName = entryType === 'openrouter'
-          ? undefined
-          : entry.displayName?.trim() || undefined;
+        // Mirror the dashboard's single normalization point for the display
+        // name: trimmed, so whitespace-only hand-edits never render as blank
+        // labels. One rule for every backend, relays included — rename
+        // addresses the entry, so the entry's own label is what shows.
+        const serverDisplayName = entry.displayName?.trim() || undefined;
         // Public projection: models carry no credentials post-registry — auth
         // lives on the entry, whose headers never reach the webview DOM.
         return {
@@ -463,8 +459,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
    * two entries with the same URL and headers are two servers by design.
    */
   private async setServerType(msg: SetServerTypeMessage): Promise<void> {
-    const validTypes: ServerType[] = ['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter'];
-    if (!msg.server || !validTypes.includes(msg.serverType)) return;
+    if (!msg.server || !KNOWN_SERVER_TYPES.includes(msg.serverType)) return;
     const servers = readServers();
     const selected = servers.find(s => s.id === msg.server);
     if (!selected || (selected.serverType ?? 'vllm') === msg.serverType) return;

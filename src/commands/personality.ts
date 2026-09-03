@@ -6,11 +6,11 @@
  */
 
 import * as vscode from 'vscode';
-import type { VllmChatModelProvider } from '../provider.js';
-import { getConfig, resolveServerConfig } from '../config.js';
-import { replaceModelConfig, type IdentifiedModelConfig } from '../configStore.js';
-import { discoverPersonalities, ensureGlobalPersonality, resolveActivePersonality } from '../personalityStore.js';
-import { describeError } from '../messageConverter.js';
+import type { VllmChatModelProvider } from '../provider/provider.js';
+import { getConfig, findModelConfigIndex, resolveConfigId, resolveServerConfig } from '../state/config.js';
+import { patchModelConfig, readModels } from '../state/configStore.js';
+import { discoverPersonalities, ensureGlobalPersonality, resolveActivePersonality } from '../persona/personalityStore.js';
+import { describeError } from '../provider/messageConverter.js';
 
 /**
  * A personality option in the Set Model Personality quick pick (step 2/2).
@@ -91,7 +91,7 @@ export function registerSetModelPersonalityCommand(
         {
           ...markCurrent(
             'Default (no personality)',
-            "Clear replacements — use Copilot's original system prompt",
+            "Clear replacements - use Copilot's original system prompt",
             isDefaultActive,
           ),
           clear: true,
@@ -140,14 +140,26 @@ export function registerSetModelPersonalityCommand(
         const replacementsFile = clear
           ? ''
           : await ensureGlobalPersonality(context, sourcePath!);
-        // The server ref is verified resolvable by personalityApplicableTo above;
-        // id or vllmModelId is present for any matched entry. The store
-        // re-validates identity at runtime rather than writing a malformed entry.
-        await replaceModelConfig({
-          ...modelPick.model,
-          // Empty string is the explicit clear signal (undefined would preserve the previous value).
-          systemMessageReplacementsFile: replacementsFile,
-        } as IdentifiedModelConfig);
+        // Re-read at write time and patch ONLY this command's field (the CR-13
+        // staleness doctrine, same fix as the Add flows): the entry was
+        // snapshotted before two quickpicks and an awaited file copy, so the
+        // previous whole-entry replace clobbered any concurrent edit (webview
+        // save, auto-configure) with the stale object. Identity re-checked
+        // against the LIVE store with the store's own matcher: a model deleted
+        // or re-keyed since the pick aborts honestly, instead of being appended
+        // back as a shell by patchModelConfig's documented append-on-no-match.
+        const pickId = resolveConfigId(modelPick.model);
+        const pickServer = modelPick.model.server ?? '';
+        // Blank id: the old replaceModelConfig path refused this at the store
+        // boundary (assertValidIdentity); refuse it here with an honest line.
+        if (!pickId || !pickId.trim() || findModelConfigIndex(readModels(), pickId, pickServer) < 0) {
+          outputChannel.appendLine(
+            `[WARN] Personality not applied: model "${pickId}" no longer exists (deleted or re-keyed since it was picked). Nothing was saved.`
+          );
+          return;
+        }
+        // Empty string is the explicit clear signal (undefined would preserve the previous value).
+        await patchModelConfig({ id: pickId, server: pickServer }, { systemMessageReplacementsFile: replacementsFile });
         outputChannel.appendLine(
           `[INFO] Personality presets: ${clear ? 'cleared' : `applied ${sourcePath}`} for ${modelPick.label}`
         );

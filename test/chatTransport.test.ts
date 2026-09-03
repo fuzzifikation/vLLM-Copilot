@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { ChatTransport } from '../src/provider/chatTransport.js';
-import type { ServerType } from '../src/config.js';
+import type { ServerType } from '../src/state/config.js';
 import type { OpenAIChatMessage, VllmChatOptions } from '../src/types.js';
 
 /**

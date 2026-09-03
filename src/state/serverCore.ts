@@ -80,13 +80,36 @@ export function normalizeServerUrl(url: string): string {
     normalized = normalized.slice(0, -1);
   }
 
-  // Strip a trailing /v1 path segment. Users commonly copy the OpenAI base URL
+  // Strip trailing /v1 path segments. Users commonly copy the OpenAI base URL
   // (e.g. https://api.openai.com/v1) but the extension appends /v1 itself.
-  if (normalized.endsWith('/v1')) {
-    normalized = normalized.slice(0, -3);
-  }
+  // Repeated and case-insensitive: every read re-normalizes (resolveServer,
+  // entryMatchesConnection), so the old single-shot strip was NOT idempotent
+  // ('.../v1/v1' stored as '.../v1', effective '...' — stored value and
+  // effective URL disagreeing, which defeats connection matching on the next
+  // add) and a capitalized '/V1' was never stripped at all.
+  normalized = normalized.replace(/(?:\/v1)+$/i, '');
 
   return normalized;
+}
+
+/**
+ * Is this stored registry-entry URL a usable connection target? The extension
+ * mints registry URLs normalized, but settings.json is hand-editable: a blank
+ * value or a host-less shape ("http://", "//host", "/v1", "?x") normalizes to
+ * the localhost:8000 sentinel (see {@link normalizeServerUrl}), and resolving
+ * it would silently route the entry's request headers — credentials included
+ * — to whatever local process squats on that port. The migration planner
+ * checks this shape itself; the runtime resolver and validateConfig answer
+ * through this one rule instead, so garbage fails loudly (unresolvable entry +
+ * validation warning) instead of silently misrouting.
+ *
+ * A real host is required: the authority segment (host[:port]) before any
+ * path/query/fragment must be non-empty once the scheme is removed.
+ */
+export function isUsableServerUrl(raw: unknown): raw is string {
+  if (typeof raw !== 'string' || !raw.trim()) return false;
+  const authority = raw.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split(/[/?#]/)[0].trim();
+  return authority !== '';
 }
 
 /**
@@ -145,6 +168,30 @@ export function sameHeaders(
     if (!fb.has(k) || fb.get(k) !== v) return false;
   }
   return true;
+}
+
+/**
+ * True when a server URL points at OpenRouter's fixed managed remote. Used to
+ * route the Add flow into the OpenRouter branch — the "server" is fixed, so the
+ * user's URL input is really a *model* reference — and to classify the backend
+ * during detection and the forced migration. Host-only: the API base
+ * (`openrouter.ai/api`), model-page URLs, and any future openrouter.ai host all
+ * match. Scheme-less input returns false (the Add flow normalizes before
+ * calling this).
+ *
+ * Division of labor (audit P16-3): the declarative `serverType` field is the
+ * SOLE runtime truth — every request-path consumer (resolver arm, request
+ * builder, metrics) dispatches on it. This host predicate is a detection and
+ * migration concern: classifying raw user URL input that has no entry (yet),
+ * and filling the key-prompt defaults in Update Auth. Never branch runtime
+ * behavior on it.
+ */
+export function isOpenRouterUrl(serverUrl: string): boolean {
+  try {
+    return new URL(serverUrl).hostname.replace(/^www\./, '').toLowerCase() === 'openrouter.ai';
+  } catch {
+    return false;
+  }
 }
 
 

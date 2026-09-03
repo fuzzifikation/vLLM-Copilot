@@ -12,8 +12,8 @@ import {
   resolveActivePersonality,
   getGlobalPersonalitiesDir,
   syncBundledPersonalities,
-} from '../src/personalityStore.js';
-import { COMMON_REPLACEMENTS_FILENAME } from '../src/promptReplacer.js';
+} from '../src/persona/personalityStore.js';
+import { COMMON_REPLACEMENTS_FILENAME } from '../src/persona/promptReplacer.js';
 
 const fsMock = vi.hoisted(() => {
   const files = new Map<string, string>();

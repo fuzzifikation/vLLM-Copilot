@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { resolveModelConfigForAdd, resolveModelConfigForAddSafely } from '../src/commands/hfDiscovery.js';
+import { clearRuntimeLimitsCache } from '../src/backends/runtimeLimits.js';
 
 /**
  * HuggingFace auto-discovery pins. `autoConfigureModel` is module-private
@@ -18,6 +19,12 @@ describe('autoConfigureModel (via resolveModelConfigForAdd)', () => {
     vi.unstubAllGlobals();
     delete (vscode as any).workspace._mockFsReadDirectory;
     delete (vscode as any).workspace._mockFsReadFile;
+    // The server-list memo (runtimeLimits) is keyed WITHOUT the model id and
+    // lives 5 s — a successful list fetched by one test would satisfy the next
+    // test's lookup on the same serverUrl+headers, so a model id only the next
+    // stub serves would "disappear" (order-dependent failures). Same doctrine
+    // as resetOpenRouterCaches in the OpenRouter flow tests.
+    clearRuntimeLimitsCache();
   });
 
   /** No bundled presets — the resolver cannot stop at the preset dialog. */
@@ -74,6 +81,32 @@ describe('autoConfigureModel (via resolveModelConfigForAdd)', () => {
     // not re-claim tool calling that the model's own template proves it lacks.
     expect(result!.modelConfig.capabilities).toEqual({ toolCalling: false, imageInput: false });
     expect(result!.summary.join('\n')).toContain('No tool calling markers in chat template');
+  });
+
+  it('vision detection claims imageInput only — the template verdict owns toolCalling', async () => {
+    // CR-7 canary: the vision branch used to write `toolCalling: true`
+    // wholesale, which made the template's detected-absence branch
+    // (guarded on undefined) structurally unreachable — agent turns then
+    // sent `tools` to a server whose model rejects them, while the summary
+    // claimed the opposite.
+    stubFetch((url: string) => {
+      if (url.endsWith('/v1/models')) {
+        return jsonResponse({ data: [{ id: 'vision-thing', max_model_len: 32768 }] });
+      }
+      if (url.includes('/api/models/vision-thing')) {
+        return jsonResponse({
+          id: 'vision-thing',
+          config: { model_type: 'qwen2_5_vl', tokenizer_config: { chat_template: '{{ messages }}' } },
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    seedNoPresets();
+    const result = await resolveModelConfigForAdd(extContext, 'vision-thing', 'http://host:8000');
+
+    expect(result!.summary.join('\n')).toContain('Vision support detected (model_type: qwen2_5_vl)');
+    expect(result!.modelConfig.capabilities).toEqual({ toolCalling: false, imageInput: true });
   });
 
   it('passes per-server request headers through to the vLLM fetch', async () => {

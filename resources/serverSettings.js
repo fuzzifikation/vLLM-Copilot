@@ -287,10 +287,10 @@
     S.servers.forEach(s => {
       const n = (urlSeen[s.url] || 0) + 1;
       urlSeen[s.url] = n;
-      // Prefer the user-set server display name over the URL — trimmed, and
-      // never for OpenRouter relays (fixed managed endpoint, not renamable).
-      const relay = s.serverType === 'openrouter';
-      const nm = relay ? '' : String(s.serverDisplayName || '').trim();
+      // Prefer the user-set server display name over the URL — trimmed. The
+      // name belongs to the registry entry (Rename Server addresses exactly
+      // one entry, relays included).
+      const nm = String(s.serverDisplayName || '').trim();
       const base = nm || s.url;
       const label = urlCount[s.url] > 1 ? base + ' (identity ' + n + ')' : base;
       h += '<option value="' + E(s.key) + '"' + (s.key === S.selServer ? ' selected' : '') + '>' + E(label) + '</option>';
@@ -337,7 +337,7 @@
     // keyed by wire id in S.providersByModel). The option value is the exact API
     // `tag` — never derived. "Auto" (empty) = let OpenRouter route. If the list
     // is unavailable (fetch failed), only "Auto" shows; nothing is fabricated.
-    if (sv.serverType === 'openrouter') {
+    if (mc && sv.serverType === 'openrouter') {
       const wire = mc.vllmModelId || mc.id || '';
       const endpoints = (S.providersByModel || {})[wire] || [];
       h += '<label>Provider</label><select data-f="provider">';
@@ -379,16 +379,24 @@
     }
     h += '</div>';
 
-    // Display name sits right after the model selector — it's the user-facing label.
-    h += '<div class="field"><label>displayName</label>' +
-      '<input type="text" data-f="displayName" value="' + E(String(mc.displayName || '')) + '">' +
-      '<div class="field-hint">Name shown in model picker</div></div>';
+    if (mc) {
+      // Display name sits right after the model selector — it's the user-facing label.
+      h += '<div class="field"><label>displayName</label>' +
+        '<input type="text" data-f="displayName" value="' + E(String(mc.displayName || '')) + '">' +
+        '<div class="field-hint">Name shown in model picker</div></div>';
 
-    // Action buttons row — these address the model, not the personality.
-    h += '<div class="action-btn-row">';
-    h += '<button id="autoConfigureBtn" class="secondary">Auto-Configure</button>';
-    h += '<button id="removeModelBtn" class="secondary" style="color:var(--vscode-errorForeground)">Remove Model</button>';
-    h += '</div>';
+      // Action buttons row — these address the model, not the personality.
+      h += '<div class="action-btn-row">';
+      h += '<button id="autoConfigureBtn" class="secondary">Auto-Configure</button>';
+      h += '<button id="removeModelBtn" class="secondary" style="color:var(--vscode-errorForeground)">Remove Model</button>';
+      h += '</div>';
+    } else {
+      // Nothing to edit: this server has no configured model and reported none
+      // (an "Add Server (no model)" registry entry, or an unreachable server).
+      // The server-level rows above stay functional; the model form is absent,
+      // so mc stays null and save() writes server-level fields only.
+      h += '<p class="empty-state">No model to configure on this server yet. Run "Add vLLM Server &amp; Model", or check the server connection.</p>';
+    }
 
     if (S.mc) {
       const m = S.mc;
@@ -690,6 +698,12 @@
     u.modelModes = modes;
     const dp = {};
     document.querySelectorAll('[data-dk]').forEach(inp => {
+      // Only real controls carry values. dpSection/addDp also stamp data-dk on
+      // the wrapper div (and the remove button): a DIV has no .value, so the
+      // numeric branch computed Number(undefined) = NaN, which JSON.stringify
+      // turned into null — and null passed the save filter's !== undefined
+      // check, persisting "key": null into defaultParams for every section.
+      if (!inp.matches('input,textarea,select')) return;
       const k = inp.dataset.dk;
       let v;
       if (inp.tagName === 'TEXTAREA') v = jsonValueOrString(inp.value);

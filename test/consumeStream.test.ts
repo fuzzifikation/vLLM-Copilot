@@ -11,7 +11,7 @@ const createOutcome = (): StreamOutcome => ({
   hadReasoning: false,
   sawRawThinkTags: false,
 });
-import { getLastRequest } from '../src/usageStore.js';
+import { getLastRequest } from '../src/usage/usageStore.js';
 import type { StreamEvent } from '../src/types.js';
 
 /**

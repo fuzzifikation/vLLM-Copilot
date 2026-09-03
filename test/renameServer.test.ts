@@ -1,19 +1,20 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { ConfigurationTarget } from 'vscode';
-import { registerRenameServerCommand } from '../src/commands.js';
+import { registerRenameServerCommand } from '../src/commands/commands.js';
 
 /**
- * Tests for the "Rename Server" command and its registry-write helper.
+ * Tests for the "Rename Server" command.
  *
- * Semantics pinned here: the display name labels THE SERVER, so the helper
- * matches registry entries by NORMALIZED URL (wider than the URL+headers
- * fingerprint that groups the dashboard tree — two credential identities are
- * two views of the same box and share its label). Empty/whitespace input
- * CLEARS by deleting the key — this write path bypasses entry sanitization,
- * so storing '' verbatim would be a bug. OpenRouter is rejected:
- * openrouter.ai is a fixed managed relay, nothing to rename. Cancel = no
- * write. Unknown URLs fail loudly (stale tree items must not look like no-ops).
+ * Semantics pinned here: rename addresses EXACTLY ONE registry entry — the
+ * tree item's `serverId`, or the first entry on the URL for bare-URL
+ * programmatic calls. Entries sharing a URL (two OpenRouter keys, two
+ * gateway tenants) keep separate labels: entry id is the identity, and
+ * rename is no exception. Every backend is renamable, relays included —
+ * one rule, no OpenRouter refusal. Empty/whitespace input CLEARS by
+ * deleting the key — this write path bypasses entry sanitization, so
+ * storing '' verbatim would be a bug. Cancel = no write. Unknown
+ * addresses fail loudly (stale tree items must not look like no-ops).
  */
 
 const output = { appendLine: vi.fn(), show: vi.fn() } as any;
@@ -39,7 +40,7 @@ describe('renameServer command', () => {
     output.appendLine.mockClear();
   });
 
-  it('renames every entry on the URL and invalidates the provider cache', async () => {
+  it('renames exactly the addressed entry and invalidates the provider cache', async () => {
     const servers = [
       { id: 'a', serverUrl: 'http://s:8000' },
       { id: 'b', serverUrl: 'http://s:8000/v1' },
@@ -50,18 +51,44 @@ describe('renameServer command', () => {
     vi.spyOn(vscode.window, 'showInputBox').mockResolvedValueOnce('IT Server for GLM5.2');
 
     const disposable = registerRenameServerCommand({} as any, provider, output);
-    await (vscode as any).commands._run('vllm-copilot.renameServer', 'http://s:8000');
+    // The context menu passes the tree item, which carries the entry id.
+    await (vscode as any).commands._run('vllm-copilot.renameServer',
+      { serverUrl: 'http://s:8000', serverId: 'a' });
     disposable.dispose();
 
     const written = cfg.update.mock.calls.find((c: any[]) => c[0] === 'servers')![1] as any[];
     expect(written[0].displayName).toBe('IT Server for GLM5.2');
-    expect(written[1].displayName).toBe('IT Server for GLM5.2');
-    // Entries on other URLs are untouched AND identity-preserved — an
-    // unchanged entry must not be rewritten (no spurious churn in settings).
+    // The sibling sharing the URL is NOT renamed — entries are separate
+    // servers by doctrine — and it stays identity-preserved (no churn).
+    expect('displayName' in written[1]).toBe(false);
+    expect(written[1]).toBe(servers[1]);
+    // Entries on other URLs are untouched AND identity-preserved too.
     expect('displayName' in written[2]).toBe(false);
     expect(written[2]).toBe(servers[2]);
     expect(cfg.update.mock.calls.find((c: any[]) => c[0] === 'servers')![2]).toBe(ConfigurationTarget.Global);
     expect(provider.clearCache).toHaveBeenCalledTimes(1);
+  });
+
+  it('two entries sharing one URL get separate labels (identity doctrine)', async () => {
+    // The exact OpenRouter case that made rename URL-wide awkward: two keys,
+    // one fixed endpoint. Each entry must wear its own name.
+    const servers = [
+      { id: 'or-work', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' },
+      { id: 'or-home', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' },
+    ];
+    const cfg = makeConfig(servers);
+    vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
+    vi.spyOn(vscode.window, 'showInputBox').mockResolvedValueOnce('Personal key');
+
+    const disposable = registerRenameServerCommand({} as any, provider, output);
+    await (vscode as any).commands._run('vllm-copilot.renameServer',
+      { serverUrl: 'https://openrouter.ai/api', serverId: 'or-home' });
+    disposable.dispose();
+
+    const written = cfg.update.mock.calls.find((c: any[]) => c[0] === 'servers')![1] as any[];
+    expect('displayName' in written[0]).toBe(false);
+    expect(written[0]).toBe(servers[0]);
+    expect(written[1].displayName).toBe('Personal key');
   });
 
   it('writes nothing and says so when the name is already exactly the target', async () => {
@@ -108,20 +135,19 @@ describe('renameServer command', () => {
     expect(provider.clearCache).not.toHaveBeenCalled();
   });
 
-  it('rejects OpenRouter relays without prompting or writing', async () => {
+  it('renames OpenRouter entries like every other backend (one rule, no relay refusal)', async () => {
     const servers = [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }];
     const cfg = makeConfig(servers);
     vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
-    const inputSpy = vi.spyOn(vscode.window, 'showInputBox');
-    const infoSpy = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValueOnce(undefined as any);
+    vi.spyOn(vscode.window, 'showInputBox').mockResolvedValueOnce('Work key');
 
     const disposable = registerRenameServerCommand({} as any, provider, output);
     await (vscode as any).commands._run('vllm-copilot.renameServer', 'https://openrouter.ai/api');
     disposable.dispose();
 
-    expect(inputSpy).not.toHaveBeenCalled();
-    expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('OpenRouter'));
-    expect(cfg.update).not.toHaveBeenCalled();
+    const written = cfg.update.mock.calls.find((c: any[]) => c[0] === 'servers')![1] as any[];
+    expect(written[0].displayName).toBe('Work key');
+    expect(provider.clearCache).toHaveBeenCalledTimes(1);
   });
 
   it('warns before prompting when no registry entry matches the URL', async () => {
@@ -177,11 +203,14 @@ describe('renameServer command', () => {
     vi.spyOn(vscode.window, 'showInputBox').mockResolvedValueOnce('Late Name');
 
     const disposable = registerRenameServerCommand({} as any, provider, output);
+    // Bare URL addresses the FIRST entry on that URL.
     await (vscode as any).commands._run('vllm-copilot.renameServer', 'http://s:8000');
     disposable.dispose();
 
     const written = (cfg.update.mock.calls as any[]).find((c: any[]) => c[0] === 'servers')![1] as any[];
     expect(written).toHaveLength(2);
-    expect(written.every((s: any) => s.displayName === 'Late Name')).toBe(true);
+    expect(written[0].displayName).toBe('Late Name');
+    // The entry that appeared mid-prompt survives, untouched and unnamed.
+    expect('displayName' in written[1]).toBe(false);
   });
 });

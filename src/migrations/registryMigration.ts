@@ -8,16 +8,16 @@
  */
 
 import {
+  isOpenRouterUrl,
   normalizeServerUrl,
   sanitizeRequestHeaders,
   sameHeaders,
-} from './config.js';
-import { isOpenRouterUrl } from './openRouter.js';
+} from '../state/config.js';
 import {
   type ServerEntry,
   entryMatchesConnection,
   generateServerId,
-} from './serverRegistry.js';
+} from '../state/serverRegistry.js';
 
 /**
  * The pre-migration model shape: server facts inline on the model. This is the
@@ -25,7 +25,7 @@ import {
  * the sweep nothing else may. `Omit<ModelConfig, ...>` keeps the shared model
  * fields in lockstep with the live type.
  */
-import type { ModelConfig, ServerType } from './config.js';
+import type { ModelConfig, ServerType } from '../state/config.js';
 
 export type LegacyModelConfig = Omit<ModelConfig, 'server'> & {
   serverUrl?: string;
@@ -115,6 +115,10 @@ export function planRegistryMigration(models: LegacyModelConfig[], existing: Ser
     modelIds: string[];
     declaredTypes: Set<ServerType>;
     hasTypeless: boolean;
+    /** Effective protocol of a REUSED existing entry (undefined for created
+     *  groups). The entry is never mutated, so this is what every member of a
+     *  reused group will actually speak — it must join the conflict union. */
+    reusedType?: ServerType;
   }
   const groups: Group[] = [];
   const takenIds = new Set<string>();
@@ -187,8 +191,14 @@ export function planRegistryMigration(models: LegacyModelConfig[], existing: Ser
       // instead of creating a duplicate — reuse-only, the entry is never mutated.
       const reused = existing.find(e => entryMatchesConnection(e, normalizedUrl, headers));
       let serverId: string;
+      let reusedType: ServerType | undefined;
       if (reused) {
         serverId = reused.id;
+        // A reused entry is never mutated, so ITS effective protocol is what
+        // every model in this group will speak. Without it in the union, a
+        // typeless group (implicitly vllm) bound to an existing 'ollama' entry
+        // reported no conflict while silently changing every member's backend.
+        reusedType = reused.serverType ?? (isOpenRouterUrl(normalizedUrl) ? 'openrouter' : 'vllm');
       } else {
         // An unparseable URL survives normalizeServerUrl only to die in
         // generateServerId's `new URL`. Never let one garbage entry abort the
@@ -220,6 +230,7 @@ export function planRegistryMigration(models: LegacyModelConfig[], existing: Ser
         modelIds: [],
         declaredTypes: new Set<ServerType>(),
         hasTypeless: false,
+        reusedType,
       };
       groups.push(group);
     }
@@ -239,6 +250,7 @@ export function planRegistryMigration(models: LegacyModelConfig[], existing: Ser
   for (const group of groups) {
     const protocols = new Set<ServerType>(group.declaredTypes);
     if (group.hasTypeless) protocols.add(group.isOpenRouter ? 'openrouter' : 'vllm');
+    if (group.reusedType !== undefined) protocols.add(group.reusedType);
     if (protocols.size > 1) {
       conflicts.push({
         serverId: group.serverId,

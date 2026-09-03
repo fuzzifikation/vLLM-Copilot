@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { convertMessages } from '../messageConverter.js';
+import { convertMessages } from './messageConverter.js';
 import {
   resolveVllmModelId,
   resolveOverrideForModel,
@@ -8,9 +8,10 @@ import {
   resolveRequestParams,
   resolveServerType,
   resolveMaxTokensForRequest,
+  readPickerSelection,
   type VllmConfig,
   type ServerType,
-} from '../config.js';
+} from '../state/config.js';
 import type { OpenAIChatMessage } from '../types.js';
 
 /**
@@ -82,43 +83,27 @@ export function buildRequest(
   // Resolve the effective request params via the layering chain (highest wins):
   //   DEFAULT_REQUEST_PARAMS ← (max_tokens + Copilot modelOptions) ← model defaultParams ← selected mode.
   // max_tokens = output budget only; vLLM enforces prompt+output <= max_model_len server-side.
-  // `modelConfiguration` is a `chatProvider`-proposal field: absent from stable
-  // `@types/vscode` (pair with `configurationSchema` in modelInfo.ts). This `any`
-  // read means a future proposal drop compiles clean and the mode picker fails
-  // silently — a known, accepted coupling.
-  const modelConfiguration = (options as any).modelConfiguration as Record<string, unknown> | undefined;
   const modelOverrides = config.models || [];
   const servers = config.servers || [];
   const override = resolveOverrideForModel(modelOverrides, model.id);
 
-  const selectedMode = typeof modelConfiguration?.reasoningEffort === 'string'
-    ? modelConfiguration.reasoningEffort as string
-    : undefined;
-
-  // Output-length picker (`maxOutputTokens` property in configurationSchema,
-  // group 'tokens'): an explicit user pick that outranks mode/defaultParams
-  // max_tokens. Only the
-  // type check happens here — normalization and the ceiling clamp are owned by
-  // resolveMaxTokensForRequest, so a stale cached schema can never push
-  // max_tokens above what Copilot was told the model can do. Non-numeric
-  // (absent dropdown) → undefined → legacy resolution.
-  const pickerTokensRaw = modelConfiguration?.maxOutputTokens;
-  const pickerTokens = typeof pickerTokensRaw === 'number' ? pickerTokensRaw : undefined;
+  // Mode + output-length pick, read through the same shared reader the provider
+  // uses for tracking (single parse, audit P1-1). The pick already outranks
+  // mode/defaultParams max_tokens inside resolveMaxTokensForRequest, where the
+  // ceiling clamp also lives: a stale cached schema can never push max_tokens
+  // above what Copilot was told the model can do.
+  const { selectedMode, pickerTokens } = readPickerSelection(options);
 
   const modeParams = selectedMode && override?.modelModes?.[selectedMode]
     ? override.modelModes[selectedMode]
     : undefined;
 
   const mergedOptions: Record<string, unknown> = {
-    // Layered params: defaults ← (max_tokens + Copilot modelOptions) ← defaultParams ← mode.
-    // Copilot's modelOptions can carry arbitrary keys (incl. a UI max_tokens); a
-    // max_tokens from there is re-asserted below, so Copilot's UI value never
-    // reaches the wire — the output budget is owned by the model config, or by
-    // the output-length picker when the model declares a maxOutputTokens vector.
-    ...resolveRequestParams(override, selectedMode, {
-      max_tokens: model.maxOutputTokens,
-      ...options.modelOptions,
-    }),
+    // Layered params: defaults ← Copilot modelOptions ← defaultParams ← mode.
+    // No max_tokens is seeded into this layering (audit P1-2): the output
+    // budget is re-asserted after the spread, so nothing layered before it —
+    // Copilot's UI value included — can reach the wire unclamped.
+    ...resolveRequestParams(override, selectedMode, { ...options.modelOptions }),
     // NOTE: tools/tool_choice come last so Copilot's tool definitions always win.
     tools,
     // Enforce tool_choice when Copilot requires the model to call a tool.
@@ -127,15 +112,13 @@ export function buildRequest(
       : {}),
   };
 
-  // Re-assert max_tokens after layering so the output budget is ALWAYS owned by
-  // the model config: a user-configured max_tokens in defaultParams or the
-  // selected mode is honored but clamped to the ADVERTISED model.maxOutputTokens
-  // (which already embeds the context-window reservation + the server-reported
-  // output ceiling via deriveTokenBudget). The wire therefore never exceeds what
-  // Copilot was told — ceiling-safe, and Option A: an up-switch to a larger mode
-  // budget takes effect on the NEXT request once metadata re-registers, while
-  // down-switches are instant. Copilot's runtime modelOptions.max_tokens is
-  // ignored — the budget is owned by the model config.
+  // The output budget is decided here and only here: the configured value
+  // (mode > defaultParams, resolved inside resolveMaxTokensForRequest, picker
+  // pick outranking both) clamped to the ADVERTISED model.maxOutputTokens, which
+  // already embeds the context-window reservation and the server-reported
+  // ceiling via deriveTokenBudget. The wire never exceeds what Copilot was
+  // told. Option A: an up-switch to a larger mode budget takes effect on the
+  // NEXT request once metadata re-registers; down-switches are instant.
   mergedOptions.max_tokens = resolveMaxTokensForRequest(
     override,
     selectedMode,
@@ -157,9 +140,6 @@ export function buildRequest(
     mergedOptions.provider = { only: [providerTag] };
     output.appendLine(`[INFO] Model "${model.id}" → OpenRouter provider pinned: "${providerTag}" (provider.only)`);
   }
-  // Log model mode diagnostic info to output channel for debugging
-  output.appendLine(`[DEBUG] Model ${model.id}: modelConfiguration=${JSON.stringify(modelConfiguration)}, override.modelModes=${override?.modelModes ? Object.keys(override.modelModes).join(', ') : 'none'}, selectedMode=${selectedMode ?? 'none'}`);
-
   if (modeParams) {
     output.appendLine(`[INFO] Model mode: "${selectedMode}" → ${JSON.stringify(modeParams)}`);
   } else if (selectedMode) {

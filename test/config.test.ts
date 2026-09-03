@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildEndpoint,
   resolveServerConfig,
-} from '../src/config.js';
+} from '../src/state/config.js';
 
 describe('buildEndpoint', () => {
   it('joins base URL and path without leading slash', () => {

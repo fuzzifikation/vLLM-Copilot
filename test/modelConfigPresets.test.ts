@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { parsePresetFile, stripJsonComments, PRESET_CONFIG_KEYS } from '../src/commands/presets.js';
+import { parsePresetFile, parsePresetRawJson, PRESET_CONFIG_KEYS } from '../src/commands/presets.js';
 
 /**
  * Guards the shipped model-configs/ presets: every JSON must parse through the
@@ -28,7 +28,7 @@ describe('shipped model-configs presets', () => {
       it('is a v2 envelope (presetVersion 1 with match list)', () => {
         // Raw check — assert the version tag explicitly (parsePresetFile
         // rejects anything else, but a missing tag here means authoring drift).
-        const raw = JSON.parse(stripJsonComments(text));
+        const raw = parsePresetRawJson(text)!;
         expect(raw.presetVersion, `${file} must declare presetVersion`).toBe(1);
         expect(Array.isArray(raw.match) && raw.match.length).toBeGreaterThan(0);
       });
@@ -48,23 +48,23 @@ describe('shipped model-configs presets', () => {
       });
 
       it('config only uses preset-allowed keys', () => {
-        const raw = JSON.parse(stripJsonComments(text));
-        for (const key of Object.keys(raw.config)) {
+        const raw = parsePresetRawJson(text)!;
+        for (const key of Object.keys(raw.config as Record<string, unknown>)) {
           expect(PRESET_CONFIG_KEYS.has(key), `${file}: unknown config key "${key}"`).toBe(true);
         }
       });
 
       it('carries user-facing provenance metadata', () => {
-        const raw = JSON.parse(stripJsonComments(text));
-        expect(typeof raw.meta?.name).toBe('string');
-        expect(raw.meta.name.trim().length).toBeGreaterThan(0);
-        expect(typeof raw.meta?.notes).toBe('string');
-        expect(raw.meta.notes.trim().length).toBeGreaterThan(0);
-        if (raw.meta.source !== undefined) {
-          expect(raw.meta.source, `${file}: meta.source must be https`).toMatch(/^https:\/\//);
+        const meta = parsePresetRawJson(text)!.meta as Record<string, string | undefined>;
+        expect(typeof meta?.name, `${file}: meta.name must be a string`).toBe('string');
+        expect(meta.name!.trim().length).toBeGreaterThan(0);
+        expect(typeof meta?.notes, `${file}: meta.notes must be a string`).toBe('string');
+        expect(meta.notes!.trim().length).toBeGreaterThan(0);
+        if (meta.source !== undefined) {
+          expect(meta.source, `${file}: meta.source must be https`).toMatch(/^https:\/\//);
         }
-        if (raw.meta.verified !== undefined) {
-          expect(raw.meta.verified, `${file}: meta.verified must be YYYY-MM-DD`).toMatch(
+        if (meta.verified !== undefined) {
+          expect(meta.verified, `${file}: meta.verified must be YYYY-MM-DD`).toMatch(
             /^\d{4}-\d{2}-\d{2}$/,
           );
         }
@@ -95,7 +95,7 @@ describe('model-configs/index.json (remote preset list)', () => {
 
   it('entry match arrays are identical to the preset file match arrays', () => {
     for (const entry of indexRaw.presets) {
-      const raw = JSON.parse(stripJsonComments(readFileSync(configsDir + entry.file, 'utf8')));
+      const raw = parsePresetRawJson(readFileSync(configsDir + entry.file, 'utf8'))!;
       expect(entry.match, `index match drift for ${entry.file}`).toEqual(raw.match);
     }
   });

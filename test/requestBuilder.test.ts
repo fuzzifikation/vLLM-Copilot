@@ -24,7 +24,7 @@ describe('buildRequest', () => {
       opts(),
       {
         models: [{ id: 'm', server: 'srv' }],
-        servers: [{ id: 'srv', serverUrl: '' }],
+        servers: [{ id: 'srv', serverUrl: 'http://localhost:8000/' }],
         enableFileLogging: false,
       },
       output,
@@ -34,8 +34,10 @@ describe('buildRequest', () => {
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'hi' },
     ]);
-    // Bare override (no vllmModelId): wire id falls back to model id. An empty
-    // registry URL normalizes to the default localhost at resolution time.
+    // Bare override (no vllmModelId): wire id falls back to model id. The
+    // registry URL is normalized (trailing slash stripped) at resolution time;
+    // a BLANK url is no longer resolvable at all (isUsableServerUrl refuses the
+    // localhost sentinel — headers must never misroute to a squatter port).
     expect(result.vllmModelId).toBe('m');
     expect(result.serverConfig.serverUrl).toBe('http://localhost:8000');
     // Output budget re-asserted from the model's context-window-derived max.

@@ -50,9 +50,9 @@ export function collectErrorMessages(error: unknown): string[] {
 
 /**
  * Best single human-readable message for an error envelope, or undefined when
- * none can be found. Joins {@link collectErrorMessages} with " — ".
+ * none can be found. Joins {@link collectErrorMessages} with " - ".
  */
 export function serverErrorMessage(error: unknown): string | undefined {
   const messages = collectErrorMessages(error);
-  return messages.length > 0 ? messages.join(' — ') : undefined;
+  return messages.length > 0 ? messages.join(' - ') : undefined;
 }

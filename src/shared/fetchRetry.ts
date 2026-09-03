@@ -5,7 +5,7 @@
  * (request-body construction) as the only change surface.
  */
 
-import { describeError } from './messageConverter.js';
+import { describeError } from '../provider/messageConverter.js';
 
 const DEFAULT_RETRY_DELAY_MS = 1500;
 const MAX_RETRY_AFTER_MS = 10_000;
@@ -135,7 +135,7 @@ export async function fetchWithRetry(
       // server's real status line.
       const text = await response.text().catch(() => '');
       const isRetry = attempt > 0;
-      const statusLine = `HTTP ${response.status}: ${response.statusText}${text ? ' — ' + text.substring(0, 2000) : ''}`;
+      const statusLine = `HTTP ${response.status}: ${response.statusText}${text ? ' - ' + text.substring(0, 2000) : ''}`;
       const is5xx = response.status >= 500 && response.status < 600;
       const canRetry = attempt + 1 < MAX_ATTEMPTS;
       if ((response.status === 429 || is5xx) && canRetry) {

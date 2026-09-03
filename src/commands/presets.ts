@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { ModelConfig } from '../config.js';
+import type { ModelConfig } from '../state/config.js';
 import { jsonrepair } from 'jsonrepair';
 
 // ---- Local preset loading ----
@@ -91,10 +91,11 @@ export interface ModelPreset {
 /**
  * Strip single-line `//` comments from a JSON string. Handles inline comments
  * but does not strip `//` inside string values (good enough for our preset files
- * which only have comments above the JSON object).
- * @internal Exported for testing.
+ * which only have comments above the JSON object). Private detail of
+ * {@link parsePresetRawJson} (audit P19-3: tests drive the parse boundary, not
+ * this step).
  */
-export function stripJsonComments(text: string): string {
+function stripJsonComments(text: string): string {
   // Index of the first `//` NOT inside a quoted string, or -1. Quote/escape
   // state machine - kept named inside its only caller, it is not a one-liner.
   function findFirstUnquotedSlashSlash(line: string): number {
@@ -218,30 +219,33 @@ function parsePresetEnvelope(raw: Record<string, unknown>, sourceFile: string): 
     return null; // Unknown config key → the whole file is untrusted.
   }
 
+  // Lenient meta sanitization (absorbed here from its own one-caller function,
+  // audit P19-2): keep only known non-empty string fields; unknown or
+  // ill-typed fields are dropped and the file survives, so future metadata
+  // additions never break old builds.
+  let meta: PresetMeta | undefined;
+  if (raw.meta && typeof raw.meta === 'object' && !Array.isArray(raw.meta)) {
+    const src = raw.meta as Record<string, unknown>;
+    const kept: PresetMeta = {};
+    for (const key of ['name', 'source', 'verified', 'notes'] as const) {
+      const v = src[key];
+      if (typeof v === 'string' && v.trim().length > 0) {
+        kept[key] = v;
+      }
+    }
+    if (Object.keys(kept).length > 0) {
+      meta = kept;
+    }
+  }
+
   return {
     // Validation above proved every key is in PRESET_CONFIG_KEYS — the type
     // now says exactly what the guard verified (no widening to ModelConfig).
     config: config as PresetConfig,
     sourceFile,
     match: match as string[],
-    meta: sanitizePresetMeta(raw.meta),
+    meta,
   };
-}
-
-/** Keep only known, non-empty string fields from a preset's `meta` object. */
-function sanitizePresetMeta(meta: unknown): PresetMeta | undefined {
-  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
-    return undefined;
-  }
-  const src = meta as Record<string, unknown>;
-  const out: PresetMeta = {};
-  for (const key of ['name', 'source', 'verified', 'notes'] as const) {
-    const v = src[key];
-    if (typeof v === 'string' && v.trim().length > 0) {
-      out[key] = v;
-    }
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
@@ -249,8 +253,10 @@ function sanitizePresetMeta(meta: unknown): PresetMeta | undefined {
  * comment-stripped text first, then falls back to `jsonrepair` (which also
  * tolerates comments, trailing commas, single quotes, and missing commas).
  * Returns null only if even the repaired text is not a JSON object.
+ * @internal Exported for testing (the preset-canary tests re-read shipped
+ * files through this boundary; the comment-stripper stays private).
  */
-function parsePresetRawJson(text: string): Record<string, unknown> | null {
+export function parsePresetRawJson(text: string): Record<string, unknown> | null {
   const cleaned = stripJsonComments(text).trim();
   try {
     const parsed = JSON.parse(cleaned);

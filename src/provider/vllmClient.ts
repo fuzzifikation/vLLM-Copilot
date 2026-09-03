@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
-import { getConfig, type ServerType, type VllmConfig } from './config.js';
-import type { FileLogger } from './logger.js';
-import { ChatTransport } from './provider/chatTransport.js';
-import type { ServerConfig } from './provider/requestBuilder.js';
-import { resolveRuntimeLimits } from './runtimeLimits.js';
-import type { OpenAIChatMessage, RuntimeModelLimits, StreamEvent, VllmChatOptions } from './types.js';
+import { getConfig, type ServerType, type VllmConfig } from '../state/config.js';
+import type { FileLogger } from '../shared/logger.js';
+import { ChatTransport } from './chatTransport.js';
+import type { ServerConfig } from './requestBuilder.js';
+import { clearRuntimeLimitsCache, resolveRuntimeLimits } from '../backends/runtimeLimits.js';
+import type { OpenAIChatMessage, RuntimeModelLimits, StreamEvent, VllmChatOptions } from '../types.js';
 
 /**
  * Provider-facing facade and single owner of the configuration cache.
@@ -34,6 +34,10 @@ export class VllmClient {
   }
 
   invalidateConfigCache(): void {
+    // A settings edit (or Test & Refresh) means observed reality may have
+    // changed: drop the resolver's short-TTL memo so the next pass re-probes
+    // live instead of serving a resolution from before the edit.
+    clearRuntimeLimitsCache();
     this.cachedConfigPromise = null;
   }
 

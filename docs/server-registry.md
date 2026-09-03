@@ -35,9 +35,11 @@ an id; models reference it.
 **What it buys:** a server exists before any model does ("add a server, add models later");
 one copy of a credential; config shape that matches the UI.
 
-**What it does not buy:** rotating a shared credential *already* works — `Update Auth` and
-`Rename Server` fan out URL-wide across every model on that URL
+**What it does not buy:** rotating a shared credential *already* works, because
+`Update Auth` fans out URL-wide across every model on that URL
 ([commands.ts](../src/commands.ts)). The registry fixes ownership, not reach.
+(Rename Server no longer fans out: since the registry shipped, a label belongs to
+exactly one entry, see §5.)
 
 ---
 
@@ -99,8 +101,9 @@ OpenRouter therefore lives in the registry like any backend (one entry: the fixe
 `openrouter.ai` endpoint, `serverType: "openrouter"`, the user key in `requestHeaders`). This is
 a **simplification forced by purity**: with no inline form there is no OpenRouter special case
 either — `addServerFlow.ts` upserts an entry like
-anyone else. The existing "never rename `openrouter.ai`" policy moves from a model check to an
-entry check.
+anyone else. The old "never rename `openrouter.ai`" exemption was dropped with the fan-out
+(§5): a relay URL can host several entries (keys), and each gets its own label like any
+other server.
 
 Server ids are user-facing (shown in pickers) and generated ids use **host + path tail**
 (`gw-example-corp-com-gw-shared`), de-duplicated `-2`, `-3`. Host alone collides for
@@ -178,12 +181,13 @@ default port dropped (`:80` on http, `:443` on https), userinfo byte-exact — s
 `example.com` and `example.com:80` name one connection, and the find-or-create paths will not
 mint a duplicate entry for a spelling variant.
 
-**Server-scoped commands keep their current scope.** `Rename Server` matches the *normalized URL*
-(the label names the box, not one credential's view of it) and `Update Auth` merges into every
-model on that URL. Deriving targets from the credential group instead would silently narrow both
-— a visible regression. With the registry they gain entries as write targets: rename writes
-`displayName` on every entry whose URL matches (`serverDisplayName` is gone, so nothing fans out
-to the models any more). Confirmation dialogs keep listing concrete targets.
+**Server-scoped commands address entries, not URLs — except auth.** `Rename Server` writes
+`displayName` on exactly the entry the command addressed (the tree item's entry id; a bare-URL
+programmatic call takes the first entry on the normalized URL). The old rule ("the label names
+the box") made two entries sharing one URL - two OpenRouter keys, two gateway tenants - wear
+one name, and forced an OpenRouter exemption; entry-id addressing removed both. `Update Auth`
+still merges into every entry on that URL: rotation reach is its job. Confirmation dialogs keep
+listing concrete targets.
 
 ---
 

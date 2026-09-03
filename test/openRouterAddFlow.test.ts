@@ -6,7 +6,14 @@ import {
   pickOpenRouterModel,
   buildOpenRouterSummary,
 } from '../src/commands/addServerFlow.js';
-import * as configStore from '../src/configStore.js';
+import * as configStore from '../src/state/configStore.js';
+import { resetOpenRouterCaches } from '../src/backends/openRouter.js';
+
+// The catalog memo is module-level: a success fetched by one test would
+// otherwise satisfy (or mask) the next test's stubbed catalog.
+beforeEach(() => {
+  resetOpenRouterCaches();
+});
 
 /**
  * Tests for the OpenRouter onboarding branch of the Add-server flow: host-only
@@ -172,7 +179,7 @@ describe('runOpenRouterAddFlow', () => {
     // and the flow resolves the exact catalog entry directly, so the user
     // actively confirms the model in the confirm/save dialog (no pre-select
     // flash + auto-accept on Enter).
-    await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/nvidia/nemotron-3.5-lightning:free', []);
+    await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/nvidia/nemotron-3.5-lightning:free');
     expect(createQuickPickSpy).not.toHaveBeenCalled();
 
     // Key box ran FIRST, as a required password box.
@@ -211,7 +218,7 @@ describe('runOpenRouterAddFlow', () => {
     inputBoxSpy.mockResolvedValueOnce('sk-or-v1-test'); // API key only
     infoSpy.mockResolvedValue('Save to Settings' as any);
 
-    await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/api', []);
+    await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/api');
 
     // No model picker (and no free-text input box) — the flow stops at the catalog.
     expect(createQuickPickSpy).not.toHaveBeenCalled();
@@ -230,9 +237,16 @@ describe('runOpenRouterAddFlow', () => {
       .mockResolvedValueOnce('Save to Settings' as any); // final confirm
 
     // Full model-page URL → picker skipped, straight to the duplicate dialog.
-    await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/nvidia/nemotron-3.5-lightning:free', [
-      { id: 'custom-openrouter-id', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', server: 'openrouter' },
-    ]);
+    // The duplicate lives in the STORE (the gate re-reads it fresh, it takes no
+    // caller snapshot) — seed the mocked settings surface accordingly.
+    vscode.workspace._mockConfig = {
+      ...vscode.workspace._mockConfig,
+      get: (key: string) =>
+        key === 'models'
+          ? [{ id: 'custom-openrouter-id', vllmModelId: 'nvidia/nemotron-3.5-lightning:free', server: 'openrouter' }]
+          : key === 'servers' ? OPENROUTER_SERVERS : undefined,
+    };
+    await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/nvidia/nemotron-3.5-lightning:free');
     expect(createQuickPickSpy).not.toHaveBeenCalled();
 
     expect(infoSpy).toHaveBeenCalledWith(

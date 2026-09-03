@@ -5,8 +5,8 @@ import {
   formatMigrationPreview,
   maybeOfferOutputLengthMigration,
   type OutputLengthProposal,
-} from '../src/outputLengthMigration.js';
-import type { ModelConfig } from '../src/config.js';
+} from '../src/migrations/outputLengthMigration.js';
+import type { ModelConfig } from '../src/state/config.js';
 import type { ModelPreset } from '../src/commands/presets.js';
 
 /**

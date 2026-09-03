@@ -127,7 +127,7 @@ describe('handleResponseError', () => {
     const output = makeOutput();
     const progress = makeProgress();
     const err = new Error(
-      'HTTP 402: Payment Required — {"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 50000 tokens, but can only afford 6666."}}'
+      'HTTP 402: Payment Required - {"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 50000 tokens, but can only afford 6666."}}'
     );
     handleResponseError(
       err,

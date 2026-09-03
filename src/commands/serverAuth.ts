@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { buildAuthHeaders } from '../config.js';
+import { buildAuthHeaders } from '../state/config.js';
 import { jsonrepair } from 'jsonrepair';
 
 /**

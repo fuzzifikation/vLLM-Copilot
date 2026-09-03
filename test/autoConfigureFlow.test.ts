@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import {
   registerAutoConfigureModelCommand,
 } from '../src/commands/autoConfigureFlow.js';
-import * as configStore from '../src/configStore.js';
+import * as configStore from '../src/state/configStore.js';
 import * as hfDiscovery from '../src/commands/hfDiscovery.js';
 
 /**

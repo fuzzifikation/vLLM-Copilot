@@ -5,7 +5,7 @@ import {
   entryMatchesConnection,
   dedupeServerIds,
   type ServerEntry,
-} from '../src/serverRegistry.js';
+} from '../src/state/serverRegistry.js';
 
 // ── resolveServer ───────────────────────────────────────────────────────
 

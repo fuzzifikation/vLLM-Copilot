@@ -4,17 +4,17 @@
  */
 
 import * as vscode from 'vscode';
-import { getConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, resolveVllmModelId, type ModelConfig, type ServerType } from './config.js';
-import { readModels, readServers } from './configStore.js';
+import { getConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, resolveVllmModelId, type ModelConfig, type ServerType } from '../state/config.js';
+import { readModels, readServers } from '../state/configStore.js';
 import { ServerMetrics, getMetricsEngine, emptyMetrics, getPollSettingMs } from './vllmMetrics.js';
-import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from './openRouter.js';
+import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from '../backends/openRouter.js';
 import {
   getLastRequest, getServerUsage, getServerCost, hasServerUsage, onUsageStoreDidChange,
   computeCost, findModelCost, formatCost, formatCostFine, formatCostSummary, fmtCount, emptyCounts,
   getModelStartedAt,
-  type UsageCounts, type CostRates,
-} from './usageStore.js';
-import { firstEntryById } from './serverRegistry.js';
+  type UsageCounts, type CostRates, type LastRequestData,
+} from '../usage/usageStore.js';
+import { firstEntryById } from '../state/serverRegistry.js';
 
 // ─── Tree Items ──────────────────────────────────────────────────────
 
@@ -119,9 +119,10 @@ class ServerTreeItem extends vscode.TreeItem {
     // servers expose auth/remove but not the vLLM metrics deep-dive.
     const isVllm = serverType === undefined || serverType === 'vllm';
     const state = metrics.online ? 'serverOnline' : 'serverOffline';
-    // OpenRouter relays get their own context-value pair: Deep-Dive AND Rename
-    // Server are hidden there (fixed managed endpoint). Other non-vLLM backends
-    // keep NoDive — no vLLM metrics, but renamable.
+    // OpenRouter relays get their own context-value pair: Deep-Dive is hidden
+    // there (a relay has no vLLM engine metrics to show). Rename is NOT part
+    // of the exclusion — every backend is renamable, because the label names
+    // the entry, and one relay URL can host several entries.
     this.contextValue = isVllm ? state
       : isOpenRouterRelay ? `${state}Relay`
       : `${state}NoDive`;
@@ -251,42 +252,35 @@ class MetricTreeItem extends vscode.TreeItem {
   }
 }
 
-/** Collapsible "Last Request" node showing per-request details */
+/** Collapsible "Last Request" node showing per-request details.
+ *
+ * Carries the store record whole (audit PF-2: the 21-parameter constructor
+ * was the caller unpacking one object field by field). The three
+ * server-reported timing values are derived from `data.metrics` here; only
+ * `serverType` comes from the tree context. */
 class LastRequestTreeItem extends vscode.TreeItem {
+  /** Server-reported timings (need --enable-per-request-metrics), derived at construction. */
+  public readonly ttftMs?: number;
+  public readonly generationMs?: number;
+  public readonly queueMs?: number;
+
   constructor(
-    public readonly serverUrl: string,
-    public readonly modelId: string,
-    public readonly timestamp: number,
-    public readonly promptTokens: number,
-    public readonly completionTokens: number,
-    public readonly totalTokens: number,
-    public readonly cachedTokens?: number,
-    public readonly createdCacheTokens?: number,
-    public readonly reasoningTokens?: number,
-    public readonly hasMetrics: boolean = false,
-    public readonly hasCacheDetails: boolean = false,
-    public readonly ttftMs?: number,
-    public readonly generationMs?: number,
-    public readonly queueMs?: number,
-    public readonly maxModelLen: number = 0,
-    public readonly maxOutputTokens: number = 0,
-    public readonly firstTokenTimeMs: number | null = null,
-    public readonly totalTimeMs: number | null = null,
+    public readonly data: LastRequestData,
     public readonly serverType?: ServerType,
-    public readonly actualCost?: number,
-    public readonly usedByok?: boolean,
   ) {
     super('Last Request', vscode.TreeItemCollapsibleState.Collapsed);
+    this.ttftMs = data.metrics?.time_to_first_token_ms;
+    this.generationMs = data.metrics?.generation_time_ms;
+    this.queueMs = data.metrics?.queue_time_ms;
     this.iconPath = new vscode.ThemeIcon('info');
-    this.id = `lastRequest:${serverUrl}`;
-    const ago = timeAgo(this.timestamp);
-    this.description = `${ago} · ${modelId}`;
+    this.id = `lastRequest:${data.serverUrl}`;
+    const ago = timeAgo(data.timestamp);
+    this.description = `${ago} · ${data.modelId}`;
     this.tooltip = new vscode.MarkdownString(
-      `Model: ${modelId}\nTime: ${ago}\nTokens: ${promptTokens} in → ${completionTokens} out`
+      `Model: ${data.modelId}\nTime: ${ago}\nTokens: ${data.promptTokens} in → ${data.completionTokens} out`
     );
   }
 }
-
 /** Collapsible "Token Usage and Cost" node — cumulative token/cost usage per server. */
 class TokenUsageTreeItem extends vscode.TreeItem {
   constructor(
@@ -383,7 +377,15 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     this.outputChannel = outputChannel;
     this.context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration(e => {
-        if (e.affectsConfiguration('vllm-copilot')) {
+        // Scoped to the dashboard's data plane: registry entries, models, and
+        // its own settings (the poll-interval badge). Unrelated toggles
+        // (personalities, logging, prompts) must not tear down and rebuild
+        // every metrics poller.
+        if (
+          e.affectsConfiguration('vllm-copilot.servers') ||
+          e.affectsConfiguration('vllm-copilot.models') ||
+          e.affectsConfiguration('vllm-copilot.dashboard')
+        ) {
           this.refreshSubscriptions();
           this.fireTreeUpdate();
         }
@@ -463,9 +465,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       // order. The engine registry is keyed by entry id — no hashing, no
       // grouping, and an Update Auth header change can never orphan a poller.
       for (const entry of entriesById.values()) {
-        // Node label from the entry: trimmed, skipped for OpenRouter (the
-        // fixed relay endpoint is not renamable). Whitespace-only never renders.
-        const name = entry.serverType === 'openrouter' ? undefined : entry.displayName?.trim();
+        // Node label from the entry: trimmed, one rule for every backend,
+        // relays included. Whitespace-only never renders.
+        const name = entry.displayName?.trim();
         const engine = getMetricsEngine(
           entry.id,
           entry.serverUrl,
@@ -744,29 +746,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       // silently vanishes for those forms.
       const lastRequest = getLastRequest(normalizeServerUrl(serverUrl));
       if (lastRequest) {
-        items.push(new LastRequestTreeItem(
-          lastRequest.serverUrl,
-          lastRequest.modelId,
-          lastRequest.timestamp,
-          lastRequest.promptTokens,
-          lastRequest.completionTokens,
-          lastRequest.totalTokens,
-          lastRequest.cachedTokens,
-          lastRequest.createdCacheTokens,
-          lastRequest.reasoningTokens,
-          lastRequest.hasMetrics,
-          lastRequest.hasCacheDetails,
-          lastRequest.metrics?.time_to_first_token_ms,
-          lastRequest.metrics?.generation_time_ms,
-          lastRequest.metrics?.queue_time_ms,
-          lastRequest.maxModelLen,
-          lastRequest.maxOutputTokens,
-          lastRequest.firstTokenTimeMs,
-          lastRequest.totalTimeMs,
-          serverType,
-          lastRequest.actualCost,
-          lastRequest.usedByok,
-        ));
+        items.push(new LastRequestTreeItem(lastRequest, serverType));
       }
 
       // Cumulative Token Usage — live via onUsageStoreDidChange (see constructor).
@@ -1048,14 +1028,14 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     // cost when present. Never both.
     const { today: todayCost, overall: overallCost, currency, hasActual } =
       this.modelCostFor(e.serverUrl, e.modelId, entry?.cost);
-    if (todayCost !== undefined || overallCost !== undefined) {
-      // Honest: show exactly what the API/store reports — today and/or total,
-      // never a fabricated window rate.
-      const value = formatCostSummary(todayCost, overallCost, currency)
-        ?? formatCostFine(todayCost ?? overallCost!, currency);
+    // formatCostSummary yields undefined exactly when BOTH figures are absent,
+    // so this check IS the "has any cost" gate. Honest: show exactly what the
+    // API/store reports — today and/or total, never a fabricated window rate.
+    const costSummary = formatCostSummary(todayCost, overallCost, currency);
+    if (costSummary !== undefined) {
       items.push(new MetricTreeItem(
         'Cost',
-        value,
+        costSummary,
         'credit-card',
         hasActual
           ? 'Actual OpenRouter cost (usage.cost) where reported; per-1M estimate for slots without reported spend.'
@@ -1081,42 +1061,46 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
   private getLastRequestChildren(e: LastRequestTreeItem): vscode.TreeItem[] {
     const items: vscode.TreeItem[] = [];
 
+    // Store-record fields are read off `d` (the item now carries the record whole);
+    // e keeps the derived timings and the tree-context serverType.
+    const d = e.data;
+
     // 1. Total Tokens — context window usage (always available)
-    if (e.maxModelLen > 0) {
-      const pct = ((e.totalTokens / e.maxModelLen) * 100).toFixed(1);
+    if (d.maxModelLen > 0) {
+      const pct = ((d.totalTokens / d.maxModelLen) * 100).toFixed(1);
       items.push(new MetricTreeItem(
         'Total Tokens',
-        `${fmtCount(e.totalTokens)}  ·  ${pct}% of context`,
+        `${fmtCount(d.totalTokens)}  ·  ${pct}% of context`,
         'symbol-numeric',
         'Total tokens consumed (input + output) as a percentage of the model\'s context window.',
       ));
     }
 
     // 2. Input Tokens — always available from usage block; cache % needs --enable-prompt-tokens-details
-    if (e.cachedTokens != null && e.cachedTokens > 0) {
+    if (d.cachedTokens != null && d.cachedTokens > 0) {
       // Input split: 'in' excludes cache; in + cached = total prompt.
-      const fresh = Math.max(0, e.promptTokens - e.cachedTokens);
+      const fresh = Math.max(0, d.promptTokens - d.cachedTokens);
       items.push(new MetricTreeItem(
         'Input Tokens',
-        `${fmtCount(fresh)} in · ${fmtCount(e.cachedTokens)} cached`,
+        `${fmtCount(fresh)} in · ${fmtCount(d.cachedTokens)} cached`,
         'symbol-parameter',
         "Input split: 'in' excludes cache; 'cached' was served from KV cache (not recomputed). in + cached = total prompt.",
       ));
     } else {
       items.push(new MetricTreeItem(
         'Input Tokens',
-        fmtCount(e.promptTokens),
+        fmtCount(d.promptTokens),
         'symbol-parameter',
         'Tokens in the prompt.',
       ));
     }
 
     // 3. Output Tokens — always available from usage block; budget % always available from settings
-    if (e.maxOutputTokens > 0) {
-      const pct = ((e.completionTokens / e.maxOutputTokens) * 100).toFixed(1);
+    if (d.maxOutputTokens > 0) {
+      const pct = ((d.completionTokens / d.maxOutputTokens) * 100).toFixed(1);
       items.push(new MetricTreeItem(
         'Output Tokens',
-        `${fmtCount(e.completionTokens)}  ·  ${pct}% of max output`,
+        `${fmtCount(d.completionTokens)}  ·  ${pct}% of max output`,
         'code',
         'Tokens generated by the model. Max output = configured output budget from settings.',
       ));
@@ -1127,22 +1111,22 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     //    Fallback: measured client-side — output tokens / (total time − TTFT).
     //    The fallback covers non-vLLM backends (no per-request metrics at all)
     //    and vLLM servers without --enable-per-request-metrics.
-    if (e.hasMetrics && e.generationMs != null && e.generationMs > 0) {
+    if (d.hasMetrics && e.generationMs != null && e.generationMs > 0) {
       const sec = (e.generationMs / 1000).toFixed(2);
-      const tokPerSec = ((e.completionTokens / e.generationMs) * 1000).toFixed(1);
+      const tokPerSec = ((d.completionTokens / e.generationMs) * 1000).toFixed(1);
       items.push(new MetricTreeItem(
         'Generation',
         `${sec}s  ·  ${tokPerSec} tok/s`,
         'rocket',
         'Time to generate all output tokens. Throughput = output tokens / generation time.',
       ));
-    } else if (e.completionTokens > 1 && e.firstTokenTimeMs != null && e.totalTimeMs != null && e.totalTimeMs > e.firstTokenTimeMs) {
-      const decodeMs = Math.max(e.totalTimeMs - e.firstTokenTimeMs, 1);
+    } else if (d.completionTokens > 1 && d.firstTokenTimeMs != null && d.totalTimeMs != null && d.totalTimeMs > d.firstTokenTimeMs) {
+      const decodeMs = Math.max(d.totalTimeMs - d.firstTokenTimeMs, 1);
       // The decode window [firstTokenTimeMs, totalTimeMs] covers tokens 2..N —
       // the first token arrived at firstTokenTimeMs. Dividing by all N tokens
       // overstates the rate (doubling a 2-token response) and invents a rate
       // for a 1-token response that had no measured decode interval.
-      const decodeTokens = e.completionTokens - 1;
+      const decodeTokens = d.completionTokens - 1;
       const sec = (decodeMs / 1000).toFixed(2);
       const tokPerSec = ((decodeTokens / decodeMs) * 1000).toFixed(1);
       items.push(new MetricTreeItem(
@@ -1154,7 +1138,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     }
 
     // 5. Queue Time (requires --enable-per-request-metrics)
-    if (e.hasMetrics && e.queueMs != null && e.queueMs > 0) {
+    if (d.hasMetrics && e.queueMs != null && e.queueMs > 0) {
       items.push(new MetricTreeItem(
         'Queue Time',
         `${fmtMs(e.queueMs)}`,
@@ -1165,11 +1149,11 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
 
     // 6. TTFT — always shown (provider-measured); also show server-reported when available.
     // The difference is client overhead + network latency (config, request build, HTTP handshake, SSE parse).
-    if (e.ttftMs != null && e.firstTokenTimeMs != null) {
-      const overheadMs = Math.max(0, e.firstTokenTimeMs - e.ttftMs);
+    if (e.ttftMs != null && d.firstTokenTimeMs != null) {
+      const overheadMs = Math.max(0, d.firstTokenTimeMs - e.ttftMs);
       items.push(new MetricTreeItem(
         'TTFT',
-        `reported: ${(e.ttftMs / 1000).toFixed(2)}s  ·  measured: ${(e.firstTokenTimeMs / 1000).toFixed(2)}s  ·  overhead: ${fmtMs(overheadMs)}`,
+        `reported: ${(e.ttftMs / 1000).toFixed(2)}s  ·  measured: ${(d.firstTokenTimeMs / 1000).toFixed(2)}s  ·  overhead: ${fmtMs(overheadMs)}`,
         'clock',
         'Time to first token. Reported = server\'s queue+prompt time. Measured = client wall-clock. Overhead = difference (network + client processing).',
       ));
@@ -1180,10 +1164,10 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         'clock',
         'Time to first token (server-reported: queue + prompt processing).',
       ));
-    } else if (e.firstTokenTimeMs != null) {
+    } else if (d.firstTokenTimeMs != null) {
       items.push(new MetricTreeItem(
         'TTFT',
-        `${fmtMs(e.firstTokenTimeMs)}`,
+        `${fmtMs(d.firstTokenTimeMs)}`,
         'clock',
         'Time to first token (client-measured wall-clock: includes network + server processing).',
       ));
@@ -1192,14 +1176,14 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     // 7. Cost — actual reported cost (OpenRouter) when present, else derived
     //    from the model's per-1M cost config. Never both: actual is server
     //    truth, the estimate is a fallback for backends that don't report cost.
-    if (e.actualCost !== undefined) {
+    if (d.actualCost !== undefined) {
       items.push(new MetricTreeItem(
         'Cost',
-        formatCostFine(e.actualCost, 'USD'),
+        formatCostFine(d.actualCost, 'USD'),
         'credit-card',
         'Actual cost reported by the backend (OpenRouter `usage.cost`, USD). Shown per-prompt for money verification.',
       ));
-      if (e.usedByok) {
+      if (d.usedByok) {
         items.push(new MetricTreeItem(
           'BYOK',
           'upstream key',
@@ -1209,12 +1193,12 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       }
     } else {
       const models = readModels();
-      const rates = findModelCost(models, e.serverUrl, e.modelId);
+      const rates = findModelCost(models, d.serverUrl, d.modelId);
       const requestCounts: UsageCounts = {
-        prompt: e.promptTokens,
-        completion: e.completionTokens,
-        cached: e.cachedTokens ?? 0,
-        reasoning: e.reasoningTokens ?? 0,
+        prompt: d.promptTokens,
+        completion: d.completionTokens,
+        cached: d.cachedTokens ?? 0,
+        reasoning: d.reasoningTokens ?? 0,
       };
       const cost = computeCost(requestCounts, rates);
       if (cost !== undefined) {
@@ -1231,8 +1215,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     // backends, so only suggest them when the server is vLLM (or type unknown).
     const missingFlags: string[] = [];
     if (e.serverType === undefined || e.serverType === 'vllm') {
-      if (!e.hasCacheDetails) missingFlags.push('--enable-prompt-tokens-details');
-      if (!e.hasMetrics) missingFlags.push('--enable-per-request-metrics');
+      if (!d.hasCacheDetails) missingFlags.push('--enable-prompt-tokens-details');
+      if (!d.hasMetrics) missingFlags.push('--enable-per-request-metrics');
     }
     if (missingFlags.length > 0) {
       // Flag-hint row (absorbed from FlagHintTreeItem — single site). Tooltip

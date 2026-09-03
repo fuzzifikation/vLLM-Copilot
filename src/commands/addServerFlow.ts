@@ -1,12 +1,12 @@
 import * as vscode from 'vscode';
-import type { ModelConfig, ServerType } from '../config.js';
-import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, toPublicModelConfig, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders } from '../config.js';
-import { replaceModelConfig, readModels, readServers, writeServers, type IdentifiedModelConfig } from '../configStore.js';
-import type { ServerEntry } from '../serverRegistry.js';
-import { entryMatchesConnection, firstEntryById, generateServerId, resolveServer } from '../serverRegistry.js';
+import type { ServerType } from '../state/config.js';
+import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, toPublicModelConfig, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders, isOpenRouterUrl } from '../state/config.js';
+import { replaceModelConfig, readModels, readServers, writeServers, type IdentifiedModelConfig } from '../state/configStore.js';
+import type { ServerEntry } from '../state/serverRegistry.js';
+import { entryMatchesConnection, firstEntryById, generateServerId, resolveServer } from '../state/serverRegistry.js';
 import type { VllmModel } from '../types.js';
-import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../messageConverter.js';
-import { detectServerType } from '../runtimeLimits.js';
+import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
+import { detectServerType } from '../backends/runtimeLimits.js';
 import { ensureByokUtilityDefault } from './byok.js';
 import { promptForServerAuth } from './serverAuth.js';
 import { fetchWithTimeout, resolveModelConfigForAddSafely } from './hfDiscovery.js';
@@ -15,14 +15,15 @@ import {
   OPENROUTER_API_BASE,
   parseOpenRouterBranchInput,
   normalizeOpenRouterFromCatalog,
-  fetchOpenRouterCatalog as fetchOpenRouterCatalogFull,
+  fetchOpenRouterCatalog,
   perMillion,
   formatUsdRate,
   formatPerMillionUsd,
-  isOpenRouterUrl,
+  openRouterCatalogConfigFields,
+  openRouterInfoDetailLines,
   type OpenRouterModelData,
   type OpenRouterModelInfo,
-} from '../openRouter.js';
+} from '../backends/openRouter.js';
 
 /**
  * Minimal provider surface the Add/Configure flows require: the flows only
@@ -110,13 +111,19 @@ async function rotateEntryAuth(
   output: vscode.OutputChannel,
 ): Promise<string | undefined> {
   if (!entryId) return undefined;
-  const servers = readServers();
-  const entry = servers.find(s => s.id === entryId);
+  // Resolve through firstEntryById — the registry's first-wins rule, the same
+  // resolver every request path uses. servers.find() could grab a shadowed
+  // duplicate-id twin and rotate credentials onto an entry that receives no
+  // traffic. (The write below deliberately maps ALL same-id twins: until
+  // activation repairs a hand-edited duplicate, both twins carry the fresh auth.)
+  const entry = firstEntryById(readServers()).get(entryId);
   if (!entry) return undefined;
   const existingHeaders = sanitizeRequestHeaders(entry.requestHeaders ?? {});
   const merged = mergeAuthHeaders(existingHeaders, sanitizeRequestHeaders(enteredHeaders));
   if (merged && !sameHeaders(merged, existingHeaders)) {
-    await writeServers(servers.map(s => (s.id === entryId ? { ...s, requestHeaders: merged } : s)));
+    // Re-read at write time so an entry another flow added while this flow's
+    // dialogs were open is not stomped by a whole-array write of a stale list.
+    await writeServers(readServers().map(s => (s.id === entryId ? { ...s, requestHeaders: merged } : s)));
     // The write happens BEFORE the model confirm (the config to review needs a
     // resolved server), so a later "Copy JSON"/dismiss leaves the rotated
     // credentials in place. That must not be a secret: credentials on a shared
@@ -140,6 +147,94 @@ async function discardUnreferencedServerEntry(entryId: string | undefined): Prom
   if (!servers.some(s => s.id === entryId)) return;
   if (readModels().some(m => m.server === entryId)) return;
   await writeServers(servers.filter(s => s.id !== entryId));
+}
+
+/**
+ * Surface a registry-entry write failure as a real error instead of VS Code's
+ * generic "command failed" toast. The write rejects when settings.json cannot
+ * be written (e.g. invalid JSON); at that point nothing was created, so there
+ * is nothing to roll back — the flow just stops with an honest message.
+ */
+function reportEntryWriteFailure(err: unknown, targetUrl: string, output: vscode.OutputChannel): void {
+  const msg = describeError(err);
+  output.appendLine(`[ERROR] Could not register the server entry for ${targetUrl}: ${msg}`);
+  void vscode.window.showErrorMessage(
+    `vLLM-Copilot: could not register the server entry for ${targetUrl}. ${msg}`
+  );
+}
+
+/**
+ * Duplicate gate shared by both Add flows (vLLM-family and OpenRouter): when
+ * the picked wire id already has configs on the target server, disambiguate
+ * WHICH one to replace — multiple configs may legitimately share one wire id
+ * (e.g. a preset-derived entry beside a discovered composite entry), and
+ * replacing the first `.find()` match would silently destroy the wrong config.
+ * Then offer Update Auth vs Replace Config. Update Auth delegates to the auth
+ * command with the credentials collected earlier in this flow, so the user is
+ * never re-prompted for a key they just typed.
+ *
+ * Returns the replace target (empty object when there is no duplicate), or
+ * `undefined` when the caller must stop — cancelled at either dialog, or the
+ * Update Auth command took over. On 'Replace Config' the returned identity
+ * must be retained downstream: `replaceModelConfig` matches on
+ * (`resolveConfigId`, `server`), so a fresh composite id OR a ref re-derived
+ * from the entered credentials would append a duplicate instead of replacing.
+ */
+async function handleDuplicateModelGate(
+  wireModelId: string,
+  delegateUrl: string,
+  requestHeaders: Record<string, string>,
+  flowLabel: string,
+  output: vscode.OutputChannel,
+): Promise<{ replaceExistingId?: string; replaceTargetServer?: string } | undefined> {
+  // Read the store HERE, not from the caller's snapshot taken before every
+  // dialog and network fetch of the flow (Update Auth / Rename / Remove all
+  // re-read for the same reason): a model created by another window mid-flow
+  // must reach this gate, not slip past a stale array into an append that
+  // duplicates the wire id. `delegateUrl` doubles as the server filter — the
+  // duplicate rule is per-server, and both flows pass the normalized URL
+  // they duplicate-check against.
+  const servers = readServers();
+  const sameModelEntries = readModels().filter(
+    m =>
+      resolveVllmModelId(m) === wireModelId &&
+      resolveServer(m.server, servers)?.serverUrl === delegateUrl,
+  );
+  if (sameModelEntries.length === 0) return {};
+  let target = sameModelEntries[0];
+  if (sameModelEntries.length > 1) {
+    const items: vscode.QuickPickItem[] = sameModelEntries.map(m => ({
+      label: m.displayName ?? resolveConfigId(m) ?? '',
+      description: resolveConfigId(m),
+      detail: `vllmModelId: ${m.vllmModelId ?? m.id}`,
+    }));
+    const picked = await vscode.window.showQuickPick(items, {
+      ignoreFocusOut: true,
+      placeHolder: `Multiple configs share "${wireModelId}" - choose which to replace`,
+    });
+    if (!picked) {
+      output.appendLine(`[INFO] ${flowLabel} cancelled — duplicate disambiguation abandoned.`);
+      return undefined;
+    }
+    target = sameModelEntries.find(m => resolveConfigId(m) === picked.description) ?? target;
+  }
+  const pick = await vscode.window.showInformationMessage(
+    `"${wireModelId}" is already configured. Update auth only, or replace entire config?`,
+    { modal: true },
+    'Update Auth',
+    'Replace Config',
+  );
+  if (pick === 'Update Auth') {
+    // Reuses updateServerAuth — and hands it the credentials collected earlier
+    // in this flow, so the user is never re-prompted for the key they just typed.
+    await vscode.commands.executeCommand('vllm-copilot.updateServerAuth', delegateUrl, requestHeaders);
+    return undefined;
+  }
+  if (pick !== 'Replace Config') {
+    output.appendLine(`[INFO] ${flowLabel} cancelled — no action chosen for existing config.`);
+    return undefined;
+  }
+  return { replaceExistingId: resolveConfigId(target), replaceTargetServer: target.server };
 }
 
 /**
@@ -369,25 +464,15 @@ export async function pickOpenRouterModel(
   });
 }
 
-/** Human-readable summary lines for the OpenRouter confirm dialog. */
+/** Human-readable summary lines for the OpenRouter confirm dialog. The flow-
+ * specific head lines stay here; the shared detail middle comes from the
+ * backend's projection (audit P8-2 — same lines Auto-Configure shows). */
 export function buildOpenRouterSummary(info: OpenRouterModelInfo): string {
   const lines: string[] = [];
   lines.push(`OpenRouter model: ${info.wireModelId}`);
   if (info.canonicalSlug && info.canonicalSlug !== info.wireModelId) lines.push(`Canonical: ${info.canonicalSlug}`);
   lines.push(`Context window: ${info.runtimeLimits.contextWindow.toLocaleString('en-US')} tokens`);
-  if (info.runtimeLimits.maxOutputTokens !== undefined) {
-    lines.push(`Max output: ${info.runtimeLimits.maxOutputTokens.toLocaleString('en-US')} tokens`);
-  }
-  lines.push(`Tool calling: ${info.capabilities.toolCalling ? 'yes' : 'no'}`);
-  lines.push(`Image input: ${info.capabilities.imageInput ? 'yes' : 'no'}`);
-  if (info.modelModes && Object.keys(info.modelModes).length > 0) {
-    lines.push(`Modes: ${Object.keys(info.modelModes).join(', ')}`);
-    if (info.defaultMode) lines.push(`Default mode: ${info.defaultMode}`);
-  }
-  if (info.cost) {
-    lines.push(`Estimated rates: in ${formatUsdRate(info.cost.input)} · out ${formatUsdRate(info.cost.output)} per 1M tokens`);
-  }
-  if (info.expirationDate) lines.push(`Expires: ${info.expirationDate}`);
+  lines.push(...openRouterInfoDetailLines(info));
   return lines.join('\n');
 }
 
@@ -406,13 +491,11 @@ export function buildOpenRouterSummary(info: OpenRouterModelInfo): string {
  *
  * @param urlInput - Raw step-1 input (pre-normalization, so a model-page URL
  *   survives for pre-filling the picker).
- * @param existingModels - Current `vllm-copilot.models` (for duplicate handling).
  */
 export async function runOpenRouterAddFlow(
   output: vscode.OutputChannel,
   provider: ClearCacheProvider,
   urlInput: string,
-  existingModels: ModelConfig[],
 ): Promise<void> {
   const onSaved = () => provider.clearCache();
 
@@ -448,7 +531,7 @@ export async function runOpenRouterAddFlow(
   const isExplicitModelUrl = /^(?:https?:\/\/)?(?:www\.)?openrouter\.ai\/[^/]+\/[^/]+/i.test(urlInput.trim());
   let fullCatalog: OpenRouterModelData[];
   try {
-    fullCatalog = await fetchOpenRouterCatalogFull();
+    fullCatalog = await fetchOpenRouterCatalog();
   } catch (err) {
     const detail = describeError(err);
     output.appendLine(`[ERROR] OpenRouter model catalog unavailable: ${detail}`);
@@ -502,55 +585,15 @@ export async function runOpenRouterAddFlow(
     `tools ${info.capabilities.toolCalling ? 'yes' : 'no'}`
   );
 
-  // 4. Duplicate detection against the FIXED API base (mirrors the vLLM path).
-  //    Models reference the registry, so "on the OpenRouter server" resolves
-  //    through each model's server entry — not a URL field on the model.
+  // 4. Duplicate detection against the FIXED API base (shared gate with the
+  //    vLLM path). Models reference the registry, so "on the OpenRouter server"
+  //    resolves through each model's server entry — not a URL field on the model.
   const apiBase = normalizeServerUrl(OPENROUTER_API_BASE); // 'https://openrouter.ai/api'
-  const registeredServers = readServers();
-  const existingOpenRouterModels = existingModels.filter(
-    (m) => resolveServer(m.server, registeredServers)?.serverUrl === apiBase
+  const gate = await handleDuplicateModelGate(
+    requestedId, apiBase, requestHeaders, 'OpenRouter add', output
   );
-  let replaceExistingId: string | undefined;
-  let replaceTargetServer: string | undefined;
-  const sameModelEntries = existingOpenRouterModels.filter((m) => resolveVllmModelId(m) === requestedId);
-  if (sameModelEntries.length > 0) {
-    // Multiple configs may share one wire id — disambiguate before replacing.
-    let target = sameModelEntries[0];
-    if (sameModelEntries.length > 1) {
-      const items: vscode.QuickPickItem[] = sameModelEntries.map((m) => ({
-        label: m.displayName ?? resolveConfigId(m) ?? '',
-        description: resolveConfigId(m),
-        detail: `vllmModelId: ${m.vllmModelId ?? m.id}`,
-      }));
-      const picked = await vscode.window.showQuickPick(items, {
-        ignoreFocusOut: true,
-        placeHolder: `Multiple configs share "${requestedId}" — choose which to replace`,
-      });
-      if (!picked) {
-        output.appendLine('[INFO] OpenRouter add cancelled — duplicate disambiguation abandoned.');
-        return; // cancelled
-      }
-      target = sameModelEntries.find((m) => resolveConfigId(m) === picked.description) ?? target;
-    }
-    const pick = await vscode.window.showInformationMessage(
-      `"${requestedId}" is already configured. Update auth only, or replace entire config?`,
-      { modal: true },
-      'Update Auth',
-      'Replace Config',
-    );
-    if (pick === 'Update Auth') {
-      // Reuse the headers the user already entered at step 1 — never re-prompt
-      // through updateServerAuth (that would discard this key and ask again).
-      await vscode.commands.executeCommand('vllm-copilot.updateServerAuth', apiBase, requestHeaders);
-      return;
-    }
-    if (pick !== 'Replace Config') {
-      output.appendLine('[INFO] OpenRouter add cancelled — no action chosen for existing config.');
-      return; // cancelled
-    }
-    replaceExistingId = resolveConfigId(target);
-    replaceTargetServer = target.server;
-  }
+  if (!gate) return; // cancelled, or Update Auth took over
+  const { replaceExistingId, replaceTargetServer } = gate;
 
   // 5. Assemble, confirm, save. `id` is composite on the registry entry id so
   //    two OpenRouter models stay distinct; `vllmModelId` is the raw wire id.
@@ -565,15 +608,30 @@ export async function runOpenRouterAddFlow(
   const replaceServerId = replaceExistingId
     ? await rotateEntryAuth(replaceTargetServer, requestHeaders, output)
     : undefined;
+  if (replaceExistingId && !replaceServerId) {
+    // The replaced model's entry vanished while the dialogs were open
+    // (Remove Server ran elsewhere). Falling through would mint a NEW entry,
+    // and replaceModelConfig — matching on (id, server) — would find no match
+    // and APPEND a zombie model reusing the replaced model's config id.
+    output.appendLine(`[ERROR] OpenRouter replace aborted: server entry "${replaceTargetServer}" no longer exists. Nothing was saved.`);
+    void vscode.window.showErrorMessage('vLLM-Copilot: could not replace the existing model: its server entry no longer exists. Nothing was changed; re-run the command to add the model fresh.');
+    return;
+  }
   if (replaceServerId) {
     openRouterServerId = replaceServerId;
   } else {
-    const entry = await ensureServerEntry({
-      serverUrl: OPENROUTER_API_BASE,
-      requestHeaders,
-      serverType: 'openrouter',
-      preferredId: 'openrouter',
-    });
+    let entry: { id: string; created: boolean };
+    try {
+      entry = await ensureServerEntry({
+        serverUrl: OPENROUTER_API_BASE,
+        requestHeaders,
+        serverType: 'openrouter',
+        preferredId: 'openrouter',
+      });
+    } catch (err) {
+      reportEntryWriteFailure(err, OPENROUTER_API_BASE, output);
+      return;
+    }
     openRouterServerId = entry.id;
     if (entry.created) createdServerId = entry.id;
   }
@@ -582,12 +640,7 @@ export async function runOpenRouterAddFlow(
     vllmModelId: requestedId,
     displayName: info.displayName ?? requestedId,
     server: openRouterServerId,
-    capabilities: info.capabilities,
-    ...(info.modelModes ? { modelModes: info.modelModes } : {}),
-    ...(info.defaultMode ? { defaultMode: info.defaultMode } : {}),
-    ...(info.defaultParams ? { defaultParams: info.defaultParams } : {}),
-    ...(info.cost ? { cost: info.cost } : {}),
-    ...(info.runtimeLimits.maxOutputTokens !== undefined ? { maxOutputTokens: info.runtimeLimits.maxOutputTokens } : {}),
+    ...openRouterCatalogConfigFields(info),
   };
 
   await confirmAndSaveAddedModel(finalConfig, requestedId, OPENROUTER_API_BASE, buildOpenRouterSummary(info), output, onSaved, undefined, createdServerId);
@@ -624,7 +677,7 @@ async function handleServerFailure(
 
   // Run Diagnostic — uses in-memory values, no settings write needed
   if (action === 'Run Diagnostic') {
-    const { runDiagnostics, formatReport } = await import('../diagnostics.js');
+    const { runDiagnostics, formatReport } = await import('../ui/diagnostics.js');
     const report = await runDiagnostics(buildEndpoint(serverUrl, 'v1/models'), requestHeaders);
     output.show(true);
     output.appendLine(formatReport(report));
@@ -649,7 +702,14 @@ async function handleServerFailure(
   // URL + auth live on the registry entry; the stub model references it by id.
   // The stub saves unconditionally — no abandon-rollback — but a blocked
   // settings write still rolls back an entry this call created.
-  const { id: serverId, created } = await ensureServerEntry({ serverUrl, requestHeaders });
+  let serverId: string;
+  let created: boolean;
+  try {
+    ({ id: serverId, created } = await ensureServerEntry({ serverUrl, requestHeaders }));
+  } catch (err) {
+    reportEntryWriteFailure(err, serverUrl, output);
+    return true; // always stops the wizard, like every other path in here
+  }
   const finalConfig: IdentifiedModelConfig = {
     id: buildModelId(serverId, modelId),
     vllmModelId: modelId,
@@ -709,7 +769,14 @@ export function registerAddServerCommand(output: vscode.OutputChannel): vscode.D
       return;
     }
 
-    const { id, created } = await ensureServerEntry({ serverUrl, requestHeaders });
+    let id: string;
+    let created: boolean;
+    try {
+      ({ id, created } = await ensureServerEntry({ serverUrl, requestHeaders }));
+    } catch (err) {
+      reportEntryWriteFailure(err, serverUrl, output);
+      return;
+    }
     if (!created) {
       void vscode.window.showInformationMessage(
         `Server ${serverUrl} is already registered as "${id}".`
@@ -784,7 +851,7 @@ export function registerAddServerModelCommand(
     // match the fixed API base; the branch performs its own duplicate handling
     // against it.
     if (isOpenRouterUrl(serverUrl)) {
-      await runOpenRouterAddFlow(output, provider, urlInput, existingModels);
+      await runOpenRouterAddFlow(output, provider, urlInput);
       return;
     }
 
@@ -888,56 +955,16 @@ export function registerAddServerModelCommand(
       return;
     }
 
-    // Check if this model already exists on this server
-    const newVllmId = modelId;
-    const sameModelEntries = existingServerModels.filter(m => resolveVllmModelId(m) === newVllmId);
-
-    // The extension-side identity of the entry we are replacing, if any, plus
-    // its server ref. When 'Replace Config' is chosen both must be retained:
-    // `replaceModelConfig` matches on (`resolveConfigId`, `server`), so a fresh
-    // composite id OR a ref re-derived from the entered credentials would make
-    // it append a duplicate instead of replacing.
-    let replaceExistingId: string | undefined;
-    let replaceTargetServer: string | undefined;
-    if (sameModelEntries.length > 0) {
-      // Multiple configs may legitimately share one wire id on a server (e.g. a
-      // preset-derived entry beside a discovered composite entry). Replacing the
-      // first `.find()` match would silently destroy the wrong config, so when
-      // ambiguous let the user choose which entry to replace.
-      let target = sameModelEntries[0];
-      if (sameModelEntries.length > 1) {
-        const items: vscode.QuickPickItem[] = sameModelEntries.map(m => ({
-          label: m.displayName ?? resolveConfigId(m) ?? '',
-          description: resolveConfigId(m),
-          detail: `vllmModelId: ${m.vllmModelId ?? m.id}`,
-        }));
-        const picked = await vscode.window.showQuickPick(items, {
-          ignoreFocusOut: true,
-          placeHolder: `Multiple configs share "${modelId}" — choose which to replace`,
-        });
-        if (!picked) {
-          output.appendLine(`[INFO] Add Server cancelled — duplicate disambiguation abandoned.`);
-          return; // cancelled
-        }
-        target = sameModelEntries.find(m => resolveConfigId(m) === picked.description) ?? target;
-      }
-      const pick = await vscode.window.showInformationMessage(
-        `"${modelId}" already exists on this server. Update auth only, or replace entire config?`,
-        { modal: true },
-        'Update Auth',
-        'Replace Config',
-      );
-      if (pick === 'Update Auth') {
-        // Update auth for all models on this server (reuses updateServerAuth)
-        return vscode.commands.executeCommand('vllm-copilot.updateServerAuth', serverUrl);
-      }
-      if (pick !== 'Replace Config') {
-        output.appendLine(`[INFO] Add Server cancelled — no action chosen for existing config on ${serverUrl}.`);
-        return; // cancelled
-      }
-      replaceExistingId = resolveConfigId(target);
-      replaceTargetServer = target.server;
-    }
+    // Duplicate gate shared with the OpenRouter flow (see
+    // handleDuplicateModelGate): disambiguation when several configs share one
+    // wire id, then Update Auth / Replace Config. On 'Replace Config' the
+    // returned identity is retained downstream — a fresh composite id or a ref
+    // re-derived from the entered credentials would append a duplicate.
+    const gate = await handleDuplicateModelGate(
+      modelId, serverUrl, requestHeaders, `Add Server (${serverUrl})`, output
+    );
+    if (!gate) return; // cancelled, or Update Auth took over
+    const { replaceExistingId, replaceTargetServer } = gate;
 
     const discoveryResult = await resolveModelConfigForAddSafely(
       output, context, modelId, serverUrl, hasHeaders ? requestHeaders : undefined,
@@ -964,14 +991,28 @@ export function registerAddServerModelCommand(
     const replaceServerId = replaceExistingId
       ? await rotateEntryAuth(replaceTargetServer, hasHeaders ? requestHeaders : {}, output)
       : undefined;
+    if (replaceExistingId && !replaceServerId) {
+      // Entry vanished mid-flow — same zombie-append trap as the OpenRouter
+      // flow: a fresh entry changes the (id, server) match, replaceModelConfig
+      // appends, and two models share one config id. Abort honestly.
+      output.appendLine(`[ERROR] Replace aborted: server entry "${replaceTargetServer}" no longer exists. Nothing was saved.`);
+      void vscode.window.showErrorMessage('vLLM-Copilot: could not replace the existing model: its server entry no longer exists. Nothing was changed; re-run the command to add the model fresh.');
+      return;
+    }
     if (replaceServerId) {
       serverId = replaceServerId;
     } else {
-      const entry = await ensureServerEntry({
-        serverUrl,
-        requestHeaders: hasHeaders ? requestHeaders : {},
-        serverType: detectedServerType,
-      });
+      let entry: { id: string; created: boolean };
+      try {
+        entry = await ensureServerEntry({
+          serverUrl,
+          requestHeaders: hasHeaders ? requestHeaders : {},
+          serverType: detectedServerType,
+        });
+      } catch (err) {
+        reportEntryWriteFailure(err, serverUrl, output);
+        return;
+      }
       serverId = entry.id;
       if (entry.created) createdServerId = entry.id;
     }

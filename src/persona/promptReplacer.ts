@@ -30,12 +30,13 @@ export const COMMON_REPLACEMENTS_FILENAME = 'prompt-replacements-common.json';
 
 /**
  * Absolute path to the bundled common replacements file, resolved relative to
- * this module: `out/` in the shipped extension and `src/` under tests — both
- * one level below the root that contains `prompt-replacements/`.
+ * this module: `out/persona/` in the shipped extension and `src/persona/`
+ * under tests — both two levels below the root that contains
+ * `prompt-replacements/`.
  */
 export function getBundledCommonReplacementsPath(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(here, '..', 'prompt-replacements', COMMON_REPLACEMENTS_FILENAME);
+  return path.resolve(here, '..', '..', 'prompt-replacements', COMMON_REPLACEMENTS_FILENAME);
 }
 
 // ── Module-level cache ───────────────────────────────────────────────

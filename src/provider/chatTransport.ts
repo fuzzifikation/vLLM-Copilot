@@ -1,9 +1,9 @@
 import type * as vscode from 'vscode';
-import { buildEndpoint, DEFAULT_MODEL_SETTINGS, type ServerType } from '../config.js';
-import { serverErrorMessage } from '../errorEnvelope.js';
-import { fetchWithRetry } from '../fetchRetry.js';
-import type { FileLogger } from '../logger.js';
-import { readSseStream } from '../streamReader.js';
+import { buildEndpoint, DEFAULT_MODEL_SETTINGS, type ServerType } from '../state/config.js';
+import { serverErrorMessage } from '../shared/errorEnvelope.js';
+import { fetchWithRetry } from '../shared/fetchRetry.js';
+import type { FileLogger } from '../shared/logger.js';
+import { readSseStream } from './streamReader.js';
 import type { OpenAIChatMessage, StreamEvent, VllmChatOptions } from '../types.js';
 import type { ServerConfig } from './requestBuilder.js';
 

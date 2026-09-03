@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { formatReport } from '../src/diagnostics.js';
-import type { DiagnosticReport } from '../src/diagnostics.js';
-import { TLS_CERT_SUGGESTION } from '../src/messageConverter.js';
+import { formatReport } from '../src/ui/diagnostics.js';
+import type { DiagnosticReport } from '../src/ui/diagnostics.js';
+import { TLS_CERT_SUGGESTION } from '../src/provider/messageConverter.js';
 
 /**
  * formatReport tests — focused on the "Transport comparison" block, which must

@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
-import type { FileLogger } from '../logger.js';
-import { reportTokenUsage, logTokenUsage } from '../usageReporting.js';
-import { recordRequest, type LastRequestData } from '../usageStore.js';
+import type { FileLogger } from '../shared/logger.js';
+import { reportTokenUsage, logTokenUsage } from '../usage/usageReporting.js';
+import { recordRequest, type LastRequestData } from '../usage/usageStore.js';
 import type { WireMetrics } from '../types.js';
-import { parseToolCallArgs } from '../messageConverter.js';
+import { parseToolCallArgs } from './messageConverter.js';
 import type { StreamEvent, WireUsage } from '../types.js';
 import type { StreamOutcome } from './contracts.js';
 
@@ -106,7 +106,7 @@ export async function consumeStream(
 
     // Defer usage reporting to after the loop — see pendingUsage comment above.
     if (event.usage) {
-      pendingUsage = event.usage;
+      pendingUsage = sanitizeUsage(event.usage);
     }
     if (event.metrics) {
       pendingMetrics = event.metrics;
@@ -156,4 +156,29 @@ export async function consumeStream(
     };
     recordRequest(lastRequestData);
   }
+}
+
+/**
+ * Third-party servers do not get to poison the persisted counters: clamp every
+ * usage number to a finite non-negative value at the single capture point. A
+ * lying `completion_tokens: "500"` string would string-concat into the
+ * all-time totals forever (0 + "500" = "0500"); NaN/null would crash the
+ * reporting lines AFTER the full answer already streamed. Garbage reads as 0.
+ * (Actual cost needs no clamp here — usageStore's accumulateCost already
+ * rejects non-finite/negative values.)
+ */
+function sanitizeUsage(u: WireUsage): WireUsage {
+  const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  const nums = (d: Record<string, number> | undefined): Record<string, number> | undefined =>
+    d && typeof d === 'object'
+      ? Object.fromEntries(Object.entries(d).map(([k, v]) => [k, n(v)]))
+      : undefined;
+  return {
+    ...u,
+    prompt_tokens: n(u.prompt_tokens),
+    completion_tokens: n(u.completion_tokens),
+    total_tokens: n(u.total_tokens),
+    prompt_tokens_details: nums(u.prompt_tokens_details),
+    completion_tokens_details: nums(u.completion_tokens_details),
+  };
 }

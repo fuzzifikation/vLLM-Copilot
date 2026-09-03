@@ -5,8 +5,8 @@ import {
   getServersWithUsage, resetUsage, computeCost, findModelCost, getModelStartedAt,
   formatCost, formatCostFine, formatCostSummary, fmtCount, resetUsageStoreForTests, onUsageStoreDidChange,
   type LastRequestData,
-} from '../src/usageStore.js';
-import type { ModelConfig } from '../src/config.js';
+} from '../src/usage/usageStore.js';
+import type { ModelConfig } from '../src/state/config.js';
 
 /** Mirrors usageStore's private day-bucket key (kept un-exported on purpose). */
 function todayKey(ts: number = Date.now()): string {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { VllmClient } from '../src/vllmClient.js';
-import * as configModule from '../src/config.js';
+import { VllmClient } from '../src/provider/vllmClient.js';
+import * as configModule from '../src/state/config.js';
 
 function makeContext(): any { return { secrets: { get: async () => undefined } }; }
 function makeOutput(): any { return { appendLine: () => {} }; }

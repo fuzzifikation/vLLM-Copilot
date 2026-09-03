@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildModelInfo } from '../src/modelInfo.js';
-import type { TokenBudget } from '../src/tokenBudget.js';
+import { buildModelInfo } from '../src/provider/modelInfo.js';
+import type { TokenBudget } from '../src/shared/tokenBudget.js';
 
 describe('buildModelInfo picker id derivation', () => {
   it('uses an explicit id as the picker id', () => {

@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { registerSetModelPersonalityCommand } from '../src/commands/personality.js';
-import * as configStore from '../src/configStore.js';
-import type { ModelConfig } from '../src/config.js';
+import * as configStore from '../src/state/configStore.js';
+import type { ModelConfig } from '../src/state/config.js';
 
 /**
  * Server-less models must never reach replaceModelConfig from the personality

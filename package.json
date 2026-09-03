@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM integration for GitHub Copilot and the VS Code Agents window on professional (and self-hosted) servers (supports full featureset of vLLM and Copilot). No subscription, no telemetry. No work content to any third party. Live observability: queue status, KV-cache, throughput, and more, in a full dashboard UI. Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
-  "version": "1.36.0-rc0",
+  "version": "1.36.0-rc1",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -253,7 +253,7 @@
         },
         {
           "command": "vllm-copilot.renameServer",
-          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive)",
+          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive || viewItem == serverOnlineRelay || viewItem == serverOfflineRelay)",
           "group": "1_server@2"
         },
         {

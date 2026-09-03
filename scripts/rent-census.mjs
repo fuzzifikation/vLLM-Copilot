@@ -3,12 +3,17 @@
 //
 // A named thing pays rent only if it is genuinely large OR has >= 2
 // production callers. Tests are NOT customers (user ruling 2026-09-03).
+// A caller is a CALL SITE, not a file: distinct caller functions inside the
+// home file count toward rent too (S8 ruling 2026-09-03 - a function exists
+// to prevent doubled code and keep one place to fix; an in-file caller
+// prevents the same doubling an out-of-file caller does). Files separate
+// concepts logically; they do not gate rent.
 // This script does NOT judge "large" (per-case ruling) — it counts rent
 // mechanically and highlights what deserves a verdict:
 //
 //   DEAD            zero references anywhere
 //   TEST_ONLY       exported, zero production callers, tests use it -> un-export or delete
-//   ABSORB_SMALL    exactly one production call site and small (<= --max-small lines)
+//   ABSORB_SMALL    exactly one production call site, no in-file caller, small (<= --max-small lines)
 //   INTERNAL_SINGLE private helper with exactly one in-file caller -> absorb into it
 //   CHAIN           same-file single-caller chains -> collapse candidates (listed at bottom)
 //   BIG_SINGLE      one production caller but sizeable -> human per-case verdict
@@ -187,7 +192,12 @@ for (const t of targets) {
   else if (prodMods.size === 1) {
     const only = t.prodSites.find((s) => !isTestPath(s.file));
     t.onlyCaller = `${only.file}::${only.label}`;
-    t.flag = t.lines <= MAX_SMALL ? 'ABSORB_SMALL' : 'BIG_SINGLE';
+    // S8 ruling 2026-09-03: distinct in-file caller functions count toward
+    // rent. One out-of-file site + one in-file site = doubling prevented =
+    // REUSED. Self-recursion never counts (references inside the target's
+    // own span are not pushed to t.internal).
+    if (new Set(t.internal).size >= 1) t.flag = 'REUSED';
+    else t.flag = t.lines <= MAX_SMALL ? 'ABSORB_SMALL' : 'BIG_SINGLE';
   } else t.flag = 'REUSED';
   if (internalOnly && !t.flag.startsWith('CONTRACT') && !testHelper) {
     if (t.internal.length === 1) t.flag = 'INTERNAL_SINGLE';

@@ -1,4 +1,4 @@
-import { parsePresetFile, type ModelPreset } from './commands/presets.js';
+import { parsePresetFile, type ModelPreset } from './presets.js';
 
 /**
  * Live remote preset lookup (docs/remote-presets-plan.md).

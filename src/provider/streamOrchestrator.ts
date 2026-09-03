@@ -1,13 +1,13 @@
 import * as vscode from 'vscode';
-import { resolveOverrideForModel, resolveModelSettings, type VllmConfig } from '../config.js';
-import type { FileLogger } from '../logger.js';
+import { resolveOverrideForModel, resolveModelSettings, type VllmConfig } from '../state/config.js';
+import type { FileLogger } from '../shared/logger.js';
 import type { OpenAIChatMessage } from '../types.js';
 import type { ProviderClient, StreamOutcome } from './contracts.js';
 import { buildRequest } from './requestBuilder.js';
 import { consumeStream } from './consumeStream.js';
 import { reportPostStreamDiagnostics, handleResponseError } from './postStream.js';
 import type { SystemMessagePipeline } from './systemMessagePipeline.js';
-import { iterateCauses } from '../messageConverter.js';
+import { isTransportFailureText, iterateCauses } from './messageConverter.js';
 
 /**
  * True when the request failed at the transport layer: the server never
@@ -24,9 +24,7 @@ function isTransportFailure(err: unknown): boolean {
   const combined = [err, ...iterateCauses(err)]
     .map(c => (c instanceof Error ? `${c.name} ${c.message}` : String(c)))
     .join(' ');
-  return combined.includes('ECONNREFUSED')
-    || combined.includes('fetch failed')
-    || combined.includes('ENOTFOUND');
+  return isTransportFailureText(combined);
 }
 
 /**

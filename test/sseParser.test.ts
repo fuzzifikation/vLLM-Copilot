@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { processSSEChunk, finalizePendingToolCalls } from '../src/sseParser.js';
-import type { PendingToolCall } from '../src/sseParser.js';
+import { processSSEChunk, finalizePendingToolCalls } from '../src/provider/sseParser.js';
+import type { PendingToolCall } from '../src/provider/sseParser.js';
 
 function makeChunk(payload: object): string {
   return JSON.stringify(payload);

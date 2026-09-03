@@ -7,20 +7,25 @@
  */
 
 import * as vscode from 'vscode';
-import type { WireUsage } from './types.js';
+import type { WireUsage } from '../types.js';
 import { formatCostFine } from './usageStore.js';
 
 /**
- * Build a LanguageModelDataPart with the exact shape VS Code's isApiUsage() guard expects.
+ * Report token usage to VS Code via LanguageModelDataPart with MIME type 'usage'.
+ * VS Code consumes this to display token counts in the chat UI.
  *
- * Requirements (discovered through trial & error, see docs/copilot-integration.md):
+ * The payload must have the exact shape VS Code's isApiUsage() guard expects
+ * (discovered through trial & error, see docs/copilot-integration.md):
  *   - Keys MUST be snake_case (`prompt_tokens`, not `promptTokens`)
  *   - MIME type MUST be `'usage'` (not `'application/json'`)
  *   - Must include `prompt_tokens_details`
+ * The former standalone part-builder was absorbed here (audit P14-2): the
+ * progress sink was its only customer, tests drive this function directly.
  */
-export function createUsageDataPart(
-  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cached_tokens?: number; prompt_tokens_details?: Record<string, number> }
-): vscode.LanguageModelDataPart {
+export function reportTokenUsage(
+  progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cached_tokens?: number; prompt_tokens_details?: Record<string, number> },
+): void {
   const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? usage.cached_tokens ?? 0;
   const usageData = {
     prompt_tokens: usage.prompt_tokens,
@@ -29,19 +34,7 @@ export function createUsageDataPart(
     prompt_tokens_details: { cached_tokens: cachedTokens },
   };
   const usageBytes = new TextEncoder().encode(JSON.stringify(usageData));
-  return new vscode.LanguageModelDataPart(usageBytes, 'usage');
-}
-
-/**
- * Report token usage to VS Code via LanguageModelDataPart with MIME type 'usage'.
- * VS Code consumes this to display token counts in the chat UI.
- */
-export function reportTokenUsage(
-  progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; prompt_tokens_details?: Record<string, number> },
-): void {
-  const dataPart = createUsageDataPart(usage);
-  progress.report(dataPart);
+  progress.report(new vscode.LanguageModelDataPart(usageBytes, 'usage'));
 }
 
 /**
@@ -86,7 +79,13 @@ export function logTokenUsage(
   const out = [];
   out.push(`[TOKENS] ${modelId}`);
   out.push(`  input: ${usage.prompt_tokens.toLocaleString('en-US')} (cached: ${cached.toLocaleString('en-US')}${cached > 0 && cacheHitPct ? ` = ${cacheHitPct}%` : ''}${inputTokPerSec ? `, ${inputTokPerSec} tok/s` : ''})`);
-  out.push(`  output: ${usage.completion_tokens.toLocaleString('en-US')}${specAcceptPct ? ` (spec: ${accepted}/${specTotal} = ${specAcceptPct}%)` : ''}${outputTokPerSec ? `, ${outputTokPerSec} tok/s` : ''})`);
+  // One balanced paren group: spec figures and tok/s live INSIDE it. The old
+  // shape closed with an unconditional ')' while the opening '(' existed only
+  // inside optional segments — every branch printed unbalanced parentheses.
+  const outDetails: string[] = [];
+  if (specAcceptPct) outDetails.push(`spec: ${accepted}/${specTotal} = ${specAcceptPct}%`);
+  if (outputTokPerSec) outDetails.push(`${outputTokPerSec} tok/s`);
+  out.push(`  output: ${usage.completion_tokens.toLocaleString('en-US')}${outDetails.length > 0 ? ` (${outDetails.join(', ')})` : ''}`);
   out.push(`  total: ${usage.total_tokens.toLocaleString('en-US')}`);
   if (usage.cost !== undefined && usage.cost !== null) {
     // One money formatter, one convention (matches the dashboard's fine cost).

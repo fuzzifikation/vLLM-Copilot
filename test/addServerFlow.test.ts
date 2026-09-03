@@ -6,7 +6,7 @@ import {
   registerAddServerModelCommand,
   registerAddServerCommand,
 } from '../src/commands/addServerFlow.js';
-import * as configStore from '../src/configStore.js';
+import * as configStore from '../src/state/configStore.js';
 import * as hfDiscovery from '../src/commands/hfDiscovery.js';
 
 /**

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import { ServerSettingsViewProvider, resolveDetectedServerType } from '../src/serverSettingsView.js';
-import { ModelConfig } from '../src/config.js';
-import { resetOpenRouterProviderListCache } from '../src/openRouter.js';
+import { ServerSettingsViewProvider, resolveDetectedServerType } from '../src/ui/serverSettingsView.js';
+import { ModelConfig } from '../src/state/config.js';
+import { resetOpenRouterCaches } from '../src/backends/openRouter.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 describe('ServerSettingsViewProvider', () => {
@@ -11,7 +11,7 @@ describe('ServerSettingsViewProvider', () => {
   let mockConfig: ModelConfig[];
 
   beforeEach(() => {
-    resetOpenRouterProviderListCache();
+    resetOpenRouterCaches();
     mockConfig = [];
     mockOutputChannel = {
       appendLine: vi.fn(),

@@ -25,11 +25,11 @@
  */
 
 import * as vscode from 'vscode';
-import type { ModelConfig } from './config.js';
-import { resolveConfigId, resolveVllmModelId } from './config.js';
-import { resolveOutputLengthVector } from './tokenBudget.js';
-import { loadModelPresets, findPresetForModel, type ModelPreset } from './commands/presets.js';
-import { patchModelConfig, readModels } from './configStore.js';
+import type { ModelConfig } from '../state/config.js';
+import { findModelConfigIndex, resolveConfigId, resolveVllmModelId } from '../state/config.js';
+import { resolveOutputLengthVector } from '../shared/tokenBudget.js';
+import { loadModelPresets, findPresetForModel, type ModelPreset } from '../commands/presets.js';
+import { patchModelConfig, readModels } from '../state/configStore.js';
 
 /** globalState key; bump the suffix if the proposal logic ever changes materially. */
 const MIGRATION_FLAG = 'vllmCopilot.outputLengthMigration.v1';
@@ -223,20 +223,29 @@ export async function maybeOfferOutputLengthMigration(
     try {
       // Sequential writes on purpose: patchModelConfig is read-modify-write on
       // the whole models array — parallel calls would clobber each other.
+      // Existence re-checked at apply time with the store's own matcher: the
+      // proposals were planned BEFORE the offer dialog (and possibly a Review
+      // detour), so a model the user deleted while the dialog was open must
+      // stay deleted — patchModelConfig appends on no match and would
+      // resurrect it as a shell entry carrying only identity fields.
       for (const p of proposals) {
+        if (findModelConfigIndex(readModels(), p.id, p.server) < 0) {
+          output.appendLine(`[INFO] Output length migration: model "${p.id}" no longer exists, skipped.`);
+          continue;
+        }
         await patchModelConfig({ id: p.id, server: p.server }, p.updates);
       }
     } catch (err) {
       // Settings write blocked (e.g. invalid settings.json) — do NOT set the
       // flag; the offer returns on the next activation once the file is valid.
       const msg = err instanceof Error ? err.message : String(err);
-      void vscode.window.showErrorMessage(`vLLM-Copilot: could not update the models setting — ${msg}`);
+      void vscode.window.showErrorMessage(`vLLM-Copilot: could not update the models setting: ${msg}`);
       output.appendLine(`[WARN] Output length migration failed: ${msg}`);
       return;
     }
     await context.globalState.update(MIGRATION_FLAG, 'done');
     void vscode.window.showInformationMessage(
-      `vLLM-Copilot: added an Output Length menu to ${proposals.length} model${proposals.length === 1 ? '' : 's'}. Pick it in the model picker — a shorter choice frees tokens for your prompt. If the dropdown is not visible yet, open the model list once and click the "Output Length" chip on the model.`
+      `vLLM-Copilot: added an Output Length menu to ${proposals.length} model${proposals.length === 1 ? '' : 's'}. Pick it in the model picker. A shorter choice frees tokens for your prompt. If the dropdown is not visible yet, open the model list once and click the "Output Length" chip on the model.`
     );
   } catch (err) {
     output.appendLine(`[WARN] Output length migration check failed: ${err instanceof Error ? err.message : String(err)}`);

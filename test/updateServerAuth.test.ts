@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { ConfigurationTarget } from 'vscode';
-import { mergeAuthHeaders } from '../src/config.js';
-import { registerUpdateServerAuthCommand } from '../src/commands.js';
+import { mergeAuthHeaders } from '../src/state/config.js';
+import { registerUpdateServerAuthCommand } from '../src/commands/commands.js';
 
 /**
  * Tests for the "Update Auth" command and its header-merge helper.
