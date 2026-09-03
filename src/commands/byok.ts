@@ -117,59 +117,52 @@ export async function ensureAgentHostModelsEnabled(): Promise<void> {
 }
 
 /**
- * Configure the BYOK utility model default setting. Lets the user choose
- * between using the main agent model, GitHub Copilot, or none for utility
- * flows. This is the manual counterpart to the auto-configuration above.
- */
-export async function configureByokUtilityModel(output: vscode.OutputChannel): Promise<void> {
-  const chatConfig = vscode.workspace.getConfiguration('chat');
-  const current = chatConfig.get<string>(BYOK_UTILITY_MODEL_DEFAULT_SECTION_KEY);
-
-  const pick = await vscode.window.showQuickPick(
-    [
-      {
-        label: 'Main Agent Model',
-        description: `Use the selected BYOK model for utility tasks (recommended)${current === MAIN_AGENT_BYOK_UTILITY_MODEL_DEFAULT ? ' ● Current' : ''}`,
-        value: MAIN_AGENT_BYOK_UTILITY_MODEL_DEFAULT,
-      },
-      {
-        label: 'GitHub Copilot',
-        description: `Use Copilot's built-in utility models${current === 'copilot' ? ' ● Current' : ''}`,
-        value: 'copilot',
-      },
-      {
-        label: 'None',
-        description: `No utility model (utility flows will fail with BYOK)${current === 'none' || !current ? ' ● Current' : ''}`,
-        value: 'none',
-      },
-    ],
-    {
-      ignoreFocusOut: true,
-      placeHolder: 'Select utility model behavior for BYOK models',
-    }
-  );
-
-  if (!pick) return;
-
-  await chatConfig.update(
-    BYOK_UTILITY_MODEL_DEFAULT_SECTION_KEY,
-    pick.value,
-    vscode.ConfigurationTarget.Global
-  );
-
-  output.appendLine(`[INFO] BYOK utility model default set to '${pick.value}'`);
-  vscode.window.showInformationMessage(
-    `Utility model default: ${pick.label}`
-  );
-}
-
-/**
- * Register the "Configure Utility Model" command.
+ * Register the "Configure Utility Model" command: choose between using the
+ * main agent model, GitHub Copilot, or none for utility flows. Manual
+ * counterpart to the auto-configuration above.
  */
 export function registerConfigureUtilityModelCommand(
   output: vscode.OutputChannel
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.configureUtilityModel', async () => {
-    await configureByokUtilityModel(output);
+    const chatConfig = vscode.workspace.getConfiguration('chat');
+    const current = chatConfig.get<string>(BYOK_UTILITY_MODEL_DEFAULT_SECTION_KEY);
+
+    const pick = await vscode.window.showQuickPick(
+      [
+        {
+          label: 'Main Agent Model',
+          description: `Use the selected BYOK model for utility tasks (recommended)${current === MAIN_AGENT_BYOK_UTILITY_MODEL_DEFAULT ? ' ● Current' : ''}`,
+          value: MAIN_AGENT_BYOK_UTILITY_MODEL_DEFAULT,
+        },
+        {
+          label: 'GitHub Copilot',
+          description: `Use Copilot's built-in utility models${current === 'copilot' ? ' ● Current' : ''}`,
+          value: 'copilot',
+        },
+        {
+          label: 'None',
+          description: `No utility model (utility flows will fail with BYOK)${current === 'none' || !current ? ' ● Current' : ''}`,
+          value: 'none',
+        },
+      ],
+      {
+        ignoreFocusOut: true,
+        placeHolder: 'Select utility model behavior for BYOK models',
+      }
+    );
+
+    if (!pick) return;
+
+    await chatConfig.update(
+      BYOK_UTILITY_MODEL_DEFAULT_SECTION_KEY,
+      pick.value,
+      vscode.ConfigurationTarget.Global
+    );
+
+    output.appendLine(`[INFO] BYOK utility model default set to '${pick.value}'`);
+    vscode.window.showInformationMessage(
+      `Utility model default: ${pick.label}`
+    );
   });
 }

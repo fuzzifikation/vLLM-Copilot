@@ -275,31 +275,6 @@ async function countSessionsBatch(
 
 // ── Filesystem operations ──────────────────────────────────────────────────
 
-/** Remove the GitHub.copilot-chat directory for a workspace (transcripts, logs, etc.). */
-async function removeChatDir(wsId: string): Promise<boolean> {
-  const dirPath = chatDirPath(wsId);
-  try {
-    await fs.rm(dirPath, { recursive: true, force: true });
-    log('INFO', `Removed chat directory: ${dirPath}`);
-    return true;
-  } catch (err) {
-    log('WARN', `Failed to remove chat directory ${dirPath}: ${err instanceof Error ? err.message : String(err)}`);
-    return false;
-  }
-}
-
-/** Remove the chatSessions directory for a workspace (side panel chat history files). */
-async function removeChatSessions(wsId: string): Promise<boolean> {
-  const dirPath = chatSessionsDirPath(wsId);
-  return removeDir(dirPath);
-}
-
-/** Remove the chatEditingSessions directory for a workspace (inline chat history files). */
-async function removeChatEditingSessions(wsId: string): Promise<boolean> {
-  const dirPath = chatEditingSessionsDirPath(wsId);
-  return removeDir(dirPath);
-}
-
 async function removeDir(dirPath: string): Promise<boolean> {
   try {
     await fs.rm(dirPath, { recursive: true, force: true });
@@ -348,15 +323,15 @@ export async function cleanWorkspace(wsId: string): Promise<{
   const dbPath = wsId === '__global__' ? globalDbPath() : wsDbPath(wsId);
   const keysRemoved = await deleteChatKeys(dbPath);
   const dbError = keysRemoved < 0;
-  const dirRemoved = wsId !== '__global__' && (await removeChatDir(wsId));
+const dirRemoved = wsId !== '__global__' && (await removeDir(chatDirPath(wsId)));
 
   // Clean filesystem session directories (workspaceStorage only — globalStorage has none)
   let chatSessionsRemoved = false;
   let chatEditingSessionsRemoved = false;
 
   if (wsId !== '__global__') {
-    chatSessionsRemoved = await removeChatSessions(wsId);
-    chatEditingSessionsRemoved = await removeChatEditingSessions(wsId);
+    chatSessionsRemoved = await removeDir(chatSessionsDirPath(wsId));
+    chatEditingSessionsRemoved = await removeDir(chatEditingSessionsDirPath(wsId));
   }
 
   return { dbKeysRemoved: keysRemoved, dbError, chatDirRemoved: dirRemoved, chatSessionsRemoved, chatEditingSessionsRemoved };

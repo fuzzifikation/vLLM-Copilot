@@ -56,15 +56,6 @@ async function getBoundedText(url: string, signal: AbortSignal): Promise<string 
   }
 }
 
-/** Parse JSON text without throwing. */
-function parseJson(text: string): unknown | undefined {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Same case-insensitive substring rule as {@link findPresetForModel}, applied
  * to list entries. `file` must be a bare `*.json` name — any path separator is
@@ -121,7 +112,12 @@ export async function fetchRemotePreset(
   if (listText === undefined) {
     return undefined; // offline / timeout / GitHub hiccup — stay silent, bundled applies
   }
-  const list = parseJson(listText) as PresetIndex | undefined;
+  let list: PresetIndex | undefined;
+  try {
+    list = JSON.parse(listText) as PresetIndex;
+  } catch {
+    list = undefined; // malformed list text — treated like the shape guard below
+  }
   if (!list || typeof list !== 'object' || (list.schemaVersion ?? 1) > LIST_SCHEMA_VERSION) {
     return undefined; // unparseable or future list format → skip, never half-interpret
   }

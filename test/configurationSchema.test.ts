@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   buildConfigurationSchema,
   resolveOutputLengthOptions,
-  formatTokenLabel,
 } from '../src/modelInfo.js';
 
 // A generous ceiling so mode-only fixtures are never filtered — the length

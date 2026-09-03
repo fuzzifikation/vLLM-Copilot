@@ -8,7 +8,6 @@
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider.js';
 import { getConfig, resolveServerConfig } from '../config.js';
-import type { ModelConfig } from '../config.js';
 import { replaceModelConfig, type IdentifiedModelConfig } from '../configStore.js';
 import { discoverPersonalities, ensureGlobalPersonality, resolveActivePersonality } from '../personalityStore.js';
 import { describeError } from '../messageConverter.js';
@@ -23,29 +22,6 @@ interface PersonalityPick {
   clear?: boolean;
   sourcePath?: string;
   kind?: vscode.QuickPickItemKind;
-}
-
-/**
- * A personality can only be persisted on a model whose `server` reference
- * resolves: the config matcher (`findModelConfigIndex`) requires both config id
- * and server, so a model with an unresolvable ref falls through to
- * `replaceModelConfig`'s append branch and writes a duplicate entry. This guard
- * lets the caller skip such models with a clear warning instead of corrupting
- * settings.json.
- * @returns `{ ok: true }` or `{ ok: false, reason }` with a user-facing message.
- */
-export function personalityApplicableTo(
-  model: ModelConfig,
-  servers: import('../serverRegistry.js').ServerEntry[] = []
-): { ok: true } | { ok: false; reason: string } {
-  if (!model.server?.trim() || !resolveServerConfig(model, servers)) {
-    const label = model.displayName || model.id || '(unnamed)';
-    return {
-      ok: false,
-      reason: `Model "${label}" has no resolvable server configured. Add a server before setting a personality.`,
-    };
-  }
-  return { ok: true };
 }
 
 /** Apply a bundled personality preset to a model's system message replacements. */
@@ -84,10 +60,13 @@ export function registerSetModelPersonalityCommand(
 
       // A model with an unresolvable server ref cannot be matched by
       // replaceModelConfig (findModelConfigIndex needs both id and server) and
-      // would otherwise append a duplicate entry.
-      const applicability = personalityApplicableTo(modelPick.model, servers);
-      if (!applicability.ok) {
-        outputChannel.appendLine(`[WARN] Personality not applicable: ${applicability.reason}`);
+      // would otherwise append a duplicate entry into settings.json. Skip it
+      // with a clear warning instead of corrupting the config.
+      if (!modelPick.model.server?.trim() || !resolveServerConfig(modelPick.model, servers)) {
+        const label = modelPick.model.displayName || modelPick.model.id || '(unnamed)';
+        outputChannel.appendLine(
+          `[WARN] Personality not applicable: Model "${label}" has no resolvable server configured. Add a server before setting a personality.`
+        );
         outputChannel.show(true);
         return;
       }

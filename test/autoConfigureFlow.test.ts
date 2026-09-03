@@ -1,56 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import {
-  applyAutoConfigUpdate,
   registerAutoConfigureModelCommand,
 } from '../src/commands/autoConfigureFlow.js';
 import * as configStore from '../src/configStore.js';
 import * as hfDiscovery from '../src/commands/hfDiscovery.js';
 
 /**
- * Direct tests for the auto-configure flow module: the update-confirm helper and
- * the re-configure command (arg-based existing-model and unconfigured-new-model
- * paths). Discovery + persistence are stubbed so the flow's own logic is
- * measured: entry-id anchoring, infra-field preservation, and the
- * replace-based save.
+ * Direct tests for the auto-configure flow module: the re-configure command
+ * (arg-based existing-model and unconfigured-new-model paths). Discovery +
+ * persistence are stubbed so the flow's own logic is measured: entry-id
+ * anchoring, infra-field preservation, and the replace-based save.
+ * (The applyAutoConfigUpdate helper's dialog-ceremony tests died with the
+ * U8 absorb wave — the confirm/save path is now covered command-side.)
  */
-describe('applyAutoConfigUpdate', () => {
-  let infoSpy: ReturnType<typeof vi.spyOn>;
-  let replaceSpy: ReturnType<typeof vi.spyOn>;
-  let clipboardSpy: ReturnType<typeof vi.spyOn>;
-  const output = {
-    appendLine: vi.fn(),
-    dispose: vi.fn(),
-    show: vi.fn(),
-    hide: vi.fn(),
-  } as any;
-  const newConfig = { id: 'm', vllmModelId: 'm', server: 'srv' };
-
-  beforeEach(() => {
-    infoSpy = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(undefined);
-    clipboardSpy = vi.spyOn(vscode.env.clipboard, 'writeText').mockResolvedValue(undefined);
-    replaceSpy = vi
-      .spyOn(configStore, 'replaceModelConfig')
-      .mockResolvedValue({ model: newConfig as any, created: false });
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('replaces the config, runs onSaved, and toasts on Save', async () => {
-    infoSpy.mockResolvedValueOnce('Save' as any);
-    const onSaved = vi.fn();
-
-    await applyAutoConfigUpdate(newConfig, 'm', 'detail', output, onSaved);
-
-    expect(replaceSpy).toHaveBeenCalledWith(newConfig);
-    expect(onSaved).toHaveBeenCalledTimes(1);
-    expect(infoSpy).toHaveBeenCalledWith('Model "m" updated.');
-  });
-
-});
-
 describe('registerAutoConfigureModelCommand', () => {
   const provider = { clearCache: vi.fn() } as any;
   const output = {

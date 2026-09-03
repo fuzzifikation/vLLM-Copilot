@@ -73,18 +73,6 @@ export interface ServerTypeConflict {
 }
 
 /**
- * The authority segment (`host[:port]`) a raw URL carries before any path,
- * query or fragment — empty exactly when there is no host at all ("//host",
- * "/v1", "?x", "http://"). normalizeServerUrl turns every one of those into
- * its localhost:8000 sentinel, so this is what distinguishes junk from a real
- * localhost server the user actually typed.
- */
-function hostSegmentOf(raw: string): string {
-  const schemeless = raw.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
-  return schemeless.split(/[/?#]/)[0].trim();
-}
-
-/**
  * Plan the registry migration. Pure function — no I/O, no vscode, no side effects.
  *
  * Groups models by connection: same `normalizeServerUrl(serverUrl)` + equal
@@ -165,7 +153,13 @@ export function planRegistryMigration(models: LegacyModelConfig[], existing: Ser
     } catch {
       hostname = '';
     }
-    if (!hostname || !hostSegmentOf(serverUrl)) {
+    // The authority segment (host[:port]) this raw URL carries before any
+    // path/query/fragment — empty exactly when there is no host at all
+    // ("//host", "/v1", "?x"). normalizeServerUrl turns every one of those
+    // into its localhost:8000 sentinel, so this is what distinguishes junk
+    // from a real localhost server the user actually typed.
+    const authority = serverUrl.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split(/[/?#]/)[0].trim();
+    if (!hostname || !authority) {
       skipped.push({ id: model.id ?? model.vllmModelId ?? '(unnamed)', reason: `unparseable serverUrl "${serverUrl}"` });
       migrated.push(model);
       continue;

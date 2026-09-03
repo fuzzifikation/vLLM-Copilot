@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as vscode from 'vscode';
 import {
   planOutputLengthMigration,
-  stripModeMaxTokens,
   formatMigrationPreview,
   maybeOfferOutputLengthMigration,
   type OutputLengthProposal,
@@ -73,6 +72,31 @@ describe('planOutputLengthMigration', () => {
     expect(planOutputLengthMigration([{ ...base } as ModelConfig], [])).toHaveLength(0);
   });
 
+  it('clears modelModes entirely (CLEAR signal) when every mode held only max_tokens', () => {
+    // stripModeMaxTokens went file-private in the U8 absorb wave; its
+    // user-visible contract is the proposal payload, asserted here.
+    const models = [{
+      ...base,
+      maxOutputTokens: 8192,
+      modelModes: { A: { max_tokens: 2048 } },
+    } as ModelConfig];
+    const plans = planOutputLengthMigration(models, []);
+    expect(plans).toHaveLength(1);
+    expect(plans[0].updates.modelModes).toBe('');
+  });
+
+  it('leaves modelModes untouched when nothing had max_tokens', () => {
+    const models = [{
+      ...base,
+      maxOutputTokens: 8192,
+      defaultParams: { max_tokens: 2048 },
+      modelModes: { A: { temperature: 1 } },
+    } as ModelConfig];
+    const plans = planOutputLengthMigration(models, []);
+    expect(plans).toHaveLength(1);
+    expect(plans[0].updates.modelModes).toBeUndefined();
+  });
+
   it('clears defaultParams entirely when max_tokens was its only key', () => {
     const models = [{
       ...base, maxOutputTokens: 8192, defaultParams: { max_tokens: 2048 },
@@ -101,17 +125,6 @@ describe('planOutputLengthMigration', () => {
     expect(plans).toHaveLength(1);
     expect(plans[0].source).toBe('synthesized');
     expect(plans[0].to).toEqual([8192, 1024]);
-  });
-});
-
-describe('stripModeMaxTokens', () => {
-  it('returns undefined when nothing had max_tokens', () => {
-    expect(stripModeMaxTokens({ A: { temperature: 1 } })).toBeUndefined();
-    expect(stripModeMaxTokens(undefined)).toBeUndefined();
-  });
-
-  it('returns the CLEAR signal when every mode becomes empty', () => {
-    expect(stripModeMaxTokens({ A: { max_tokens: 100 } })).toBe('');
   });
 });
 

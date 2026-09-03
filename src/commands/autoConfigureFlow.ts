@@ -156,42 +156,25 @@ export function registerAutoConfigureModelCommand(
       newConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
     }
 
-    await applyAutoConfigUpdate(newConfig, vllmId, discoveryResult.summary.join('\n'), output, () => provider.clearCache());
+    // 4. Confirm dialog, then save or copy. The auto-configure path guards
+    //    identity (vllmId via resolveVllmModelId, non-blank serverUrl) before
+    //    building newConfig; the store's runtime check is the backstop against
+    //    a malformed write. No BYOK write here — the model already exists.
+    output.appendLine(`[INFO] Auto-configure ${vllmId}:`);
+    output.appendLine(discoveryResult.summary.join('\n'));
+    const action = await vscode.window.showInformationMessage(
+      `Update configuration for "${vllmId}"?`,
+      { modal: true },
+      'Save',
+      'Copy JSON'
+    );
+    if (action === 'Save') {
+      await replaceModelConfig(newConfig as IdentifiedModelConfig);
+      provider.clearCache();
+      vscode.window.showInformationMessage(`Model "${vllmId}" updated.`);
+    } else if (action === 'Copy JSON') {
+      await vscode.env.clipboard.writeText(JSON.stringify(newConfig, null, 2));
+      vscode.window.showInformationMessage('Model config copied to clipboard.');
+    }
   });
-}
-
-/**
- * Show the final confirm dialog for an auto-configured model update, then save it
- * or copy its JSON. Shared by the preset and HuggingFace branches so both end
- * the same way.
- */
-export async function applyAutoConfigUpdate(
-  newConfig: ModelConfig,
-  vllmId: string,
-  detail: string,
-  output: vscode.OutputChannel,
-  onSaved?: () => void
-): Promise<void> {
-  output.appendLine(`[INFO] Auto-configure ${vllmId}:`);
-  output.appendLine(detail);
-
-  const action = await vscode.window.showInformationMessage(
-    `Update configuration for "${vllmId}"?`,
-    { modal: true },
-    'Save',
-    'Copy JSON'
-  );
-
-  if (action === 'Save') {
-    // The auto-configure path guards identity (vllmId via resolveVllmModelId,
-    // non-blank serverUrl) before building newConfig; the store's runtime check
-    // is the backstop against a malformed write. No BYOK write here — the model
-    // already exists.
-    await replaceModelConfig(newConfig as IdentifiedModelConfig);
-    onSaved?.();
-    vscode.window.showInformationMessage(`Model "${vllmId}" updated.`);
-  } else if (action === 'Copy JSON') {
-    await vscode.env.clipboard.writeText(JSON.stringify(newConfig, null, 2));
-    vscode.window.showInformationMessage('Model config copied to clipboard.');
-  }
 }

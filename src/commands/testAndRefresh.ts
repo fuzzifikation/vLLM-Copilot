@@ -36,41 +36,12 @@ export interface ServerTestResult {
 }
 
 /**
- * Internal grouping types for server-dedup logic.
+ * Grouping shape for the refresh flow: one probe batch per registry entry.
  */
 interface ServerGroup {
   serverUrl: string;
   requestHeaders: Record<string, string>;
   models: ModelConfig[];
-}
-
-/**
- * Group model configs by the registry ENTRY their `server` ref points at, so
- * each unique server is probed once instead of N times — the entry id IS the
- * server identity. Models whose `server` reference does not resolve each get
- * their own singleton group so they can be reported individually.
- * @internal Exported for testing.
- */
-export function groupModelsByServer(models: ModelConfig[], servers: ServerEntry[]): ServerGroup[] {
-  const groups = new Map<string, ServerGroup>();
-  models.forEach((model, index) => {
-    const resolved = resolveServerConfig(model, servers);
-    if (!resolved) {
-      groups.set(`__nourl__${index}`, { serverUrl: '', requestHeaders: {}, models: [model] });
-      return;
-    }
-    const existing = groups.get(model.server);
-    if (existing) {
-      existing.models.push(model);
-    } else {
-      groups.set(model.server, {
-        serverUrl: resolved.serverUrl,
-        requestHeaders: resolved.requestHeaders,
-        models: [model],
-      });
-    }
-  });
-  return Array.from(groups.values());
 }
 
 /**
@@ -144,8 +115,27 @@ export function registerTestAndRefreshModelsCommand(
     // comment: one probe batch per entry, never merged across entries) ──
     // Models on two entries that merely share a connection probe separately:
     // two entries are two servers by doctrine, however redundant validateConfig
-    // calls them.
-    const groups = groupModelsByServer(models, servers);
+    // calls them. Models whose `server` reference does not resolve each get
+    // their own singleton group so they can be reported individually.
+    const groupMap = new Map<string, ServerGroup>();
+    models.forEach((model, index) => {
+      const resolved = resolveServerConfig(model, servers);
+      if (!resolved) {
+        groupMap.set(`__nourl__${index}`, { serverUrl: '', requestHeaders: {}, models: [model] });
+        return;
+      }
+      const existing = groupMap.get(model.server);
+      if (existing) {
+        existing.models.push(model);
+      } else {
+        groupMap.set(model.server, {
+          serverUrl: resolved.serverUrl,
+          requestHeaders: resolved.requestHeaders,
+          models: [model],
+        });
+      }
+    });
+    const groups = Array.from(groupMap.values());
 
     // ── 2. Test each unique server once (parallel) ──
     const serverTasks = groups.map(async (group): Promise<ServerTestResult> => {

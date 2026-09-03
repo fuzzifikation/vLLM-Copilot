@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractFamilyWithSource } from '../src/modelUtils.js';
+import { extractFamilyWithSource } from '../src/modelInfo.js';
 
 describe('extractFamilyWithSource', () => {
 

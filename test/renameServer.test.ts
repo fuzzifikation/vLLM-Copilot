@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { ConfigurationTarget } from 'vscode';
-import { applyServerDisplayName, registerRenameServerCommand } from '../src/commands.js';
+import { registerRenameServerCommand } from '../src/commands.js';
 
 /**
  * Tests for the "Rename Server" command and its registry-write helper.
@@ -29,34 +29,6 @@ function makeConfig(servers: any[]): any {
   };
 }
 
-describe('applyServerDisplayName', () => {
-  it('writes the name to every entry sharing the normalized URL', () => {
-    const existing = [
-      { id: 'a', serverUrl: 'http://s:8000/' },
-      { id: 'b', serverUrl: 'http://s:8000/v1' },
-      { id: 'c', serverUrl: 'http://other:9000' },
-    ];
-    const { servers, matched, changed } = applyServerDisplayName(existing, 'http://s:8000', 'IT Server');
-
-    expect(matched).toBe(2);
-    expect(changed).toBe(2);
-    expect(servers[0].displayName).toBe('IT Server');
-    expect(servers[1].displayName).toBe('IT Server');
-    expect('displayName' in servers[2]).toBe(false);
-    // Untouched entries keep their object identity — no spurious rewrites.
-    expect(servers[2]).toBe(existing[2]);
-  });
-
-  it('clears by deleting the key when the name is empty', () => {
-    const existing = [{ id: 'a', serverUrl: 'http://s:8000', displayName: 'Old' }];
-    const { servers, changed } = applyServerDisplayName(existing, 'http://s:8000', '');
-    expect(changed).toBe(1);
-    // '' must never be persisted — absent means "show the URL again".
-    expect('displayName' in servers[0]).toBe(false);
-  });
-
-});
-
 describe('renameServer command', () => {
   beforeEach(() => {
     (vscode as any).commands._registrations = [];
@@ -71,6 +43,7 @@ describe('renameServer command', () => {
     const servers = [
       { id: 'a', serverUrl: 'http://s:8000' },
       { id: 'b', serverUrl: 'http://s:8000/v1' },
+      { id: 'c', serverUrl: 'http://other:9000' },
     ];
     const cfg = makeConfig(servers);
     vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
@@ -81,9 +54,29 @@ describe('renameServer command', () => {
     disposable.dispose();
 
     const written = cfg.update.mock.calls.find((c: any[]) => c[0] === 'servers')![1] as any[];
-    expect(written.every((s: any) => s.displayName === 'IT Server for GLM5.2')).toBe(true);
+    expect(written[0].displayName).toBe('IT Server for GLM5.2');
+    expect(written[1].displayName).toBe('IT Server for GLM5.2');
+    // Entries on other URLs are untouched AND identity-preserved — an
+    // unchanged entry must not be rewritten (no spurious churn in settings).
+    expect('displayName' in written[2]).toBe(false);
+    expect(written[2]).toBe(servers[2]);
     expect(cfg.update.mock.calls.find((c: any[]) => c[0] === 'servers')![2]).toBe(ConfigurationTarget.Global);
     expect(provider.clearCache).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes nothing and says so when the name is already exactly the target', async () => {
+    const servers = [{ id: 'a', serverUrl: 'http://s:8000', displayName: 'Same' }];
+    const cfg = makeConfig(servers);
+    vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(cfg as any);
+    vi.spyOn(vscode.window, 'showInputBox').mockResolvedValueOnce('Same');
+    const infoSpy = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(undefined as any);
+
+    const disposable = registerRenameServerCommand({} as any, provider, output);
+    await (vscode as any).commands._run('vllm-copilot.renameServer', 'http://s:8000');
+    disposable.dispose();
+
+    expect(cfg.update).not.toHaveBeenCalled();
+    expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('No changes'));
   });
 
   it("deletes the key instead of persisting '' when cleared", async () => {

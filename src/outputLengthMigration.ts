@@ -52,24 +52,13 @@ export interface OutputLengthProposal {
   updates: Omit<Partial<ModelConfig>, 'id' | 'server'>;
 }
 
-/** Sanitize an arbitrary candidate list into a menu: positive ints, dedupe, descending, ≤8. */
-function toMenu(values: (number | undefined)[]): number[] | undefined {
-  const ints = values
-    .filter((n): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0)
-    .map(n => Math.floor(n));
-  const vector = resolveOutputLengthVector(ints);
-  if (!vector) return undefined;
-  const sorted = [...new Set(vector)].sort((a, b) => b - a);
-  return sorted.length >= 2 ? sorted.slice(0, 8) : undefined;
-}
-
 /**
  * Copy `modelModes` with every entry's `max_tokens` removed. Returns undefined
  * when nothing was removed (caller leaves `modelModes` untouched then). An
  * entry emptied by the strip is dropped; ALL entries emptied → `''` (the
  * store's documented CLEAR signal — an empty object is not a valid modes map).
  */
-export function stripModeMaxTokens(
+function stripModeMaxTokens(
   modes: Record<string, Record<string, unknown>> | undefined
 ): Record<string, Record<string, unknown>> | '' | undefined {
   if (!modes) return undefined;
@@ -137,8 +126,13 @@ export function planOutputLengthMigration(
         userValues.push((params as Record<string, unknown>).max_tokens as number);
       }
     }
-    const synthesized = toMenu(userValues);
-    if (!synthesized) continue;
+    // Menu sanitization (this ladder is the only candidate source): positive
+    // ints, deduped, descending, ≤8. Fewer than 2 survivors is not a menu.
+    const vector = resolveOutputLengthVector(userValues.map(n => Math.floor(n)));
+    const synthesized = vector
+      ? [...new Set(vector)].sort((a, b) => b - a)
+      : undefined;
+    if (!synthesized || synthesized.length < 2) continue;
     const strippedModes = stripModeMaxTokens(m.modelModes as any);
     updates.maxOutputTokens = synthesized;
     if (strippedModes !== undefined) updates.modelModes = strippedModes as Partial<ModelConfig>['modelModes'];
@@ -171,15 +165,6 @@ export function formatMigrationPreview(proposals: readonly OutputLengthProposal[
     lines.push('');
   }
   return lines.join('\n');
-}
-
-/** Apply every proposal through the shared settings store. Throws on the first write failure. */
-async function applyProposals(proposals: readonly OutputLengthProposal[]): Promise<void> {
-  // Sequential on purpose: patchModelConfig is read-modify-write on the whole
-  // models array — parallel calls would clobber each other's writes.
-  for (const p of proposals) {
-    await patchModelConfig({ id: p.id, server: p.server }, p.updates);
-  }
 }
 
 const BTN_UPDATE = 'Update output length menus';
@@ -236,7 +221,11 @@ export async function maybeOfferOutputLengthMigration(
     }
 
     try {
-      await applyProposals(proposals);
+      // Sequential writes on purpose: patchModelConfig is read-modify-write on
+      // the whole models array — parallel calls would clobber each other.
+      for (const p of proposals) {
+        await patchModelConfig({ id: p.id, server: p.server }, p.updates);
+      }
     } catch (err) {
       // Settings write blocked (e.g. invalid settings.json) — do NOT set the
       // flag; the offer returns on the next activation once the file is valid.

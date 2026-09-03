@@ -316,38 +316,6 @@ export function registerUpdateServerAuthCommand(
 }
 
 /**
- * Apply (or clear) the display name on the server registry entry matching the
- * given server URL. Pure helper, exported for testing.
- *
- * The name labels "the box" — the dashboard tree shows it instead of the bare
- * host. An empty/whitespace `displayName` CLEARS: the entry loses the key
- * entirely (absent means "show the URL again"; persisting `''` would be a bug).
- * An entry whose value already equals the target is left untouched so an
- * unchanged registry produces no write.
- */
-export function applyServerDisplayName(
-  servers: ServerEntry[],
-  serverUrl: string,
-  displayName: string,
-): { servers: ServerEntry[]; matched: number; changed: number } {
-  const normalizedUrl = normalizeServerUrl(serverUrl);
-  const trimmed = displayName.trim();
-  let matched = 0;
-  let changed = 0;
-  const nextServers = servers.map(s => {
-    if (normalizeServerUrl(s.serverUrl) !== normalizedUrl) return s;
-    matched++;
-    if ((s.displayName ?? '') === trimmed) return s; // no-op — nothing changed
-    changed++;
-    const next = { ...s };
-    if (trimmed === '') delete next.displayName;
-    else next.displayName = trimmed;
-    return next;
-  });
-  return { servers: nextServers, matched, changed };
-}
-
-/**
  * Rename a server for display: sets `displayName` on the server registry entry
  * for the given server URL. The Dashboard tree shows that name instead of the
  * bare host; empty input clears it (the URL is shown again).
@@ -413,8 +381,25 @@ export function registerRenameServerCommand(
     }
 
     // Re-read AFTER the prompt: the registry may have changed while it was open.
+    // Fan out to EVERY entry sharing the normalized URL (the name labels the
+    // box, not one entry). Empty/whitespace CLEARS by deleting the key — this
+    // write path bypasses entry sanitization, so persisting '' would be a bug.
+    // Entries already at the target value are returned untouched (identity
+    // preserved) so an unchanged registry produces no write.
     const existingServers = readServers();
-    const { servers: nextServers, matched, changed } = applyServerDisplayName(existingServers, serverUrl, name);
+    const trimmedName = name.trim();
+    let matched = 0;
+    let changed = 0;
+    const nextServers = existingServers.map(s => {
+      if (normalizeServerUrl(s.serverUrl) !== normalizedUrl) return s;
+      matched++;
+      if ((s.displayName ?? '') === trimmedName) return s;
+      changed++;
+      const next = { ...s };
+      if (trimmedName === '') delete next.displayName;
+      else next.displayName = trimmedName;
+      return next;
+    });
     if (matched === 0) {
       // Distinct from no-op: the entry vanished mid-prompt — a stale tree item
       // or a programmatic call with a wrong URL should fail loudly.
@@ -428,13 +413,12 @@ export function registerRenameServerCommand(
 
     await writeServers(nextServers);
     provider.clearCache();
-    const trimmed = name.trim();
     // Retitle any open Deep-Dive panels for this server immediately — without
     // this they keep the old label until closed and reopened.
-    updateDeepDiveTitle(serverUrl, trimmed || undefined);
-    if (trimmed) {
-      outputChannel.appendLine(`[INFO] Renamed server ${serverUrl} to "${trimmed}" (applied to ${matched} entr${matched === 1 ? 'y' : 'ies'}).`);
-      vscode.window.showInformationMessage(`Server renamed to "${trimmed}".`);
+    updateDeepDiveTitle(serverUrl, trimmedName || undefined);
+    if (trimmedName) {
+      outputChannel.appendLine(`[INFO] Renamed server ${serverUrl} to "${trimmedName}" (applied to ${matched} entr${matched === 1 ? 'y' : 'ies'}).`);
+      vscode.window.showInformationMessage(`Server renamed to "${trimmedName}".`);
     } else {
       outputChannel.appendLine(`[INFO] Cleared display name for ${serverUrl} (applied to ${matched} entr${matched === 1 ? 'y' : 'ies'}).`);
       vscode.window.showInformationMessage(`Display name cleared — showing the URL again.`);
@@ -534,23 +518,6 @@ export function registerRemoveServerCommand(
 }
 
 /**
- * Filter out the single model matching (server entry id, configId) from a
- * config array. `configId` is the extension `id` (falling back to the vLLM
- * wire id for legacy entries). Never touches sibling models on the same
- * server. Pure helper, exported for testing.
- */
-export function removeModelFromConfig(
-  existing: ModelConfig[],
-  server: string,
-  configId: string,
-): { filtered: ModelConfig[]; removed: number } {
-  const filtered = existing.filter(
-    m => !(m.server === server && resolveConfigId(m) === configId)
-  );
-  return { filtered, removed: existing.length - filtered.length };
-}
-
-/**
  * Remove a single model entry from a server.
  * Triggered from the Server Settings webview "Remove Model" button — the only
  * caller. The webview confirms the removal with the user before posting, so
@@ -571,10 +538,15 @@ export function registerRemoveModelCommand(
       return;
     }
 
+    // Match on (server entry id, resolveConfigId) — extension id preferred,
+    // vLLM wire id fallback for legacy entries. Sibling models on the same
+    // server are never touched.
     const existing = readModels();
-    const { filtered, removed } = removeModelFromConfig(existing, server, configId);
+    const filtered = existing.filter(
+      m => !(m.server === server && resolveConfigId(m) === configId)
+    );
 
-    if (removed === 0) {
+    if (existing.length === filtered.length) {
       vscode.window.showWarningMessage(`No configured model "${configId}" found on server "${server}".`);
       return;
     }

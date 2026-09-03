@@ -1327,7 +1327,36 @@ Recommended split (per-case judgment, god-function refusal):
   accessors of private state, law cannot absorb across the module wall
   without exporting the state itself).
 
-**U8 command-layer absorb list (low risk, wide).** Single-caller
+**U8 command-layer absorb list (low risk, wide). SPLIT: U8a EXECUTED
+2026-09-03 (census 435->416, 18 targets killed, 3rd file death
+`modelUtils.ts`, 814 green, both cruises green). U8b pending:
+hfDiscovery collapse, openRouter small absorbs, account/credits merge
+(P16-4), `registryMigration.ts` file-merge, borderline calls.**
+U8a execution notes (live, some claims adjusted against the bytes):
+- Absorbed as planned: `applyServerDisplayName` + `removeModelFromConfig`
+  (into their commands), `personalityApplicableTo` (duplicate-append
+  canary rerouted as a command-level test), `groupModelsByServer`
+  (its pure test file died wholesale - structure-wins ruling),
+  `applyAutoConfigUpdate` (dialog-ceremony test deleted),
+  `pickModelFromServer` + lying `ServerModelChoice` docstring,
+  `projectCatalog` (+ dead `PROJECTED` fixture), `catalogPricing`,
+  `persistAddedModel` (turned out 5 lines, not 80 - census lines-column
+  mistrust vindicated, absorbed), `toMenu` (its numeric-filter guard was
+  already dead weight at the sole call site), `applyProposals`,
+  `hostSegmentOf`, sessionManager clone chain (removeChatDir was a
+  removeDir clone, the two 4-line wrappers died), `configureByokUtilityModel`
+  (into its command), `parseJson`, `formatTokenLabel` (test import was
+  already dead), `modelUtils.ts` -> `modelInfo.ts` (test import rerouted,
+  zero seam loss).
+- `stripModeMaxTokens` un-exported as written; its CLEAR-signal pins
+  rerouted through `planOutputLengthMigration`.
+- WAIVER PROPOSED (executor ruling, needs user ratification):
+  `dedupeServerIds` NOT absorbed into the activation block. Reason:
+  28-line pure contract, its 7 tests are settings.json destruction-crew
+  tripwires (serverRegistry.test.ts was a purge survivor BY NAME), and
+  extension.ts activation is the least testable place in the extension.
+  Absorbing buys a name fewer and costs a real tripwire.
+Single-caller
 absorptions, all verified by census + spot-grep: `applyServerDisplayName`,
 `removeModelFromConfig`, `personalityApplicableTo` (post-U1: TEST_ONLY, the
 facade was its fake production caller -> absorb into
@@ -1353,23 +1382,27 @@ account/credits merge to one internal fetch (P16-4 executes here),
 `mergePresetWithUserConfig` (identity-safety boundary deserves its name ->
 robot rec: un-export+keep), `checkNetworkGatingSettings`, serverSettingsView
 message arms, `buildHtml`/`offlineError` in deepDiveView, `runDiscoveryOnce`
-(55-line cache protocol, rec: KEEP-large-lite, do not in[corrected by reviewer round: two rows executed themselves]
-`export` dies, function stays: `parseOpenRouterModelRef`, `normalizeOpenRouterModel`,
+(55-line cache protocol, rec: KEEP-large-lite, do not inline).
+
+**U9 export-demotion wave (export dies, function stays).** `export` is a
+reuse claim; these claims are lies.
+[NOTE 2026-09-03: this section's header was destroyed by an interrupted
+edit that stitched it into U8's last sentence; reconstructed from the
+surviving body. Reviewer-round corrections preserved.]
+Reviewer round: two rows executed themselves (already un-exported by
+earlier units), two rows were STRUCK (see below). Surviving demotions:
+`parseOpenRouterModelRef`, `normalizeOpenRouterModel`,
 `fetchOpenRouterModel`, `fetchOpenRouterModelEndpoints`,
 `buildPickerBanners`, `buildConfigurationSchema`,
 `resolveOutputLengthOptions`, `isVersionAtLeast`, `longestListMatch`,
 `autoConfigureModel`, `CONFIG_SCHEMA_TOOL_NAME` (accepted-with-flag: its
 test moves to the literal). Post-U1 addition: `WireStructuredOutputConfig`
-(types.ts - alive inside types.ts as a field type, export lost its last
-external namer in U1). STRUCK by reviewer round (verified): `iterateCauses`
+(already executed with U1b: alive inside types.ts as a field type).
+STRUCK by reviewer round (verified): `iterateCauses`
 (export must survive U4: `isGracefulTermination`/`isTransportFailure`/
 `serializeError` walk it across the file boundary - R-1) and `buildIndex`
 (export is the contract letting `genPresetIndex.test.ts` pin key sets
 without running `main()`, which rewrites the repo - load-bearing canary).
-`export` is a reuse claim; these claims are lies - these two are notel`, `CONFIG_SCHEMA_TOOL_NAME`.
-Post-U1 addition: `WireStructuredOutputConfig` (types.ts - alive inside
-types.ts as a field type, export lost its last external namer in U1).
-`export` is a reuse claim; these claims are lies.
 
 **U1b post-rescan micro-findings (new 2026-09-03). EXECUTED 2026-09-03**
 (with U11, one commit; census 441->435, zero dead, 824 green).

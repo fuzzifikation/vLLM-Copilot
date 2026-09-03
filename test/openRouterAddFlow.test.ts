@@ -4,7 +4,6 @@ import {
   registerAddServerModelCommand,
   runOpenRouterAddFlow,
   pickOpenRouterModel,
-  projectCatalog,
   buildOpenRouterSummary,
 } from '../src/commands/addServerFlow.js';
 import * as configStore from '../src/configStore.js';
@@ -80,9 +79,6 @@ function stubOpenRouterFetch() {
     return jsonResponse({}, 404);
   });
 }
-
-/** The catalog projected to the picker's narrow entry shape (what the flow passes to the picker). */
-const PROJECTED = projectCatalog(CATALOG.data);
 
 /** Mock the config surfaces the save path touches (configStore + workspace config). */
 function mockSaveSurfaces(chatUpdate = vi.fn().mockResolvedValue(undefined)) {

@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import {
-  pickModelFromServer,
   confirmAndSaveAddedModel,
   ensureServerEntry,
   registerAddServerModelCommand,

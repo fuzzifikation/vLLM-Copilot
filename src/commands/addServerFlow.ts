@@ -34,65 +34,6 @@ export interface ClearCacheProvider {
 }
 
 /**
- * Minimal shape required from a `GET /v1/models` entry to feed the picker.
- * Both `addServerModel` and `testAndRefreshModels` consume `GET /v1/models`
- * and present the same quick-pick UI; this shared helper is the single
- * source for that UX so the two flows cannot drift.
- */
-export interface ServerModelChoice {
-  id: string;
-  root?: string;
-  max_model_len?: number;
-}
-
-/**
- * Show a QuickPick of models returned by a vLLM server and return the user's
- * chosen `id`, or `undefined` if they cancel. Shared by the "Add Server &
- * Model" command (initial selection) and the "Test & Refresh Models" command
- * (corrective selection when a configured `vllmModelId` is not on the server).
- *
- * Item layout mirrors the prior inline picker: model id as label, max_model_len
- * as description, and root (when present) as detail so an alias served under
- * `--served-model-name` shows the checkpoint it points at.
- */
-export async function pickModelFromServer(
-  models: ServerModelChoice[],
-  host: string,
-  title?: string
-): Promise<string | undefined> {
-  const items: vscode.QuickPickItem[] = models.map(m => ({
-    label: m.id,
-    description: m.max_model_len ? `${m.max_model_len.toLocaleString('en-US')} ctx` : '',
-    detail: m.root ? `root: ${m.root}` : '',
-  }));
-  const selected = await vscode.window.showQuickPick(items, {
-    ignoreFocusOut: true,
-    ...(title ? { title } : {}),
-    placeHolder: `Select a model on ${host}`,
-  });
-  return selected?.label;
-}
-
-/**
- * Persist a newly added model and ensure the BYOK utility-model default so agent
- * mode works once the model becomes selectable. Only the Add paths call this
- * (discovered/preset and Keep-Anyway stub) — auto-configure and personality
- * updates must NOT re-run the BYOK write.
- *
- * The BYOK write is awaited AFTER the model write resolves: a failed save never
- * starts the BYOK bootstrap, and the write cannot race the model persistence
- * (the previous fire-and-forget call did both).
- */
-export async function persistAddedModel(
-  finalConfig: IdentifiedModelConfig,
-  onSaved?: () => void
-): Promise<void> {
-  await replaceModelConfig(finalConfig);
-  await ensureByokUtilityDefault();
-  onSaved?.();
-}
-
-/**
  * Find-or-create the registry entry for a server connection (normalized URL +
  * auth). Matching is by {@link entryMatchesConnection}: an existing entry with
  * the same URL + headers is reused (its id and label are preserved; a backend
@@ -209,6 +150,14 @@ async function discardUnreferencedServerEntry(entryId: string | undefined): Prom
  * freshly created entry — live credentials and all — sits in settings with no
  * model referencing it. Returns true only when the model is actually stored.
  */
+/**
+ * Persist a newly added model and ensure the BYOK utility-model default so agent
+ * mode works once the model becomes selectable. Only the Add paths reach this
+ * (discovered/preset and Keep-Anyway stub) — auto-configure and personality
+ * updates must NOT re-run the BYOK write. The BYOK write is awaited AFTER the
+ * model write resolves: a failed save never starts the BYOK bootstrap, and the
+ * write cannot race the model persistence.
+ */
 async function persistAddedModelOrRollback(
   finalConfig: IdentifiedModelConfig,
   modelId: string,
@@ -217,7 +166,9 @@ async function persistAddedModelOrRollback(
   output: vscode.OutputChannel
 ): Promise<boolean> {
   try {
-    await persistAddedModel(finalConfig, onSaved);
+    await replaceModelConfig(finalConfig);
+    await ensureByokUtilityDefault();
+    onSaved?.();
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -328,38 +279,11 @@ export async function confirmAndSaveAddedModel(
 // the model is saved with the fixed API base.
 
 /** A single OpenRouter catalog entry (the subset of `/v1/models` the picker shows). */
-export interface OpenRouterCatalogEntry {
+interface OpenRouterCatalogEntry {
   id: string;
   name?: string;
   context_length?: number;
   pricing?: { prompt?: string; completion?: string };
-}
-
-/**
- * Project a full catalog entry down to the subset the typeahead picker renders.
- * The full snapshot is kept by the flow for exact-id metadata resolution, so the
- * catalog is fetched exactly once per onboarding.
- */
-export function projectCatalog(full: OpenRouterModelData[]): OpenRouterCatalogEntry[] {
-  return full.map((entry) => ({
-    id: entry.id ?? '',
-    name: entry.name,
-    context_length: entry.context_length ?? undefined,
-    pricing: entry.pricing
-      ? { prompt: entry.pricing.prompt ?? undefined, completion: entry.pricing.completion ?? undefined }
-      : undefined,
-  }));
-}
-
-/** Render a catalog entry's pricing as compact per-1M "in · out", or ''. */
-function catalogPricing(entry: OpenRouterCatalogEntry): string {
-  // perMillion + formatPerMillionUsd (openRouter.ts) are the single shared
-  // per-token → per-1M conversion and en-US formatting; this only lays them out.
-  const fmt = (v?: string): string | null => formatPerMillionUsd(perMillion(v));
-  const inStr = fmt(entry.pricing?.prompt);
-  const outStr = fmt(entry.pricing?.completion);
-  if (!inStr && !outStr) return '';
-  return `in ${inStr ?? '—'} · out ${outStr ?? '—'}`;
 }
 
 /**
@@ -390,7 +314,16 @@ export async function pickOpenRouterModel(
     description: entry.name ?? '',
     detail: [
       entry.context_length ? `${entry.context_length.toLocaleString('en-US')} ctx` : '',
-      catalogPricing(entry),
+      // perMillion + formatPerMillionUsd (openRouter.ts) are the single shared
+      // per-token → per-1M conversion and en-US formatting; this only lays out
+      // compact per-1M "in · out".
+      (() => {
+        const fmt = (v?: string): string | null => formatPerMillionUsd(perMillion(v));
+        const inStr = fmt(entry.pricing?.prompt);
+        const outStr = fmt(entry.pricing?.completion);
+        if (!inStr && !outStr) return '';
+        return `in ${inStr ?? '—'} · out ${outStr ?? '—'}`;
+      })(),
     ].filter(Boolean).join(' · '),
   }));
   const qp = vscode.window.createQuickPick<vscode.QuickPickItem>();
@@ -532,7 +465,18 @@ export async function runOpenRouterAddFlow(
     requestedId = prefill;
     output.appendLine(`[INFO] OpenRouter model-page URL → resolving "${requestedId}" directly (picker skipped).`);
   } else {
-    requestedId = await pickOpenRouterModel(projectCatalog(fullCatalog), prefill);
+    // Project the full catalog down to the subset the typeahead renders; the
+    // full snapshot stays with the flow for exact-id metadata resolution, so
+    // the catalog is fetched exactly once per onboarding.
+    const catalog: OpenRouterCatalogEntry[] = fullCatalog.map((entry) => ({
+      id: entry.id ?? '',
+      name: entry.name,
+      context_length: entry.context_length ?? undefined,
+      pricing: entry.pricing
+        ? { prompt: entry.pricing.prompt ?? undefined, completion: entry.pricing.completion ?? undefined }
+        : undefined,
+    }));
+    requestedId = await pickOpenRouterModel(catalog, prefill);
   }
   if (!requestedId) {
     output.appendLine('[WARN] OpenRouter add cancelled — no model selected.');
@@ -910,7 +854,20 @@ export function registerAddServerModelCommand(
       return;
     }
 
-    const modelId = await pickModelFromServer(models, serverUrl, 'Add vLLM Server & Model (4/4)');
+    // Quick-pick the models the server reported: id as label, ctx as
+    // description, root (when present) as detail so an alias served under
+    // `--served-model-name` shows the checkpoint it points at.
+    const modelItems: vscode.QuickPickItem[] = models.map(m => ({
+      label: m.id,
+      description: m.max_model_len ? `${m.max_model_len.toLocaleString('en-US')} ctx` : '',
+      detail: m.root ? `root: ${m.root}` : '',
+    }));
+    const modelPick = await vscode.window.showQuickPick(modelItems, {
+      ignoreFocusOut: true,
+      title: 'Add vLLM Server & Model (4/4)',
+      placeHolder: `Select a model on ${serverUrl}`,
+    });
+    const modelId = modelPick?.label;
     if (!modelId) {
       output.appendLine(`[INFO] Add Server cancelled — no model selected on ${serverUrl}.`);
       return;
