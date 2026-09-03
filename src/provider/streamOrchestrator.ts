@@ -2,13 +2,35 @@ import * as vscode from 'vscode';
 import { resolveOverrideForModel, resolveModelSettings, type VllmConfig } from '../config.js';
 import type { FileLogger } from '../logger.js';
 import type { OpenAIChatMessage } from '../types.js';
-import type { ProviderClient } from './contracts.js';
+import type { ProviderClient, StreamOutcome } from './contracts.js';
 import { buildRequest } from './requestBuilder.js';
 import { consumeStream } from './consumeStream.js';
-import { createOutcome, resetOutcome } from './outcome.js';
 import { reportPostStreamDiagnostics, handleResponseError } from './postStream.js';
 import type { SystemMessagePipeline } from './systemMessagePipeline.js';
 import { isTransportFailure } from '../messageConverter.js';
+
+/**
+ * Fresh outcome for the start of a request/attempt. FULL-zero literal: every
+ * mutable field is listed, so `resetOutcome` can reuse it — a literal that
+ * omitted finishReason/firstTokenTime would leak a stale finish_reason across
+ * auto-continue attempts.
+ */
+function createOutcome(): StreamOutcome {
+  return {
+    hadContent: false,
+    hadToolCalls: false,
+    hadReasoning: false,
+    sawRawThinkTags: false,
+    finishReason: undefined,
+    firstTokenTime: undefined,
+    contentBuffer: undefined,
+  };
+}
+
+/** Reset all mutable fields on the outcome object for a retry attempt. */
+function resetOutcome(outcome: StreamOutcome): void {
+  Object.assign(outcome, createOutcome());
+}
 
 /**
  * Collaborators the chat-response orchestration needs. The provider owns the

@@ -10,34 +10,6 @@ import { describeError } from './messageConverter.js';
 const DEFAULT_RETRY_DELAY_MS = 1500;
 const MAX_RETRY_AFTER_MS = 10_000;
 
-/** Parse Retry-After seconds or an HTTP date into a non-negative delay. */
-export function parseRetryAfterMs(value: string | null, now: number = Date.now()): number | undefined {
-  const trimmed = value?.trim();
-  if (!trimmed) return undefined;
-  if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
-    const seconds = Number(trimmed);
-    return Number.isFinite(seconds) ? Math.ceil(seconds * 1000) : undefined;
-  }
-  const at = Date.parse(trimmed);
-  return Number.isFinite(at) ? Math.max(0, at - now) : undefined;
-}
-
-/** Abortable retry delay so cancellation never waits behind backoff. */
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('Request cancelled by user'));
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      clearTimeout(timeout);
-      reject(signal?.reason ?? new Error('Request cancelled by user'));
-    };
-    const timeout = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
 /**
  * Merge headers: the per-model server headers first (base), then caller headers
  * (e.g. Content-Type — always wins). Each model targets its own server, so these
@@ -63,22 +35,6 @@ export function buildRequestHeaders(
 }
 
 /**
- * Normalize `HeadersInit` (which can be Headers, string[][], or Record) into
- * a plain Record<string, string> so `buildRequestHeaders` can work with a
- * single, well-defined input shape.
- */
-function normalizeHeaders(headers: RequestInit['headers']): Record<string, string> | undefined {
-  if (!headers) return undefined;
-  if (typeof headers === 'object' && !(headers instanceof Headers) && !Array.isArray(headers)) {
-    return headers as Record<string, string>;
-  }
-  const map = new Map<string, string>(headers as Iterable<[string, string]>);
-  const result: Record<string, string> = {};
-  for (const [k, v] of map) result[k] = v;
-  return result;
-}
-
-/**
  * Fetch with retry on transient failures.
  *
  * @param url - Request URL
@@ -96,7 +52,16 @@ export async function fetchWithRetry(
   onRetry?: (error: string, delayMs: number) => void,
   onRetrySuccess?: (status: number) => void
 ): Promise<Response> {
-  const headers = buildRequestHeaders(normalizeHeaders(init.headers), requestHeaders);
+  // Normalize `HeadersInit` (Headers, string[][], or Record) into a plain
+  // Record so buildRequestHeaders sees one well-defined input shape.
+  let callerHeaders: Record<string, string> | undefined;
+  if (init.headers) {
+    callerHeaders =
+      typeof init.headers === 'object' && !(init.headers instanceof Headers) && !Array.isArray(init.headers)
+        ? (init.headers as Record<string, string>)
+        : Object.fromEntries(init.headers as Iterable<[string, string]>);
+  }
+  const headers = buildRequestHeaders(callerHeaders, requestHeaders);
   const callerSignal = init.signal as AbortSignal | undefined;
 
   if (callerSignal?.aborted) {
@@ -110,7 +75,23 @@ export async function fetchWithRetry(
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
       onRetry?.(lastError!, retryDelayMs);
-      await sleep(retryDelayMs, callerSignal);
+      // Abortable retry delay so cancellation never waits behind backoff.
+      // Rejects with the signal's raw reason (not a wrapped Error) — callers
+      // distinguish user-cancel from failures on that value.
+      if (callerSignal?.aborted) {
+        throw callerSignal.reason ?? new Error('Request cancelled by user');
+      }
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timeout);
+          reject(callerSignal?.reason ?? new Error('Request cancelled by user'));
+        };
+        const timeout = setTimeout(() => {
+          callerSignal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, retryDelayMs);
+        callerSignal?.addEventListener('abort', onAbort, { once: true });
+      });
     }
 
     // If caller already aborted between attempts, stop immediately
@@ -164,7 +145,19 @@ export async function fetchWithRetry(
         // does not look hung. Missing/invalid values use the existing 1.5s delay.
         retryDelayMs = DEFAULT_RETRY_DELAY_MS;
         if (response.status === 429 || response.status === 503) {
-          const requestedDelay = parseRetryAfterMs(response.headers.get('retry-after'));
+          // Parse Retry-After (plain seconds or HTTP date) into a non-negative
+          // delay; undefined for missing/invalid values.
+          const retryAfter = response.headers.get('retry-after')?.trim();
+          let requestedDelay: number | undefined;
+          if (retryAfter) {
+            if (/^\d+(?:\.\d+)?$/.test(retryAfter)) {
+              const seconds = Number(retryAfter);
+              requestedDelay = Number.isFinite(seconds) ? Math.ceil(seconds * 1000) : undefined;
+            } else {
+              const at = Date.parse(retryAfter);
+              requestedDelay = Number.isFinite(at) ? Math.max(0, at - Date.now()) : undefined;
+            }
+          }
           if (requestedDelay !== undefined) {
             if (requestedDelay > MAX_RETRY_AFTER_MS) throw new Error(statusLine);
             retryDelayMs = requestedDelay;

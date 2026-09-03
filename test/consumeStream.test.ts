@@ -1,7 +1,16 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { consumeStream } from '../src/provider/consumeStream.js';
-import { createOutcome } from '../src/provider/outcome.js';
+import type { StreamOutcome } from '../src/provider/contracts.js';
+
+// Mirror of the orchestrator's private factory (U2: createOutcome moved into
+// streamOrchestrator.ts; the interface in contracts.ts is the public seam).
+const createOutcome = (): StreamOutcome => ({
+  hadContent: false,
+  hadToolCalls: false,
+  hadReasoning: false,
+  sawRawThinkTags: false,
+});
 import { getLastRequest } from '../src/usageStore.js';
 import type { StreamEvent } from '../src/types.js';
 

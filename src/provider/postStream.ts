@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { isGracefulTermination, serializeError, formatError } from '../messageConverter.js';
-import type { StreamOutcome } from './outcome.js';
+import type { StreamOutcome } from './contracts.js';
 
 /** Emit a diagnostic to the Output channel only. */
 function diag(output: vscode.OutputChannel, level: 'INFO' | 'WARN' | 'ERROR', msg: string): void {

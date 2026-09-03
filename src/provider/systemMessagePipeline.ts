@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { resolveOverrideForModel, resolveWorkspaceRelativePath, type VllmConfig, type ModelConfig } from '../config.js';
+import { resolveOverrideForModel, resolveWorkspaceRelativePath, type VllmConfig } from '../config.js';
 import { messageToText } from '../messageConverter.js';
 import {
   loadPromptReplacements,
@@ -39,7 +39,7 @@ function isCaptureEntry(e: unknown): e is CaptureEntry {
 /**
  * Persistence boundary for captured system messages. {@link SystemMessagePipeline}
  * collects capture entries during transformation and hands them to this writer.
- * Production defaults to {@link SystemMessagePipeline.captureToDisk}; tests inject
+ * Production default is the constructor's own disk writer; tests inject
  * a mock to observe the collected entries without touching the file system.
  */
 export type CaptureWriter = (entries: CaptureEntry[]) => Promise<void>;
@@ -68,7 +68,24 @@ export class SystemMessagePipeline {
     private readonly output: vscode.OutputChannel,
     captureWriter?: CaptureWriter,
   ) {
-    this.captureWriter = captureWriter ?? ((entries) => this.captureToDisk(entries));
+    // Default writer: capture entries to .vllm/system-messages.json
+    // (fire-and-forget, serialized). `captureEntries` already contains every
+    // system message from the turn — the processor records all of them, both
+    // replaced and passthrough — so there is no separate passthrough pass
+    // here. Deduplication is by `receivedContent`.
+    this.captureWriter = captureWriter ?? (async (captureEntries: CaptureEntry[]) => {
+      const folders = vscode.workspace.workspaceFolders;
+      if (!folders?.length || captureEntries.length === 0) return;
+
+      const targetPath = path.join(folders[0].uri.fsPath, '.vllm', 'system-messages.json');
+
+      // Deduplicate within this request (shouldn't happen, but guard against it)
+      const uniqueEntries = Array.from(
+        new Map(captureEntries.map(e => [e.receivedContent, e])).values()
+      );
+
+      await this.enqueueWrite(targetPath, uniqueEntries);
+    });
   }
 
   /**
@@ -86,7 +103,41 @@ export class SystemMessagePipeline {
   ): Promise<vscode.LanguageModelChatRequestMessage[]> {
     try {
       const override = resolveOverrideForModel(config.models || [], model.id);
-      const replacements = await this.loadReplacements(override);
+
+      // Load replacement rules for the model's override (relative paths resolve
+      // against the workspace root). Load failures are swallowed HERE (warn, no
+      // replacements) so the capture path stays alive even when the file is broken.
+      let replacements: PromptReplacement[] = [];
+      if (override?.systemMessageReplacementsFile) {
+        try {
+          const replacementsFile = resolveWorkspaceRelativePath(override.systemMessageReplacementsFile);
+          let fileExists = true;
+          try {
+            await fs.access(replacementsFile);
+          } catch {
+            fileExists = false;
+            this.output.appendLine(`[WARN] Replacements file not found: ${replacementsFile}`);
+          }
+          if (fileExists) {
+            // Shared boilerplate removals append to EVERY active personality (Default —
+            // no replacements file — never reaches this code path, so the vanilla prompt
+            // stays untouched). Order is load-bearing: persona rules run FIRST, because
+            // persona replace-rules anchor on text that the shared remove-rules delete
+            // (e.g. the short/impersonal line also lives inside the safety blocks).
+            const personaRules = await loadPromptReplacements(replacementsFile);
+            const commonRules = await loadPromptReplacements(getBundledCommonReplacementsPath());
+            replacements = [...personaRules, ...commonRules];
+            if (replacements.length > 0) {
+              this.output.appendLine(
+                `[INFO] Loaded ${personaRules.length} personality + ${commonRules.length} shared replacement rule(s) from ${replacementsFile}`
+              );
+            }
+          }
+        } catch (err) {
+          this.output.appendLine(`[WARN] Failed to load replacements: ${err instanceof Error ? err.message : String(err)}`);
+          replacements = [];
+        }
+      }
 
       const cfg = vscode.workspace.getConfiguration('vllm-copilot');
       const captureEnabled = cfg.get<boolean>('systemMessageCapture', false);
@@ -148,63 +199,6 @@ export class SystemMessagePipeline {
       this.output.appendLine(`[WARN] System message pipeline failed: ${err instanceof Error ? err.message : String(err)}`);
       return [...originalMessages];
     }
-  }
-
-  /**
-   * Load replacement rules for a model override. Resolves relative paths against workspace root.
-   */
-  async loadReplacements(override: ModelConfig | undefined): Promise<PromptReplacement[]> {
-    if (!override?.systemMessageReplacementsFile) return [];
-
-    try {
-      const replacementsFile = resolveWorkspaceRelativePath(override.systemMessageReplacementsFile);
-
-      try {
-        await fs.access(replacementsFile);
-      } catch {
-        this.output.appendLine(`[WARN] Replacements file not found: ${replacementsFile}`);
-        return [];
-      }
-
-      const personaRules = await loadPromptReplacements(replacementsFile);
-      // Shared boilerplate removals append to EVERY active personality (Default —
-      // no replacements file — never reaches this code path, so the vanilla prompt
-      // stays untouched). Order is load-bearing: persona rules run FIRST, because
-      // persona replace-rules anchor on text that the shared remove-rules delete
-      // (e.g. the short/impersonal line also lives inside the safety blocks).
-      const commonRules = await loadPromptReplacements(getBundledCommonReplacementsPath());
-      const replacements = [...personaRules, ...commonRules];
-      if (replacements.length > 0) {
-        this.output.appendLine(
-          `[INFO] Loaded ${personaRules.length} personality + ${commonRules.length} shared replacement rule(s) from ${replacementsFile}`
-        );
-      }
-      return replacements;
-    } catch (err) {
-      this.output.appendLine(`[WARN] Failed to load replacements: ${err instanceof Error ? err.message : String(err)}`);
-      return [];
-    }
-  }
-
-  /**
-   * Capture system messages to .vllm/system-messages.json (fire-and-forget, serialized).
-   *
-   * `captureEntries` already contains every system message from the turn — the
-   * processor records all of them, both replaced and passthrough — so there is no
-   * separate passthrough pass here. Deduplication is by `receivedContent`.
-   */
-  async captureToDisk(captureEntries: CaptureEntry[]): Promise<void> {
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders?.length || captureEntries.length === 0) return;
-
-    const targetPath = path.join(folders[0].uri.fsPath, '.vllm', 'system-messages.json');
-
-    // Deduplicate within this request (shouldn't happen, but guard against it)
-    const uniqueEntries = Array.from(
-      new Map(captureEntries.map(e => [e.receivedContent, e])).values()
-    );
-
-    await this.enqueueWrite(targetPath, uniqueEntries);
   }
 
   /**

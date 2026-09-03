@@ -1236,7 +1236,18 @@ factories dead, sumCounts test-only, dedupeServerIds single). New fish:
   types.ts:178 docstring that claims it is re-exported for a reason) and
   `PresetFile` (commands/presets.ts:81, zero references).
 
-**U2 outcome + capture fold (pipeline, low risk).** [corrected by reviewer round - see "Reviewer-agent round"]
+**U2 outcome + capture fold (pipeline, low risk). EXECUTED 2026-09-03.**
+`outcome.ts` dead (4th file death): `StreamOutcome` -> `contracts.ts`,
+`createOutcome`/`resetOutcome` -> `streamOrchestrator.ts` as module-private,
+reset = `Object.assign(o, createOutcome())` over a now-FULL-zero literal
+(reviewer's stale-finish_reason trap closed by construction). Pipeline class:
+`loadReplacements` absorbed into `processSystemMessages` (inner swallow
+preserved: not-found vs load-fail warn paths distinct), `captureToDisk`
+folded into the constructor's default writer closure. Tests: consumeStream /
+postStream use a 4-field local `createOutcome` alias off the contracts type;
+all 10+1 call sites untouched. Census: StreamOutcome REUSED in new home,
+create/reset INTERNAL (rent paid by owner).
+[corrected by reviewer round - see "Reviewer-agent round"]
 - R2.1 `outcome.ts`: `createOutcome`/`resetOutcome` overlap but are NOT
   equal (reviewer catch, verified): the create-literal omits
   `finishReason`/`firstTokenTime` that reset clears - `Object.assign(o,
@@ -1279,9 +1290,16 @@ factories dead, sumCounts test-only, dedupeServerIds single). New fish:
   classification) with no per-message micro-organs. Supersedes pass-1
   P2-1 (split proposal): the law pulls the opposite direction and is right.
 
-**U5 fetchRetry innards.** `parseRetryAfterMs`, `normalizeHeaders`, `sleep`
-absorb into `fetchWithRetry` (private single-site); `buildRequestHeaders`
-stays (3 real customers). [TC-mild: fetchRetry.test reroutes]
+**U5 fetchRetry innards. EXECUTED 2026-09-03.** `parseRetryAfterMs`,
+`normalizeHeaders`, `sleep` absorbed into `fetchWithRetry`; `buildRequestHeaders`
+stays (3 real customers). Inline sleep preserves the raw-reject-on-abort-reason
+semantics the cancel pins depend on (`rejects.toBe('User cancelled')`);
+inline parse keeps seconds/HTTP-date/invalid branches. Test reroute: pure
+`parseRetryAfterMs` describe (2 its) replaced by one end-to-end past-HTTP-date
+pin through `fetchWithRetry` (delay 0, not the 1500 default -> proves the
+date branch). Fractional-seconds and future-date pins dropped per structure-wins
+ruling. fetchRetry.ts 193 -> 168 lines.
+[TC-mild: fetchRetry.test reroutes]
 
 **U6 diagnostics de-zoo (self-contained flow, no cross-module risk).**
 Verified: 18 of 24 functions are single-caller breadcrumbs of one flow.
@@ -1350,7 +1368,7 @@ U8a execution notes (live, some claims adjusted against the bytes):
   zero seam loss).
 - `stripModeMaxTokens` un-exported as written; its CLEAR-signal pins
   rerouted through `planOutputLengthMigration`.
-- WAIVER PROPOSED (executor ruling, needs user ratification):
+- WAIVER RATIFIED BY USER 2026-09-03:
   `dedupeServerIds` NOT absorbed into the activation block. Reason:
   28-line pure contract, its 7 tests are settings.json destruction-crew
   tripwires (serverRegistry.test.ts was a purge survivor BY NAME), and

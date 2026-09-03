@@ -5,7 +5,7 @@ import { recordRequest, type LastRequestData } from '../usageStore.js';
 import type { WireMetrics } from '../types.js';
 import { parseToolCallArgs } from '../messageConverter.js';
 import type { StreamEvent, WireUsage } from '../types.js';
-import type { StreamOutcome } from './outcome.js';
+import type { StreamOutcome } from './contracts.js';
 
 /**
  * Matches raw reasoning tags (`</thinking>`, `<thinking>`, etc.) that

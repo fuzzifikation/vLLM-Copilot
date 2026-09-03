@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fetchWithRetry, parseRetryAfterMs } from '../src/fetchRetry.js';
+import { fetchWithRetry } from '../src/fetchRetry.js';
 
 /**
  * fetchWithRetry retry classification. Regression tests for the real Node/undici
@@ -138,16 +138,21 @@ describe('fetchWithRetry abort handling', () => {
     await expect(pending).rejects.toBe('User cancelled');
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
-});
+  it('retries immediately on a past Retry-After HTTP date (clamped to zero)', async () => {
+    // Exercises the HTTP-date branch of the inlined Retry-After parse through
+    // the real path: a past date clamps to 0 (NOT the 1500 ms default that
+    // invalid values fall back to), so the retry fires without backoff.
+    const delays: number[] = [];
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('stale', {
+        status: 503,
+        headers: { 'Retry-After': 'Thu, 01 Jan 1970 00:00:00 GMT' },
+      }))
+      .mockResolvedValueOnce(okResponse());
 
-describe('parseRetryAfterMs', () => {
-  it('parses seconds and HTTP dates', () => {
-    expect(parseRetryAfterMs('1.5', 0)).toBe(1500);
-    expect(parseRetryAfterMs('Thu, 01 Jan 1970 00:00:05 GMT', 1000)).toBe(4000);
-  });
-
-  it('rejects invalid values and clamps past dates to zero', () => {
-    expect(parseRetryAfterMs('later')).toBeUndefined();
-    expect(parseRetryAfterMs('Thu, 01 Jan 1970 00:00:00 GMT', 1000)).toBe(0);
+    const res = await fetchWithRetry('http://test', {}, {}, (_error, delay) => delays.push(delay));
+    expect(res.status).toBe(200);
+    expect(delays).toEqual([0]);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });

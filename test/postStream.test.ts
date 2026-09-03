@@ -1,7 +1,16 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { reportPostStreamDiagnostics, handleResponseError } from '../src/provider/postStream.js';
-import { createOutcome, type StreamOutcome } from '../src/provider/outcome.js';
+import type { StreamOutcome } from '../src/provider/contracts.js';
+
+// Mirror of the orchestrator's private factory (U2: createOutcome moved into
+// streamOrchestrator.ts; the interface in contracts.ts is the public seam).
+const createOutcome = (): StreamOutcome => ({
+  hadContent: false,
+  hadToolCalls: false,
+  hadReasoning: false,
+  sawRawThinkTags: false,
+});
 
 function makeOutput(): vscode.OutputChannel & { appendLine: ReturnType<typeof vi.fn> } {
   return {
