@@ -1264,7 +1264,19 @@ create/reset INTERNAL (rent paid by owner).
   survives (75 lines, phases). ~~`isCaptureEntry` -> private~~ already
   private (reviewer catch: stale plan row, struck).
 
-**U3 chatProtocol annihilation [TC, ruling gate].** [corrected by reviewer round]
+**U3 chatProtocol annihilation. EXECUTED 2026-09-03.** Option A taken
+(no tripwire exemption needed): file dead (5th death), trio relocated
+module-private into `chatTransport.ts` exactly as the reviewer demanded
+(no ~170-line god-function). `chatProtocol.test.ts` -> `chatTransport.test.ts`:
+26 pins now drive the real `stream()` path with mocked fetch (body assertions
+via captured request, error assertions via generator rejection). Kept every
+protected-key strip/keep pin, ollama tool_choice + warn-once-per-transport,
+system-ordering (asserts fetch never fired), all content-type gate cases
+(HTML case moved to status 200 - a 5xx never reaches the gate anyway, it dies
+in fetchWithRetry). Non-array-messages pin kept (one line, defensive branch).
+Census: trio
+now INTERNAL_SINGLE inside owner.
+[TC, ruling gate] [corrected by reviewer round]
 - R3.1 `chatProtocol.ts`: `buildChatBody`/`validateMessages`/
   `checkResponseContentType`, 22-26 lines each, all single-called by
   `ChatTransport.stream` and nobody else (verified twice). File ceases to

@@ -47,7 +47,7 @@ describe('system message processing', () => {
   });
 
   it('returns the original messages when a malformed replacements file is configured', async () => {
-    // This exercises the INTERNAL swallow in loadReplacements (bad file -> []
+    // This exercises the internal load-failure swallow in processSystemMessages (bad file -> []
     // after a warning) — it does NOT reach the pipeline's outer catch, which
     // has its own test below.
     const { pipeline } = makePipeline();

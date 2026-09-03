@@ -7,7 +7,7 @@ import type { VllmConfig } from '../src/config.js';
  * VllmClient is a thin facade over ChatTransport, so these tests only cover what
  * the facade itself is responsible for: owning the configuration cache, passing
  * server type through to the request body, and enforcing the initial request
- * timeout. Pure body construction lives in chatProtocol.test.ts; runtime limits
+ * timeout. Pure body construction lives in chatTransport.test.ts; runtime limits
  * in runtimeLimits.test.ts.
  */
 
