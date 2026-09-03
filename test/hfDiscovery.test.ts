@@ -1,17 +1,29 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { autoConfigureModel, resolveModelConfigForAdd, resolveModelConfigForAddSafely } from '../src/commands/hfDiscovery.js';
+import { resolveModelConfigForAdd, resolveModelConfigForAddSafely } from '../src/commands/hfDiscovery.js';
 
 /**
- * Direct tests for the hfDiscovery module's autoConfigureModel. Global fetch is
- * stubbed and routed by URL so the module is measured without hitting the
- * network: /v1/models → vLLM, /api/models/ → HF model info,
- * /generation_config.json → HF generation config.
+ * HuggingFace auto-discovery pins. `autoConfigureModel` is module-private
+ * (U9 demotion); these drive it through its only production entry,
+ * `resolveModelConfigForAdd`, with no presets seeded so the resolver falls
+ * straight through to the auto-discovery branch. Global fetch is stubbed and
+ * routed by URL so nothing hits the network: /v1/models → vLLM,
+ * /api/models/ → HF model info, /generation_config.json → HF generation
+ * config, anything else (the remote-preset index) → 404 → silent miss.
  */
-describe('autoConfigureModel', () => {
+describe('autoConfigureModel (via resolveModelConfigForAdd)', () => {
+  const extContext = { extensionUri: vscode.Uri.file('/ext') } as any;
+
   afterEach(() => {
     vi.unstubAllGlobals();
+    delete (vscode as any).workspace._mockFsReadDirectory;
+    delete (vscode as any).workspace._mockFsReadFile;
   });
+
+  /** No bundled presets — the resolver cannot stop at the preset dialog. */
+  const seedNoPresets = () => {
+    (vscode as any).workspace._mockFsReadDirectory = () => Promise.resolve([]);
+  };
 
   const jsonResponse = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -31,8 +43,11 @@ describe('autoConfigureModel', () => {
       return jsonResponse({}, 404);
     });
 
+    seedNoPresets();
     // Strict policy: a model without a resolvable context window is not saved.
-    await expect(autoConfigureModel('m', 'http://host:8000')).rejects.toThrow(/HTTP 503/);
+    await expect(
+      resolveModelConfigForAdd(extContext, 'm', 'http://host:8000'),
+    ).rejects.toThrow(/HTTP 503/);
     // No HF lookup happened — the flow aborted at the mandatory context check.
     expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/api/models/m'))).toBe(false);
   });
@@ -52,12 +67,13 @@ describe('autoConfigureModel', () => {
       return jsonResponse({}, 404);
     });
 
-    const result = await autoConfigureModel('plain-text', 'http://host:8000');
+    seedNoPresets();
+    const result = await resolveModelConfigForAdd(extContext, 'plain-text', 'http://host:8000');
 
     // The template is present but has no tool support — the step-4 fallback must
     // not re-claim tool calling that the model's own template proves it lacks.
-    expect(result.modelConfig.capabilities).toEqual({ toolCalling: false, imageInput: false });
-    expect(result.summary.join('\n')).toContain('No tool calling markers in chat template');
+    expect(result!.modelConfig.capabilities).toEqual({ toolCalling: false, imageInput: false });
+    expect(result!.summary.join('\n')).toContain('No tool calling markers in chat template');
   });
 
   it('passes per-server request headers through to the vLLM fetch', async () => {
@@ -68,7 +84,8 @@ describe('autoConfigureModel', () => {
       return jsonResponse({}, 404);
     });
 
-    await autoConfigureModel('m', 'http://host:8000', { 'X-API-Key': 'secret' });
+    seedNoPresets();
+    await resolveModelConfigForAdd(extContext, 'm', 'http://host:8000', { 'X-API-Key': 'secret' });
 
     const vllmCall = fetchFn.mock.calls.find(([u]) => String(u).endsWith('/v1/models'));
     expect(vllmCall).toBeDefined();

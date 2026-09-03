@@ -1,87 +1,109 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-  parseOpenRouterModelRef,
-  parseOpenRouterBranchInput,
-  normalizeOpenRouterModel,
-  fetchOpenRouterModel,
-  fetchOpenRouterAccount,
-  fetchOpenRouterCredits,
+  fetchOpenRouterCatalog,
+  normalizeOpenRouterFromCatalog,
   resolveOpenRouterRuntimeLimits,
-  autoConfigureOpenRouterModel,
-  fetchOpenRouterModelEndpoints,
-  getOpenRouterModelEndpointsCached,
-  resetOpenRouterProviderListCache,
   PermanentContextError,
   OpenRouterModelNotFoundError,
-  fetchOpenRouterCatalog,
   OPENROUTER_API_BASE,
   type OpenRouterModelData,
+  type OpenRouterModelInfo,
 } from '../src/openRouter.js';
 
+/**
+ * `parseOpenRouterModelRef`, `normalizeOpenRouterModel` and
+ * `fetchOpenRouterModel` are module-private (U9 demotion). Each section below
+ * drives its subject through the surviving public surface: refs through
+ * `normalizeOpenRouterFromCatalog` (which parses first and carries the parsed
+ * id into `wireModelId`), the normalizer through the same wrapper, and the
+ * fetch flow through `fetchOpenRouterCatalog` + the wrapper - byte-for-byte
+ * the composition production uses.
+ */
+/** Normalizer driver: the entry carries the requested id (the catalog's exact-match rule), so legacy `'x'` placeholder ids fall back to the entry's own id. */
+const normalizeModelViaCatalog = (data: OpenRouterModelData, requestedId: string): OpenRouterModelInfo => {
+  const id = requestedId.includes('/') ? requestedId : (data.id ?? requestedId);
+  return normalizeOpenRouterFromCatalog([{ ...data, id }], id);
+};
+
 describe('parseOpenRouterModelRef', () => {
+  // Ref parsing observed through the wrapper: success surfaces as the parsed
+  // id on wireModelId, rejection surfaces as the parse error message.
+  const PARSE_CATALOG: OpenRouterModelData[] = [
+    'deepseek/deepseek-chat',
+    'meta-llama/llama-3.3-70b-instruct:free',
+    '~deepseek/family-latest',
+  ].map((id) => ({ id, context_length: 10000 }) as OpenRouterModelData);
+  const parse = (input: string): { requestedId?: string; error?: string } => {
+    try {
+      return { requestedId: normalizeOpenRouterFromCatalog(PARSE_CATALOG, input).wireModelId };
+    } catch (err) {
+      return { error: (err as Error).message };
+    }
+  };
+
   it('parses a plain author/slug and preserves it as the requested id', () => {
-    const r = parseOpenRouterModelRef('deepseek/deepseek-chat');
+    const r = parse('deepseek/deepseek-chat');
     expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 
   it('strips a variant suffix for the LOOKUP but preserves the full id for CHAT', () => {
-    const r = parseOpenRouterModelRef('meta-llama/llama-3.3-70b-instruct:free');
+    const r = parse('meta-llama/llama-3.3-70b-instruct:free');
     expect(r).toEqual({ requestedId: 'meta-llama/llama-3.3-70b-instruct:free' });
   });
 
   it('parses a ~family-latest alias: strips ~ for lookup, keeps it for chat', () => {
-    const r = parseOpenRouterModelRef('~deepseek/family-latest');
+    const r = parse('~deepseek/family-latest');
     expect(r).toEqual({ requestedId: '~deepseek/family-latest' });
   });
 
   it('parses a model-page URL, ignoring query, fragment, and trailing slash', () => {
-    const r = parseOpenRouterModelRef('https://openrouter.ai/deepseek/deepseek-chat?x=1#frag/');
+    const r = parse('https://openrouter.ai/deepseek/deepseek-chat?x=1#frag/');
     expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 
   it('accepts the www subdomain', () => {
-    const r = parseOpenRouterModelRef('https://www.openrouter.ai/deepseek/deepseek-chat');
+    const r = parse('https://www.openrouter.ai/deepseek/deepseek-chat');
     expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 
   it('rejects unrelated hosts', () => {
-    const r = parseOpenRouterModelRef('https://evil.com/deepseek/deepseek-chat');
+    const r = parse('https://evil.com/deepseek/deepseek-chat');
     expect(r).toEqual({ error: expect.stringContaining('openrouter.ai') });
   });
 
   it('rejects reserved paths (catalog, docs, settings)', () => {
-    expect(parseOpenRouterModelRef('https://openrouter.ai/models')).toMatchObject({ error: expect.any(String) });
-    expect(parseOpenRouterModelRef('https://openrouter.ai/docs/api')).toMatchObject({ error: expect.any(String) });
+    expect(parse('https://openrouter.ai/models')).toMatchObject({ error: expect.any(String) });
+    expect(parse('https://openrouter.ai/docs/api')).toMatchObject({ error: expect.any(String) });
   });
 
   it('rejects malformed values: empty, no slash, too many segments', () => {
-    expect(parseOpenRouterModelRef('')).toMatchObject({ error: expect.any(String) });
-    expect(parseOpenRouterModelRef('deepseek')).toMatchObject({ error: expect.any(String) });
-    expect(parseOpenRouterModelRef('a/b/c')).toMatchObject({ error: expect.any(String) });
+    expect(parse('')).toMatchObject({ error: expect.any(String) });
+    expect(parse('deepseek')).toMatchObject({ error: expect.any(String) });
+    expect(parse('a/b/c')).toMatchObject({ error: expect.any(String) });
   });
 
   it('trims trailing slashes in the bare form so the chat id is clean', () => {
-    const r = parseOpenRouterModelRef('deepseek/deepseek-chat/');
+    const r = parse('deepseek/deepseek-chat/');
     expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 
   it('trims leading slashes in the bare form (pasted /author/model)', () => {
-    const r = parseOpenRouterModelRef('/deepseek/deepseek-chat');
+    const r = parse('/deepseek/deepseek-chat');
     expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 
   it('preserves the ~ alias prefix in the chat id but strips it for the lookup', () => {
-    const r = parseOpenRouterModelRef('~deepseek/family-latest/');
+    const r = parse('~deepseek/family-latest/');
     expect(r).toEqual({ requestedId: '~deepseek/family-latest' });
   });
 
   it('collapses internal double slashes so the chat id is clean', () => {
-    const r = parseOpenRouterModelRef('deepseek//deepseek-chat');
+    const r = parse('deepseek//deepseek-chat');
     expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 
   it('trims spaces around the slash in the bare form (pasted "author / model")', () => {
-    const r = parseOpenRouterModelRef('deepseek / deepseek-chat');
+    const r = parse('deepseek / deepseek-chat');
     expect(r).toEqual({ requestedId: 'deepseek/deepseek-chat' });
   });
 });
@@ -100,12 +122,12 @@ describe('normalizeOpenRouterModel', () => {
   };
 
   it('resolves context conservatively (min of reported bounds), clamps output', () => {
-    const info = normalizeOpenRouterModel(base, 'deepseek/deepseek-chat');
+    const info = normalizeModelViaCatalog(base, 'deepseek/deepseek-chat');
     expect(info.runtimeLimits).toEqual({ contextWindow: 128000, maxOutputTokens: 16000 });
   });
 
   it('prefers per_request_limits when present (defensive; null in practice)', () => {
-    const info = normalizeOpenRouterModel(
+    const info = normalizeModelViaCatalog(
       { ...base, per_request_limits: { context_tokens: 4000, completion_tokens: 3000 } },
       'x',
     );
@@ -114,7 +136,7 @@ describe('normalizeOpenRouterModel', () => {
 
   it('falls back to 10% of the context window (hard-capped) when no completion cap is reported', () => {
     // No max_completion_tokens anywhere — the common catalog case.
-    const noCap = normalizeOpenRouterModel(
+    const noCap = normalizeModelViaCatalog(
       { ...base, top_provider: { context_length: 128000 } },
       'x',
     );
@@ -122,7 +144,7 @@ describe('normalizeOpenRouterModel', () => {
     expect(noCap.runtimeLimits).toEqual({ contextWindow: 128000, maxOutputTokens: 12800 });
 
     // A huge window must still respect the 81920 hard cap (never the full window).
-    const huge = normalizeOpenRouterModel(
+    const huge = normalizeModelViaCatalog(
       { id: 'big/ctx', context_length: 2000000, top_provider: { context_length: 2000000 } },
       'x',
     );
@@ -136,7 +158,7 @@ describe('normalizeOpenRouterModel', () => {
     // that cap set the output budget to the FULL window, which 400s on the first
     // real request (prompt + output > context) — the exact failure the 10%
     // fallback exists to prevent, resurrected through the reported-cap path.
-    const atWindow = normalizeOpenRouterModel(
+    const atWindow = normalizeModelViaCatalog(
       { id: 'risky/at-window', context_length: 512000, top_provider: { context_length: 512000, max_completion_tokens: 512000 } },
       'x',
     );
@@ -144,7 +166,7 @@ describe('normalizeOpenRouterModel', () => {
     expect(atWindow.runtimeLimits).toEqual({ contextWindow: 512000, maxOutputTokens: 51200 });
 
     // Near-window cap (95%) is equally degenerate — no input headroom.
-    const nearWindow = normalizeOpenRouterModel(
+    const nearWindow = normalizeModelViaCatalog(
       { id: 'risky/near-window', context_length: 512000, top_provider: { context_length: 512000, max_completion_tokens: 486400 } },
       'x',
     );
@@ -154,7 +176,7 @@ describe('normalizeOpenRouterModel', () => {
   it('preserves a reported cap that leaves real input headroom (never over-restricted)', () => {
     // A cap well below the window (e.g. 384k on a 1M window — deepseek-v4-pro)
     // leaves genuine room for the prompt and is a real model capability: keep it.
-    const headroom = normalizeOpenRouterModel(
+    const headroom = normalizeModelViaCatalog(
       { id: 'deepseek/deepseek-v4-pro-0813', context_length: 1048576, top_provider: { context_length: 1048576, max_completion_tokens: 384000 } },
       'x',
     );
@@ -162,7 +184,7 @@ describe('normalizeOpenRouterModel', () => {
   });
 
   it('derives estimated per-1M USD rates from per-token pricing strings', () => {
-    const info = normalizeOpenRouterModel(base, 'x');
+    const info = normalizeModelViaCatalog(base, 'x');
     expect(info.cost).toEqual({
       input: 0.2574,
       output: 1.0287,
@@ -172,7 +194,7 @@ describe('normalizeOpenRouterModel', () => {
   });
 
   it('treats -1 (unknown, dynamic routers) and malformed pricing as undefined', () => {
-    const info = normalizeOpenRouterModel(
+    const info = normalizeModelViaCatalog(
       { ...base, pricing: { prompt: '-1', completion: 'not-a-number', input_cache_read: '' } },
       'x',
     );
@@ -181,7 +203,7 @@ describe('normalizeOpenRouterModel', () => {
 
   it('throws when no positive context bound is reported', () => {
     expect(() =>
-      normalizeOpenRouterModel(
+      normalizeModelViaCatalog(
         { ...base, context_length: null, top_provider: { context_length: null } },
         'x',
       ),
@@ -189,7 +211,7 @@ describe('normalizeOpenRouterModel', () => {
   });
 
   it('derives toolCalling from supported_parameters and imageInput from modalities', () => {
-    const info = normalizeOpenRouterModel(
+    const info = normalizeModelViaCatalog(
       {
         ...base,
         supported_parameters: ['tools', 'temperature'],
@@ -201,7 +223,7 @@ describe('normalizeOpenRouterModel', () => {
   });
 
   it('builds reasoning modes when supported, omits No Think when mandatory', () => {
-    const optional = normalizeOpenRouterModel(
+    const optional = normalizeModelViaCatalog(
       { ...base, supported_parameters: ['reasoning_effort'], reasoning: { mandatory: false } },
       'x',
     );
@@ -211,7 +233,7 @@ describe('normalizeOpenRouterModel', () => {
     });
     expect(optional.defaultMode).toBe('Think (High)');
 
-    const mandatory = normalizeOpenRouterModel(
+    const mandatory = normalizeModelViaCatalog(
       { ...base, supported_parameters: ['reasoning'], reasoning: { mandatory: true } },
       'x',
     );
@@ -222,7 +244,7 @@ describe('normalizeOpenRouterModel', () => {
   });
 
   it('builds the full effort ladder from supported_efforts (no hardcoded pair)', () => {
-    const info = normalizeOpenRouterModel(
+    const info = normalizeModelViaCatalog(
       {
         ...base,
         supported_parameters: ['reasoning_effort'],
@@ -247,7 +269,7 @@ describe('normalizeOpenRouterModel', () => {
   });
 
   it('defaults to No Think when reasoning is disabled by default', () => {
-    const info = normalizeOpenRouterModel(
+    const info = normalizeModelViaCatalog(
       {
         ...base,
         supported_parameters: ['reasoning_effort'],
@@ -259,7 +281,7 @@ describe('normalizeOpenRouterModel', () => {
   });
 
   it('uses a single Think mode for Anthropic-style max_tokens reasoning (no effort ladder)', () => {
-    const info = normalizeOpenRouterModel(
+    const info = normalizeModelViaCatalog(
       {
         ...base,
         supported_parameters: ['reasoning'],
@@ -277,7 +299,7 @@ describe('normalizeOpenRouterModel', () => {
   it('detects reasoning from the reasoning object even when the param is not listed', () => {
     // The reasoning object is authoritative evidence of support; don't require it
     // to be echoed in supported_parameters (API variance).
-    const info = normalizeOpenRouterModel(
+    const info = normalizeModelViaCatalog(
       {
         ...base,
         supported_parameters: ['tools'],
@@ -296,7 +318,7 @@ describe('normalizeOpenRouterModel', () => {
     // Contradictory-but-reachable metadata: reasoning is mandatory (no No Think
     // mode) yet the default_effort is 'none'. defaultMode must not reference a
     // mode that doesn't exist (regression: it used to point at 'No Think').
-    const info = normalizeOpenRouterModel(
+    const info = normalizeModelViaCatalog(
       {
         ...base,
         supported_parameters: ['reasoning_effort'],
@@ -315,7 +337,7 @@ describe('normalizeOpenRouterModel', () => {
   it('falls back to a single high effort when supported_efforts is empty or all-none', () => {
     // An empty or all-'none' ladder is contradictory metadata — treat like missing.
     for (const supported_efforts of [[], ['none']]) {
-      const info = normalizeOpenRouterModel(
+      const info = normalizeModelViaCatalog(
         {
           ...base,
           supported_parameters: ['reasoning_effort'],
@@ -332,7 +354,7 @@ describe('normalizeOpenRouterModel', () => {
   });
 
   it('filters default_parameters to non-null supported values', () => {
-    const info = normalizeOpenRouterModel(
+    const info = normalizeModelViaCatalog(
       {
         ...base,
         supported_parameters: ['temperature', 'top_p'],
@@ -344,7 +366,7 @@ describe('normalizeOpenRouterModel', () => {
   });
 
   it('keeps the requested wire id verbatim (variant preserved)', () => {
-    const info = normalizeOpenRouterModel(base, 'meta-llama/llama-3.3-70b-instruct:free');
+    const info = normalizeModelViaCatalog(base, 'meta-llama/llama-3.3-70b-instruct:free');
     expect(info.wireModelId).toBe('meta-llama/llama-3.3-70b-instruct:free');
     expect(info.canonicalSlug).toBe('deepseek/deepseek-chat-v3');
   });
@@ -401,6 +423,10 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
     return new Response(JSON.stringify({ data: CATALOG }), { status: 200, headers: { 'content-type': 'application/json' } });
   }
 
+  /** Catalog + exact-match normalize — the same composition production runs. */
+  const resolveInfo = async (requestedId: string): Promise<OpenRouterModelInfo> =>
+    normalizeOpenRouterFromCatalog(await fetchOpenRouterCatalog(), requestedId);
+
   /** Fresh catalog response per call — Response bodies are single-use. */
   function mockCatalogFetch(): ReturnType<typeof vi.spyOn> {
     fetchSpy.mockImplementation(() => Promise.resolve(catalogResponse()));
@@ -417,7 +443,7 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
   it('resolves metadata by EXACT catalog id match — a :free pick uses the FREE entry, never the paid one', async () => {
     mockCatalogFetch();
 
-    const info = await fetchOpenRouterModel('cohere/north-mini-code:free');
+    const info = await resolveInfo('cohere/north-mini-code:free');
     expect(fetchSpy).toHaveBeenCalledWith(
       `${OPENROUTER_API_BASE}/v1/models`,
       expect.objectContaining({ method: 'GET' }),
@@ -432,14 +458,14 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
 
   it('resolves a variant-free id by exact catalog match', async () => {
     mockCatalogFetch();
-    const info = await fetchOpenRouterModel('deepseek/deepseek-chat');
+    const info = await resolveInfo('deepseek/deepseek-chat');
     expect(info.wireModelId).toBe('deepseek/deepseek-chat');
     expect(info.runtimeLimits).toEqual({ contextWindow: 128000, maxOutputTokens: 16000 });
   });
 
   it('resolves a :free id to the FREE catalog entry (distinct from the base)', async () => {
     mockCatalogFetch();
-    const info = await fetchOpenRouterModel('deepseek/deepseek-chat:free');
+    const info = await resolveInfo('deepseek/deepseek-chat:free');
     expect(info.wireModelId).toBe('deepseek/deepseek-chat:free');
     // Free entry → $0 estimated rates, proving it did NOT resolve to the paid base model.
     expect(info.cost?.input).toBe(0);
@@ -451,9 +477,9 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
     // Absent from this snapshot → OpenRouterModelNotFoundError. The metrics
     // engine rechecks next poll (the catalog is re-fetched); it is NOT a
     // permanent miss and NOT a guessed/derived slug.
-    await expect(fetchOpenRouterModel('bad/not-a-real-model')).rejects.toBeInstanceOf(OpenRouterModelNotFoundError);
-    await expect(fetchOpenRouterModel('bad/not-a-real-model')).rejects.toThrow(/not found in the current OpenRouter catalog/);
-    await expect(fetchOpenRouterModel('bad/not-a-real-model')).rejects.not.toBeInstanceOf(PermanentContextError);
+    await expect(resolveInfo('bad/not-a-real-model')).rejects.toBeInstanceOf(OpenRouterModelNotFoundError);
+    await expect(resolveInfo('bad/not-a-real-model')).rejects.toThrow(/not found in the current OpenRouter catalog/);
+    await expect(resolveInfo('bad/not-a-real-model')).rejects.not.toBeInstanceOf(PermanentContextError);
   });
 
   it('classifies a catalog ENTRY with no context bound as PermanentContextError', async () => {
@@ -463,7 +489,7 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
     fetchSpy.mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ data: noWindow }), { status: 200, headers: { 'content-type': 'application/json' } }),
     ));
-    await expect(fetchOpenRouterModel('openai/gpt-4')).rejects.toBeInstanceOf(PermanentContextError);
+    await expect(resolveInfo('openai/gpt-4')).rejects.toBeInstanceOf(PermanentContextError);
   });
 
   it('treats a malformed catalog payload (missing data array) as a transient failure, never an empty list', async () => {
@@ -493,8 +519,10 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
 
   it('wraps a catalog fetch/HTTP failure with model + catalog URL context', async () => {
     // fetchWithRetry retries once on a network error, so reject BOTH attempts.
+    // Driven through the production wrapper (resolveOpenRouterRuntimeLimits) so
+    // the contextual error message is production's, not a test mirror's.
     fetchSpy.mockRejectedValue(new Error('Network error: ECONNREFUSED'));
-    await expect(fetchOpenRouterModel('deepseek/deepseek-chat')).rejects.toThrow(
+    await expect(resolveOpenRouterRuntimeLimits('deepseek/deepseek-chat')).rejects.toThrow(
       /OpenRouter model "deepseek\/deepseek-chat" lookup failed.*v1\/models/,
     );
   });

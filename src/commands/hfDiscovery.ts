@@ -85,7 +85,7 @@ export interface AutoConfigResult {
  * `vllmInfo.root` points to the base HuggingFace repo (`Qwen/Qwen3.6-27B`). HF lookups
  * use this `root` so they resolve metadata for the actual model, not the served alias.
  */
-export async function autoConfigureModel(
+async function autoConfigureModel(
   modelId: string,
   serverUrl: string,
   requestHeaders?: Record<string, string>,

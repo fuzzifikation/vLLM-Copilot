@@ -1,12 +1,34 @@
 import { describe, it, expect } from 'vitest';
-import {
-  buildConfigurationSchema,
-  resolveOutputLengthOptions,
-} from '../src/modelInfo.js';
+import { buildModelInfo } from '../src/modelInfo.js';
 
 // A generous ceiling so mode-only fixtures are never filtered — the length
 // dropdown is emitted ONLY when a vector is declared, so these stay clean.
 const CEIL = 65536;
+
+/**
+ * `buildConfigurationSchema` and `resolveOutputLengthOptions` are
+ * module-private (U9 demotion): the schema is exercised through its only
+ * production caller. The ceiling rides in as `outputMenuCeiling` — the same
+ * pre-pick ceiling discovery passes — and the context window is huge so the
+ * budget derivation never interferes with the menu under test.
+ */
+function buildConfigurationSchema(
+  override: Record<string, unknown>,
+  ceiling: number = CEIL,
+): { properties: Record<string, any> } | undefined {
+  const id = String(override.id ?? 'test/model');
+  const info = buildModelInfo(
+    { id, max_model_len: 1_000_000 },
+    { id, vllmModelId: id, server: 'srv', ...override } as any,
+    { maxOutputTokens: 4096 },
+    'vllm',
+    undefined,
+    undefined,
+    undefined,
+    ceiling,
+  ) as { configurationSchema?: { properties: Record<string, any> } };
+  return info.configurationSchema;
+}
 
 describe('buildConfigurationSchema', () => {
   it('returns user-defined model modes when modelModes is set', () => {
@@ -75,50 +97,55 @@ describe('buildConfigurationSchema', () => {
     });
   });
 
-describe('resolveOutputLengthOptions', () => {
+describe('output-length menu (resolveOutputLengthOptions, via the schema)', () => {
+  // Menu shape is read off the rendered property: enum = values,
+  // enumItemLabels = labels, default = first surviving value.
+  const menu = (maxOutputTokens: unknown, ceiling?: number) =>
+    buildConfigurationSchema({ id: 'some/model', maxOutputTokens }, ceiling)
+      ?.properties?.maxOutputTokens as { enum: number[]; enumItemLabels: string[]; default: number } | undefined;
+
   it('returns undefined without an explicit vector (no derived ladder)', () => {
-    expect(resolveOutputLengthOptions(undefined, CEIL)).toBeUndefined();
-    expect(resolveOutputLengthOptions([], CEIL)).toBeUndefined();
+    expect(menu(undefined)).toBeUndefined();
+    expect(menu([])).toBeUndefined();
   });
 
   it('passes through a clean descending vector with formatted labels', () => {
-    const r = resolveOutputLengthOptions([65536, 32768, 16384], CEIL);
-    expect(r).toEqual({
-      values: [65536, 32768, 16384],
-      labels: ['64K', '32K', '16K'],
-    });
+    const r = menu([65536, 32768, 16384]);
+    expect(r!.enum).toEqual([65536, 32768, 16384]);
+    expect(r!.enumItemLabels).toEqual(['64K', '32K', '16K']);
+    expect(r!.default).toBe(65536);
   });
 
   it('drops entries above the ceiling, promoting the next survivor to default', () => {
     // Head (131072) exceeds a 65536 ceiling → dropped, 65536 becomes default.
-    const r = resolveOutputLengthOptions([131072, 65536, 32768], 65536);
-    expect(r!.values).toEqual([65536, 32768]);
-    expect(r!.values[0]).toBe(65536);
+    const r = menu([131072, 65536, 32768], 65536);
+    expect(r!.enum).toEqual([65536, 32768]);
+    expect(r!.default).toBe(65536);
   });
 
   it('drops non-integer and non-positive entries', () => {
-    const r = resolveOutputLengthOptions([8192, 4096.5, 0, -5, 2048], CEIL);
-    expect(r!.values).toEqual([8192, 2048]);
+    const r = menu([8192, 4096.5, 0, -5, 2048]);
+    expect(r!.enum).toEqual([8192, 2048]);
   });
 
   it('dedupes repeated values preserving order', () => {
-    const r = resolveOutputLengthOptions([32768, 32768, 16384], CEIL);
-    expect(r!.values).toEqual([32768, 16384]);
+    const r = menu([32768, 32768, 16384]);
+    expect(r!.enum).toEqual([32768, 16384]);
   });
 
   it('returns undefined when fewer than two options survive', () => {
-    expect(resolveOutputLengthOptions([65536], CEIL)).toBeUndefined();
-    expect(resolveOutputLengthOptions([131072, 262144], 65536)).toBeUndefined();
+    expect(menu([65536])).toBeUndefined();
+    expect(menu([131072, 262144], 65536)).toBeUndefined();
   });
 
   it('caps the menu at 8 entries', () => {
     const nine = [9, 8, 7, 6, 5, 4, 3, 2, 1].map(n => n * 1024);
-    const r = resolveOutputLengthOptions(nine, 100 * 1024);
-    expect(r!.values).toHaveLength(8);
-    expect(r!.labels).toHaveLength(8);
+    const r = menu(nine, 100 * 1024);
+    expect(r!.enum).toHaveLength(8);
+    expect(r!.enumItemLabels).toHaveLength(8);
   });
 
   it('returns undefined for a non-finite ceiling', () => {
-    expect(resolveOutputLengthOptions([8192, 4096], Number.NaN)).toBeUndefined();
+    expect(menu([8192, 4096], Number.NaN)).toBeUndefined();
   });
 });

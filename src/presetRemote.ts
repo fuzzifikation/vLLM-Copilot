@@ -63,7 +63,7 @@ async function getBoundedText(url: string, signal: AbortSignal): Promise<string 
  * Longest matching pattern wins; ties keep list order (remote is a single
  * source, so order is the generator's deterministic sort).
  */
-export function longestListMatch(
+function longestListMatch(
   list: ListEntry[],
   modelId: string,
   root?: string,

@@ -142,7 +142,7 @@ function thinkModeLabel(effort: string): string {
  * — it matches `requestedId` verbatim against the model catalog, so a `:free`
  * pick can never resolve to the paid model (they are separate catalog entries).
  */
-export function parseOpenRouterModelRef(
+function parseOpenRouterModelRef(
   input: string,
 ): { requestedId: string } | { error: string } {
   const trimmed = input.trim();
@@ -336,7 +336,7 @@ function supports(data: OpenRouterModelData, param: string): boolean {
  *   context bound (strict policy: never fabricate a window, never serve a model
  *   we can't size).
  */
-export function normalizeOpenRouterModel(
+function normalizeOpenRouterModel(
   data: OpenRouterModelData,
   requestedId: string,
 ): OpenRouterModelInfo {
@@ -560,7 +560,7 @@ export function normalizeOpenRouterFromCatalog(
  * The catalog endpoint is public and unauthenticated, so no per-model headers
  * are sent (threading them here would be dead).
  */
-export async function fetchOpenRouterModel(requestedId: string): Promise<OpenRouterModelInfo> {
+async function fetchOpenRouterModel(requestedId: string): Promise<OpenRouterModelInfo> {
   // DETERMINISTIC metadata resolution — no slug guessing, no fallback. Resolve
   // from the model CATALOG (`GET /api/v1/models`), matching the requested id
   // verbatim (see normalizeOpenRouterFromCatalog). The exact-model endpoint
@@ -624,7 +624,7 @@ export interface OpenRouterModelEndpoint {
  * pricing, caps, status) preserved as reported. Throws on HTTP/network failure
  * and on malformed payloads.
  */
-export async function fetchOpenRouterModelEndpoints(
+async function fetchOpenRouterModelEndpoints(
   requestedId: string,
   timeoutMs: number = METADATA_TIMEOUT_MS,
 ): Promise<OpenRouterModelEndpoint[]> {

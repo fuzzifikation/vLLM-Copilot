@@ -16,7 +16,7 @@ import * as vscode from 'vscode';
  * (stable since VS Code 1.90 — no proposal needed).
  */
 
-export const CONFIG_SCHEMA_TOOL_NAME = 'vllm-copilot_model_schema';
+const CONFIG_SCHEMA_TOOL_NAME = 'vllm-copilot_model_schema';
 
 /** Relative (to extension root) path of the bundled model-entry schema. */
 const SCHEMA_PATH = ['schemas', 'vllm-copilot-models.schema.json'];

@@ -1455,6 +1455,26 @@ message arms, `buildHtml`/`offlineError` in deepDiveView, `runDiscoveryOnce`
 
 **U9 export-demotion wave (export dies, function stays).** `export` is a
 reuse claim; these claims are lies.
+**U9 EXECUTED 2026-09-03.** All 11 surviving demotions applied; the two
+STRUCK rows (`iterateCauses`, `buildIndex`) untouched as ruled. Test seams
+rerouted instead of burned, count unchanged (812): the schema quartet drives
+`buildModelInfo` (ceiling rides in as `outputMenuCeiling`; the
+`resolveOutputLengthOptions` pins read the rendered `enum`/`enumItemLabels`);
+the openRouter trio drives `normalizeOpenRouterFromCatalog` (refs surface as
+`wireModelId`, errors as thrown messages; the normalizer's `'x'` placeholder
+ids fall back to the entry id) and `fetchOpenRouterCatalog` + wrapper for the
+fetch flow, with the wrap-message pin moved to
+`resolveOpenRouterRuntimeLimits` so it asserts production's message, not a
+test mirror's; `longestListMatch` verdicts read as WHICH file
+`fetchRemotePreset` downloads (the skipped-entry pin stubs the loser as
+downloadable, so a miss proves the skip, not a fetch failure);
+`autoConfigureModel` pins drive `resolveModelConfigForAdd` with no presets
+seeded (falls straight through to auto-discovery);
+`CONFIG_SCHEMA_TOOL_NAME`'s test import was already dead - nothing to move.
+Incinerator bonus: `test/openRouter.test.ts` carried seven dead imports.
+Deviation to ratify: `isVersionAtLeast`'s direct pins (none existed in the
+suite, only a dead import) are gone for good - the version gate is now
+covered only implicitly by the host-version the vscode mock reports.
 [NOTE 2026-09-03: this section's header was destroyed by an interrupted
 edit that stitched it into U8's last sentence; reconstructed from the
 surviving body. Reviewer-round corrections preserved.]

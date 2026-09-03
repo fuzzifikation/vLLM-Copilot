@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { CONFIG_SCHEMA_TOOL_NAME, registerConfigSchemaTool } from '../src/configSchemaTool.js';
+import { registerConfigSchemaTool } from '../src/configSchemaTool.js';
 
 /**
  * Unit tests for the config-schema LM tool. Pins the registration name, the

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { fetchRemotePreset, longestListMatch } from '../src/presetRemote.js';
+import { fetchRemotePreset } from '../src/presetRemote.js';
 
 /**
  * Tests for the live remote preset lookup (src/presetRemote.ts). fetch is
@@ -185,35 +185,58 @@ describe('fetchRemotePreset', () => {
   });
 });
 
-describe('longestListMatch', () => {
+describe('list-entry matching (longestListMatch via fetchRemotePreset, U9 demotion)', () => {
+  // The matcher is module-private; its verdicts are observable as WHICH file
+  // the lookup downloads (sourceFile) — a miss downloads nothing.
   const entries = [
     { match: ['DeepSeek-V4-Flash'], file: 'a.json' },
     { match: ['DeepSeek-V4-Flash-0731'], file: 'b.json' },
   ];
 
-  it('longest matching pattern wins, case-insensitive', () => {
-    expect(longestListMatch(entries, 'deepseek-v4-flash-0731-preview')?.file).toBe('b.json');
-    expect(longestListMatch(entries, 'nvidia/DeepSeek-V4-Flash-NVFP4')?.file).toBe('a.json');
+  /** Any of the candidate files returns the same valid preset; the winner
+   *  identity is proven by which URL was fetched. */
+  const winnerFile = async (presets: unknown[], modelId: string, root?: string) => {
+    stubFetch({
+      'index.json': jsonResponse({ schemaVersion: 1, presets }),
+      'a.json': jsonResponse(V2_PRESET),
+      'b.json': jsonResponse(V2_PRESET),
+      'M.json': jsonResponse(V2_PRESET),
+      'x.json': jsonResponse(V2_PRESET),
+    });
+    const preset = await fetchRemotePreset(modelId, root, noLog);
+    return preset?.sourceFile.replace('remote:', '');
+  };
+
+  it('longest matching pattern wins, case-insensitive', async () => {
+    expect(await winnerFile(entries, 'deepseek-v4-flash-0731-preview')).toBe('b.json');
+    expect(await winnerFile(entries, 'nvidia/DeepSeek-V4-Flash-NVFP4')).toBe('a.json');
   });
 
-  it('matches against the root too', () => {
-    expect(longestListMatch(entries, 'alias-x', 'deepseek/DeepSeek-V4-Flash-0731')?.file).toBe('b.json');
+  it('matches against the root too', async () => {
+    expect(await winnerFile(entries, 'alias-x', 'deepseek/DeepSeek-V4-Flash-0731')).toBe('b.json');
   });
 
-  it('skips entries with path characters or missing match arrays', () => {
+  it('skips entries with path characters or missing match arrays', async () => {
     const nasty = [
       { match: ['M'], file: 'sub/dir/M.json' },
       { match: ['M'], file: 'M.json' },
     ];
-    expect(longestListMatch(nasty, 'M')?.file).toBe('M.json');
-    expect(longestListMatch([{ file: 'x.json' } as never], 'M')).toBeUndefined();
+    expect(await winnerFile(nasty, 'M')).toBe('M.json');
+    // x.json is downloadable (stubbed valid) — a miss proves the entry was
+    // skipped for lacking a match array, not for a failing fetch.
+    expect(await winnerFile([{ file: 'x.json' }], 'M')).toBeUndefined();
   });
 
-  it('treats a non-array match as no patterns — never iterates it character-wise', () => {
+  it('treats a non-array match as no patterns — never iterates it character-wise', async () => {
     // A hostile/corrupt list entry { match: 'q' } must NOT be iterated as
     // single characters — a 1-char pattern would match nearly every model.
-    const hostile = [{ match: 'q', file: 'evil.json' } as never];
-    expect(longestListMatch(hostile, 'Qwen3.8-27B')).toBeUndefined();
-    expect(longestListMatch(hostile, 'anything')).toBeUndefined();
+    const fn = stubFetch({
+      'index.json': jsonResponse({ schemaVersion: 1, presets: [{ match: 'q', file: 'evil.json' }] }),
+      'evil.json': jsonResponse(V2_PRESET),
+    });
+    expect(await fetchRemotePreset('Qwen3.8-27B', undefined, noLog)).toBeUndefined();
+    expect(await fetchRemotePreset('anything', undefined, noLog)).toBeUndefined();
+    // Two list GETs only — evil.json (downloadable, valid) was never fetched.
+    expect(fn).toHaveBeenCalledTimes(2);
   });
 });

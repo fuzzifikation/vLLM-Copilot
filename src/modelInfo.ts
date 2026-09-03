@@ -71,7 +71,7 @@ export function extractFamilyWithSource(modelId: string): ExtractedFamily {
  * `1.136.0-insider`) is at least `minimum` (`major.minor`). Unparsable inputs
  * return false — an unknown runtime is treated as too old, never as capable.
  */
-export function isVersionAtLeast(minimum: string, current: string): boolean {
+function isVersionAtLeast(minimum: string, current: string): boolean {
   const min = /^(\d+)\.(\d+)/.exec(minimum);
   const cur = /^(\d+)\.(\d+)/.exec(current);
   if (!min || !cur) {
@@ -99,8 +99,8 @@ const INFO_TEXT_MIN_VSCODE = '1.135';
  * merely restates information VS Code already shows (context size, vision)
  * is deliberately not emitted.
  *
- * Exported separately so each rule is unit-testable without the version gate;
- * `buildModelInfo` passes the real `vscode.version` result.
+ * File-private: `buildModelInfo` is the only caller and the only test seam
+ * (U9 demotion: banners are asserted through the built info's metadata).
  *
  * @param supportsInfoText - false suppresses `infoText` (host too old);
  *   `warningText` is never suppressed.
@@ -109,7 +109,7 @@ const INFO_TEXT_MIN_VSCODE = '1.135';
  *   reference — a deliberate shorter pick is the feature working, not a clamp.
  *   Absent → the raw configured budget (vector head or scalar).
  */
-export function buildPickerBanners(
+function buildPickerBanners(
   override: Partial<ModelConfig> | undefined,
   config: { maxOutputTokens: number },
   budget: TokenBudget,
@@ -201,7 +201,7 @@ export function buildPickerBanners(
  *   passes the static pre-pick ceiling); the picker never offers more than the
  *   model promised.
  */
-export function buildConfigurationSchema(
+function buildConfigurationSchema(
   override: Pick<ModelConfig, 'modelModes' | 'defaultMode' | 'maxOutputTokens'> | undefined,
   outputCeiling: number
 ): { properties: Record<string, unknown> } | undefined {
@@ -253,7 +253,7 @@ export function buildConfigurationSchema(
  * Returns undefined for the scalar form or when fewer than two distinct valid
  * options survive.
  */
-export function resolveOutputLengthOptions(
+function resolveOutputLengthOptions(
   maxOutputTokens: number | number[] | undefined,
   ceiling: number,
 ): { values: number[]; labels: string[] } | undefined {

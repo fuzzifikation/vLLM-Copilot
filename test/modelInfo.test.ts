@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildModelInfo, buildPickerBanners, isVersionAtLeast } from '../src/modelInfo.js';
+import { buildModelInfo } from '../src/modelInfo.js';
 import type { TokenBudget } from '../src/tokenBudget.js';
 
 describe('buildModelInfo picker id derivation', () => {
