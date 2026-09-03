@@ -3,13 +3,7 @@ import * as vscode from 'vscode';
 import {
   messageToText,
   convertMessages,
-  convertAssistantMessage,
-  convertUserMessage,
-  extractToolResultContent,
   parseToolCallArgs,
-  isGracefulTermination,
-  isImagePart,
-  imagePartToDataUri,
 } from '../src/messageConverter.js';
 
 // Helpers to build messages with the mocked vscode classes.
@@ -19,6 +13,13 @@ function userMsg(content: any[]): vscode.LanguageModelChatRequestMessage {
 function asstMsg(content: any[]): vscode.LanguageModelChatRequestMessage {
   return { role: vscode.LanguageModelChatMessageRole.Assistant, content, name: undefined } as any;
 }
+
+// U4: the per-role convert functions folded into convertMessages' dispatch
+// branches; these aliases keep the branch pins readable.
+const convertAsst = (content: any[]) => convertMessages([asstMsg(content)]);
+const convertUser = (content: any[]) => convertMessages([userMsg(content)]);
+/** Tool-result content as it reaches the wire (extractToolResultContent is now private). */
+const toolContent = (part: any) => (convertUser([part])[0] as any).content;
 
 describe('messageToText', () => {
   it('joins multiple text parts with newlines', () => {
@@ -66,26 +67,26 @@ describe('messageToText', () => {
   });
 });
 
-describe('convertAssistantMessage', () => {
+describe('convertMessages — assistant branch', () => {
   it('returns a text-only assistant message', () => {
-    const result = convertAssistantMessage(asstMsg([
+    const result = convertAsst([
       new vscode.LanguageModelTextPart('hi'),
-    ]));
-    expect(result).toEqual({ role: 'assistant', content: 'hi' });
+    ]);
+    expect(result).toEqual([{ role: 'assistant', content: 'hi' }]);
   });
 
   it('joins multiple text parts with newlines', () => {
-    const result = convertAssistantMessage(asstMsg([
+    const result = convertAsst([
       new vscode.LanguageModelTextPart('line 1'),
       new vscode.LanguageModelTextPart('line 2'),
-    ]))!;
+    ])[0]!;
     expect(result.content).toBe('line 1\nline 2');
   });
 
   it('emits tool_calls with stringified arguments', () => {
-    const result = convertAssistantMessage(asstMsg([
+    const result = convertAsst([
       new vscode.LanguageModelToolCallPart('call_1', 'readFile', { path: '/foo' }),
-    ]))!;
+    ])[0]!;
     expect(result.role).toBe('assistant');
     expect(result.content).toBe('');
     expect(result.tool_calls).toHaveLength(1);
@@ -97,59 +98,59 @@ describe('convertAssistantMessage', () => {
   });
 
   it('emits both text and tool_calls when present', () => {
-    const result = convertAssistantMessage(asstMsg([
+    const result = convertAsst([
       new vscode.LanguageModelTextPart('Let me check that.'),
       new vscode.LanguageModelToolCallPart('c1', 'readFile', { path: '/a' }),
-    ]))!;
+    ])[0]!;
     expect(result.content).toBe('Let me check that.');
     expect(result.tool_calls).toHaveLength(1);
   });
 
   it('uses empty string content when only tool_calls present', () => {
-    const result = convertAssistantMessage(asstMsg([
+    const result = convertAsst([
       new vscode.LanguageModelToolCallPart('c1', 'foo', {}),
-    ]))!;
+    ])[0]!;
     expect(result.content).toBe('');
   });
 
   it('forwards host-supplied thinking history as structured reasoning', () => {
-    const result = convertAssistantMessage(asstMsg([
+    const result = convertAsst([
       new vscode.LanguageModelThinkingPart('first '),
       new vscode.LanguageModelThinkingPart(['step', ' two']),
       new vscode.LanguageModelTextPart('answer'),
-    ]));
-    expect(result).toEqual({
+    ]);
+    expect(result).toEqual([{
       role: 'assistant',
       content: 'answer',
       reasoning: 'first step two',
-    });
+    }]);
   });
 
   it('keeps a thinking-only historical assistant message', () => {
-    const result = convertAssistantMessage(asstMsg([
+    const result = convertAsst([
       new vscode.LanguageModelThinkingPart('reasoning'),
-    ]));
-    expect(result).toEqual({
+    ]);
+    expect(result).toEqual([{
       role: 'assistant',
       content: '',
       reasoning: 'reasoning',
-    });
+    }]);
   });
 });
 
-describe('convertUserMessage', () => {
+describe('convertMessages — user branch', () => {
   it('returns a single user message with a text string for a single text part', () => {
-    const result = convertUserMessage(userMsg([
+    const result = convertUser([
       new vscode.LanguageModelTextPart('hello'),
-    ]));
+    ]);
     expect(result).toEqual([{ role: 'user', content: 'hello' }]);
   });
 
   it('returns a content array when multiple parts present', () => {
-    const result = convertUserMessage(userMsg([
+    const result = convertUser([
       new vscode.LanguageModelTextPart('hello'),
       new vscode.LanguageModelTextPart('world'),
-    ]));
+    ]);
     expect(result).toHaveLength(1);
     expect(Array.isArray(result[0].content)).toBe(true);
     expect(result[0].content).toEqual([
@@ -160,10 +161,10 @@ describe('convertUserMessage', () => {
 
   it('emits tool results BEFORE the user text (correct roundtrip order)', () => {
     const toolResult = new vscode.LanguageModelToolResultPart('call_1', [new vscode.LanguageModelTextPart('file contents')]);
-    const result = convertUserMessage(userMsg([
+    const result = convertUser([
       new vscode.LanguageModelTextPart('thanks'),
       toolResult,
-    ]));
+    ]);
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ role: 'tool', tool_call_id: 'call_1', content: 'file contents' });
     expect(result[1]).toEqual({ role: 'user', content: 'thanks' });
@@ -171,17 +172,23 @@ describe('convertUserMessage', () => {
 
   it('returns only tool messages when only tool results present', () => {
     const tr = new vscode.LanguageModelToolResultPart('c1', [new vscode.LanguageModelTextPart('data')]);
-    const result = convertUserMessage(userMsg([tr]));
+    const result = convertUser([tr]);
     expect(result).toEqual([{ role: 'tool', tool_call_id: 'c1', content: 'data' }]);
+  });
+
+  it('emits an empty user message when the message has no parts', () => {
+    // The never-empty guard: an empty user message must still emit a message
+    // so the request isn't dropped by strict servers.
+    expect(convertUser([])).toEqual([{ role: 'user', content: '' }]);
   });
 
   it('encodes image parts as image_url with data URI', () => {
     const imgBytes = new Uint8Array([0xff, 0xd8, 0xff]); // JPEG SOI
     const img = new vscode.LanguageModelDataPart(imgBytes, 'image/jpeg');
-    const result = convertUserMessage(userMsg([
+    const result = convertUser([
       new vscode.LanguageModelTextPart('describe this'),
       img,
-    ]));
+    ]);
     expect(result).toHaveLength(1);
     const content = result[0].content;
     expect(Array.isArray(content)).toBe(true);
@@ -189,6 +196,21 @@ describe('convertUserMessage', () => {
     expect(imageContent).toBeTruthy();
     expect(imageContent.image_url.url).toMatch(/^data:image\/jpeg;base64,/);
     expect(imageContent.image_url.url).toContain('/9j/'); // base64 of FFD8FF
+  });
+
+  it('produces an exact data URI for known bytes', () => {
+    // Absorbed from the deleted imagePartToDataUri unit test: exact bytes ->
+    // exact base64, verified through the wire path.
+    const img = new vscode.LanguageModelDataPart(new Uint8Array([1, 2, 3]), 'image/png');
+    const content = convertUser([img])[0].content as any[];
+    expect(content[0].image_url.url).toBe('data:image/png;base64,AQID');
+  });
+
+  it('does not treat non-image data parts as images', () => {
+    // Absorbed from the deleted isImagePart unit test: a JSON data part is
+    // silently dropped (not sent as text, not sent as image).
+    const jsonPart = new vscode.LanguageModelDataPart(new Uint8Array([1]), 'application/json');
+    expect(convertUser([jsonPart])).toEqual([{ role: 'user', content: '' }]);
   });
 });
 
@@ -267,30 +289,30 @@ describe('convertMessages', () => {
   });
 });
 
-describe('extractToolResultContent', () => {
+describe('tool result content extraction (private, via convertMessages tool role)', () => {
   it('joins array-of-text-parts with newlines', () => {
     const part = new vscode.LanguageModelToolResultPart('id1', [
       new vscode.LanguageModelTextPart('a'),
       new vscode.LanguageModelTextPart('b'),
     ]);
-    expect(extractToolResultContent(part)).toBe('a\nb');
+    expect(toolContent(part)).toBe('a\nb');
   });
 
   it('JSON-stringifies unknown content types in arrays', () => {
     const part = new vscode.LanguageModelToolResultPart('id1', [{ foo: 'bar' }]);
-    expect(extractToolResultContent(part)).toBe('{"foo":"bar"}');
+    expect(toolContent(part)).toBe('{"foo":"bar"}');
   });
 
   it('does NOT filter objects that have mimeType but no $mid (legitimate tool output)', () => {
     // A file-info tool might return {name, mimeType, size} — this must pass through.
     const fileInfo = { name: 'image.png', mimeType: 'image/png', size: 1024 };
     const part = new vscode.LanguageModelToolResultPart('id1', [fileInfo]);
-    expect(extractToolResultContent(part)).toBe(JSON.stringify(fileInfo));
+    expect(toolContent(part)).toBe(JSON.stringify(fileInfo));
   });
 
   it('handles bare string elements in content array', () => {
     const part = new vscode.LanguageModelToolResultPart('id1', ['just a string']);
-    expect(extractToolResultContent(part)).toBe('just a string');
+    expect(toolContent(part)).toBe('just a string');
   });
 
   it('filters out LanguageModelDataPart (cache_control metadata) from arrays', () => {
@@ -299,7 +321,7 @@ describe('extractToolResultContent', () => {
       new vscode.LanguageModelTextPart('tool output'),
       cacheControl,
     ]);
-    expect(extractToolResultContent(part)).toBe('tool output');
+    expect(toolContent(part)).toBe('tool output');
   });
 
   it('filters out raw VS Code protocol objects with $mid (plain-object metadata leak)', () => {
@@ -310,13 +332,13 @@ describe('extractToolResultContent', () => {
       new vscode.LanguageModelTextPart('tool output'),
       rawBlob,
     ]);
-    expect(extractToolResultContent(part)).toBe('tool output');
+    expect(toolContent(part)).toBe('tool output');
   });
 
   it('filters out LanguageModelDataPart when it is the only element in the array', () => {
     const cacheControl = new vscode.LanguageModelDataPart(new TextEncoder().encode('ephemeral'), 'cache_control');
     const part = new vscode.LanguageModelToolResultPart('id1', [cacheControl]);
-    expect(extractToolResultContent(part)).toBe('');
+    expect(convertUser([part])).toEqual([{ role: 'tool', tool_call_id: 'id1', content: '' }]);
   });
 
   it('only preserves text parts when mixed with DataPart metadata', () => {
@@ -328,7 +350,7 @@ describe('extractToolResultContent', () => {
       usageData,
       new vscode.LanguageModelTextPart('more data'),
     ]);
-    expect(extractToolResultContent(part)).toBe('result: 42\nmore data');
+    expect(toolContent(part)).toBe('result: 42\nmore data');
   });
 });
 
@@ -385,47 +407,3 @@ describe('parseToolCallArgs', () => {
   });
 });
 
-describe('isGracefulTermination', () => {
-  it('recognizes TypeError: terminated (VS Code internal .terminate())', () => {
-    expect(isGracefulTermination(new TypeError('terminated'))).toBe(true);
-  });
-
-  it('recognizes TypeError: terminated nested in a cause chain', () => {
-    const inner = new TypeError('terminated');
-    const outer = new Error('fetch failed', { cause: inner });
-    expect(isGracefulTermination(outer)).toBe(true);
-  });
-
-  it('does NOT treat ERR_STREAM_PREMATURE_CLOSE as graceful', () => {
-    // A premature close is a network/proxy drop, NOT an intentional .terminate().
-    // Treating it as graceful would silently swallow a real failure. It must
-    // surface to the user via formatError's premature-close branch instead.
-    const err = Object.assign(new Error('Premature close'), { code: 'ERR_STREAM_PREMATURE_CLOSE' });
-    expect(isGracefulTermination(err)).toBe(false);
-  });
-
-  it('does NOT treat bare ECONNRESET as graceful', () => {
-    expect(isGracefulTermination(new Error('ECONNRESET'))).toBe(false);
-  });
-
-  it('does NOT treat string throws as graceful', () => {
-    expect(isGracefulTermination('User cancelled')).toBe(false);
-    expect(isGracefulTermination('Stream inactivity timeout (30000ms without data)')).toBe(false);
-  });
-});
-
-describe('isImagePart / imagePartToDataUri', () => {
-  it('returns true only for image/* data parts', () => {
-    expect(isImagePart(new vscode.LanguageModelDataPart(new Uint8Array(), 'image/png'))).toBe(true);
-    expect(isImagePart(new vscode.LanguageModelDataPart(new Uint8Array(), 'image/jpeg'))).toBe(true);
-    expect(isImagePart(new vscode.LanguageModelDataPart(new Uint8Array(), 'application/json'))).toBe(false);
-    expect(isImagePart(new vscode.LanguageModelTextPart('hi'))).toBe(false);
-    expect(isImagePart(null)).toBe(false);
-    expect(isImagePart(undefined)).toBe(false);
-  });
-
-  it('produces a valid data URI', () => {
-    const uri = imagePartToDataUri(new vscode.LanguageModelDataPart(new Uint8Array([1, 2, 3]), 'image/png'));
-    expect(uri).toBe('data:image/png;base64,AQID');
-  });
-});

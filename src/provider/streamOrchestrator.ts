@@ -7,7 +7,27 @@ import { buildRequest } from './requestBuilder.js';
 import { consumeStream } from './consumeStream.js';
 import { reportPostStreamDiagnostics, handleResponseError } from './postStream.js';
 import type { SystemMessagePipeline } from './systemMessagePipeline.js';
-import { isTransportFailure } from '../messageConverter.js';
+import { iterateCauses } from '../messageConverter.js';
+
+/**
+ * True when the request failed at the transport layer: the server never
+ * answered (connection refused, DNS failure, undici `fetch failed`). HTTP
+ * error responses (the server answered, even with a 5xx) are NOT transport
+ * failures, and neither are cancellations, timeouts, or mid-stream resets.
+ *
+ * A transport failure means the picker was advertising a server that no
+ * longer exists, so the owner invalidates its model cache and the next
+ * resolve re-probes rather than reusing the stale snapshot.
+ */
+function isTransportFailure(err: unknown): boolean {
+  if (typeof err === 'string' || !(err instanceof Error)) return false;
+  const combined = [err, ...iterateCauses(err)]
+    .map(c => (c instanceof Error ? `${c.name} ${c.message}` : String(c)))
+    .join(' ');
+  return combined.includes('ECONNREFUSED')
+    || combined.includes('fetch failed')
+    || combined.includes('ENOTFOUND');
+}
 
 /**
  * Fresh outcome for the start of a request/attempt. FULL-zero literal: every

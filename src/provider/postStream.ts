@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { isGracefulTermination, serializeError, formatError } from '../messageConverter.js';
+import { formatError, iterateCauses } from '../messageConverter.js';
 import type { StreamOutcome } from './contracts.js';
 
 /** Emit a diagnostic to the Output channel only. */
@@ -183,4 +183,80 @@ export function handleResponseError(
   // Report error to user via text part — don't re-throw, VS Code swallows it anyway
   const errorMsg = formatError(err);
   progress.report(new vscode.LanguageModelTextPart(`⚠️ ${errorMsg}`));
+}
+
+/**
+ * Detect whether an error is a graceful termination rather than a hard failure.
+ *
+ * VS Code may close the fetch connection internally (e.g., after reading files
+ * during tool orchestration) without firing the cancellation token. This produces
+ * `TypeError: terminated` (possibly with a network-level cause like ECONNRESET).
+ *
+ * A `TypeError: terminated` means something called `.terminate()` on the response
+ * ReadableStream — that is always an intentional action (not a random network
+ * failure), so it is by definition graceful.
+ *
+ * NOTE: Bare ECONNRESET, "socket hang up", etc. (without the TypeError wrapper)
+ * are genuine network failures, NOT graceful terminations — they should surface
+ * to the user as connectivity errors.
+ *
+ * Timeouts and user cancellations are handled separately and should NOT match here.
+ */
+function isGracefulTermination(err: unknown): boolean {
+  if (typeof err === 'string') {
+    // Plain string throws from fetch are typically our own abort reasons
+    // (inactivity timeout, user cancelled), not graceful terminations.
+    return false;
+  }
+  if (err instanceof Error) {
+    const name = err.name ?? '';
+
+    // `TypeError: terminated` — the response ReadableStream was terminated by
+    // something calling `.terminate()` on it. This is always intentional
+    // (e.g., VS Code's internal fetch layer after tool orchestration).
+    if (name === 'TypeError' && err.message === 'terminated') {
+      return true;
+    }
+
+    // Check cause chain for the same pattern (wrapping can nest the original).
+    for (const cause of iterateCauses(err)) {
+      if (cause instanceof Error && cause.name === 'TypeError' && cause.message === 'terminated') {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Serialize an error to a multi-line string with full diagnostic info:
+ * name, message, cause chain, and stack trace.
+ * Handles both Error objects and plain string throws (fetch abort returns a string!).
+ * Use this for OUTPUT channel / file log entries — never for user-facing text.
+ */
+function serializeError(err: unknown): string {
+  // Node.js fetch() throws a plain string when aborted, not an Error object.
+  // e.g., "Stream inactivity timeout (30000ms without data)"
+  if (typeof err === 'string') {
+    return `Fetch abort (string): ${err}`;
+  }
+  if (err instanceof Error) {
+    const lines: string[] = [];
+    lines.push(`${err.name}: ${err.message}`);
+    // Unwrap cause chain (fetch errors often wrap the real cause)
+    for (const cause of iterateCauses(err)) {
+      const causeStr = cause instanceof Error
+        ? `${cause.name}: ${cause.message}`
+        : String(cause);
+      lines.push(`  caused by: ${causeStr}`);
+    }
+    if (err.stack) {
+      const stackLines = err.stack.split('\n').slice(1);
+      lines.push(...stackLines);
+    }
+    return lines.join('\n');
+  }
+  // Fallback for any other thrown value
+  try { return `Non-error thrown: ${JSON.stringify(err)}`; }
+  catch { return `Non-error thrown: ${String(err)}`; }
 }

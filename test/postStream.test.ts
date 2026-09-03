@@ -147,3 +147,52 @@ describe('handleResponseError', () => {
     expect(text).not.toContain('vLLM');
   });
 });
+// U4: isGracefulTermination became module-private in postStream.ts (sole
+// consumer). The pins moved from direct predicate calls to the observable
+// behavior of handleResponseError: graceful = quiet INFO + minimal '\n'
+// part, no scary ⚠️ part; everything else must surface as an error.
+describe('graceful termination via handleResponseError', () => {
+  function run(err: unknown): { output: ReturnType<typeof makeOutput>; progress: ReturnType<typeof makeProgress> } {
+    const output = makeOutput();
+    const progress = makeProgress();
+    handleResponseError(err, makeModel('model-g'), outcome(), makeToken(false), progress as any, output);
+    return { output, progress };
+  }
+
+  it('recognizes TypeError: terminated (VS Code internal .terminate())', () => {
+    const { output, progress } = run(new TypeError('terminated'));
+    expect(lines(output)).toContain('model-g: request terminated (connection reset).');
+    expect(lines(output)).not.toContain('[ERROR]');
+    // No content was produced -> exactly one minimal newline part, no ⚠️.
+    expect(progress.reports).toHaveLength(1);
+    expect(String((progress.reports[0] as any).value)).toBe('\n');
+  });
+
+  it('recognizes TypeError: terminated nested in a cause chain', () => {
+    const outer = new Error('fetch failed', { cause: new TypeError('terminated') });
+    const { output } = run(outer);
+    expect(lines(output)).toContain('request terminated (connection reset).');
+    expect(lines(output)).not.toContain('[ERROR]');
+  });
+
+  it('does NOT swallow ERR_STREAM_PREMATURE_CLOSE (network drop must surface)', () => {
+    // A premature close is a network/proxy drop, NOT an intentional
+    // .terminate(). Swallowing it silently would hide real failures.
+    const err = Object.assign(new Error('Premature close'), { code: 'ERR_STREAM_PREMATURE_CLOSE' });
+    const { output, progress } = run(err);
+    expect(lines(output)).toContain('[ERROR]');
+    expect(String((progress.reports[0] as any).value)).toContain('⚠️');
+  });
+
+  it('does NOT swallow bare ECONNRESET', () => {
+    const { output } = run(new Error('ECONNRESET'));
+    expect(lines(output)).toContain('[ERROR]');
+  });
+
+  it('does NOT swallow string throws (our own abort reasons)', () => {
+    const a = run('User cancelled');
+    expect(lines(a.output)).toContain('[ERROR]');
+    const b = run('Stream inactivity timeout (30000ms without data)');
+    expect(lines(b.output)).toContain('[ERROR]');
+  });
+});

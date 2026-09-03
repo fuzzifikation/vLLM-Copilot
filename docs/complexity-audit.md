@@ -1287,6 +1287,20 @@ now INTERNAL_SINGLE inside owner.
   (wire-format crew, protected-keys canary) reroutes through `stream` with
   fetch mocks, or shrinks. Option B: KEEP by explicit tripwire exemption.
 
+**U4 messageConverter shrink. EXECUTED 2026-09-03.** R4.1: assistant/user
+branches fused into `convertMessages`' dispatch (image predicate + data-URI
+builder inlined at the one use site); `extractToolResultContent` un-exported
+(2 internal callers, rent paid). R4.2: extraction chain folded into
+`formatError`'s server-error loop (marker match -> JSON envelope -> tolerant
+regex -> status text, same ladder, one function). R4.3: `isGracefulTermination`
++ `serializeError` relocated module-private into postStream, `isTransportFailure`
+into streamOrchestrator; `iterateCauses` export confirmed REUSED post-move
+(2 new external importers - reviewer's STRUCK correction vindicated by census).
+Tests: assistant/user/extractToolResult pins rerouted via `convertMessages`
+(branch aliases), image pins absorbed (exact-base64 + non-image-drop),
+isGracefulTermination describe transplanted to postStream.test.ts as
+handleResponseError behavior canaries (INFO-swallow vs [ERROR]+part).
+messageConverter 564 -> 440 lines, 6 census targets dead.
 **U4 messageConverter shrink (medium churn).**
 - R4.1 fold `convertAssistantMessage`/`convertUserMessage` into
   `convertMessages` (they are its two dispatch branches); inline
