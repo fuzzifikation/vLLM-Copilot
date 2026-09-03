@@ -76,8 +76,8 @@ describe('shipped model-configs presets', () => {
 /**
  * Drift guard for the generated remote preset list (model-configs/index.json):
  * it must list exactly the preset files in this directory with identical match
- * arrays. Regenerate with `npm run gen:presets` (the GitHub Action does the
- * same on push) — a stale index must never ship, and npm run build gates this.
+ * arrays. Regenerate with `npm run gen:presets`, in the same commit as the
+ * preset change — a stale index must never ship, and npm run build gates this.
  */
 describe('model-configs/index.json (remote preset list)', () => {
   const indexRaw = JSON.parse(readFileSync(configsDir + INDEX_FILE, 'utf8'));

@@ -7,7 +7,7 @@ import { buildIndex, PRESET_CONFIG_KEYS as GEN_KEYS } from '../scripts/gen-prese
 
 /**
  * Guards the dependency-free index generator (scripts/gen-preset-index.mjs),
- * which the GitHub Action runs WITHOUT the strict suite — so it must refuse
+ * which runs standalone WITHOUT the strict suite — so it must refuse
  * presets the runtime guard would reject, and its mirrored allow-list must
  * never drift from the real one in src/commands/presets.ts.
  */

@@ -2,9 +2,10 @@
  * Generates model-configs/index.json — the remote preset list served live to
  * the extension during Add Server / Auto-Configure.
  *
- * GENERATED, NEVER HAND-EDITED. Freshness chain:
- *   1. GitHub Action (.github/workflows/preset-index.yml) regenerates + commits
- *      this file on any push touching model-configs/**.
+ * GENERATED, NEVER HAND-EDITED. Freshness chain (there is deliberately no CI:
+ * one maintainer, and the Actions history is a public information surface):
+ *   1. Run `npm run gen:presets` in the SAME commit as any preset add/remove/
+ *      edit, so main never serves a lagging live list.
  *   2. The Vitest drift test (test/modelConfigPresets.test.ts) fails a stale
  *      index, so `npm run build` cannot ship one.
  *
@@ -21,8 +22,8 @@ const SCHEMA_VERSION = 1;
 /**
  * Mirror of PRESET_CONFIG_KEYS in src/commands/presets.ts (this script is
  * dependency-free Node and cannot import the TypeScript module). A Vitest
- * sync test (test/gen-preset-index.test.ts) fails if the two ever diverge.
- * Without this check the GitHub Action could publish an index advertising a
+ * sync test (test/genPresetIndex.test.ts) fails if the two ever diverge.
+ * Without this check the generator could publish an index advertising a
  * preset the runtime guard will reject — the lookup fails gracefully, but the
  * index should never advertise garbage in the first place.
  */

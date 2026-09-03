@@ -28,6 +28,6 @@ Beyond shipping inside the VSIX, the presets in this directory are served **live
 For maintainers:
 
 - Every preset uses the **v2 envelope**: `presetVersion` / `match` (match patterns) / `meta` (provenance, displayed) / `config` (the loadable ModelConfig minus identity & transport). Unknown `config` keys reject the whole file — server URLs and headers are structurally impossible.
-- `index.json` is **generated — never hand-edit**. `npm run gen:presets` regenerates it; a GitHub Action does it automatically on push, and a Vitest drift guard makes the build fail on a stale list.
+- `index.json` is **generated — never hand-edit**. Run `npm run gen:presets` in the **same commit** as any preset change, so the live list on `main` never lags the directory. A Vitest drift guard makes the build fail on a stale list, so a shipped VSIX can never carry one.
 
 For the full configuration schema and copy-paste snippets for `bad_words`, `structured_outputs`, `repetition_detection`, `chat_template_kwargs`, and sampling presets, see the [vLLM-Copilot Manual](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md) and the [Configuration Reference](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/configuration-reference.md).
