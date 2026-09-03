@@ -289,7 +289,10 @@
             "markdownDescription": "Server registry: each entry is one server (URL + auth + type), referenced by `id` from `vllm-copilot.models`. Managed via the Dashboard and the vLLM-Copilot commands; hand-editing is possible but the commands keep models and servers in sync. Stored in **User settings only** — the extension always writes there, so a workspace-layer value would be silently ignored.",
             "items": {
               "type": "object",
-              "required": ["id", "serverUrl"],
+              "required": [
+                "id",
+                "serverUrl"
+              ],
               "additionalProperties": false,
               "properties": {
                 "id": {
@@ -306,13 +309,21 @@
                 },
                 "serverType": {
                   "type": "string",
-                  "enum": ["vllm", "lmstudio", "llamacpp", "ollama", "openrouter"],
+                  "enum": [
+                    "vllm",
+                    "lmstudio",
+                    "llamacpp",
+                    "ollama",
+                    "openrouter"
+                  ],
                   "default": "vllm",
                   "markdownDescription": "Backend serving this server's models. **Default: `vllm`.**"
                 },
                 "requestHeaders": {
                   "type": "object",
-                  "additionalProperties": { "type": "string" },
+                  "additionalProperties": {
+                    "type": "string"
+                  },
                   "markdownDescription": "Extra HTTP headers sent to this server (e.g. `Authorization`)."
                 }
               }
@@ -325,7 +336,10 @@
             "markdownDescription": "Per-model configuration: server reference, params, modes. Server connection facts (URL, auth, type) live in the `vllm-copilot.servers` registry. See README Configuration Reference for details. Stored in **User settings only** — the extension always writes there, so a workspace-layer value would be silently ignored.",
             "items": {
               "type": "object",
-              "required": ["id", "server"],
+              "required": [
+                "id",
+                "server"
+              ],
               "properties": {
                 "server": {
                   "type": "string",
@@ -522,13 +536,17 @@
     "check:cli-rules": "node scripts/check-cli-rules.mjs",
     "extract:cli-reference": "node scripts/extract-cli-reference.mjs",
     "gen:presets": "node scripts/gen-preset-index.mjs",
-    "build": "npm run license:check && npm run compile && npm run test:typecheck && npm test && npx @vscode/vsce package"
+    "dep:check": "dependency-cruiser src && dependency-cruiser src -c .dependency-cruiser.consumers.cjs",
+    "dep:graph": "node scripts/dep-graph.mjs",
+    "rent": "node scripts/rent-census.mjs",
+    "build": "npm run license:check && npm run compile && npm run dep:check && npm run rent -- --fail-on=dead && npm run test:typecheck && npm test && npx @vscode/vsce package"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.7",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^26.1.1",
     "@types/vscode": "^1.128.0",
+    "dependency-cruiser": "^18.2.0",
     "jsdom": "^29.1.1",
     "license-checker-rseidelsohn": "^5.0.1",
     "typescript": "^6.0.3",

@@ -6,9 +6,6 @@ import type { ServerConfig } from './provider/requestBuilder.js';
 import { resolveRuntimeLimits } from './runtimeLimits.js';
 import type { OpenAIChatMessage, RuntimeModelLimits, StreamEvent, VllmChatOptions } from './types.js';
 
-export type { OpenAIChatMessage, StreamEvent, VllmChatOptions, VllmModel } from './types.js';
-export { detectServerType, detectServerTypeFromV1Models, resolveRuntimeLimits } from './runtimeLimits.js';
-
 /**
  * Provider-facing facade and single owner of the configuration cache.
  * Runtime metadata resolution and chat transport are implemented by focused

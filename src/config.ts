@@ -1,6 +1,5 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import type { WireStructuredOutputConfig } from './types.js';
 import { resolveOutputBudgetScalar } from './tokenBudget.js';
 import { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders } from './serverCore.js';
 import { entryMatchesConnection, resolveServer } from './serverRegistry.js';
@@ -10,8 +9,6 @@ import { entryMatchesConnection, resolveServer } from './serverRegistry.js';
 // used to force a duplicated resolver here. Re-exported for existing consumers.
 // Server identity is the registry ENTRY ID; nothing here derives one.
 export { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders };
-
-export type StructuredOutputConfig = WireStructuredOutputConfig;
 
 /**
  * The backend that serves this model. Every model targets its own server; the

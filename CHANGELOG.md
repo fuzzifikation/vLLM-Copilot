@@ -15,6 +15,8 @@
 ### Fixed
 
 - **Model settings now live in one place: User settings.** The setting is declared application-scoped. Before, a copy of `vllm-copilot.models` in a workspace `.vscode/settings.json` shadowed every read while all writes went to User settings: add/edit/auth commands wrote where nothing was read.
+- **Deep Dive no longer revives old credentials.** With a server's Deep Dive panel open, rotating its auth (Update Auth) and then invoking Deep Dive again pushed the pre-rotation key back into the shared connection: dashboards and requests using that server ran on the stale key. An open panel now follows the server's current credentials.
+- **OpenRouter provider list refreshes after key rotation.** The provider list fetched from OpenRouter was cached for the whole session and never dropped when servers or models changed, so the picker could keep listing the old key's providers. Server and model edits now flush the cache.
 
 ## v1.35.2
 

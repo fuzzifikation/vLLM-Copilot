@@ -18,12 +18,26 @@ interface ReadyMessage {
   type: 'ready';
 }
 
+/** Live connection facts for an open panel. The `refresh` closure MUST read
+ *  these instead of the values captured when the panel was created:
+ *  `getMetricsEngine`'s reuse path overwrites url/headers/type on EVERY
+ *  lookup, so a closure holding creation-time credentials would stomp freshly
+ *  rotated auth (pushed by Update Auth via `refreshEngineHeaders`, or by a
+ *  hand-edited settings.json) back onto the SHARED engine the next time the
+ *  command retakes the reading. The command re-reads settings on every
+ *  invocation, so these fields are always current. */
+interface PanelArgs {
+  serverUrl: string;
+  requestHeaders: Record<string, string>;
+  serverType: ServerType;
+}
+
 /** Singleton — only one deep-dive panel per server registry entry at a time.
- *  The key is the entry id (the same key the metrics engine uses); the URL
- *  rides alongside so a rename can retitle every panel whose entry shares the
- *  URL (§5 fans the display name out per URL), and `refresh` lets the command
- *  retake the reading of an already-open panel. */
-const openPanels = new Map<string, { panel: vscode.WebviewPanel; url: string; refresh: () => void }>();
+ *  The key is the entry id (the same key the metrics engine uses); the live
+ *  URL rides in `args` so a rename can retitle every panel whose entry shares
+ *  the URL (§5 fans the display name out per URL), and `refresh` lets the
+ *  command retake the reading of an already-open panel. */
+const openPanels = new Map<string, { panel: vscode.WebviewPanel; args: PanelArgs; refresh: () => void }>();
 
 /**
  * Retitle every open Deep-Dive panel for a server (matched by normalized URL).
@@ -33,8 +47,8 @@ const openPanels = new Map<string, { panel: vscode.WebviewPanel; url: string; re
 export function updateDeepDiveTitle(serverUrl: string, displayName?: string): void {
   const normalized = normalizeServerUrl(serverUrl);
   for (const entry of openPanels.values()) {
-    if (normalizeServerUrl(entry.url) === normalized) {
-      entry.panel.title = `vLLM Deep-Dive: ${displayName || entry.url}`;
+    if (normalizeServerUrl(entry.args.serverUrl) === normalized) {
+      entry.panel.title = `vLLM Deep-Dive: ${displayName || entry.args.serverUrl}`;
     }
   }
 }
@@ -61,11 +75,21 @@ export function openDeepDive(
   // open (retainContextWhenHidden) would otherwise show the stale label.
   const existing = openPanels.get(panelKey);
   if (existing) {
+    // The command re-reads settings on every invocation, so these args are
+    // live: fold a rotated key, an edited URL, or a changed backend type into
+    // the holder BEFORE retaking the reading. `refresh` reads them from the
+    // holder — that is the only way the engine sees current credentials.
+    existing.args.serverUrl = serverUrl;
+    existing.args.requestHeaders = requestHeaders;
+    existing.args.serverType = serverType;
     existing.panel.title = `vLLM Deep-Dive: ${displayName || serverUrl}`;
     existing.panel.reveal(vscode.ViewColumn.Beside);
     existing.refresh();
     return;
   }
+
+  /** Mutable holder read by `refresh` on every reading (see PanelArgs). */
+  const args: PanelArgs = { serverUrl, requestHeaders, serverType };
 
   const panel = vscode.window.createWebviewPanel(
     'vllm-copilot.deepDive',
@@ -107,7 +131,8 @@ export function openDeepDive(
     reading?.dispose();
     reading = undefined;
 
-    const engine = getMetricsEngine(serverId, serverUrl, requestHeaders, serverType, undefined, outputChannel);
+    // Read the LIVE holder, never the creation-time parameters — see PanelArgs.
+    const engine = getMetricsEngine(serverId, args.serverUrl, args.requestHeaders, args.serverType, undefined, outputChannel);
     // Cache first so the panel paints instantly; it can still be stale (or
     // missing), so the live cycle below is what actually refreshes the view.
     const cached = engine.getCachedRaw();
@@ -146,7 +171,7 @@ export function openDeepDive(
     msgDisposable.dispose();
   });
 
-  openPanels.set(panelKey, { panel, url: serverUrl, refresh });
+  openPanels.set(panelKey, { panel, args, refresh });
 }
 
 /** Why the probe produced nothing, or undefined when it succeeded. The message

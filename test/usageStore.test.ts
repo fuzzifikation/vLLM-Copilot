@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import {
   initUsageStore, recordRequest, getLastRequest, getServerUsage, getServerCost, hasServerUsage,
   getServersWithUsage, resetUsage, computeCost, findModelCost, getModelStartedAt,
-  formatCost, formatCostFine, formatCostSummary, fmtCount, sumCounts, dayKey, resetUsageStoreForTests, onUsageStoreDidChange,
+  formatCost, formatCostFine, formatCostSummary, fmtCount, dayKey, resetUsageStoreForTests, onUsageStoreDidChange,
   type LastRequestData,
 } from '../src/usageStore.js';
 import type { ModelConfig } from '../src/config.js';

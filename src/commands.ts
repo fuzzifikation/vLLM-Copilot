@@ -28,11 +28,6 @@ import { updateDeepDiveTitle } from './deepDiveView.js';
 import { resetUsage, getServersWithUsage } from './usageStore.js';
 import { isOpenRouterUrl } from './openRouter.js';
 
-// Re-export the extracted workflows so extension.ts and tests keep a single
-// stable import surface (matches the autoConfig.ts facade pattern).
-export { registerTestAndRefreshModelsCommand, groupModelsByServer } from './commands/testAndRefresh.js';
-export { registerSetModelPersonalityCommand, personalityApplicableTo } from './commands/personality.js';
-
 /**
  * Diagnose connection issues for a single model.
  *
@@ -208,13 +203,6 @@ export function registerCleanSessionsCommand(
     vscode.window.showInformationMessage(msg, 'OK');
   });
 }
-
-/**
- * Header-merge helpers live in config.ts (shared with the Add Server flow, which
- * rotates credentials on a registry entry). Re-exported for the existing
- * command-side tests that import them from this facade.
- */
-export { mergeAuthHeaders, sameHeaders };
 
 /**
  * Update auth (API key + request headers) for all models on a server.

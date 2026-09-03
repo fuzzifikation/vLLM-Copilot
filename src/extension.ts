@@ -2,18 +2,23 @@ import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider.js';
 import { getConfig, validateConfig, normalizeServerUrl, sanitizeRequestHeaders } from './config.js';
 import { FileLogger } from './logger.js';
-import { registerAddServerModelCommand, registerAddServerCommand, registerConfigureUtilityModelCommand, registerAutoConfigureModelCommand, ensureByokUtilityDefault, ensureAgentHostModelsEnabled } from './autoConfig.js';
+import { registerAddServerModelCommand, registerAddServerCommand } from './commands/addServerFlow.js';
+import { registerAutoConfigureModelCommand } from './commands/autoConfigureFlow.js';
+import {
+  registerConfigureUtilityModelCommand,
+  ensureByokUtilityDefault,
+  ensureAgentHostModelsEnabled,
+} from './commands/byok.js';
 import { setSessionManagerOutput } from './sessionManager.js';
 import { syncBundledPersonalities } from './personalityStore.js';
 import { readServers, writeServers } from './configStore.js';
 import { dedupeServerIds } from './serverRegistry.js';
+import { resetOpenRouterProviderListCache } from './openRouter.js';
 import {
-  registerTestAndRefreshModelsCommand,
   registerDiagnoseConnectionCommand,
   registerOpenLogFileCommand,
   registerClearLogFilesCommand,
   registerCleanSessionsCommand,
-  registerSetModelPersonalityCommand,
   registerUpdateServerAuthCommand,
   registerRenameServerCommand,
   registerRemoveServerCommand,
@@ -21,6 +26,8 @@ import {
   registerResetUsageCommand,
   registerConfigureCostCommand,
 } from './commands.js';
+import { registerTestAndRefreshModelsCommand } from './commands/testAndRefresh.js';
+import { registerSetModelPersonalityCommand } from './commands/personality.js';
 import { setExtensionVersion } from './diagnostics.js';
 import { initUsageStore } from './usageStore.js';
 import { maybeOfferOutputLengthMigration } from './outputLengthMigration.js';
@@ -121,6 +128,16 @@ export async function activate(context: vscode.ExtensionContext) {
           } catch (err) {
             outputChannel.appendLine(`[ERROR] Config change handler: ${err instanceof Error ? err.message : String(err)}`);
           }
+        }
+        // Provider lists are display data tied to the configured servers and
+        // models: flush the shared endpoints cache (values, in-flight dedup,
+        // AND failure backoff) when they change, so an auth rotation, a
+        // server edit, or a fixed URL serves a fresh provider dropdown on the
+        // next view instead of a stale list for up to a 5-minute TTL. Every
+        // write path (commands, webview, hand-edited settings.json) fires
+        // this event, so this is the one choke point that covers them all.
+        if (e.affectsConfiguration('vllm-copilot.servers') || e.affectsConfiguration('vllm-copilot.models')) {
+          resetOpenRouterProviderListCache();
         }
       })
     );

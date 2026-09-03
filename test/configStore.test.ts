@@ -3,8 +3,13 @@ import { fileURLToPath } from 'node:url';
 import * as vscode from 'vscode';
 import { replaceModelConfig, patchModelConfig, readModels, writeModels, type IdentifiedModelConfig, type ModelIdentity } from '../src/configStore.js';
 import { ModelConfig } from '../src/config.js';
-import { makeModelConfig } from './factories.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+/** A ModelConfig with the required fields filled in (models reference registry entries by `server` id). */
+function makeModelConfig(overrides: Partial<ModelConfig> = {}): ModelConfig {
+  const { id = 'test-model', vllmModelId = id, server = 'test-server', ...rest } = overrides;
+  return { id, vllmModelId, server, ...rest };
+}
 
 /**
  * Tests for the `replaceModelConfig` (configStore) personality merge semantics:

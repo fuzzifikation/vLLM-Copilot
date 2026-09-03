@@ -181,13 +181,6 @@ function accumulateCost(map: UsageCostMap, serverUrl: string, modelId: string, c
   server[modelId] = (server[modelId] ?? 0) + cost;
 }
 
-/** Sum the counts across every model on a server. */
-export function sumCounts(map: Record<string, UsageCounts>): UsageCounts {
-  let out = emptyCounts();
-  for (const counts of Object.values(map)) out = addCounts(out, counts);
-  return out;
-}
-
 // ─── Init / load / persist ────────────────────────────────────────────────
 
 function pruneDays(): void {

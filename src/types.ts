@@ -175,7 +175,6 @@ export interface WireRepetitionDetectionConfig {
 /**
  * Wire-format for vLLM structured_outputs parameter.
  * Enforces output constraints at the token level. Exactly one field should be set.
- * This type is re-exported as `StructuredOutputConfig` in config.ts for the VS Code settings shape.
  */
 export interface WireStructuredOutputConfig {
   /** JSON schema the output must conform to (object or JSON string). */

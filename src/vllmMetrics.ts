@@ -995,7 +995,7 @@ function isPermanentContextError(err: unknown): boolean {
  * Parse raw Prometheus text into categorized buckets (gauges, counters, histograms, etc.).
  * This is a simpler parser than MetricsParser — it just categorizes raw entries.
  */
-export function parseRawMetrics(rawText: string, metrics: ServerRawData['metrics']): void {
+function parseRawMetrics(rawText: string, metrics: ServerRawData['metrics']): void {
   const lineRe = /^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{([^}]*)\})?\s+([-+0-9.eE+-]+)$/;
   const typeHints: Record<string, 'gauge' | 'counter' | 'histogram'> = {};
   const helpDesc: Record<string, string> = {};

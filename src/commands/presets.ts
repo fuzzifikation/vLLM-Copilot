@@ -72,21 +72,6 @@ export interface PresetMeta {
 }
 
 /**
- * Preset file format v2 envelope. `presetVersion` marks the format so older
- * extension builds ignore new files instead of misreading them; `match` holds
- * the id/root substrings the preset applies to (decoupled from the exact
- * served id in `config.vllmModelId`); `meta` is provenance; `config` is the
- * loadable payload. See docs/remote-presets-plan.md §4.
- */
-export interface PresetFile {
-  presetVersion: 1;
-  /** Case-insensitive substrings matched against the model id and server root. */
-  match: string[];
-  meta?: PresetMeta;
-  config: PresetConfig;
-}
-
-/**
  * A preset loaded from model-configs/*.json (or fetched remotely), paired with
  * the source filename. Produced ONLY by {@link parsePresetFile}, so the
  * allow-list guard has already vetted every `config` key — the type is a

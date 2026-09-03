@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { planRegistryMigration } from '../src/registryMigration.js';
-import { makeLegacyModelConfig, DEFAULT_TEST_SERVER_URL } from './factories.js';
+import { planRegistryMigration, type LegacyModelConfig } from '../src/registryMigration.js';
+
+const DEFAULT_TEST_SERVER_URL = 'http://localhost:8000';
+
+/** Pre-migration (legacy) model settings: per-model serverUrl/requestHeaders/serverType/serverDisplayName. */
+function makeLegacyModelConfig(overrides: Partial<LegacyModelConfig> = {}): LegacyModelConfig {
+  const { id = 'test-model', vllmModelId = id, serverUrl = DEFAULT_TEST_SERVER_URL, ...rest } = overrides;
+  return { id, vllmModelId, serverUrl, ...rest };
+}
 
 describe('planRegistryMigration', () => {
   it('migrates a single model to one server entry referenced by id', () => {

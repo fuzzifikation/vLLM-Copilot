@@ -757,7 +757,13 @@ export async function getOpenRouterModelEndpointsCached(
   return promise;
 }
 
-/** Test hook: clear the shared provider-list cache (call between tests). */
+/**
+ * Clear the shared provider-list cache — values, in-flight dedup, and failure
+ * backoff. Production caller: the activation config listener flushes it when
+ * `vllm-copilot.servers`/`.models` change, so settings edits (auth rotation,
+ * server URL fixes, model add/remove) surface fresh provider lists instead of
+ * serving stale entries for the rest of the TTL. Tests reuse it for isolation.
+ */
 export function resetOpenRouterProviderListCache(): void {
   providerListCache.clear();
   providerListInflight.clear();
