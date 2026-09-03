@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { getConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, resolveVllmModelId, type ModelConfig, type ServerType } from './config.js';
 import { readModels, readServers } from './configStore.js';
-import { ServerMetrics, fmtPct, fmtMs, fmtN, fmtThroughput, fmtTokPerSec, shortUrl, getMetricsEngine } from './vllmMetrics.js';
+import { ServerMetrics, getMetricsEngine, emptyMetrics, getPollSettingMs } from './vllmMetrics.js';
 import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from './openRouter.js';
 import {
   getLastRequest, getServerUsage, getServerCost, hasServerUsage, onUsageStoreDidChange,
@@ -18,12 +18,41 @@ import { firstEntryById } from './serverRegistry.js';
 
 // ─── Tree Items ──────────────────────────────────────────────────────
 
-/** Build a compact one-line summary for the collapsed server node description */
-function summaryLine(m: ServerMetrics): string {
-  const parts: string[] = [];
-  if (m.runningRequests != null) parts.push(`${m.runningRequests} running`);
-  if (m.waitingRequests != null && m.waitingRequests > 0) parts.push(`${m.waitingRequests} waiting`);
-  return parts.join('  ·  ') || 'idle';
+// ─── Formatting ──────────────────────────────────────────────────────
+// Display helpers moved here from vllmMetrics (U7): the tree rows are their
+// only consumers; vllmMetrics produces data, not strings.
+
+function fmtPct(v: number | null): string {
+  return v == null ? '—' : `${Math.round(v)}%`;
+}
+
+function fmtMs(ms: number | null): string {
+  if (ms == null) return '—';
+  return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
+}
+
+function fmtN(v: number | null): string {
+  return v == null ? '—' : String(v);
+}
+
+/** Format a directly-computed tokens/sec value (pooled throughput ratio). */
+function fmtTokPerSec(tokPerSec: number | null): string {
+  if (tokPerSec == null || tokPerSec <= 0) return '—';
+  return tokPerSec >= 100
+    ? `${Math.round(tokPerSec)} tok/s`
+    : `${tokPerSec.toFixed(1)} tok/s`;
+}
+
+function shortUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    // Omit the port when it's empty (URL constructor leaves `:` for a stripped
+    // default port like 443) — `openrouter.ai` should render without a trailing
+    // colon, not `openrouter.ai:`.
+    return u.port ? `${u.hostname}:${u.port}` : u.hostname;
+  } catch {
+    return url.replace(/\/+$/, '');
+  }
 }
 
 /** Deterministic ISO date (YYYY-MM-DD) — locale-independent, unlike toLocaleDateString. */
@@ -57,6 +86,12 @@ class ServerTreeItem extends vscode.TreeItem {
     const statusIcon = metrics.online
       ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'))
       : new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.red'));
+    // Compact one-line summary for the collapsed description (absorbed from
+    // the former summaryLine helper — this constructor was its only caller).
+    const summaryParts: string[] = [];
+    if (metrics.runningRequests != null) summaryParts.push(`${metrics.runningRequests} running`);
+    if (metrics.waitingRequests != null && metrics.waitingRequests > 0) summaryParts.push(`${metrics.waitingRequests} waiting`);
+    const summary = summaryParts.join('  ·  ') || 'idle';
 
     super(displayName, vscode.TreeItemCollapsibleState.Collapsed);
     this.iconPath = statusIcon;
@@ -70,7 +105,7 @@ class ServerTreeItem extends vscode.TreeItem {
     const isOpenRouterRelay = serverType === 'openrouter';
     // No "degraded" label — every backend is a first-class dashboard citizen.
     this.description = metrics.online
-      ? (isOpenRouterRelay ? undefined : summaryLine(metrics))
+      ? (isOpenRouterRelay ? undefined : summary)
       : 'Offline';
     const modelsLine = isOpenRouterRelay ? '' : `\n*${metrics.models.join(', ') || 'no models'}*`;
     const contextLine = isOpenRouterRelay || metrics.maxModelLen == null
@@ -100,15 +135,6 @@ class ModelsTreeItem extends vscode.TreeItem {
     this.description = `${modelNames.length}`;
     this.iconPath = new vscode.ThemeIcon('copilot');
     this.tooltip = modelNames.join('\n');
-  }
-}
-
-/** A single model name under the Model IDs node */
-class ModelTreeItem extends vscode.TreeItem {
-  constructor(modelName: string) {
-    super(modelName, vscode.TreeItemCollapsibleState.None);
-    this.iconPath = new vscode.ThemeIcon('symbol-class');
-    this.tooltip = modelName;
   }
 }
 
@@ -225,37 +251,6 @@ class MetricTreeItem extends vscode.TreeItem {
   }
 }
 
-/** Clickable poll-interval row at the top of the tree */
-class PollIntervalTreeItem extends vscode.TreeItem {
-  constructor(intervalLabel: string) {
-    super('Refresh Interval', vscode.TreeItemCollapsibleState.None);
-    this.description = intervalLabel;
-    this.iconPath = new vscode.ThemeIcon('refresh');
-    this.command = { command: 'vllm-copilot.setPollInterval', title: 'Set Poll Interval' };
-    this.tooltip = new vscode.MarkdownString('Click to change polling interval');
-  }
-}
-
-/** Clickable "Add or Reconfigure Server/Model" action item */
-class AddServerTreeItem extends vscode.TreeItem {
-  constructor() {
-    super('Add or Reconfigure Server/Model', vscode.TreeItemCollapsibleState.None);
-    this.iconPath = new vscode.ThemeIcon('vm-running');
-    this.command = { command: 'vllm-copilot.addServerModel', title: 'Add or Reconfigure Server/Model' };
-    this.tooltip = new vscode.MarkdownString('Add a new server, add a model to an existing server, or reconfigure auth');
-  }
-}
-
-/** Clickable "Test & Refresh Models" action item */
-class TestRefreshTreeItem extends vscode.TreeItem {
-  constructor() {
-    super('Test & Refresh Models', vscode.TreeItemCollapsibleState.None);
-    this.iconPath = new vscode.ThemeIcon('vm-running');
-    this.command = { command: 'vllm-copilot.testAndRefreshModels', title: 'Test & Refresh Models' };
-    this.tooltip = new vscode.MarkdownString('Test the vLLM server connection and reload the model list');
-  }
-}
-
 /** Collapsible "Last Request" node showing per-request details */
 class LastRequestTreeItem extends vscode.TreeItem {
   constructor(
@@ -289,27 +284,6 @@ class LastRequestTreeItem extends vscode.TreeItem {
     this.tooltip = new vscode.MarkdownString(
       `Model: ${modelId}\nTime: ${ago}\nTokens: ${promptTokens} in → ${completionTokens} out`
     );
-  }
-}
-
-/** A metric row under Last Request (label: value) */
-class RequestMetricTreeItem extends vscode.TreeItem {
-  constructor(label: string, value: string, icon?: string, tooltip?: string) {
-    super(label, vscode.TreeItemCollapsibleState.None);
-    this.description = value;
-    if (icon) {
-      this.iconPath = new vscode.ThemeIcon(icon);
-    }
-    this.tooltip = tooltip ?? `${label}: ${value}`;
-  }
-}
-
-/** Hint row suggesting vLLM server flags for more data */
-class FlagHintTreeItem extends vscode.TreeItem {
-  constructor(message: string) {
-    super(message, vscode.TreeItemCollapsibleState.None);
-    this.iconPath = new vscode.ThemeIcon('lightbulb', new vscode.ThemeColor('charts.yellow'));
-    this.tooltip = message;
   }
 }
 
@@ -511,7 +485,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
           url: normalizeServerUrl(entry.serverUrl),
           serverType: entry.serverType,
           serverDisplayName: name || undefined,
-          metrics: engine.getCachedAggregated() ?? emptyFallbackMetrics(),
+          metrics: engine.getCachedAggregated() ?? emptyMetrics('Loading…'),
           dispose: sub.dispose,
         });
       }
@@ -533,19 +507,22 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     this.subscriptions = [];
   }
 
-  private getPollIntervalTreeItem(): PollIntervalTreeItem {
-    const intervalMs = vscode.workspace.getConfiguration('vllm-copilot.dashboard').get<number>('pollIntervalMs', 15000);
-    const label = intervalMs < 60000 ? `${intervalMs / 1000}s` : `${Math.round(intervalMs / 1000)}s`;
-    return new PollIntervalTreeItem(label);
-  }
-
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
     return element;
   }
 
   async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
     if (!element) {
-      const items: vscode.TreeItem[] = [this.getPollIntervalTreeItem()];
+      // Clickable poll-interval row (absorbed from getPollIntervalTreeItem +
+      // PollIntervalTreeItem). Reads through the engine's own getPollSettingMs
+      // — same setting, same default, same catch (P11-1).
+      const intervalMs = getPollSettingMs();
+      const pollItem = new vscode.TreeItem('Refresh Interval', vscode.TreeItemCollapsibleState.None);
+      pollItem.description = intervalMs < 60000 ? `${intervalMs / 1000}s` : `${Math.round(intervalMs / 1000)}s`;
+      pollItem.iconPath = new vscode.ThemeIcon('refresh');
+      pollItem.command = { command: 'vllm-copilot.setPollInterval', title: 'Set Poll Interval' };
+      pollItem.tooltip = new vscode.MarkdownString('Click to change polling interval');
+      const items: vscode.TreeItem[] = [pollItem];
       // Label precedence: user-set serverDisplayName first, else shortUrl. The
       // `(identity N)` suffix keys off URL-sharing ENTRIES ONLY — never off
       // label equality — so two identically-NAMED entries on one URL stay
@@ -564,7 +541,17 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         const label = shared ? `${base} (identity ${n})` : base;
         return new ServerTreeItem(sub.url, sub.serverId, sub.metrics, sub.serverType, label, sub.serverDisplayName);
       });
-      return [...items, ...servers, new AddServerTreeItem(), new TestRefreshTreeItem()];
+      // Action rows (absorbed from AddServerTreeItem/TestRefreshTreeItem —
+      // one construction site each).
+      const addItem = new vscode.TreeItem('Add or Reconfigure Server/Model', vscode.TreeItemCollapsibleState.None);
+      addItem.iconPath = new vscode.ThemeIcon('vm-running');
+      addItem.command = { command: 'vllm-copilot.addServerModel', title: 'Add or Reconfigure Server/Model' };
+      addItem.tooltip = new vscode.MarkdownString('Add a new server, add a model to an existing server, or reconfigure auth');
+      const testItem = new vscode.TreeItem('Test & Refresh Models', vscode.TreeItemCollapsibleState.None);
+      testItem.iconPath = new vscode.ThemeIcon('vm-running');
+      testItem.command = { command: 'vllm-copilot.testAndRefreshModels', title: 'Test & Refresh Models' };
+      testItem.tooltip = new vscode.MarkdownString('Test the vLLM server connection and reload the model list');
+      return [...items, ...servers, addItem, testItem];
     }
 
     if (element instanceof ServerTreeItem) {
@@ -572,7 +559,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     }
 
     if (element instanceof ModelsTreeItem) {
-      return element.modelNames.map(name => new ModelTreeItem(name));
+      // Model rows (absorbed from ModelTreeItem — single construction site).
+      return element.modelNames.map(name => {
+        const item = new vscode.TreeItem(name, vscode.TreeItemCollapsibleState.None);
+        item.iconPath = new vscode.ThemeIcon('symbol-class');
+        item.tooltip = name;
+        return item;
+      });
     }
 
     if (element instanceof OpenRouterAccountTreeItem) {
@@ -666,7 +659,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       ));
     }
     if (m.avgTputTokPerSec != null || m.avgTPOTMs != null) {
-      const outSpeed = m.avgTputTokPerSec != null ? fmtTokPerSec(m.avgTputTokPerSec) : fmtThroughput(m.avgTPOTMs);
+      const outSpeed = m.avgTputTokPerSec != null
+        ? fmtTokPerSec(m.avgTputTokPerSec)
+        // Zero-guard kept from the absorbed fmtThroughput (R-2): without the
+        // `> 0` check, 1000/0 prints "Infinity tok/s" at zero TPOT.
+        : m.avgTPOTMs != null && m.avgTPOTMs > 0
+          ? fmtTokPerSec(1000 / m.avgTPOTMs)
+          : '—';
       const prefillSpeed = m.avgPrefillTputTokPerSec != null ? fmtTokPerSec(m.avgPrefillTputTokPerSec) : null;
       items.push(new MetricTreeItem(
         'Speed',
@@ -877,7 +876,11 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       // `/endpoints`). Whoever clamps below the configured budget shows the
       // Attention icon + honest tooltip. Display-only — settings never rewritten.
       const configuredOutput = resolveModelSettings(model).maxOutputTokens;
-      const catalogCeiling = this.relayEffectiveOutput(serverId, modelId);
+      // Cached effective output ceiling for this relay model (inline lookup —
+      // absorbed from the single-caller relayEffectiveOutput helper).
+      const catalogCeiling = this.subscriptions
+        .find(s => s.serverId === serverId)
+        ?.metrics.outputByModel?.[modelId];
       const clampCauses: OutputClampCause[] = [];
       let effectiveOutput = catalogCeiling;
       if (catalogCeiling !== undefined && catalogCeiling < configuredOutput) {
@@ -999,7 +1002,11 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     // (from the engine resolve) and the saved output budget. Both belong together:
     // they define the model's usable envelope. "Total" prefixes the context so it
     // balances the following "Output" (Total context vs output budget).
-    const contextWindow = this.relayContextWindow(e.serverId, e.modelId);
+    // Per-model context window from the engine resolve (inline lookup —
+    // absorbed from the single-caller relayContextWindow helper).
+    const contextWindow = this.subscriptions
+      .find(s => s.serverId === e.serverId)
+      ?.metrics.contextByModel?.[e.modelId];
     // maxOutputTokens may be a vector (Output length menu) — the head is the
     // advertised budget; the rest are pickable options, shown in the tooltip.
     const maxOutputRaw = entry?.maxOutputTokens;
@@ -1071,13 +1078,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     return items;
   }
 
-  private getLastRequestChildren(e: LastRequestTreeItem): (RequestMetricTreeItem | FlagHintTreeItem)[] {
-    const items: (RequestMetricTreeItem | FlagHintTreeItem)[] = [];
+  private getLastRequestChildren(e: LastRequestTreeItem): vscode.TreeItem[] {
+    const items: vscode.TreeItem[] = [];
 
     // 1. Total Tokens — context window usage (always available)
     if (e.maxModelLen > 0) {
       const pct = ((e.totalTokens / e.maxModelLen) * 100).toFixed(1);
-      items.push(new RequestMetricTreeItem(
+      items.push(new MetricTreeItem(
         'Total Tokens',
         `${fmtCount(e.totalTokens)}  ·  ${pct}% of context`,
         'symbol-numeric',
@@ -1089,14 +1096,14 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     if (e.cachedTokens != null && e.cachedTokens > 0) {
       // Input split: 'in' excludes cache; in + cached = total prompt.
       const fresh = Math.max(0, e.promptTokens - e.cachedTokens);
-      items.push(new RequestMetricTreeItem(
+      items.push(new MetricTreeItem(
         'Input Tokens',
         `${fmtCount(fresh)} in · ${fmtCount(e.cachedTokens)} cached`,
         'symbol-parameter',
         "Input split: 'in' excludes cache; 'cached' was served from KV cache (not recomputed). in + cached = total prompt.",
       ));
     } else {
-      items.push(new RequestMetricTreeItem(
+      items.push(new MetricTreeItem(
         'Input Tokens',
         fmtCount(e.promptTokens),
         'symbol-parameter',
@@ -1107,7 +1114,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     // 3. Output Tokens — always available from usage block; budget % always available from settings
     if (e.maxOutputTokens > 0) {
       const pct = ((e.completionTokens / e.maxOutputTokens) * 100).toFixed(1);
-      items.push(new RequestMetricTreeItem(
+      items.push(new MetricTreeItem(
         'Output Tokens',
         `${fmtCount(e.completionTokens)}  ·  ${pct}% of max output`,
         'code',
@@ -1123,7 +1130,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     if (e.hasMetrics && e.generationMs != null && e.generationMs > 0) {
       const sec = (e.generationMs / 1000).toFixed(2);
       const tokPerSec = ((e.completionTokens / e.generationMs) * 1000).toFixed(1);
-      items.push(new RequestMetricTreeItem(
+      items.push(new MetricTreeItem(
         'Generation',
         `${sec}s  ·  ${tokPerSec} tok/s`,
         'rocket',
@@ -1138,7 +1145,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       const decodeTokens = e.completionTokens - 1;
       const sec = (decodeMs / 1000).toFixed(2);
       const tokPerSec = ((decodeTokens / decodeMs) * 1000).toFixed(1);
-      items.push(new RequestMetricTreeItem(
+      items.push(new MetricTreeItem(
         'Generation (measured)',
         `${sec}s  ·  ${tokPerSec} tok/s`,
         'rocket',
@@ -1148,7 +1155,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
 
     // 5. Queue Time (requires --enable-per-request-metrics)
     if (e.hasMetrics && e.queueMs != null && e.queueMs > 0) {
-      items.push(new RequestMetricTreeItem(
+      items.push(new MetricTreeItem(
         'Queue Time',
         `${fmtMs(e.queueMs)}`,
         'debug-pause',
@@ -1160,21 +1167,21 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     // The difference is client overhead + network latency (config, request build, HTTP handshake, SSE parse).
     if (e.ttftMs != null && e.firstTokenTimeMs != null) {
       const overheadMs = Math.max(0, e.firstTokenTimeMs - e.ttftMs);
-      items.push(new RequestMetricTreeItem(
+      items.push(new MetricTreeItem(
         'TTFT',
         `reported: ${(e.ttftMs / 1000).toFixed(2)}s  ·  measured: ${(e.firstTokenTimeMs / 1000).toFixed(2)}s  ·  overhead: ${fmtMs(overheadMs)}`,
         'clock',
         'Time to first token. Reported = server\'s queue+prompt time. Measured = client wall-clock. Overhead = difference (network + client processing).',
       ));
     } else if (e.ttftMs != null) {
-      items.push(new RequestMetricTreeItem(
+      items.push(new MetricTreeItem(
         'TTFT',
         `${fmtMs(e.ttftMs)}`,
         'clock',
         'Time to first token (server-reported: queue + prompt processing).',
       ));
     } else if (e.firstTokenTimeMs != null) {
-      items.push(new RequestMetricTreeItem(
+      items.push(new MetricTreeItem(
         'TTFT',
         `${fmtMs(e.firstTokenTimeMs)}`,
         'clock',
@@ -1186,14 +1193,14 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     //    from the model's per-1M cost config. Never both: actual is server
     //    truth, the estimate is a fallback for backends that don't report cost.
     if (e.actualCost !== undefined) {
-      items.push(new RequestMetricTreeItem(
+      items.push(new MetricTreeItem(
         'Cost',
         formatCostFine(e.actualCost, 'USD'),
         'credit-card',
         'Actual cost reported by the backend (OpenRouter `usage.cost`, USD). Shown per-prompt for money verification.',
       ));
       if (e.usedByok) {
-        items.push(new RequestMetricTreeItem(
+        items.push(new MetricTreeItem(
           'BYOK',
           'upstream key',
           'key',
@@ -1211,7 +1218,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       };
       const cost = computeCost(requestCounts, rates);
       if (cost !== undefined) {
-        items.push(new RequestMetricTreeItem(
+        items.push(new MetricTreeItem(
           'Cost',
           formatCostFine(cost, rates?.currency),
           'credit-card',
@@ -1228,11 +1235,13 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       if (!e.hasMetrics) missingFlags.push('--enable-per-request-metrics');
     }
     if (missingFlags.length > 0) {
-      items.push(new FlagHintTreeItem(
-        `⚡ More data with ${missingFlags.join(' & ')}`
-      ));
-      // The flag hint already has a tooltip set to the message itself,
-      // which is fine — it reiterates the action needed.
+      // Flag-hint row (absorbed from FlagHintTreeItem — single site). Tooltip
+      // repeats the message — it reiterates the action needed.
+      const hintMsg = `⚡ More data with ${missingFlags.join(' & ')}`;
+      const hint = new vscode.TreeItem(hintMsg, vscode.TreeItemCollapsibleState.None);
+      hint.iconPath = new vscode.ThemeIcon('lightbulb', new vscode.ThemeColor('charts.yellow'));
+      hint.tooltip = hintMsg;
+      items.push(hint);
     }
     return items;
   }
@@ -1284,25 +1293,11 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     return readModels().filter(m => m.server === serverId);
   }
 
-  /** The cached per-model context window for a relay model, if resolved. */
-  private relayContextWindow(serverId: string, modelId: string): number | undefined {
-    return this.subscriptions
-      .find(s => s.serverId === serverId)
-      ?.metrics.contextByModel?.[modelId];
-  }
-
   /** The cached provider list (with per-1M pricing) for a relay model, if fetched. */
   private relayProviders(serverId: string, modelId: string): OpenRouterModelEndpoint[] | undefined {
     return this.subscriptions
       .find(s => s.serverId === serverId)
       ?.metrics.providersByModel?.[modelId];
-  }
-
-  /** The cached effective output ceiling for a relay model, if resolved. */
-  private relayEffectiveOutput(serverId: string, modelId: string): number | undefined {
-    return this.subscriptions
-      .find(s => s.serverId === serverId)
-      ?.metrics.outputByModel?.[modelId];
   }
 
   /**
@@ -1337,14 +1332,4 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     this.disposeSubscriptions();
     this._onDidChangeTreeData.dispose();
   }
-}
-
-/** Fallback metrics for a server before first data arrives. */
-function emptyFallbackMetrics(): ServerMetrics {
-  return {
-    online: false, error: 'Loading…',
-    models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
-    cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
-    avgTTFTMs: null, avgTPOTMs: null, avgTputTokPerSec: null, avgPrefillTputTokPerSec: null, preemptions: null, evictions: null,
-  };
 }

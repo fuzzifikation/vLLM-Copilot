@@ -1358,6 +1358,21 @@ Recommended split (per-case judgment, god-function refusal):
   `collectEnv` (parallel-probe leaves: their names ARE the report rows;
   a 350-line runDiagnostics is not simpler, per-case verdict).
 
+**U7 dashboard/vllmMetrics family relocation. EXECUTED 2026-09-03 (with
+P11-1).** `fmtPct`/`fmtMs`/`fmtN`/`fmtTokPerSec`/`shortUrl` moved to
+`dashboard.ts` (tree rows are their only consumers; vllmMetrics now emits
+data, not strings). `fmtThroughput` deleted, zero-guard `> 0` preserved at
+the Speed row (R-2 honored - no "Infinity tok/s"). TreeItem alphabet culled:
+`ModelTreeItem`/`PollIntervalTreeItem`/`AddServerTreeItem`/
+`TestRefreshTreeItem`/`FlagHintTreeItem` inlined at their single
+construction sites, `RequestMetricTreeItem` merged into `MetricTreeItem`
+(13 sites), `summaryLine` absorbed into the ServerTreeItem constructor,
+`relayContextWindow`/`relayEffectiveOutput` inlined (single-caller
+find-chains; `relayProviders` kept for its callers). Twin death:
+`emptyFallbackMetrics` == `emptyMetrics('Loading…')` (one literal, exported).
+P11-1: dashboard's private settings read replaced by exported
+`getPollSettingMs` (same default, same catch as the engine's own poll loop).
+`isoDate` kept per reviewer STRUCK note. Census 406 -> 397 (-9).
 **U7 dashboard/vllmMetrics family relocation.**
 - R7.1 `fmtPct`/`fmtMs`/`fmtN`/`fmtTokPerSec`/`shortUrl` move to
   dashboard.ts (verified: dashboard is the only consumer; presentation

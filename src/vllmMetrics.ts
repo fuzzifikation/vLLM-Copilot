@@ -672,8 +672,10 @@ export class ServerMetricsEngine {
   }
 }
 
-/** Read the configured poll interval (in ms) from VS Code settings. */
-function getPollSettingMs(): number {
+/** Read the configured poll interval (in ms) from VS Code settings.
+ * Exported so the dashboard's Refresh-Interval row reads the SAME value
+ * through the SAME default+catch instead of duplicating the lookup (P11-1). */
+export function getPollSettingMs(): number {
   try {
     return vscode.workspace.getConfiguration('vllm-copilot.dashboard').get<number>('pollIntervalMs', DEFAULT_POLL_MS);
   } catch {
@@ -959,8 +961,9 @@ async function safeFetch(url: string, options: RequestInit): Promise<Response | 
   catch { return null; }
 }
 
-/** Build an empty/error ServerMetrics. */
-function emptyMetrics(error: string): ServerMetrics {
+/** Build an empty/error ServerMetrics. Exported for the dashboard's
+ * pre-first-poll fallback (one literal, not a per-module twin). */
+export function emptyMetrics(error: string): ServerMetrics {
   return {
     online: false, error,
     models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
@@ -1089,42 +1092,5 @@ function parseRawMetrics(rawText: string, metrics: ServerRawData['metrics']): vo
   }
 }
 
-// ─── Formatting ──────────────────────────────────────────────────────
-
-export function fmtPct(v: number | null): string {
-  return v == null ? '—' : `${Math.round(v)}%`;
-}
-
-export function fmtMs(ms: number | null): string {
-  if (ms == null) return '—';
-  return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
-}
-
-export function fmtN(v: number | null): string {
-  return v == null ? '—' : String(v);
-}
-
-export function fmtThroughput(avgTPOTms: number | null): string {
-  if (avgTPOTms == null || avgTPOTms <= 0) return '—';
-  return fmtTokPerSec(1000 / avgTPOTms);
-}
-
-/** Format a directly-computed tokens/sec value (pooled throughput ratio). */
-export function fmtTokPerSec(tokPerSec: number | null): string {
-  if (tokPerSec == null || tokPerSec <= 0) return '—';
-  return tokPerSec >= 100
-    ? `${Math.round(tokPerSec)} tok/s`
-    : `${tokPerSec.toFixed(1)} tok/s`;
-}
-
-export function shortUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    // Omit the port when it's empty (URL constructor leaves `:` for a stripped
-    // default port like 443) — `openrouter.ai` should render without a trailing
-    // colon, not `openrouter.ai:`.
-    return u.port ? `${u.hostname}:${u.port}` : u.hostname;
-  } catch {
-    return url.replace(/\/+$/, '');
-  }
-}
+// Formatting helpers live in dashboard.ts (its tree rows are the only
+// consumers — U7). This module produces DATA, not display strings.
