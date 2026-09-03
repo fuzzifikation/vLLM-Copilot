@@ -5,12 +5,9 @@ import type { LmStudioModel, RuntimeModelLimits, VllmModel } from './types.js';
 
 const METADATA_TIMEOUT_MS = 10000;
 
-function isHttp404(error: unknown): boolean {
-  return error instanceof Error && /^HTTP\s+404\b/.test(error.message);
-}
-
+/** "wrong backend here" signal: 404 from an endpoint, or unparseable JSON. */
 function isInvalidSignature(error: unknown): boolean {
-  return isHttp404(error) || error instanceof SyntaxError;
+  return (error instanceof Error && /^HTTP\s+404\b/.test(error.message)) || error instanceof SyntaxError;
 }
 
 export async function resolveRuntimeLimits(
@@ -111,18 +108,6 @@ export async function detectServerType(
     `llama.cpp (owned_by "llamacpp"), LM Studio (/api/v1/models with models[].key), or ` +
     `Ollama (/api/ps with models[]), or OpenRouter (openrouter.ai host). No documented signature matched model "${modelId}".`
   );
-}
-
-export function detectServerTypeFromV1Models(
-  entries: Array<{ owned_by?: string; max_model_len?: number }>
-): ServerType | undefined {
-  if (entries.some((entry) => typeof entry.max_model_len === 'number' && entry.max_model_len > 0)) {
-    return 'vllm';
-  }
-  if (entries.some((entry) => entry.owned_by === 'llamacpp')) {
-    return 'llamacpp';
-  }
-  return undefined;
 }
 
 async function fetchJsonRaw<T>(url: string, requestHeaders: Record<string, string>): Promise<T> {

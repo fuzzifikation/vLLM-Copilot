@@ -175,8 +175,9 @@ export interface WireRepetitionDetectionConfig {
 /**
  * Wire-format for vLLM structured_outputs parameter.
  * Enforces output constraints at the token level. Exactly one field should be set.
+ * File-private: `VllmChatOptions` below is its only consumer.
  */
-export interface WireStructuredOutputConfig {
+interface WireStructuredOutputConfig {
   /** JSON schema the output must conform to (object or JSON string). */
   json?: object | string;
   /** Regular expression the output must match. */

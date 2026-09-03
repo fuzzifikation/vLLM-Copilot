@@ -118,11 +118,6 @@ function isPositive(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0;
 }
 
-/** Round a per-million rate to 6 decimals to kill float noise. */
-function round6(n: number): number {
-  return Math.round(n * 1e6) / 1e6;
-}
-
 /** Title-case a reasoning effort into a mode label, e.g. 'high' → 'Think (High)'. */
 function thinkModeLabel(effort: string): string {
   return `Think (${effort[0].toUpperCase()}${effort.slice(1)})`;
@@ -305,7 +300,8 @@ export function perMillion(rate?: string | null): number | undefined {
   if (rate.trim() === '') return undefined;
   const n = Number(rate);
   if (!Number.isFinite(n) || n < 0) return undefined;
-  return round6(n * 1e6);
+  // Scale to per-1M, rounded to 6 decimals to kill float noise.
+  return Math.round(n * 1e12) / 1e6;
 }
 
 /**

@@ -546,3 +546,24 @@ describe('ServerSettingsViewProvider', () => {
     });
   });
 });
+
+// Relocated from runtimeLimits.test.ts when detectServerTypeFromV1Models
+// merged into resolveDetectedServerType (its only production caller).
+describe('resolveDetectedServerType', () => {
+  it('returns vllm when any entry has a positive max_model_len', () => {
+    expect(resolveDetectedServerType([{ owned_by: 'llamacpp' }, { owned_by: 'vllm', max_model_len: 262144 }], [])).toBe('vllm');
+  });
+
+  it('returns llamacpp when entries have owned_by llamacpp and no positive max_model_len', () => {
+    expect(resolveDetectedServerType([{ owned_by: 'llamacpp' }, { owned_by: 'llamacpp' }], [])).toBe('llamacpp');
+  });
+
+  it('falls back to the sibling serverType when there is no /v1/models signal', () => {
+    expect(resolveDetectedServerType([{ owned_by: 'mystery' }], [{ serverType: 'ollama' }])).toBe('ollama');
+    expect(resolveDetectedServerType([], [])).toBeUndefined();
+  });
+
+  it('does not treat a zero max_model_len as a vLLM signal', () => {
+    expect(resolveDetectedServerType([{ owned_by: 'llamacpp', max_model_len: 0 }], [])).toBe('llamacpp');
+  });
+});

@@ -1,9 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import {
-  detectServerType,
-  detectServerTypeFromV1Models,
-  resolveRuntimeLimits,
-} from '../src/runtimeLimits.js';
+import { detectServerType, resolveRuntimeLimits } from '../src/runtimeLimits.js';
 
 /**
  * runtimeLimits.ts: per-backend runtime context-window resolution and server-type
@@ -377,21 +373,5 @@ describe('detectServerType', () => {
   });
 });
 
-describe('detectServerTypeFromV1Models', () => {
-  it('returns vllm when any entry has a positive max_model_len', () => {
-    expect(detectServerTypeFromV1Models([{ owned_by: 'llamacpp' }, { owned_by: 'vllm', max_model_len: 262144 }])).toBe('vllm');
-  });
-
-  it('returns llamacpp when entries have owned_by llamacpp and no positive max_model_len', () => {
-    expect(detectServerTypeFromV1Models([{ owned_by: 'llamacpp' }, { owned_by: 'llamacpp' }])).toBe('llamacpp');
-  });
-
-  it('returns undefined when there is no documented /v1/models signal', () => {
-    expect(detectServerTypeFromV1Models([{ owned_by: 'mystery' }, { owned_by: 'unknown' }])).toBeUndefined();
-    expect(detectServerTypeFromV1Models([])).toBeUndefined();
-  });
-
-  it('does not treat a zero max_model_len as a vLLM signal', () => {
-    expect(detectServerTypeFromV1Models([{ owned_by: 'llamacpp', max_model_len: 0 }])).toBe('llamacpp');
-  });
-});
+// /v1/models signature detection moved to serverSettingsView.test.ts: the
+// logic merged into resolveDetectedServerType (its only production caller).

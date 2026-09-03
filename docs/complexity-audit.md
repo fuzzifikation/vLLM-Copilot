@@ -1371,7 +1371,11 @@ Post-U1 addition: `WireStructuredOutputConfig` (types.ts - alive inside
 types.ts as a field type, export lost its last external namer in U1).
 `export` is a reuse claim; these claims are lies.
 
-**U1b post-rescan micro-findings (new 2026-09-03, pending ruling).**
+**U1b post-rescan micro-findings (new 2026-09-03). EXECUTED 2026-09-03**
+(with U11, one commit; census 441->435, zero dead, 824 green).
+Live-execution addendum: `dayKey` was census-flagged TEST_ONLY - the export
+earned zero rent (all 4 users live inside usageStore.ts), so it was
+un-exported too; test reroutes through a local `todayKey` mirror.
 (a) `usageStore.addCounts` (8L) into `accumulate` - unmasked when
 `sumCounts` died; (b) `WireStructuredOutputConfig` un-export (also in U9);
 (c) borderline: merge `resolveDetectedServerType` + `detectServerTypeFromV1Models`
@@ -1379,8 +1383,15 @@ into one private helper in serverSettingsView, un-export from runtimeLimits
 (robot rec: accept; `detectServerType` itself stays - 42-line dispatcher,
 pays rent by size per-case, real consumer addServerFlow).
 CONFIRMED by reviewer round (2026-09-03), executing as written.
+Executed as (c') : merged INTO `resolveDetectedServerType` (kept exported -
+pre-existing @internal-for-testing seam the moved detection tests use;
+same pattern as stripJsonComments/loadModelPresets), detectServerTypeFromV1Models
+deleted from runtimeLimits, its 4 test assertions relocated to
+serverSettingsView.test.ts plus a new sibling-fallback case (+1 net behavior pin).
 
-**U11 micro-fold wave (from the improvement inventory, corrected by reviewer round).**
+**U11 micro-fold wave (from the improvement inventory, corrected by reviewer round). EXECUTED 2026-09-03**
+(fold 4 done as written; nested-function judgment taken: the slash state
+machine kept its name inside `stripJsonComments`; keep 2 kept).
 All private single-callers, same-file folds, lane-free, cycle-free.
 FOLD 4: `round6` (3L) into `perMillion` (openRouter.ts); `isHttp404` (3L)
 into `isInvalidSignature` (runtimeLimits.ts); `pruneDays` (11L) into `load`

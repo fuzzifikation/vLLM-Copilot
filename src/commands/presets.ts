@@ -95,6 +95,32 @@ export interface ModelPreset {
  * @internal Exported for testing.
  */
 export function stripJsonComments(text: string): string {
+  // Index of the first `//` NOT inside a quoted string, or -1. Quote/escape
+  // state machine - kept named inside its only caller, it is not a one-liner.
+  function findFirstUnquotedSlashSlash(line: string): number {
+    let inQuotes = false;
+    let escapeNext = false;
+    for (let i = 0; i < line.length - 1; i++) {
+      const ch = line[i];
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escapeNext = true;
+        continue;
+      }
+      if (ch === '"') {
+        inQuotes = !inQuotes;
+        continue;
+      }
+      if (!inQuotes && ch === '/' && line[i + 1] === '/') {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   return text
     .split('\n')
     .map(line => {
@@ -105,34 +131,6 @@ export function stripJsonComments(text: string): string {
       return line;
     })
     .join('\n');
-}
-
-/**
- * Find the index of the first `//` that is NOT inside a quoted string.
- * Returns -1 if no such comment exists.
- */
-function findFirstUnquotedSlashSlash(line: string): number {
-  let inQuotes = false;
-  let escapeNext = false;
-  for (let i = 0; i < line.length - 1; i++) {
-    const ch = line[i];
-    if (escapeNext) {
-      escapeNext = false;
-      continue;
-    }
-    if (ch === '\\') {
-      escapeNext = true;
-      continue;
-    }
-    if (ch === '"') {
-      inQuotes = !inQuotes;
-      continue;
-    }
-    if (!inQuotes && ch === '/' && line[i + 1] === '/') {
-      return i;
-    }
-  }
-  return -1;
 }
 
 /**

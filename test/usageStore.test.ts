@@ -3,10 +3,18 @@ import * as vscode from 'vscode';
 import {
   initUsageStore, recordRequest, getLastRequest, getServerUsage, getServerCost, hasServerUsage,
   getServersWithUsage, resetUsage, computeCost, findModelCost, getModelStartedAt,
-  formatCost, formatCostFine, formatCostSummary, fmtCount, dayKey, resetUsageStoreForTests, onUsageStoreDidChange,
+  formatCost, formatCostFine, formatCostSummary, fmtCount, resetUsageStoreForTests, onUsageStoreDidChange,
   type LastRequestData,
 } from '../src/usageStore.js';
 import type { ModelConfig } from '../src/config.js';
+
+/** Mirrors usageStore's private day-bucket key (kept un-exported on purpose). */
+function todayKey(ts: number = Date.now()): string {
+  const d = new Date(ts);
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${m}-${day}`;
+}
 
 /**
  * Usage-store tests: the combined last-request + cumulative token/cost store.
@@ -76,7 +84,7 @@ describe('persistence (globalState)', () => {
 
     expect(m.stored.version).toBe(3);
     expect(m.stored.allTime[url]['m1']).toEqual({ prompt: 100, completion: 50, cached: 10, reasoning: 5 });
-    expect(m.stored.days[dayKey()][url]['m1'].prompt).toBe(100);
+    expect(m.stored.days[todayKey()][url]['m1'].prompt).toBe(100);
     expect(typeof m.stored.startedAt[url]['m1']).toBe('number'); // first-record stamp persisted
 
     // Simulate a window reload: fresh module state, same memento.
@@ -133,10 +141,10 @@ describe('persistence (globalState)', () => {
     const v3 = {
       version: 3 as const,
       allTime: { [url]: { m1: { prompt: 100, completion: 50, cached: 10, reasoning: 5 } } },
-      days: { [dayKey()]: { [url]: { m1: { prompt: 100, completion: 50, cached: 10, reasoning: 5 } } } },
+      days: { [todayKey()]: { [url]: { m1: { prompt: 100, completion: 50, cached: 10, reasoning: 5 } } } },
       startedAt: { [url]: { m1: 12345 } },
       allTimeCost: { [url]: { m1: 0.0037 } },
-      daysCost: { [dayKey()]: { [url]: { m1: 0.0037 } } },
+      daysCost: { [todayKey()]: { [url]: { m1: 0.0037 } } },
     };
     const m = makeMemento(v3);
     initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);

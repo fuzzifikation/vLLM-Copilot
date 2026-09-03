@@ -149,8 +149,8 @@ export const onUsageStoreDidChange: vscode.Event<void> = emitter.event;
 
 // ─── Date / count helpers ────────────────────────────────────────────────
 
-/** `YYYY-MM-DD` local-time bucket key. */
-export function dayKey(ts: number = Date.now()): string {
+/** `YYYY-MM-DD` local-time bucket key. File-private: every user lives in this module. */
+function dayKey(ts: number = Date.now()): string {
   const d = new Date(ts);
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
@@ -161,18 +161,15 @@ export function emptyCounts(): UsageCounts {
   return { prompt: 0, completion: 0, cached: 0, reasoning: 0 };
 }
 
-function addCounts(a: UsageCounts, b: UsageCounts): UsageCounts {
-  return {
-    prompt: a.prompt + b.prompt,
-    completion: a.completion + b.completion,
-    cached: a.cached + b.cached,
-    reasoning: a.reasoning + b.reasoning,
-  };
-}
-
 function accumulate(map: UsageServerMap, serverUrl: string, modelId: string, counts: UsageCounts): void {
   const server = map[serverUrl] ?? (map[serverUrl] = {});
-  server[modelId] = addCounts(server[modelId] ?? emptyCounts(), counts);
+  const prev = server[modelId] ?? emptyCounts();
+  server[modelId] = {
+    prompt: prev.prompt + counts.prompt,
+    completion: prev.completion + counts.completion,
+    cached: prev.cached + counts.cached,
+    reasoning: prev.reasoning + counts.reasoning,
+  };
 }
 
 /** Sum actual reported cost into a cost map (all-time or per-day plane). */
@@ -182,18 +179,6 @@ function accumulateCost(map: UsageCostMap, serverUrl: string, modelId: string, c
 }
 
 // ─── Init / load / persist ────────────────────────────────────────────────
-
-function pruneDays(): void {
-  const cutoff = dayKey(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
-  for (const key of Object.keys(days)) {
-    if (key < cutoff) delete days[key];
-  }
-  // Cost day buckets must be pruned with the same window — otherwise the
-  // persisted blob grows one bucket per day indefinitely.
-  for (const key of Object.keys(daysCost)) {
-    if (key < cutoff) delete daysCost[key];
-  }
-}
 
 /** Load persisted usage from globalState (best-effort; corrupt/missing → fresh). */
 function load(): void {
@@ -226,7 +211,15 @@ function load(): void {
       daysCost = p.daysCost ?? {};
     }
   }
-  pruneDays();
+  // Prune expired day buckets. Cost buckets use the same window — otherwise
+  // the persisted blob grows one bucket per day indefinitely.
+  const cutoff = dayKey(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  for (const key of Object.keys(days)) {
+    if (key < cutoff) delete days[key];
+  }
+  for (const key of Object.keys(daysCost)) {
+    if (key < cutoff) delete daysCost[key];
+  }
 }
 
 /**

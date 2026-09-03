@@ -8,7 +8,6 @@ import * as path from 'path';
 import { getConfig, buildEndpoint, findModelConfigIndex, toPublicModelConfig, normalizeServerUrl, sanitizeRequestHeaders, resolveConfigId, resolveVllmModelId, type ModelConfig, type ServerType } from './config.js';
 import { patchModelConfig, readModels, readServers, writeServers, type ModelIdentity } from './configStore.js';
 import { firstEntryById, type ServerEntry } from './serverRegistry.js';
-import { detectServerTypeFromV1Models } from './runtimeLimits.js';
 import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from './openRouter.js';
 
 import {
@@ -92,7 +91,13 @@ export function resolveDetectedServerType(
   entries: Array<{ owned_by?: string; max_model_len?: number }>,
   siblings: ReadonlyArray<{ serverType?: ServerType }>
 ): ServerType | undefined {
-  return detectServerTypeFromV1Models(entries) ?? siblings[0]?.serverType;
+  if (entries.some((entry) => typeof entry.max_model_len === 'number' && entry.max_model_len > 0)) {
+    return 'vllm';
+  }
+  if (entries.some((entry) => entry.owned_by === 'llamacpp')) {
+    return 'llamacpp';
+  }
+  return siblings[0]?.serverType;
 }
 
 interface ReadyMessage {
