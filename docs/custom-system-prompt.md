@@ -310,10 +310,10 @@ Watched files (OpenAI-family agent prompt + shared base components, matching wha
 - **CLI prompt drift** has two cheap detectors instead of runtime machinery: a static all-fire test (`test/cliPromptRules.test.ts`, every `scope: "cli"` rule must match `scripts/cli-prompt-reference.txt` exactly once, runs on every `npm test`) and a live auditor (`npm run check:cli-rules` against a fresh `systemMessageCapture` — reports dead anchors; `--persona <file>` makes non-firing a hard error). Regenerate the reference after re-capturing: `node scripts/extract-cli-reference.mjs <capture>` (it strips everything but the anchored regions and verifies capture entries agree).
 - **Merge order is load-bearing: persona first, then common.** Persona replace-rules anchor on text that the common remove-rules delete (the short/impersonal line also lives inside the safety blocks); reversing the order silently kills those replacements. Pinned by the chain test in `test/promptReplacer.test.ts`.
 - `src/provider/systemMessagePipeline.ts` — `SystemMessagePipeline.processSystemMessages()` unified pipeline (capture + replace in one pass)
-- `src/messageConverter.ts` — simplified, no replacement logic (pure conversion only)
+- `src/provider/messageConverter.ts` — simplified, no replacement logic (pure conversion only)
 - Replacements are applied to a **clone** of the system messages — VS Code's original messages are never mutated
 - Capture file at `.vllm/system-messages.json` with `receivedContent` / `deliveredContent` / `rulesApplied`
-- **Unit tests:** `test/promptReplacer.test.ts` (apply + parser), `test/providerSystemMessages.test.ts` + `test/providerCapture.test.ts` (pipeline end-to-end)
+- **Unit tests:** `test/promptReplacer.test.ts` (apply + parser), `test/providerSystemMessages.test.ts` (pipeline end-to-end, incl. the capture write path)
 
 ---
 

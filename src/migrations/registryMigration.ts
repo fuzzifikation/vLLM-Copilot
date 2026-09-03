@@ -1,7 +1,7 @@
 /**
  * Registry migration planner — the pure core of the forced migration that moves
  * server facts (serverUrl/requestHeaders/serverType/serverDisplayName) off the
- * per-model configs and into the `servers[]` registry (docs/server-registry.md §6).
+ * per-model configs and into the `servers[]` registry.
  *
  * Pure module: no vscode imports, no I/O, no side effects. The caller (activation)
  * owns the settings writes (servers first, then models) and the migration marker.

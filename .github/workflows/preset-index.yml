@@ -1,13 +1,24 @@
 name: Regenerate preset index
 
-# Layer 1 of the preset-index freshness chain (docs/remote-presets-plan.md §3):
+# Layer 1 of the preset-index freshness chain (see the header of scripts/gen-preset-index.mjs):
 # whenever preset files change, regenerate model-configs/index.json and commit
 # it, so the live remote list can never lag the directory. Layer 2 is the
 # Vitest drift test (npm run build gate). index.json changes are excluded to
 # avoid a self-trigger loop (belt: the bot commit also carries [skip ci]).
+#
+# TAG PUSHES MUST NOT RUN THIS (branches + tags-ignore + the ref_type guard):
+# GitHub ignores `paths` filters on tag pushes, so every tag push used to run
+# the workflow file frozen at that tag's commit. On old tags the bot's commit
+# step then failed: the checkout is a detached HEAD and `git push` from one
+# dies with exit 128. (Pushing an OLD tag again still runs the OLD workflow
+# file - main's fix cannot reach into the past.)
 
 on:
   push:
+    branches:
+      - main
+    tags-ignore:
+      - '**'
     paths:
       - 'model-configs/**'
       - '!model-configs/index.json'
@@ -18,13 +29,14 @@ permissions:
 
 jobs:
   regenerate:
+    if: github.ref_type == 'branch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
 
       # The generator is dependency-free Node — no npm install needed.
       - name: Generate index.json

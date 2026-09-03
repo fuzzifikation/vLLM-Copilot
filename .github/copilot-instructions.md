@@ -102,25 +102,19 @@ This is a **VS Code Language Model Chat Provider extension** that routes Copilot
 Copilot → provider/provider.ts (VllmChatModelProvider) → provider/vllmClient.ts → vLLM server
 ```
 
-### Core files:
-| File | Responsibility |
+### Core layout:
+| Path | Responsibility |
 |---|---|
 | `src/extension.ts` | Activation, command registration, lifecycle |
-| `src/provider.ts` | `LanguageModelChatProvider` impl. Streams response to Copilot. |
-| `src/vllmClient.ts` | HTTP client. Config cache owner, SSE streaming, request construction. |
-| `src/config.ts` | Config types (`VllmConfig`, `ModelConfig`), validation, resolution helpers. |
 | `src/types.ts` | Shared wire-format types & SSE events only. No business logic. |
-| `src/messageConverter.ts` | VS Code ↔ OpenAI/vLLM message format conversion. |
-| `src/streamReader.ts` | SSE stream reader. Uses `eventsource-parser` for spec-compliant line parsing + inactivity timeout. |
-| `src/sseParser.ts` | vLLM-specific SSE layer: JSON parse of `data:` chunks + tool call accumulation. Sits on top of `streamReader.ts`. |
-| `src/sessionManager.ts` | Copilot session janitor: purges stale chat-session state from VS Code's storage (Clear Copilot Sessions command). No model/turn state. |
-| `src/tokenBudget.ts` | Token budgeting for input context windows. |
-| `src/modelInfo.ts` | Builds `LanguageModelChatInformation` from server + override configs. |
-| `src/modelUtils.ts` | Model ID/family detection utilities. |
-| `src/commands.ts` | User-facing VS Code commands (configure, refresh, test, etc.). |
-| `src/autoConfig.ts` | Auto-detect model config from vLLM server + HuggingFace. |
-| `src/logger.ts` | File-based request/response logging. |
-| `src/usageReporting.ts` | Token usage tracking and reporting. |
+| `src/provider/` | Request path: `provider.ts` (`LanguageModelChatProvider` impl, streams to Copilot), `vllmClient.ts` (HTTP client, config cache owner), `requestBuilder.ts`/`chatTransport.ts`, `streamOrchestrator.ts`/`consumeStream.ts`, `streamReader.ts` + `sseParser.ts` (SSE), `messageConverter.ts` (VS Code ↔ OpenAI/vLLM formats), `modelInfo.ts` (picker info + family detection), `systemMessagePipeline.ts` (personality/capture), `discovery.ts`, `postStream.ts` |
+| `src/state/` | `config.ts` (types `VllmConfig`/`ModelConfig`, validation, resolution helpers), `configStore.ts` (the sole settings.json writer), `serverCore.ts` + `serverRegistry.ts` (registry entries, URL/identity rules) |
+| `src/commands/` | User-facing commands: add server/model flows, auto-configure + HF discovery, auth rotation, presets (bundled + remote), personalities, Test & Refresh |
+| `src/migrations/` | One-shot config migrations at activation (registry migration, output-length offer) |
+| `src/backends/` | Backend specifics: OpenRouter catalog/aliases, runtime limits (per-backend context windows) |
+| `src/ui/` | Dashboard tree, Deep-Dive + Server Settings webviews, Connection Diagnostics |
+| `src/usage/` | Usage store (`usage.json` persistence) + usage reporting to Copilot |
+| `src/shared/` | File logger, fetch retry, token budget, session manager, error envelope, config-schema tool |
 
 ### Key patterns:
 - **Config ownership:** `VllmClient` owns the config cache. Everyone reads through it. Single source of truth — adding a second cache causes stale reads.
@@ -129,7 +123,7 @@ Copilot → provider/provider.ts (VllmChatModelProvider) → provider/vllmClient
 - **ESM throughout.** All imports use `.js` extensions per TypeScript 5+ ESM rules.
 
 ### Test structure:
-- Unit tests in `test/*.test.ts`, one file per source module.
+- Unit tests in `test/*.test.ts`. Tests exist only as tripwires for real breakage (wire format, settings.json writes, provider lifecycle, shipped-bug canaries) — no coverage metric, no ceremony tests.
 - Integration tests in `test/integration/`.
 - Mocks in `test/__mocks__/vscode.ts` — VS Code API is mocked at the module level.
 

@@ -1,7 +1,6 @@
 /**
  * Generates model-configs/index.json — the remote preset list served live to
- * the extension during Add Server / Auto-Configure
- * (docs/remote-presets-plan.md §3).
+ * the extension during Add Server / Auto-Configure.
  *
  * GENERATED, NEVER HAND-EDITED. Freshness chain:
  *   1. GitHub Action (.github/workflows/preset-index.yml) regenerates + commits

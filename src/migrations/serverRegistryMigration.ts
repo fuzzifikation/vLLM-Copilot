@@ -1,5 +1,5 @@
 /**
- * Forced server-registry migration on activation (docs/server-registry.md §6).
+ * Forced server-registry migration on activation.
  *
  * Moves the server facts (serverUrl/requestHeaders/serverType/serverDisplayName)
  * off every `vllm-copilot.models` entry and into the `vllm-copilot.servers`

@@ -6,6 +6,7 @@ import {
   dedupeServerIds,
   type ServerEntry,
 } from '../src/state/serverRegistry.js';
+import { resolveServerConfig, type ModelConfig } from '../src/state/config.js';
 
 // ── resolveServer ───────────────────────────────────────────────────────
 
@@ -177,5 +178,22 @@ describe('dedupeServerIds', () => {
     const { servers: out, renames } = dedupeServerIds(servers);
     expect(renames).toEqual([]);
     expect(out).toEqual(servers);
+  });
+});
+
+// ── resolveServerConfig (model-ref wrapper, folded from its old suite) ─
+// The wrapper is a pass-through over resolveServer; normalization and
+// sanitization are pinned above through resolveServer itself. What the
+// wrapper exists for is the per-model view: exactly its own entry's
+// credentials, never a sibling's.
+
+describe('resolveServerConfig (model ref → registry entry)', () => {
+  it('hands a model only its own entry request headers (isolated per server ref)', () => {
+    const model: ModelConfig = { id: 'test', server: 'srv' };
+    const withAuth: ServerEntry[] = [
+      { id: 'srv', serverUrl: 'http://remote-server:9000', requestHeaders: { 'X-Key': 'a' } },
+      { id: 'other', serverUrl: 'http://elsewhere:9000', requestHeaders: { 'X-Key': 'b' } },
+    ];
+    expect(resolveServerConfig(model, withAuth)?.requestHeaders).toEqual({ 'X-Key': 'a' });
   });
 });

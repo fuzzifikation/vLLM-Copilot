@@ -9,8 +9,8 @@ import { SystemMessagePipeline } from '../src/provider/systemMessagePipeline.js'
  * Direct tests for the extracted system-message pipeline
  * (`systemMessagePipeline.ts`). The transformation path is exercised with an
  * injected capture writer so the collected entries are observable without
- * touching the file system; the write path itself has its own end-to-end suite
- * in `providerCapture.test.ts`.
+ * touching the file system; the capture write path (`enqueueWrite`) runs
+ * against a real temp directory in the describe at the end of this file.
  */
 function makePipeline() {
   const captureWriter = vi.fn().mockResolvedValue(undefined);
@@ -87,5 +87,37 @@ describe('system message processing', () => {
 
     expect(result).toEqual([msg]);
     expect(appendLine).toHaveBeenCalledWith(expect.stringContaining('System message pipeline failed'));
+  });
+});
+
+// ── capture write path (folded from test/providerCapture.test.ts) ──────
+// Real temp directory so the atomic temp-file + rename behavior of
+// system-messages.json is exercised end-to-end.
+
+describe('enqueueWrite (system message capture)', () => {
+  function makePipeline(): SystemMessagePipeline {
+    return new SystemMessagePipeline({ appendLine: vi.fn() } as any);
+  }
+
+  const entry = (receivedContent: string, deliveredContent: string, rulesApplied: string[] = []) => ({
+    receivedContent,
+    deliveredContent,
+    rulesApplied,
+  });
+
+  it('starts fresh when the existing file is corrupted and does not crash', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vllm-capture-'));
+    try {
+      const target = path.join(dir, 'system-messages.json');
+      await fs.writeFile(target, '{ not valid json', 'utf-8');
+      const pipeline = makePipeline();
+
+      await pipeline.enqueueWrite(target, [entry('sys-a', 'sys-a')]);
+
+      const stored = JSON.parse(await fs.readFile(target, 'utf-8'));
+      expect(stored).toEqual([entry('sys-a', 'sys-a')]);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });

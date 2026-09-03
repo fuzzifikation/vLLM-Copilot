@@ -278,4 +278,4 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 | [Agents window](agents-window.md) | Using vLLM models in the VS Code "Open in Agents" window (Agent Host BYOK). |
 | [Copilot integration](copilot-integration.md) | How the extension plugs into Copilot, sessions, tool calls. |
 
-**Maintainer-only docs:** [OpenRouter architecture](openrouter-integration.md) · [Third-party compatibility plan](thirdparty-compatibility-plan.md) · [SGLang compat plan](sglang-compat-plan.md) · [Feature ideas](feature-ideas.md) · [Code review](code-review.md).
+**Maintainer-only docs:** [OpenRouter architecture](openrouter-integration.md) · [SGLang compat plan](sglang-compat-plan.md) · [Feature ideas](feature-ideas.md) · [Code review](code-review.md).

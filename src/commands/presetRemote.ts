@@ -1,7 +1,7 @@
 import { parsePresetFile, type ModelPreset } from './presets.js';
 
 /**
- * Live remote preset lookup (docs/remote-presets-plan.md).
+ * Live remote preset lookup.
  *
  * When a model is added, the flow fetches a tiny index file from the
  * vLLM-Copilot GitHub repo, matches the identified model against its patterns

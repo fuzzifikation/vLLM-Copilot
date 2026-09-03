@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildModelInfo } from '../src/provider/modelInfo.js';
+import { buildModelInfo, extractFamilyWithSource } from '../src/provider/modelInfo.js';
 import type { TokenBudget } from '../src/shared/tokenBudget.js';
 
 describe('buildModelInfo picker id derivation', () => {
@@ -120,5 +120,27 @@ describe('buildModelInfo outputMenuCeiling (pick-as-advertised scaling)', () => 
     const enumVals = info.configurationSchema?.properties?.maxOutputTokens?.enum;
     expect(enumVals).toEqual([32768, 16384]); // 65536 pruned — menu follows the advertised budget
     expect(info.warningText?.output_limit).toBeDefined(); // 65536 configured > 40000 → warns
+  });
+});
+
+// ── extractFamilyWithSource (folded from test/modelUtils.test.ts) ──────
+
+describe('extractFamilyWithSource', () => {
+  it('reports fromFallback=true for org-name fallback (GLM/ChatGLM not in list)', () => {
+    // GLM — exactly the case the known-bugs doc flagged. Intentionally not in
+    // KNOWN_FAMILIES; the authoritative family must come from a preset or HF.
+    expect(extractFamilyWithSource('zai-org/GLM-5.2')).toEqual({
+      family: 'zai-org',
+      fromFallback: true,
+    });
+  });
+
+  it('matches codellama before llama (longer family wins via iteration order)', () => {
+    // codellama is checked first; the substring "llama" appears inside it but
+    // the loop returns the codellama match, not llama.
+    expect(extractFamilyWithSource('codellama/CodeLlama-34b')).toEqual({
+      family: 'codellama',
+      fromFallback: false,
+    });
   });
 });

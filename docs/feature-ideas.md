@@ -308,7 +308,7 @@ Since the model list is small (typically < 20 entries) and the server is local/c
 ## ✨ Named-Server Registry ("B") — deduplicate server identity & auth
 
 **Category:** Architecture / Vitamin (developer-experience, not user-facing moat)
-**Status:** Accepted → plan: [server-registry.md](./server-registry.md) (revision 4, 2026-08-31, code-reviewed against `836efb5`; not implemented). **Revision 4 changed the shape of the deal: pure registry, inline `serverUrl` deleted from `ModelConfig`, user settings migrated on activation without an opt-in.** The "non-breaking rules" below are superseded — read them as history.
+**Status:** SHIPPED in v1.36.0 (pure registry, forced migration on activation). The plan doc was retired after ship; revision 4 (2026-08-31, code-reviewed against `836efb5`) was the final shape. **Revision 4 changed the shape of the deal: pure registry, inline `serverUrl` deleted from `ModelConfig`, user settings migrated on activation without an opt-in.** The "non-breaking rules" below are superseded — read them as history.
 **Cross-note:** This *reconsiders* the per-model identity decision in [code-review.md](./code-review.md) ("Accepted product decisions: per-model server identity"). It is **not** a return to the deprecated single-global-server; it's an explicit registry of *N* named servers that models reference.
 
 **What:** Today every model entry duplicates its own `serverUrl` and `requestHeaders`. Two models on one server carry the same auth copy-pasted (e.g. the same CF-Access client-id/secret + bearer token). This introduces a real drift bug class: rotate a shared credential and every entry must be updated or it silently keeps a dead key. The display-name work (v1.33.0, `serverDisplayName`) landed as a per-model field for the same structural reason.
@@ -330,8 +330,8 @@ Proposed shape — models reference a server by id instead of copying it:
 ```
 
 **Why it's worth it:**
-- **Auth becomes a single source of truth** — one stored copy per server instead of one per model. (Honest caveat verified in the review: *rotation* already works today, because `Update Auth` and `Rename Server` fan out URL-wide across every model on that URL. The registry fixes ownership and settings.json hygiene, not reach — see server-registry.md §1.)
-- **Server identity becomes `id`, not a header-value fingerprint** — first rejected in the plan (server-registry.md §5, 2026-08-31), then **adopted in 1.36.0-rc0 anyway** after the LOC audit showed the fingerprint apparatus (fingerprint, entry fingerprint, identity pair, sha256 group key, engine re-keying) cost ~150 lines to answer a write-time dedupe question and hashed credentials into map keys. Dashboard grouping, settings view, deep-dive keys and metrics-engine pooling now key on the entry id; connection equality survives only as a plain write-time comparison (`entryMatchesConnection`). The "deletes most of the identity machinery" saving did materialise, one release late.
+- **Auth becomes a single source of truth** — one stored copy per server instead of one per model. (Honest caveat verified in the review: *rotation* already works today, because `Update Auth` and `Rename Server` fan out URL-wide across every model on that URL. The registry fixes ownership and settings.json hygiene, not reach.)
+- **Server identity becomes `id`, not a header-value fingerprint** — first rejected (2026-08-31), then **adopted in 1.36.0-rc0 anyway** after the LOC audit showed the fingerprint apparatus (fingerprint, entry fingerprint, identity pair, sha256 group key, engine re-keying) cost ~150 lines to answer a write-time dedupe question and hashed credentials into map keys. Dashboard grouping, settings view, deep-dive keys and metrics-engine pooling now key on the entry id; connection equality survives only as a plain write-time comparison (`entryMatchesConnection`). The "deletes most of the identity machinery" saving did materialise, one release late.
 - **Future server-level knobs get a home** — TLS options, per-server poll interval, proxy settings stop needing a per-model storage debate.
 - **`serverDisplayName` migrates cleanly** onto the server record; the shipped dashboard/rename logic keeps working against the registry (~70% portable).
 
@@ -343,7 +343,7 @@ what made the design a hybrid. Revision 4 dropped them, and that *shrank* the pl
 2. ~~**Read tolerance forever**~~ → no fallback exists. The upside nobody expected: with the
    field gone, all 135 `.serverUrl` reads become compile errors, so the silent "model vanishes
    from a feature" failure class is caught by `tsc` instead of by a hand-written audit plus
-   tests. See [server-registry.md](./server-registry.md) §2.
+   tests.
 3. ~~**Opt-in migrate command, never auto-rewrite**~~ → one-shot **forced** migration at
    activation, marker-guarded, forensic pre-write snapshot (no Undo command — restoring the legacy
    shape would produce settings the current version cannot use), notification
@@ -354,7 +354,7 @@ what made the design a hybrid. Revision 4 dropped them, and that *shrank* the pl
 - ~~**Lifecycle rule that must be decided:** what happens when a user deletes a server entry that models still reference?~~ **Decided:** refuse while any model references the id and name the models. No cascade, and no "detach to inline" — there is nothing to detach to.
 - The rename feature shipped (v1.33.0) already solves the display-name problem, so the *remaining* justification is auth dedup + identity simplification — not renaming.
 
-**Priority:** P3 / deferred. High value, high churn. Worth doing if duplicated shared auth keeps recurring or server-level settings keep being requested; not worth it for renaming alone. *(Superseded 2026-08-31: decided to build the pure version — see server-registry.md.)*
+**Priority:** P3 / deferred. High value, high churn. Worth doing if duplicated shared auth keeps recurring or server-level settings keep being requested; not worth it for renaming alone. *(Superseded 2026-08-31: decided to build the pure version.)*
 
 **Effort:** Medium-large, and it is a **single breaking release** — the pure design has no shippable intermediate state (deleting `serverUrl` and shipping the migration are one commit). Config layer + provider/discovery read path + migration + write paths + webview + both schema artifacts + docs. No server-side changes needed; all data comes from the existing vLLM responses. (This line previously claimed "Requires SSE response parsing", which was boilerplate from another idea and never applied here.)
 

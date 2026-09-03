@@ -3,12 +3,12 @@ import * as vscode from 'vscode';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { registerConfigSchemaTool } from '../src/shared/configSchemaTool.js';
 
 /**
- * Unit tests for the config-schema LM tool. Pins the registration name, the
- * schema+guide result content, the optional section filter, and the graceful
- * fallback when the bundled schema cannot be read.
+ * Artifact tests for the config-schema tool's data sources: the shipped
+ * `schemas/vllm-copilot-models.schema.json` and the inline
+ * `vllm-copilot.models` contribution in package.json. The tool itself is a
+ * thin reader over these files; the pins here catch shipped-artifact drift.
  */
 
 describe('shipped vllm-copilot-models.schema.json (artifact)', () => {
