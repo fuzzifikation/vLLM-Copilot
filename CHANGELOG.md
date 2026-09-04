@@ -12,9 +12,10 @@
 
 - **Every entry is its own server.** Two entries on one URL (two OpenRouter keys, two tenants on one gateway) get their own Dashboard node, Deep-Dive panel, backend type, and name. **Rename Server** renames exactly the entry you right-click, OpenRouter entries included. **Remove Server** deletes exactly that entry, and still refuses while any model references it. `http://EXAMPLE.com`, `http://example.com`, and `http://example.com:80` are one server. New model ids read `<model> on <server entry id>`, so two models on one host can never collide.
 
+- **Workspace settings override per-project - on purpose.** A `vllm-copilot.models`/`vllm-copilot.servers` copy in a workspace `.vscode/settings.json` replaces your global config for that folder: different projects, different servers and model sets. Command and Dashboard edits then write to the layer that is actually in effect (the workspace copy when one exists), so edits never vanish into an invisible layer. Only override in folders you trust - a repo's settings file decides which servers receive your requests and headers.
+
 ### Fixed
 
-- **Workspace settings no longer shadow your config.** A copy of `vllm-copilot.models` in a workspace `.vscode/settings.json` overrode every read while all writes went to User settings: add/edit/auth commands appeared to do nothing.
 - Various bug fixes: Deep Dive no longer revives old credentials after you rotate a server's auth, and the OpenRouter provider list refreshes after a key swap.
 - **Test & Refresh is faster and gentler on your servers.** Each server's model list is fetched once per pass, regardless of how many models it hosts. Ten models on one vLLM box used to mean ten identical requests, and OpenRouter's ~500 KB catalog was downloaded per model per pass.
 - **Model Settings lists real models for LM Studio and Ollama.** Each backend is now asked on its own documented endpoint, so Ollama's loaded models and LM Studio's downloads show up, and Test & Refresh matches only models that can actually serve you.

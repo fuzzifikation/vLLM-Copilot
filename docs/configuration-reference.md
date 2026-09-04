@@ -8,6 +8,8 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 
 **Servers and models are separate.** A server entry owns `serverUrl`, `requestHeaders`, `serverType` and its display label; a model entry references its server by `server` id and owns everything model-scoped (token budgets, capabilities, params). There is no default or global server: a registry entry is used only because a model references it.
 
+**Per-project overrides.** `vllm-copilot.servers` and `vllm-copilot.models` are window-scoped: a copy of either key in a workspace `.vscode/settings.json` **replaces** the User value for that folder - different projects can run on different servers and model sets. When a workspace copy is in effect, extension commands and the Dashboard edit that workspace copy (writes always land in the layer you can see). Only do this in folders you trust: the workspace file decides which servers receive your requests and auth headers.
+
 ---
 
 ## Server Entry Fields (`vllm-copilot.servers`)

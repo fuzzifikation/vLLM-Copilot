@@ -719,20 +719,67 @@ describe('readModels / writeModels (single settings access path)', () => {
 });
 
 describe('settings contribution — scope contract', () => {
-  // configStore ALWAYS writes ConfigurationTarget.Global. Without
-  // "scope": "application" these settings are window-scoped, so a workspace
-  // layer could shadow every read while every write landed in user settings —
-  // the migration would then mark itself done over still-effective legacy
-  // values, and add/edit/auth commands would write where nobody reads.
-  // Pinning the scope in package.json is what makes read/write see one layer.
-  it('models and servers are application-scoped', () => {
+  // Owner ruling 2026-09-04: workspace override is a FEATURE. A copy of
+  // vllm-copilot.models/servers in a workspace .vscode/settings.json shadows
+  // the User value for that folder (per-project model/server sets) — this is
+  // what 1.35.x shipped and what stays. So the scope must be
+  // workspace-overridable (window/resource/... — NEVER "machine" or
+  // "application": workspace values are then impossible, breaking the
+  // feature; "application" additionally is not writable to profile User
+  // settings at all, which bricked the fresh-install migration during
+  // 1.36.0-rc1 testing with "not a registered configuration").
+  // Because reads (getConfiguration().get()) return the workspace copy when
+  // one exists, writes must follow the same layer — pinned below.
+  const readProps = () => {
     const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url));
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-    const props = Object.assign(
+    return Object.assign(
       {},
       ...pkg.contributes.configuration.map((section: any) => section.properties),
     );
-    expect(props['vllm-copilot.models'].scope).toBe('application');
-    expect(props['vllm-copilot.servers'].scope).toBe('application');
+  };
+  // Same access trick as the other suites: the mock exposes _mockConfig, the
+  // real @types/vscode does not know it exists.
+  const mockWorkspace = () => (vscode as any).workspace as { _mockConfig: any };
+
+  it('models and servers stay workspace-overridable (window scope)', () => {
+    const props = readProps();
+    const overridable = ['window', 'resource', 'language-overridable', undefined];
+    expect(overridable).toContain(props['vllm-copilot.models'].scope);
+    expect(overridable).toContain(props['vllm-copilot.servers'].scope);
+  });
+
+  it('writes land in the layer the reads see (workspace shadow, no silent writes)', async () => {
+    const updateSpy = vi.fn().mockResolvedValue(undefined);
+    const inspectFor = (inspected: unknown) => ({
+      get: () => [],
+      update: updateSpy,
+      inspect: () => inspected,
+    });
+
+    // No override anywhere → User settings (Global), the unchanged default.
+    mockWorkspace()._mockConfig = inspectFor(undefined);
+    await writeModels([]);
+    await writeServers([]);
+    expect(updateSpy.mock.calls.map(c => c[2])).toEqual([vscode.ConfigurationTarget.Global, vscode.ConfigurationTarget.Global]);
+
+    // Workspace-file override active → writes go to the Workspace layer,
+    // because that is what every read returns; a Global write would be invisible.
+    updateSpy.mockClear();
+    mockWorkspace()._mockConfig = inspectFor({ workspaceValue: [] });
+    await writeServers([]);
+    expect(updateSpy).toHaveBeenCalledWith('servers', [], vscode.ConfigurationTarget.Workspace);
+
+    // Folder override wins over workspace-file, matching read precedence.
+    updateSpy.mockClear();
+    mockWorkspace()._mockConfig = inspectFor({ workspaceValue: [], workspaceFolderValue: [] });
+    await writeModels([]);
+    expect(updateSpy).toHaveBeenCalledWith('models', [], vscode.ConfigurationTarget.WorkspaceFolder);
+
+    // defaultValue alone is NOT an override — must not write to defaults-land.
+    updateSpy.mockClear();
+    mockWorkspace()._mockConfig = inspectFor({ defaultValue: [] });
+    await writeModels([]);
+    expect(updateSpy).toHaveBeenCalledWith('models', [], vscode.ConfigurationTarget.Global);
   });
 });

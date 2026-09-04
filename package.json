@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM integration for GitHub Copilot and the VS Code Agents window on professional (and self-hosted) servers (supports full featureset of vLLM and Copilot). No subscription, no telemetry. No work content to any third party. Live observability: queue status, KV-cache, throughput, and more, in a full dashboard UI. Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
-  "version": "1.36.0-rc1",
+  "version": "1.36.0-rc2",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -288,9 +288,9 @@
         "properties": {
           "vllm-copilot.servers": {
             "type": "array",
-            "scope": "application",
+            "scope": "window",
             "default": [],
-            "markdownDescription": "Server registry: each entry is one server (URL + auth + type), referenced by `id` from `vllm-copilot.models`. Managed via the Dashboard and the vLLM-Copilot commands; hand-editing is possible but the commands keep models and servers in sync. Stored in **User settings only** - the extension always writes there, so a workspace-layer value would be silently ignored.",
+            "markdownDescription": "Server registry: each entry is one server (URL + auth + type), referenced by `id` from `vllm-copilot.models`. Managed via the Dashboard and the vLLM-Copilot commands; hand-editing is possible but the commands keep models and servers in sync. A copy of this key in a workspace `.vscode/settings.json` **overrides** the User value for that folder - and Dashboard/command edits then target that workspace layer, so you edit what you see. Caution: any repo can ship such a file and redirect your requests (and headers) - override on folders you trust.",
             "items": {
               "type": "object",
               "required": [
@@ -335,9 +335,9 @@
           },
           "vllm-copilot.models": {
             "type": "array",
-            "scope": "application",
+            "scope": "window",
             "default": [],
-            "markdownDescription": "Per-model configuration: server reference, params, modes. Server connection facts (URL, auth, type) live in the `vllm-copilot.servers` registry. See README Configuration Reference for details. Stored in **User settings only** - the extension always writes there, so a workspace-layer value would be silently ignored.",
+            "markdownDescription": "Per-model configuration: server reference, params, modes. Server connection facts (URL, auth, type) live in the `vllm-copilot.servers` registry. See README Configuration Reference for details. A copy of this key in a workspace `.vscode/settings.json` **overrides** the User value for that folder - and Dashboard/command edits then target that workspace layer, so you edit what you see. Caution: any repo can ship such a file and redirect your requests (and headers) - override on folders you trust.",
             "items": {
               "type": "object",
               "required": [

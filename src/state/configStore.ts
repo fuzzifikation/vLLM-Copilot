@@ -4,6 +4,29 @@ import { findModelConfigIndex, normalizeModelEntry, resolveConfigId } from './co
 import type { ServerEntry } from './serverRegistry.js';
 
 /**
+ * The settings layer a write to `key` must land in for the write to be VISIBLE.
+ *
+ * Workspace override is supported behavior (1.35.x shipped it, owner ruling
+ * 2026-09-04 keeps it): a `.vscode/settings.json` copy of `models`/`servers`
+ * shadows the User value, and every read (`getConfiguration().get()`) returns
+ * the workspace copy. A write pinned to `Global` under that shadow lands where
+ * nobody reads — the original 1.35.2 "add/edit appears to do nothing" bug. So
+ * writes follow the layer the reads already see: workspace-folder value wins,
+ * then workspace value, else User settings. No workspace open (or no override
+ * present) → `inspect()` reports no workspace values → Global, unchanged.
+ */
+function effectiveWriteTarget(key: 'models' | 'servers'): vscode.ConfigurationTarget {
+  const inspected = vscode.workspace.getConfiguration('vllm-copilot').inspect(key);
+  if (inspected?.workspaceFolderValue !== undefined) {
+    return vscode.ConfigurationTarget.WorkspaceFolder;
+  }
+  if (inspected?.workspaceValue !== undefined) {
+    return vscode.ConfigurationTarget.Workspace;
+  }
+  return vscode.ConfigurationTarget.Global;
+}
+
+/**
  * Read the raw `vllm-copilot.models` array exactly as stored.
  *
  * Nothing here normalizes entries — callers that need effective values go through
@@ -30,11 +53,11 @@ export function readModels(): ModelConfig[] {
  * This is the single home for write semantics: the server-registry migration needs
  * servers-before-models ordering plus "set the completion marker only after every
  * write succeeded" (the rule `outputLengthMigration` already follows), and one place
- * to put both.
+ * to put both. The write goes to the layer in effect — see {@link effectiveWriteTarget}.
  */
 export async function writeModels(models: ModelConfig[]): Promise<void> {
   const config = vscode.workspace.getConfiguration('vllm-copilot');
-  await config.update('models', models, vscode.ConfigurationTarget.Global);
+  await config.update('models', models, effectiveWriteTarget('models'));
 }
 
 /**
@@ -51,12 +74,13 @@ export function readServers(): ServerEntry[] {
 
 /**
  * The ONLY writer of the `vllm-copilot.servers` setting, whole-array like
- * {@link writeModels}. The registry migration relies on the same error
+ * {@link writeModels}, and to the layer in effect — see
+ * {@link effectiveWriteTarget}. The registry migration relies on the same error
  * propagation so it can defer its completion marker until every write succeeded.
  */
 export async function writeServers(servers: ServerEntry[]): Promise<void> {
   const config = vscode.workspace.getConfiguration('vllm-copilot');
-  await config.update('servers', servers, vscode.ConfigurationTarget.Global);
+  await config.update('servers', servers, effectiveWriteTarget('servers'));
 }
 
 /**
