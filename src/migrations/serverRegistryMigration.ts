@@ -139,8 +139,19 @@ export async function maybeRunServerRegistryMigration(
       // Settings write blocked (e.g. invalid settings.json) — no marker, so
       // the next activation retries the idempotent plan from scratch.
       const msg = err instanceof Error ? err.message : String(err);
-      void vscode.window.showErrorMessage(`vLLM-Copilot: could not adopt your servers into settings, will retry next start. ${msg}`);
-      output.appendLine(`[WARN] Server registry migration write failed: ${msg}`);
+      // Fresh VSIX installs can activate before VS Code's configuration
+      // registry knows the new `vllm-copilot.servers` key; the write then
+      // throws "not a registered configuration" (same registration race
+      // byok.ts guards against). A VS Code restart re-reads the setting and
+      // the retry succeeds — the raw VS Code error alone gives the user no
+      // action, so name the fix. Other write failures (invalid
+      // settings.json) keep the raw message; a restart would not help there.
+      const restartNeeded = msg.toLowerCase().includes('registered configuration');
+      const toast = restartNeeded
+        ? 'vLLM-Copilot: could not adopt your servers into the new server registry. Restart VS Code to finish - servers are adopted automatically on next start.'
+        : `vLLM-Copilot: could not adopt your servers into settings, will retry next start. ${msg}`;
+      void vscode.window.showErrorMessage(toast);
+      output.appendLine(`[WARN] Server registry migration write failed: ${msg}${restartNeeded ? ' - restart VS Code to register the new servers setting; the migration retries on next start.' : ''}`);
       return;
     }
 

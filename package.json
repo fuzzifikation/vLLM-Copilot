@@ -15,6 +15,7 @@
     "url": "https://github.com/fuzzifikation/vLLM-Copilot/issues"
   },
   "homepage": "https://github.com/fuzzifikation/vLLM-Copilot",
+  "changelog": "https://github.com/fuzzifikation/vLLM-Copilot/blob/main/CHANGELOG.md",
   "sponsor": {
     "url": "https://paypal.me/DieterSchwarzmann"
   },

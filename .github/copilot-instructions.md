@@ -15,7 +15,7 @@ These apply to any codebase.
 ### NEVER DO THESE (without explicit user approval)
 - **Run destructive git commands:** `git checkout`, `git stash`, `git reset`, `git clean`, etc.
 - **Revert or overwrite files without checking contents first.**
-- **never git push** without permission. You can commit to save work, but a push must be allowed by the user.
+- **HARD RULE, THE BIG ONE: DO NOT PUSH unless the user explicitly asks for a push in that moment.** Not "commit and push" for a trivia file, not "ok", not a previous session's approval, not your own judgment that the unit is ready. Committing locally to save work: always fine, as many commits as you like. A push needs the user's live words ("push it", "commit and push" for a COHERENT UNIT). One push per coherent unit: collapse your micro-commits silently (soft reset, recommit, bland message) before pushing - a push of a test-mock tweak or a two-line wording edit is unacceptable (owner rage 2026-09-04 after 19 pushes since 1.35.3).
 - **Change Version** without asking. Never change version. Version change and number must be allowed by the user.
 
 ### Communication
@@ -65,10 +65,12 @@ These apply to any codebase.
 - **Package a VSIX:** `npm run build` (compiles, tests, then packages with vsce).
 
 ### Changelog Policy
-- **Only issues a user actually experienced in a SHIPPED version get a `Fixed` entry.** A bug that was introduced and fixed within the same unreleased cycle is work-in-progress, not news — no entry, ever.
+- **Only issues a user actually experienced in a SHIPPED version get a `Fixed` entry.** A bug that was introduced and fixed within the same unreleased cycle is work-in-progress, not news — no entry, ever. This includes bugs seen only during the author's own rc/VSIX testing: an unpublished rc is not a shipped version.
 - **New features deserve entries.** Internal refactors and implementation details do not.
 - **Never compare against never-shipped intermediate behavior** ("before, during this rc, X happened"). If no user ever saw it, it never happened.
+- **Intent before content, always.** A release gets a short intent paragraph directly under the version heading (the goal of the release, why it exists), before `### Added`. Each major structural change likewise states its goal first, then the change as its consequence. Never bury the why mid-paragraph, and state it once: the release-level intent paragraph replaces per-entry restatements of the same goal.
 - Be terse in the changelog - this is for users to read. The commit messages can be verbose - those are for AI to read.
+- **`package.json` `changelog` field points at the CHANGELOG.md blob URL, never at GitHub releases.** Marketplace versions and git releases are deliberately different things; not every version gets a git release. Note: a VSIX-installed extension shows the packaged `CHANGELOG.md` snapshot in the extension page's CHANGELOG tab and ignores the manifest field; the field only feeds Marketplace installs.
 
 ### code-review.md Policy
 - `docs/code-review.md` tracks **live issues only**. When a finding is fixed, DELETE its entry in the same commit. No status sections, no "fixed by" annotations, no archives, no grades: git history holds what was done, and nobody reads accomplishment logs. Rejection lists, deferred architecture, and accepted product decisions stay (standing rulings, not history).

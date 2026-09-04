@@ -275,7 +275,15 @@ export const workspace: {
     const config = workspace._mockConfig;
     // If the test set a specific config for this section, return it.
     // Otherwise return a default config that responds to .get() with undefined.
-    if (config && typeof config.get === 'function') return config as WorkspaceConfiguration;
+    if (config && typeof config.get === 'function') {
+      // Tests routinely assign a bare { get, update } here; code under test
+      // (configStore's effectiveWriteTarget) also calls inspect(). Supply the
+      // honest default when absent: no workspace override → writes go Global.
+      if (typeof config.inspect !== 'function') {
+        return { ...config, inspect: () => undefined } as WorkspaceConfiguration;
+      }
+      return config as WorkspaceConfiguration;
+    }
     // Default: return an object with a .get() that returns undefined for unknown keys.
     return {
       get: <T>(key: string, defaultValue?: T) => (config && config[key] !== undefined ? config[key] : defaultValue),

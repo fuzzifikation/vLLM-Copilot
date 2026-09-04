@@ -2,13 +2,15 @@
 
 ## v1.36.0-rc1 - The server registry
 
+The goal of this release: with server facts stored inside every model entry, any server-level feature had to be built, stored and edited once per model copy, and none of the server-level UX and UI improvements we want could land. Servers becoming one registry entry each is the backbone for them. This release lays that foundation; the features built on it come later.
+
 ### Added
 
 - **Servers without a model.** A new **vLLM-Copilot: Add Server (no model)** command registers a server on its own, and **Remove Server** sits in the Dashboard's server context menu. Model list and registry never drift apart.
 
 ### Changed
 
-- **Breaking: servers are now a registry.** Connection settings (URL, headers, backend type, label) move out of each model entry into a new `vllm-copilot.servers` setting; every model references its server's entry id. The one breaking change of this release, and it migrates itself: on first start, models sharing URL + credentials become one entry each, differing credentials stay separate servers. The migration never deletes a settings value; hand-edited leftovers are kept and reported in the Output channel. Rolling back means restoring `settings.json` by hand or an older VSIX.
+- **Breaking: servers are now a registry.** Connection settings (URL, headers, backend type, label) move out of each model entry into a new `vllm-copilot.servers` setting; every model references its server's entry id. This is the one breaking change of the release, and it migrates itself: on first start, models sharing URL + credentials become one entry each, differing credentials stay separate servers. The migration never deletes a settings value; hand-edited leftovers are kept and reported in the Output channel. Rolling back means restoring `settings.json` by hand or an older VSIX.
 
 - **Every entry is its own server.** Two entries on one URL (two OpenRouter keys, two tenants on one gateway) get their own Dashboard node, Deep-Dive panel, backend type, and name. **Rename Server** renames exactly the entry you right-click, OpenRouter entries included. **Remove Server** deletes exactly that entry, and still refuses while any model references it. `http://EXAMPLE.com`, `http://example.com`, and `http://example.com:80` are one server. New model ids read `<model> on <server entry id>`, so two models on one host can never collide.
 
