@@ -7,19 +7,19 @@ Derived from investigating the Copilot extension's `package.json` and the VS Cod
 
 ## What Copilot sends us
 
-- **Messages** — all messages the caller assembled (no pre-filtering by VS Code)
-- **Historical thinking** — current hosts can include assistant `LanguageModelThinkingPart`
+- **Messages** - all messages the caller assembled (no pre-filtering by VS Code)
+- **Historical thinking** - current hosts can include assistant `LanguageModelThinkingPart`
   content in those messages; the extension forwards it as vLLM's structured `reasoning`
   field without keeping a private transcript
-- **`options.tools`** — available tools for the model to call
-- **`options.toolMode`** — `Auto` (model decides) or `Required` (must use a tool)
-- **`options.modelConfiguration`** — resolved values from our `configurationSchema` (if we declare one)
-- **`options.modelOptions`** — generic pass-through; Copilot currently sends only OTel correlation IDs here, NOT token limits
+- **`options.tools`** - available tools for the model to call
+- **`options.toolMode`** - `Auto` (model decides) or `Required` (must use a tool)
+- **`options.modelConfiguration`** - resolved values from our `configurationSchema` (if we declare one)
+- **`options.modelOptions`** - generic pass-through; Copilot currently sends only OTel correlation IDs here, NOT token limits
 
 ## What Copilot does NOT send us
 
-- No `max_tokens` / output limit of its own — Copilot never originates an output cap for providers. Since v1.35 `modelConfiguration.maxOutputTokens` may carry the user's pick from our own **Output Length** picker (`configurationSchema` property) — that is our schema value echoing back, not a Copilot decision. Either way we clamp it to the advertised ceiling before it reaches the wire.
-- No context truncation hints — Copilot trusts our declared `maxInputTokens` and self-manages
+- No `max_tokens` / output limit of its own - Copilot never originates an output cap for providers. Since v1.35 `modelConfiguration.maxOutputTokens` may carry the user's pick from our own **Output Length** picker (`configurationSchema` property) - that is our schema value echoing back, not a Copilot decision. Either way we clamp it to the advertised ceiling before it reaches the wire.
+- No context truncation hints - Copilot trusts our declared `maxInputTokens` and self-manages
 
 ## What Copilot does with our declared info
 
@@ -27,7 +27,7 @@ Derived from investigating the Copilot extension's `package.json` and the VS Cod
 |----------------|---------------------|
 | `maxInputTokens` | Budget for `@vscode/prompt-tsx` rendering; compaction trigger threshold |
 | `maxOutputTokens` | Context usage widget (total = input + output); model picker display |
-| `family` | Capability routing — Copilot picks prompt templates based on family name |
+| `family` | Capability routing - Copilot picks prompt templates based on family name |
 | `capabilities.toolCalling` | Enables Agent mode for the model |
 | `capabilities.imageInput` | Routes image pastes to the model |
 | `configurationSchema` | Renders dropdowns in the model picker UI ("Model Mode" and, when `maxOutputTokens` is an array, "Output Length") |
@@ -41,10 +41,10 @@ Derived from investigating the Copilot extension's `package.json` and the VS Cod
 
 Copilot uses a JSX-like prompt-tsx system where prompts are composed of reusable components. Every system message is a composition of:
 
-1. **Unique first line** — identifies the prompt type ("You are an expert in...", "You are a programmer...")
-2. **Reusable building blocks** — shared components like `<SafetyRules />`, `<CopilotIdentityRules />`
-3. **Prompt-specific rules** — unique instructions for that message type
-4. **Dynamic values** — model name (`{promptEndpoint.name}`), date, OS, tools available
+1. **Unique first line** - identifies the prompt type ("You are an expert in...", "You are a programmer...")
+2. **Reusable building blocks** - shared components like `<SafetyRules />`, `<CopilotIdentityRules />`
+3. **Prompt-specific rules** - unique instructions for that message type
+4. **Dynamic values** - model name (`{promptEndpoint.name}`), date, OS, tools available
 
 ### Reusable Building Blocks
 
@@ -57,7 +57,7 @@ All prompts import these shared components (single source of truth):
 | `<CopilotIdentityRules />` | "When asked for your name, you must respond with 'GitHub Copilot'. When asked about the model you are using, you must state that you are using {model_name}." | [copilotIdentity.tsx](https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/extension/prompts/node/base/copilotIdentity.tsx) |
 | `<EditorIntegrationRules />` | Markdown formatting, code block rules | [editorIntegrationRules.tsx](https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/extension/prompts/node/panel/editorIntegrationRules.tsx) |
 
-**Key insight:** The same blocks appear in dozens of different prompt types. Cannot patch VS Code — must intercept at runtime.
+**Key insight:** The same blocks appear in dozens of different prompt types. Cannot patch VS Code - must intercept at runtime.
 
 ### Message Types We've Observed
 
@@ -72,11 +72,11 @@ See [custom-system-prompt.md](./custom-system-prompt.md) for the full design doc
 
 ## Historical Thinking Preservation
 
-**Status (2026-07-20):** BROKEN on VS Code Stable 1.129.1 — upstream Copilot Chat issue.
+**Status (2026-07-20):** BROKEN on VS Code Stable 1.129.1 - upstream Copilot Chat issue.
 
 The extension correctly reports thinking chunks via `progress.report(new ThinkingPart(...))` and forwards any thinking parts it receives as the `reasoning` field. However, Copilot Chat's public-history-to-internal-turn reconstruction flattens assistant responses to visible text only, dropping `LanguageModelThinkingPart` before the provider request is built.
 
-**Verified on:** VS Code 1.129.1 (Stable) — `LanguageModelThinkingPart` is available at runtime (`ThinkingPartAvailable=true`), but second-turn assistant messages have `think=false` on all parts. First-turn reasoning streams correctly; subsequent turns lose the `reasoning` field entirely.
+**Verified on:** VS Code 1.129.1 (Stable) - `LanguageModelThinkingPart` is available at runtime (`ThinkingPartAvailable=true`), but second-turn assistant messages have `think=false` on all parts. First-turn reasoning streams correctly; subsequent turns lose the `reasoning` field entirely.
 
 **Root cause:** Copilot Chat, not the extension or VS Code core. The generic Copilot endpoint can transport thinking when supplied; the loss occurs in Copilot Chat's history reconstruction.
 
@@ -165,16 +165,16 @@ terminalChat.toolSessionMappings
 
 ## Implications for our implementation
 
-1. **`family` matters** — if we return `family: "qwen3"` but Copilot doesn't recognize it, it may use generic prompts. We auto-discover the family from HuggingFace's `config.model_type` via the Auto-Configure command. A string-matching heuristic in `modelInfo.extractFamilyWithSource()` serves as fallback. Users can override routing via `modelCapabilityOverrides`:
+1. **`family` matters** - if we return `family: "qwen3"` but Copilot doesn't recognize it, it may use generic prompts. We auto-discover the family from HuggingFace's `config.model_type` via the Auto-Configure command. A string-matching heuristic in `modelInfo.extractFamilyWithSource()` serves as fallback. Users can override routing via `modelCapabilityOverrides`:
    ```json
    "github.copilot.chat.modelCapabilityOverrides": {
      "qwen3_next": "qwen3"
    }
    ```
    This maps our model's family (`qwen3_next`) to a family name Copilot recognizes (`qwen3`).
-2. **`configurationSchema` is the official way** to expose reasoning effort in the model picker — not a custom setting.
-3. **Agent mode = `toolCalling: true`** — no separate flag needed, it's auto-derived.
-4. **Copilot never truncates for us** — it fills up to `maxInputTokens`, then compacts its own history. Our provider receives exactly what fits.
+2. **`configurationSchema` is the official way** to expose reasoning effort in the model picker - not a custom setting.
+3. **Agent mode = `toolCalling: true`** - no separate flag needed, it's auto-derived.
+4. **Copilot never truncates for us** - it fills up to `maxInputTokens`, then compacts its own history. Our provider receives exactly what fits.
 
 ---
 
@@ -190,26 +190,26 @@ terminalChat.toolSessionMappings
 
 ### Auto-Continue: Recovering Incomplete Responses
 
-Local/self-hosted reasoning models sometimes stop (`finish_reason: stop`) without delivering a usable answer. The provider recovers automatically inside a single `provideLanguageModelChatResponse` call — all attempts share one `progress` reporter, so Copilot sees one seamless stream. Controlled by `vllm-copilot.autoContinueRetries` (default `1`, `0` disables). Implemented in `provider.ts`.
+Local/self-hosted reasoning models sometimes stop (`finish_reason: stop`) without delivering a usable answer. The provider recovers automatically inside a single `provideLanguageModelChatResponse` call - all attempts share one `progress` reporter, so Copilot sees one seamless stream. Controlled by `vllm-copilot.autoContinueRetries` (default `1`, `0` disables). Implemented in `provider.ts`.
 
 Two distinct triggers, each with its **own** request shape:
 
-1. **Empty response (nudge).** The model emitted only reasoning (or nothing) then stopped. We append an empty assistant prefill `{ role: 'assistant', content: '' }` and re-send under the **default** chat-template flags. vLLM starts a fresh assistant turn — nothing reached Copilot yet, so nothing is lost.
+1. **Empty response (nudge).** The model emitted only reasoning (or nothing) then stopped. We append an empty assistant prefill `{ role: 'assistant', content: '' }` and re-send under the **default** chat-template flags. vLLM starts a fresh assistant turn - nothing reached Copilot yet, so nothing is lost.
 
-2. **Colon-truncation (continuation).** The streamed content ends on a trailing colon (`…as follows:`) — a sentence cut mid-thought. Here we must **resume** the text already shown, not regenerate it. We set vLLM's continuation flags `continue_final_message: true` and `add_generation_prompt: false`, and grow the assistant prefill with everything streamed so far. vLLM reopens the existing assistant message and returns only **new** tokens. Without these flags, vLLM would treat the prefill as a finished turn and regenerate, duplicating what Copilot already displayed.
+2. **Colon-truncation (continuation).** The streamed content ends on a trailing colon (`…as follows:`) - a sentence cut mid-thought. Here we must **resume** the text already shown, not regenerate it. We set vLLM's continuation flags `continue_final_message: true` and `add_generation_prompt: false`, and grow the assistant prefill with everything streamed so far. vLLM reopens the existing assistant message and returns only **new** tokens. Without these flags, vLLM would treat the prefill as a finished turn and regenerate, duplicating what Copilot already displayed.
 
-The retry check uses the full content buffer (not the last chunk) so a trailing whitespace-only chunk can't hide the colon. `finish_reason: length` (token-limit truncation) and `content_filter` are deliberately excluded — those need different handling, not a continuation nudge.
+The retry check uses the full content buffer (not the last chunk) so a trailing whitespace-only chunk can't hide the colon. `finish_reason: length` (token-limit truncation) and `content_filter` are deliberately excluded - those need different handling, not a continuation nudge.
 
 ### Empty Response: Distinguishing a Model Decision from a Dropped Stream
 
-**Problem:** The Output channel logs `[WARN] <model>: empty response (only reasoning/thinking tokens were produced (no finish_reason received)) after 240.2s`. The old hint told the user to adjust the model mode — pointing at the model when the real cause is often transport.
+**Problem:** The Output channel logs `[WARN] <model>: empty response (only reasoning/thinking tokens were produced (no finish_reason received)) after 240.2s`. The old hint told the user to adjust the model mode - pointing at the model when the real cause is often transport.
 
 **Root cause:** Two very different failures share one symptom (reasoning tokens, no text):
 
-1. **Server-reported stop after thinking** (`finish_reason: stop`) — the model genuinely decided it was done. A model/configuration issue; adjust `maxOutputTokens`, `reasoning_effort`, or the model mode.
-2. **No `finish_reason` at all** — the stream was cut *before* vLLM's final summary chunk arrived. This is a transport-layer kill (corporate gateway, reverse proxy, or the serving stack dropping the generation mid-stream), not a model decision. vLLM always sends a terminal chunk with `finish_reason` when a generation completes; its absence means the connection died first.
+1. **Server-reported stop after thinking** (`finish_reason: stop`) - the model genuinely decided it was done. A model/configuration issue; adjust `maxOutputTokens`, `reasoning_effort`, or the model mode.
+2. **No `finish_reason` at all** - the stream was cut *before* vLLM's final summary chunk arrived. This is a transport-layer kill (corporate gateway, reverse proxy, or the serving stack dropping the generation mid-stream), not a model decision. vLLM always sends a terminal chunk with `finish_reason` when a generation completes; its absence means the connection died first.
 
-**Fix:** `provider.ts` `reportPostStreamDiagnostics` now distinguishes the two. The no-finish-reason case gets a hint pointing at gateway/reverse-proxy response timeouts and at the duration correlation ("if this recurs at a similar duration") — the tell-tale signature of a fixed proxy timeout. The genuine `finish_reason: stop` case keeps the model-configuration hint.
+**Fix:** `provider.ts` `reportPostStreamDiagnostics` now distinguishes the two. The no-finish-reason case gets a hint pointing at gateway/reverse-proxy response timeouts and at the duration correlation ("if this recurs at a similar duration") - the tell-tale signature of a fixed proxy timeout. The genuine `finish_reason: stop` case keeps the model-configuration hint.
 
 ### Token Usage Display: The `isApiUsage()` Snake-Case Trap
 
@@ -219,9 +219,9 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
 
 **The fix (3 parts):**
 
-1. **Request `stream_options: { include_usage: true }`** in the vLLM body — otherwise the server doesn't emit a trailing usage chunk at all.
+1. **Request `stream_options: { include_usage: true }`** in the vLLM body - otherwise the server doesn't emit a trailing usage chunk at all.
 
-2. **Handle usage-only SSE chunks** — the final chunk has `choices: []` (empty array), so the SSE parser must check for `parsed.usage` before skipping chunks with no choices:
+2. **Handle usage-only SSE chunks** - the final chunk has `choices: []` (empty array), so the SSE parser must check for `parsed.usage` before skipping chunks with no choices:
    ```typescript
    if (!choice) {
      if (parsed.usage) {
@@ -231,7 +231,7 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
    }
    ```
 
-3. **Report usage with snake_case keys** — the `LanguageModelDataPart` payload must match VS Code's expectation exactly:
+3. **Report usage with snake_case keys** - the `LanguageModelDataPart` payload must match VS Code's expectation exactly:
    ```typescript
    const usageData = {
      prompt_tokens: usage.prompt_tokens,
@@ -243,7 +243,7 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
    progress.report(new vscode.LanguageModelDataPart(usageBytes, 'usage'));
    ```
 
-**Why this was hard to debug:** The `isApiUsage()` check is in VS Code's compiled Copilot extension code, not documented anywhere, and fails silently — no error in the console, no warning in the output channel. The usage data was simply swallowed.
+**Why this was hard to debug:** The `isApiUsage()` check is in VS Code's compiled Copilot extension code, not documented anywhere, and fails silently - no error in the console, no warning in the output channel. The usage data was simply swallowed.
 
 ### `LanguageModelDataPart.json()` MIME Type Trap
 
@@ -253,17 +253,17 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
 
 **Fix:** Always use `new TextEncoder().encode(JSON.stringify(data))` + `'usage'` MIME type.
 
-**Lesson:** Never use the `.json()` factory for usage data — it produces the wrong MIME type. This is likely a VS Code API design oversight; `.json()` is meant for structured data parts, not usage reporting.
+**Lesson:** Never use the `.json()` factory for usage data - it produces the wrong MIME type. This is likely a VS Code API design oversight; `.json()` is meant for structured data parts, not usage reporting.
 
 ---
 
 ### `configurationSchema`: Model Picker Settings (Thinking Effort)
 
-**⚠️ PROPOSED API** — `configurationSchema` is a `chatProvider`-proposal field. It is **not** in stable `@types/vscode` (the `LanguageModelChatInformation` interface there omits it), but it **is** declared in upstream `vscode.proposed.chatProvider.d.ts` (microsoft/vscode). It still requires `enabledApiProposals: ["chatProvider"]` and VS Code reads it at runtime. The same applies to `options.modelConfiguration` on the request side — also a proposal field absent from `@types/vscode`.
+**⚠️ PROPOSED API** - `configurationSchema` is a `chatProvider`-proposal field. It is **not** in stable `@types/vscode` (the `LanguageModelChatInformation` interface there omits it), but it **is** declared in upstream `vscode.proposed.chatProvider.d.ts` (microsoft/vscode). It still requires `enabledApiProposals: ["chatProvider"]` and VS Code reads it at runtime. The same applies to `options.modelConfiguration` on the request side - also a proposal field absent from `@types/vscode`.
 
-**Status:** Implemented. Proposed API — absent from stable `@types/vscode` but declared upstream and read by VS Code at runtime. Can change or be dropped with a future proposal update.
+**Status:** Implemented. Proposed API - absent from stable `@types/vscode` but declared upstream and read by VS Code at runtime. Can change or be dropped with a future proposal update.
 
-**Discovery:** The field name was confirmed against upstream `vscode.proposed.chatProvider.d.ts`. What was verified by reading VS Code's compiled extension host (`extensionHostProcess.js`) and the Copilot extension (`copilot/dist/extension.js`) is the **runtime contract** — the gear-menu rendering, default merging, and where the resolved config lands — which is still not in any public stable docs. The Local Model Provider extension (krevas) does NOT use it.
+**Discovery:** The field name was confirmed against upstream `vscode.proposed.chatProvider.d.ts`. What was verified by reading VS Code's compiled extension host (`extensionHostProcess.js`) and the Copilot extension (`copilot/dist/extension.js`) is the **runtime contract** - the gear-menu rendering, default merging, and where the resolved config lands - which is still not in any public stable docs. The Local Model Provider extension (krevas) does NOT use it.
 
 **How it works (from VS Code source):**
 
@@ -287,7 +287,7 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
    }
    ```
 
-2. **VS Code reads `configurationSchema.properties`** — but NOT freely: the model picker renders exactly **two** sections, hardcoded to the groups `navigation` and `tokens` (`modelPickerConfiguration.ts::_buildItems`), and each section reads only the **first** property whose `group` matches and which has a non-empty `enum`. A third property, or a second one inside an already-filled group, is silently dropped from the main picker (it still appears in the "Configure..." management panel via `createModelConfigurationActions`). This is not theoretical — v1.35 shipped two `navigation` properties and the second (Output Length) never rendered. One control per group. Period.
+2. **VS Code reads `configurationSchema.properties`** - but NOT freely: the model picker renders exactly **two** sections, hardcoded to the groups `navigation` and `tokens` (`modelPickerConfiguration.ts::_buildItems`), and each section reads only the **first** property whose `group` matches and which has a non-empty `enum`. A third property, or a second one inside an already-filled group, is silently dropped from the main picker (it still appears in the "Configure..." management panel via `createModelConfigurationActions`). This is not theoretical - v1.35 shipped two `navigation` properties and the second (Output Length) never rendered. One control per group. Period.
 
 3. **User selection is persisted** in VS Code's `_modelConfigurations` store (per model ID).
 
@@ -321,52 +321,52 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
 | `enumItemLabels` | `string[]` | Human-readable labels for each enum value |
 | `enumDescriptions` | `string[]` | Tooltip/description for each enum value |
 | `default` | `any` | Default value (used if user hasn't configured) |
-| `group` | `string` | UI grouping — **one property renders per group**: `"navigation"` and `"tokens"` are the two main model-picker sections; any other value/omit = "Configure..." management panel only |
+| `group` | `string` | UI grouping - **one property renders per group**: `"navigation"` and `"tokens"` are the two main model-picker sections; any other value/omit = "Configure..." management panel only |
 | `defaultSnippets` | `array` | Used for settings.json snippet generation |
 
 **`group` values (verified against `modelPickerConfiguration.ts` / `modelPickerHover.ts`, incl. release/1.135):**
 
 | Value | Where it appears | Example |
 |-------|-----------------|----------|
-| `"navigation"` | Model picker dropdown section #1 (next to model name) — **only the first matching property renders** | Thinking/mode selector |
-| `"tokens"` | Model picker dropdown section #2 — same first-match rule; section header falls back to "Context Size" unless the property sets `title` | `contextSize` on long-context models; our `maxOutputTokens` |
-| other / *(omitted)* | "Configure..." management panel only (`createModelConfigurationActions`) — never in the main picker | Less prominent settings |
+| `"navigation"` | Model picker dropdown section #1 (next to model name) - **only the first matching property renders** | Thinking/mode selector |
+| `"tokens"` | Model picker dropdown section #2 - same first-match rule; section header falls back to "Context Size" unless the property sets `title` | `contextSize` on long-context models; our `maxOutputTokens` |
+| other / *(omitted)* | "Configure..." management panel only (`createModelConfigurationActions`) - never in the main picker | Less prominent settings |
 
 The model **hover** card mirrors this: `SUPPORTED_CONFIG_GROUPS = ['navigation', 'tokens']`, one "Configurable" button per group.
 
 **How Copilot uses it for their models:**
-- `reasoningEffort` — `enum: ['low', 'medium', 'high']` (or `['none', 'minimal', 'low', 'medium', 'high', 'xhigh']` for some models), `group: "navigation"`
-- `contextSize` — `type: 'number'`, `enum: [128000, 1000000]` with `group: "tokens"` for context window selection
+- `reasoningEffort` - `enum: ['low', 'medium', 'high']` (or `['none', 'minimal', 'low', 'medium', 'high', 'xhigh']` for some models), `group: "navigation"`
+- `contextSize` - `type: 'number'`, `enum: [128000, 1000000]` with `group: "tokens"` for context window selection
 
-**Copilot's naming is misleading:** The property name `reasoningEffort` implies this is only for thinking/reasoning models. It is not. The `configurationSchema` + `modelConfiguration` mechanism is a **general-purpose parameter preset selector**. The enum values are arbitrary strings — Copilot just happens to use "low/medium/high" for their thinking models. We use it for any model, thinking or not.
+**Copilot's naming is misleading:** The property name `reasoningEffort` implies this is only for thinking/reasoning models. It is not. The `configurationSchema` + `modelConfiguration` mechanism is a **general-purpose parameter preset selector**. The enum values are arbitrary strings - Copilot just happens to use "low/medium/high" for their thinking models. We use it for any model, thinking or not.
 
 **Our implementation:**
-- Users define `modelModes` in `vllm-copilot.models` — custom parameter presets for each model
-- **Auto-Configure** (invoked from the **Add vLLM Server & Model** command) detects `family`, capabilities, and `defaultParams`. It does **not** synthesize `modelModes` from HuggingFace chat templates — thinking modes require model-specific knowledge that isn't discoverable from Jinja conditionals. Modes come from bundled presets (`model-configs/`) or, for OpenRouter models, from the `reasoning` metadata.
-- We return `configurationSchema` with a `reasoningEffort` property whose enum values are the user's `modelModes` keys, `group: "navigation"` — and, for models with an ARRAY `maxOutputTokens`, an independent `maxOutputTokens` property (numeric enum, `group: "tokens"` — NOT `navigation`: the renderer keeps only one property per group, so a second `navigation` property is silently dropped) rendered as an "Output Length" dropdown; its selection owns the request's `max_tokens` **and** the advertised output budget — a pick change re-publishes metadata (provider-tracked, deduped; a pick equal to the advertised ceiling triggers nothing), so Copilot's prompt budget (window − pick) grows when the user picks shorter (see `resolveOutputLengthOptions` in `modelInfo.ts`)
-- **Important:** The `reasoningEffort` property name is what Copilot expects in the schema, but the *values* and *parameters* are completely user-defined. This is a general-purpose parameter preset mechanism — not limited to thinking/reasoning. Any inference parameter (temperature, top_p, chat_template_kwargs, etc.) can be configured per mode.
-- Even models with zero thinking capability benefit from model modes — e.g., "Creative" (high temperature, low top_p) vs "Precise" (low temperature, high top_p), or "Fast" vs "Thorough"
+- Users define `modelModes` in `vllm-copilot.models` - custom parameter presets for each model
+- **Auto-Configure** (invoked from the **Add or Reconfigure Server/Model** command) detects `family`, capabilities, and `defaultParams`. It does **not** synthesize `modelModes` from HuggingFace chat templates - thinking modes require model-specific knowledge that isn't discoverable from Jinja conditionals. Modes come from bundled presets (`model-configs/`) or, for OpenRouter models, from the `reasoning` metadata.
+- We return `configurationSchema` with a `reasoningEffort` property whose enum values are the user's `modelModes` keys, `group: "navigation"` - and, for models with an ARRAY `maxOutputTokens`, an independent `maxOutputTokens` property (numeric enum, `group: "tokens"` - NOT `navigation`: the renderer keeps only one property per group, so a second `navigation` property is silently dropped) rendered as an "Output Length" dropdown; its selection owns the request's `max_tokens` **and** the advertised output budget - a pick change re-publishes metadata (provider-tracked, deduped; a pick equal to the advertised ceiling triggers nothing), so Copilot's prompt budget (window − pick) grows when the user picks shorter (see `resolveOutputLengthOptions` in `modelInfo.ts`)
+- **Important:** The `reasoningEffort` property name is what Copilot expects in the schema, but the *values* and *parameters* are completely user-defined. This is a general-purpose parameter preset mechanism - not limited to thinking/reasoning. Any inference parameter (temperature, top_p, chat_template_kwargs, etc.) can be configured per mode.
+- Even models with zero thinking capability benefit from model modes - e.g., "Creative" (high temperature, low top_p) vs "Precise" (low temperature, high top_p), or "Fast" vs "Thorough"
 - On request, we read `options.modelConfiguration.reasoningEffort` and spread the selected mode's parameters into the vLLM request body
 - The title shown in the model picker is "Model Mode" (not "Thinking Effort") to reflect the broader capability
 
 **Context size (not implemented, but possible):**
-- Numeric enums render fine — our Output Length dropdown is one. But it currently **occupies the `tokens` group slot**, and only one property per group renders: adding `contextSize` later would collide with our own picker unless one of them moves or they merge.
+- Numeric enums render fine - our Output Length dropdown is one. But it currently **occupies the `tokens` group slot**, and only one property per group renders: adding `contextSize` later would collide with our own picker unless one of them moves or they merge.
 - Claude Sonnet 4.6 exposes `contextSize` as a number enum with `group: "tokens"`
 - To implement: add `contextSize` property to `configurationSchema.properties` with enum of token counts
 - On request, read `options.modelConfiguration.contextSize` and use it to adjust `maxInputTokens`/`maxOutputTokens`
 - Caveat: vLLM's `max_model_len` is fixed at server startup; changing context size would require re-loading the model
 
 **Caveats:**
-- This is NOT a public VS Code API — it could change without notice
+- This is NOT a public VS Code API - it could change without notice
 - The property name `configurationSchema` must be exact (VS Code checks `configurationSchema?.properties`)
 - If the schema has no properties with enum of 2+ values, `getModelConfigurationActions()` returns `[]` and nothing shows in UI
-- The `modelConfiguration` property on `options` is also not in `@types/vscode` — must be accessed via `(options as any).modelConfiguration`
+- The `modelConfiguration` property on `options` is also not in `@types/vscode` - must be accessed via `(options as any).modelConfiguration`
 
 ### `provideTokenCount`: Cold-Start Latency from `context.secrets.get()`
 
 **Problem:** First prompt after VS Code restart took ~20 seconds. Subsequent prompts were instant.
 
-**Root cause (historical — pre-migration):** VS Code calls `provideTokenCount` **100+ times** before sending a request — once per message and once per available tool schema. Under the legacy global-server layout, every call executed `await getConfig()`, which did `await context.secrets.get('vllm-copilot.apiKey')` — async disk I/O to VS Code's credential storage, resulting in 100+ sequential disk reads. The current per-model `getConfig()` in `src/config.ts` no longer touches `context.secrets`.
+**Root cause (historical - pre-migration):** VS Code calls `provideTokenCount` **100+ times** before sending a request - once per message and once per available tool schema. Under the legacy global-server layout, every call executed `await getConfig()`, which did `await context.secrets.get('vllm-copilot.apiKey')` - async disk I/O to VS Code's credential storage, resulting in 100+ sequential disk reads. The current per-model `getConfig()` in `src/config.ts` no longer touches `context.secrets`.
 
 **The fix (current behavior):** `provideTokenCount` reads the model config through the client's config cache (`getConfigCached()`) on every call; the char/3.5 estimate is cheap and does no secrets or network I/O.
 
@@ -374,22 +374,22 @@ The model **hover** card mirrors this: `SUPPORTED_CONFIG_GROUPS = ['navigation',
 
 ### `provideTokenCount`: Estimate vs. Authoritative Usage
 
-**Key architectural insight (verified 2026-07-11):** `provideTokenCount` returns a *character-based estimate* (`Math.ceil(prompt.length /_charsPerToken)`, default 3.5), NOT the real token count. This is intentional and structurally forced — not a bug.
+**Key architectural insight (verified 2026-07-11):** `provideTokenCount` returns a *character-based estimate* (`Math.ceil(prompt.length /_charsPerToken)`, default 3.5), NOT the real token count. This is intentional and structurally forced - not a bug.
 
-**What the estimate is used for:** Copilot calls `provideTokenCount` 100+ times per turn (once per message, once per available tool schema, etc.) as a *preflight* check — "do all these things still fit in `maxInputTokens`?" Any blocking network call here stalls that preflight loop; the request never leaves Copilot until every call returns.
+**What the estimate is used for:** Copilot calls `provideTokenCount` 100+ times per turn (once per message, once per available tool schema, etc.) as a *preflight* check - "do all these things still fit in `maxInputTokens`?" Any blocking network call here stalls that preflight loop; the request never leaves Copilot until every call returns.
 
 **Why `/v1/tokenize` is the wrong fix:** vLLM has a `/v1/tokenize` endpoint that returns the exact count, but calling it per-token-count call (100+ per turn) would serialize 100+ network round-trips into Copilot's preflight loop. Per-model WASM tokenizers are equally unsuitable (multi-hundred-MB binaries per model family). Character estimation is the only practical shape for this API.
 
-**The other half — what IS exact:** Once the actual request fires, vLLM returns authoritative usage in the final SSE chunk (`stream_options: { include_usage: true }`). We already parse and report it back to Copilot as a `LanguageModelDataPart` (see [Token Usage Display](#token-usage-display-the-isapiusage-snake-case-trap) above). So:
+**The other half - what IS exact:** Once the actual request fires, vLLM returns authoritative usage in the final SSE chunk (`stream_options: { include_usage: true }`). We already parse and report it back to Copilot as a `LanguageModelDataPart` (see [Token Usage Display](#token-usage-display-the-isapiusage-snake-case-trap) above). So:
 
 | When | What Copilot knows | Source |
 |---|---|---|
 | During preflight (per tool, per message, per history item) | Approximate | `provideTokenCount` (char/3.5) |
 | After request completion | **Exact** | vLLM `usage` → `reportTokenUsage` |
 
-**What this means in practice:** Copilot's view of *what just ran* is exact (vLLM told it). Only its *preview* of the upcoming request is approximate. When the estimate is wrong (CJK / very code-heavy prompts, ±30%), the failure mode is premature or late compaction — not incorrect token accounting. Copilot auto-compacts on overflow; vLLM enforces `max_model_len` server-side either way.
+**What this means in practice:** Copilot's view of *what just ran* is exact (vLLM told it). Only its *preview* of the upcoming request is approximate. When the estimate is wrong (CJK / very code-heavy prompts, ±30%), the failure mode is premature or late compaction - not incorrect token accounting. Copilot auto-compacts on overflow; vLLM enforces `max_model_len` server-side either way.
 
-**Testing findings:** Our `len/3.5` token estimate produces estimates that closely match vLLM's authoritative `prompt_tokens` count for English / mixed content — see also the note under [`preserve_thinking`](#preservethinking-context-window-accumulation).
+**Testing findings:** Our `len/3.5` token estimate produces estimates that closely match vLLM's authoritative `prompt_tokens` count for English / mixed content - see also the note under [`preserve_thinking`](#preservethinking-context-window-accumulation).
 
 ---
 
@@ -397,8 +397,8 @@ The model **hover** card mirrors this: `SUPPORTED_CONFIG_GROUPS = ['navigation',
 
 Qwen3.6's `preserve_thinking` option (enabled via `chat_template_kwargs`) is a chat template parameter, not a VS Code feature. When `preserve_thinking: true`, the model's chat template **retains `<think>`/`</think>` blocks from historical assistant messages** in the prompt instead of stripping them.
 
-- **Without `preserve_thinking`** — thinking blocks are stripped from history; context stays small; model re-thinks every turn
-- **With `preserve_thinking`** — thinking blocks accumulate in conversation history; each turn's `prompt_tokens` grows
+- **Without `preserve_thinking`** - thinking blocks are stripped from history; context stays small; model re-thinks every turn
+- **With `preserve_thinking`** - thinking blocks accumulate in conversation history; each turn's `prompt_tokens` grows
 
 **What vLLM reports:** The `usage` object at end of stream (via `stream_options: { include_usage: true }`) contains authoritative counts:
 
@@ -410,11 +410,11 @@ Qwen3.6's `preserve_thinking` option (enabled via `chat_template_kwargs`) is a c
 }
 ```
 
-`prompt_tokens` includes everything the model processed — system prompt, tool schemas, all conversation history, and accumulated thinking blocks.
+`prompt_tokens` includes everything the model processed - system prompt, tool schemas, all conversation history, and accumulated thinking blocks.
 
-**vLLM's `completion_tokens_details`:** On vLLM 0.21, the usage object is flat — no `reasoning_tokens` breakdown in the `/v1/chat/completions` endpoint. Thinking tokens are mixed into `completion_tokens`. The `/v1/responses` endpoint (newer API) does populate `completion_tokens_details.reasoning_tokens`, but that would require a major rewrite to adopt.
+**vLLM's `completion_tokens_details`:** On vLLM 0.21, the usage object is flat - no `reasoning_tokens` breakdown in the `/v1/chat/completions` endpoint. Thinking tokens are mixed into `completion_tokens`. The `/v1/responses` endpoint (newer API) does populate `completion_tokens_details.reasoning_tokens`, but that would require a major rewrite to adopt.
 
-**Implication:** VS Code has no visibility into thinking token accumulation. The extension's `maxInputTokens` budget doesn't account for it specifically. The model card says this is intentional — "maintaining full reasoning context can enhance decision consistency and reduce overall token consumption by minimizing redundant reasoning."
+**Implication:** VS Code has no visibility into thinking token accumulation. The extension's `maxInputTokens` budget doesn't account for it specifically. The model card says this is intentional - "maintaining full reasoning context can enhance decision consistency and reduce overall token consumption by minimizing redundant reasoning."
 
 **Our implementation:** We log authoritative token counts to the vLLM-Copilot output channel after each request:
 ```
@@ -430,7 +430,7 @@ This lets users watch context growth across turns when `preserve_thinking` is ac
 
 ### Empty Chat Response: The "No Response Was Returned" Trap
 
-**Problem:** When the model returns an empty response with `finish_reason: stop` (normal after a tool result — the model received the tool output and has nothing further to say), VS Code shows "Sorry, no response was returned" to the user. The output channel logs are correct (`[INFO] model is done`), but the chat UI shows a scary error banner.
+**Problem:** When the model returns an empty response with `finish_reason: stop` (normal after a tool result - the model received the tool output and has nothing further to say), VS Code shows "Sorry, no response was returned" to the user. The output channel logs are correct (`[INFO] model is done`), but the chat UI shows a scary error banner.
 
 **Root cause:** VS Code's chat layer considers a response "missing" if **zero** `progress.report()` calls are made during the response lifetime. When a model returns empty + stop (after a tool result, user stop, or graceful termination), we were returning from `provideLanguageModelChatResponse` without ever calling `progress.report()`.
 
@@ -452,7 +452,7 @@ if (!hadContent && !hadToolCalls) {
 ```
 
 **Why a newline and not a message:**
-- The model genuinely produced nothing — a message like "Model is done" would be misleading (it implies *we* said something)
+- The model genuinely produced nothing - a message like "Model is done" would be misleading (it implies *we* said something)
 - A newline is invisible in the chat UI but satisfies VS Code's "at least one part" requirement
 - The output channel still logs the full INFO message for debugging
 

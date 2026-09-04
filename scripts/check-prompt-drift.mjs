@@ -242,6 +242,12 @@ async function main() {
   // 4. SHA canary: did any watched file change since the baseline?
   const changedFiles = fetched.filter((f) => !f.missing && f.sha && BASELINE[f.label] && BASELINE[f.label] !== f.sha);
   const missingFiles = fetched.filter((f) => f.missing);
+  // A watched file with NO baseline entry can never fire the SHA arm — printing
+  // it as [NEW] while counting nothing makes the canary report "All good"
+  // forever while its prose drifts (the one-way door this script exists to
+  // police). Unpinned files count as problems unless the run's stated intent is
+  // to pin baselines (--update-baseline, which writes them at the end).
+  const unpinnedFiles = fetched.filter((f) => !f.missing && !BASELINE[f.label]);
 
   // ── Output ────────────────────────────────────────────────────────
   const date = new Date().toISOString().slice(0, 10);
@@ -266,8 +272,10 @@ async function main() {
     for (const p of parseFailures) console.log(`  [SKIP] ${p}`);
   }
 
-  const problems = deadRules + changedFiles.length + missingFiles.length + (cliRefMissing && cliFinds.length ? 1 : 0);
-  console.log(`\nResult: ${deadRules} dead rule(s), ${changedFiles.length} changed file(s), ${missingFiles.length} missing file(s).`);
+  const problems = deadRules + changedFiles.length + missingFiles.length
+    + (updateBaseline ? 0 : unpinnedFiles.length)
+    + (cliRefMissing && cliFinds.length ? 1 : 0);
+  console.log(`\nResult: ${deadRules} dead rule(s), ${changedFiles.length} changed file(s), ${missingFiles.length} missing file(s), ${unpinnedFiles.length} unpinned file(s).`);
   if (problems === 0) {
     console.log('All good - presets match the current Microsoft prompt source.');
   } else {

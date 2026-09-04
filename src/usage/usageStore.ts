@@ -417,8 +417,11 @@ async function writeUsageFile(p: string, data: PersistedUsage): Promise<void> {
  * land in order. The snapshot is taken AT WRITE TIME (the queue serializes
  * them, so the next persist simply replays this window's delta since the last
  * successful write). Both surfaces get the SAME merged blob: the file is
- * canonical (freshly read), the memento a downgrade mirror. On any failure
- * `lastWritten` stays stale so the next persist retries the lost delta.
+ * canonical (freshly read), the memento a downgrade mirror. Failure semantics
+ * follow CANONICALITY, not sequence: in file mode the baseline advances as soon
+ * as the FILE write succeeds (a mirror failure never vetoes the file's
+ * arithmetic, CR-40); in memento-only mode, or before the file write, a failure
+ * leaves `lastWritten` stale so the next persist retries the lost delta.
  */
 function schedulePersist(): void {
   if (!globalState && !usageFilePath) return;
@@ -427,9 +430,27 @@ function schedulePersist(): void {
       const memory = snapshotMemory();
       const disk = usageFilePath ? await readUsageFile(usageFilePath) : undefined;
       const merged = mergePersisted(disk, memory, lastWritten ?? memory);
-      if (usageFilePath) await writeUsageFile(usageFilePath, merged);
-      if (globalState) await globalState.update(STORAGE_KEY, merged);
-      lastWritten = memory;
+      if (usageFilePath) {
+        await writeUsageFile(usageFilePath, merged);
+        // Advance the baseline the moment the CANONICAL surface is written
+        // (CR-40): the memento below is a downgrade mirror — if ITS write
+        // rejects, replaying this delta into the already-updated file would
+        // double-count it into every window, permanently.
+        lastWritten = memory;
+        if (globalState) {
+          try {
+            await globalState.update(STORAGE_KEY, merged);
+          } catch (err) {
+            logError(`[usage] memento mirror update failed (usage.json is canonical, counters unaffected): ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      } else if (globalState) {
+        // Memento-only mode: the mirror IS canonical here, so a failed write
+        // must leave lastWritten stale and let the next persist retry the
+        // delta (the retry semantics the docstring promises).
+        await globalState.update(STORAGE_KEY, merged);
+        lastWritten = memory;
+      }
     })
     .catch(err => logError(`[usage] persist failed: ${err instanceof Error ? err.message : String(err)}`));
 }
@@ -437,9 +458,10 @@ function schedulePersist(): void {
 /**
  * Initialize the store. Called once from `activate()` (awaited) before any
  * request can complete. Load order: the shared `usage.json` wins; when it is
- * absent the legacy `globalState` blob is adopted (one-time migration — the
- * next persist writes it back as the file). Returns a Disposable that
- * releases the change event.
+ * absent OR unreadable (corrupt counts too — `readUsageFile` returns
+ * undefined for both) the legacy `globalState` blob is adopted as the
+ * recovery source (one-time migration — the next persist writes it back as
+ * the file). Returns a Disposable that releases the change event.
  */
 export async function initUsageStore(
   context: vscode.ExtensionContext,
@@ -566,23 +588,6 @@ export function resetUsage(scope: 'all' | { serverUrl: string }): void {
 // ─── Cost derivation (render-time, never stored) ──────────────────────────
 
 /**
- * Cost in the configured unit for the given counts, from per-1M rates.
- * Fresh input = prompt − cached (cache-read tokens are priced at the cached
- * rate, not the input rate). Undefined when no rates are configured.
- */
-export function computeCost(counts: UsageCounts, rates: CostRates | undefined): number | undefined {
-  if (!rates) return undefined;
-  const input = rates.input ?? 0;
-  const output = rates.output ?? 0;
-  const cachedInput = rates.cachedInput ?? 0;
-  if (input === 0 && output === 0 && cachedInput === 0) return undefined;
-  const freshInput = Math.max(0, counts.prompt - counts.cached);
-  return (freshInput / 1e6) * input
-    + (counts.cached / 1e6) * cachedInput
-    + (counts.completion / 1e6) * output;
-}
-
-/**
  * Locate a model's cost rates by `(serverUrl, wire modelId)`.
  * The wire id (`vllmModelId` or legacy `id`) is what the tracker keys on.
  * Returns undefined when the model has no `cost` config.
@@ -666,40 +671,4 @@ export function formatCostSummary(
   if (todayCost !== undefined) parts.push(`${fmt(todayCost)} today`);
   if (overallCost !== undefined) parts.push(`${fmt(overallCost)} total`);
   return parts.join(' and ');
-}
-
-/**
- * Abbreviate large token counts for compact dashboard rows: 3883588 → "3.88M",
- * 836350 → "836k", 999 → "999". Thousands are rounded to whole k (sub-1000
- * precision is noise); millions keep 2 decimals, trailing zeros stripped.
- * No space between the number and the unit. Presentation ONLY — the stored
- * counts are never rounded; this runs at render time on already-accumulated
- * integers.
- */
-export function fmtCount(n: number): string {
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`;
-  if (n >= 1e3) {
-    const k = Math.round(n / 1e3);
-    if (k >= 1000) { // 999,500 → 1000k → "1M"
-      const m = k / 1000;
-      return `${m.toFixed(2).replace(/\.?0+$/, '')}M`;
-    }
-    return `${k}k`;
-  }
-  return String(n);
-}
-
-/** Test-only: reset module state between tests. */
-export function resetUsageStoreForTests(): void {
-  lastRequest.clear();
-  allTime = {};
-  days = {};
-  startedAt = {};
-  allTimeCost = {};
-  daysCost = {};
-  globalState = undefined;
-  usageFilePath = undefined;
-  lastWritten = undefined;
-  writeQueue = Promise.resolve();
-  logError = () => {};
 }

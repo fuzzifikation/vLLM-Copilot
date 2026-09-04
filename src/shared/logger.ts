@@ -9,8 +9,10 @@ import * as path from 'path';
  */
 
 /** Maximum number of timestamped log files to retain in the storage directory.
- *  Every activation writes a new `vllm-copilot-<ts>.log`; without a cap the
- *  directory accumulates one plaintext-API-key file per reload with no bound. */
+ *  Each activation with file logging ENABLED writes a new
+ *  `vllm-copilot-<ts>.log` (init() is gated on the setting); without a cap
+ *  the directory accumulates one plaintext-API-key file per logging-enabled
+ *  reload with no bound. */
 const MAX_LOG_FILES = 20;
 
 export class FileLogger implements vscode.Disposable {
@@ -92,15 +94,15 @@ export class FileLogger implements vscode.Disposable {
    * Filenames are zero-padded ISO timestamps, so lexicographic sort is
    * chronological. Runs synchronously because `init()` is synchronous.
    */
-  private pruneOldLogFiles(keep: number = MAX_LOG_FILES): void {
+  private pruneOldLogFiles(): void {
     const logDir = this.context.globalStorageUri?.fsPath;
     if (!logDir) return;
     try {
       const entries = fs.readdirSync(logDir)
         .filter(e => /^vllm-copilot-.*\.log$/.test(e))
         .sort();
-      if (entries.length <= keep) return;
-      const toDelete = entries.slice(0, entries.length - keep);
+      if (entries.length <= MAX_LOG_FILES) return;
+      const toDelete = entries.slice(0, entries.length - MAX_LOG_FILES);
       for (const entry of toDelete) {
         const fullPath = path.join(logDir, entry);
         if (this.logFilePath && fullPath === this.logFilePath) continue;

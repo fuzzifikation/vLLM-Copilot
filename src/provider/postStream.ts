@@ -97,18 +97,18 @@ export function reportPostStreamDiagnostics(
       } else if (finishReason) {
         // Other server-reported terminal reasons (unusual finish values).
         hint = actualAttempts > 1
-          ? `The model produced only reasoning/thinking tokens after ${actualAttempts} attempt(s) (finish_reason: ${finishReason}) — try again or adjust the model mode.`
-          : `The model produced only reasoning/thinking tokens and no answer (finish_reason: ${finishReason}) — try again or adjust the model mode.`;
+          ? `The model produced only reasoning/thinking tokens after ${actualAttempts} attempt(s) (finish_reason: ${finishReason}) - try again or adjust the model mode.`
+          : `The model produced only reasoning/thinking tokens and no answer (finish_reason: ${finishReason}) - try again or adjust the model mode.`;
       } else {
         // No finish_reason at all: the stream was cut before the server's final
         // summary chunk. That's a transport-layer kill, not a model decision.
-        hint = 'The stream ended before the server reported a finish reason — the connection was likely ' +
+        hint = 'The stream ended before the server reported a finish reason - the connection was likely ' +
           'dropped mid-generation by a gateway, reverse proxy, or the server itself. ' +
           'If this recurs at a similar duration, check for a proxy/gateway response timeout.';
       }
     } else {
       hint = actualAttempts > 1
-        ? `Empty response after ${actualAttempts} attempt(s) — check model configuration and server logs.`
+        ? `Empty response after ${actualAttempts} attempt(s) - check model configuration and server logs.`
         : 'Check the model configuration and server logs (Output → vLLM-Copilot).';
     }
 
@@ -119,7 +119,7 @@ export function reportPostStreamDiagnostics(
       diag(
         output,
         'WARN',
-        `${model.id}: empty response after ${actualAttempts} attempt(s) (${reason}) — giving up after ${elapsed}s${extraCtx}`
+        `${model.id}: empty response after ${actualAttempts} attempt(s) (${reason}) - giving up after ${elapsed}s${extraCtx}`
       );
     } else {
       diag(
@@ -129,15 +129,22 @@ export function reportPostStreamDiagnostics(
       );
     }
 
-    progress.report(new vscode.LanguageModelTextPart(
-      `⚠️ The model returned no output (${reason}) after ${elapsed}s. ${hint}`
-    ));
+    // Suppress the CHAT warning when an earlier auto-continue attempt already
+    // put visible output on the user's screen (CR-38): the per-attempt outcome
+    // was reset, so the final attempt's emptiness would otherwise print
+    // "the model returned no output" directly UNDER the answer the user just
+    // got. The Output-channel diagnostics above stay per-attempt honest either way.
+    if (!outcome.everStreamed) {
+      progress.report(new vscode.LanguageModelTextPart(
+        `⚠️ The model returned no output (${reason}) after ${elapsed}s. ${hint}`
+      ));
+    }
   } else if (finishReason === 'length' && hadContent) {
     // The user got a partial answer — warn that it was cut off so they don't
     // mistake a truncated response for a complete one.
     diag(output, 'WARN', `${model.id}: response truncated at max output tokens (finish_reason: length).`);
     progress.report(new vscode.LanguageModelTextPart(
-      `\n\n⚠️ Response truncated — reached the max output token limit. Increase maxOutputTokens to get the full answer.`
+      `\n\n⚠️ Response truncated - reached the max output token limit. Increase maxOutputTokens to get the full answer.`
     ));
   }
 }
@@ -186,19 +193,47 @@ export function handleResponseError(
 }
 
 /**
+ * Socket-level kill markers that prove a `TypeError: terminated` was a genuine
+ * network death, NOT an intentional `.terminate()`. undici's fetch raises
+ * `TypeError('terminated', { cause })` for EVERY body-stream death — a proxy
+ * chopping the connection at its idle timeout, a server OOM, an ECONNRESET
+ * mid-generation — so the wrapper name+message alone can never separate
+ * intentional from accidental. Only the cause chain can. (`Premature close`
+ * is the `eos`-module shape, not the fetch-body shape; the wrapper is not a
+ * reliable alibi system.)
+ */
+const SOCKET_KILL_PATTERN =
+  /ECONNRESET|EPIPE|ECONNABORTED|ERR_STREAM_PREMATURE_CLOSE|UND_ERR_|socket hang up|other side closed|socket connection was closed/i;
+
+function isSocketKillCause(cause: unknown): boolean {
+  if (!(cause instanceof Error)) {
+    return false;
+  }
+  const code = (cause as { code?: unknown }).code;
+  return (
+    cause.name === 'SocketError'
+    || SOCKET_KILL_PATTERN.test(cause.message)
+    || SOCKET_KILL_PATTERN.test(cause.name)
+    || (typeof code === 'string' && SOCKET_KILL_PATTERN.test(code))
+  );
+}
+
+/**
  * Detect whether an error is a graceful termination rather than a hard failure.
  *
  * VS Code may close the fetch connection internally (e.g., after reading files
- * during tool orchestration) without firing the cancellation token. This produces
- * `TypeError: terminated` (possibly with a network-level cause like ECONNRESET).
+ * during tool orchestration) without firing the cancellation token. That shape
+ * is a bare `TypeError: terminated` with NO network cause in its chain.
  *
- * A `TypeError: terminated` means something called `.terminate()` on the response
- * ReadableStream — that is always an intentional action (not a random network
- * failure), so it is by definition graceful.
+ * Because undici wraps every mid-body network kill in the same
+ * `TypeError('terminated')`, a socket-kill cause anywhere in the chain vetoes
+ * the match: the failure is real, must reach `formatError`, and must never be
+ * logged as a quiet "connection reset" over what the user believes is a
+ * complete answer.
  *
  * NOTE: Bare ECONNRESET, "socket hang up", etc. (without the TypeError wrapper)
- * are genuine network failures, NOT graceful terminations — they should surface
- * to the user as connectivity errors.
+ * are genuine network failures, NOT graceful terminations — they surface to the
+ * user as connectivity errors.
  *
  * Timeouts and user cancellations are handled separately and should NOT match here.
  */
@@ -209,11 +244,20 @@ function isGracefulTermination(err: unknown): boolean {
     return false;
   }
   if (err instanceof Error) {
+    // A network cause anywhere in the chain proves this was a kill, not a
+    // VS Code-initiated termination — refuse before any name+message match.
+    for (const cause of iterateCauses(err)) {
+      if (isSocketKillCause(cause)) {
+        return false;
+      }
+    }
+
     const name = err.name ?? '';
 
     // `TypeError: terminated` — the response ReadableStream was terminated by
-    // something calling `.terminate()` on it. This is always intentional
-    // (e.g., VS Code's internal fetch layer after tool orchestration).
+    // something calling `.terminate()` on it. With no socket-kill cause above,
+    // this is intentional (e.g., VS Code's internal fetch layer after tool
+    // orchestration).
     if (name === 'TypeError' && err.message === 'terminated') {
       return true;
     }

@@ -25,7 +25,7 @@ export class VllmClient {
 
   async getConfigCached(): Promise<VllmConfig> {
     if (this.cachedConfigPromise === null) {
-      this.cachedConfigPromise = getConfig(this.context).catch((error) => {
+      this.cachedConfigPromise = getConfig().catch((error) => {
         this.cachedConfigPromise = null;
         throw error;
       });

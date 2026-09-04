@@ -141,8 +141,8 @@ function buildPickerBanners(
       && !Number.isNaN(reportedMaxOutputTokens)
       && reportedMaxOutputTokens < desiredOutput;
     warningText.output_limit = providerCapped
-      ? `The provider caps responses to ${budget.maxOutputTokens} tokens — below the configured output budget of ${desiredOutput}.`
-      : `The ${budget.maxModelLen}-token context window caps responses to ${budget.maxOutputTokens} tokens — below the configured output budget of ${desiredOutput}.`;
+      ? `The provider caps responses to ${budget.maxOutputTokens} tokens - below the configured output budget of ${desiredOutput}.`
+      : `The ${budget.maxModelLen}-token context window caps responses to ${budget.maxOutputTokens} tokens - below the configured output budget of ${desiredOutput}.`;
     // When a length dropdown actually renders for this model, point at it —
     // it is the actionable control for working within the cap. Same inputs as
     // the schema builder, so the banner can never advertise an absent dropdown.

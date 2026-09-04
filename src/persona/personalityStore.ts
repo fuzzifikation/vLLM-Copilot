@@ -13,7 +13,7 @@
  *
  * Note: legacy workspace copies (`.vllm/prompt-replacements-*.json`) are deliberately
  * NOT discovered as personalities. They still function as custom replacement files at
- * request time (see provider.ts), but the picker only knows bundled and global ones.
+ * request time (see systemMessagePipeline.ts), but the picker only knows bundled and global ones.
  */
 
 import * as fs from 'fs/promises';

@@ -15,6 +15,24 @@
  */
 
 /**
+ * The backend that serves this model. Every model targets its own server; the
+ * backend determines which metadata endpoint yields its served context window
+ * and which request fields are adapted.
+ *
+ * Missing `serverType` ALWAYS means vLLM (intentional product policy — every
+ * released configuration is vLLM). Secondary backends are explicit opt-in via
+ * the Add Server flow or manual config.
+ */
+export type ServerType = 'vllm' | 'lmstudio' | 'llamacpp' | 'ollama' | 'openrouter';
+
+/** The enum values above as a runtime array — settings.json is hand-editable,
+ *  so validateConfig checks `serverType` against THIS, not against the type
+ *  system that stopped existing the moment the user opened the file. Lives in
+ *  this leaf because BOTH config.ts and serverRegistry.ts need it at runtime
+ *  and neither may import the other (CR-39's normalization choke point). */
+export const KNOWN_SERVER_TYPES: readonly ServerType[] = ['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter'];
+
+/**
  * Ensure the server URL has a valid scheme. If the user types `localhost:8000`
  * instead of `http://localhost:8000`, prepend a scheme so `fetch()` doesn't
  * throw `TypeError: fetch failed` on an invalid URL.
@@ -80,14 +98,18 @@ export function normalizeServerUrl(url: string): string {
     normalized = normalized.slice(0, -1);
   }
 
-  // Strip trailing /v1 path segments. Users commonly copy the OpenAI base URL
+  // Strip trailing /v1 PATH segments. Users commonly copy the OpenAI base URL
   // (e.g. https://api.openai.com/v1) but the extension appends /v1 itself.
   // Repeated and case-insensitive: every read re-normalizes (resolveServer,
   // entryMatchesConnection), so the old single-shot strip was NOT idempotent
   // ('.../v1/v1' stored as '.../v1', effective '...' — stored value and
   // effective URL disagreeing, which defeats connection matching on the next
   // add) and a capitalized '/V1' was never stripped at all.
-  normalized = normalized.replace(/(?:\/v1)+$/i, '');
+  // The authority must stay intact (CR-63): the bare regex ate the last segment
+  // even when it WAS the host — a LAN box literally named `v1` came out as
+  // "http:/". The anchor below only strips segments that follow a complete
+  // scheme://authority.
+  normalized = normalized.replace(/^(https?:\/\/[^/?#]+)(?:\/v1)+$/i, '$1');
 
   return normalized;
 }

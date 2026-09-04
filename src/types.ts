@@ -59,7 +59,8 @@ export interface WireUsage {
    */
   cost?: number | null;
   /**
-   * OpenRouter's `is_byok` (mapped here at the parser layer): the request was
+   * OpenRouter's `is_byok` (remapped in sseParser.ts, not here - this is a
+   * type file): the request was
    * served using the user's OWN upstream provider key (e.g. a real
    * OpenAI/Anthropic key routed through OpenRouter), billed directly by that
    * provider rather than OpenRouter credits. Deliberately named `usedByok` —
@@ -133,12 +134,9 @@ export interface VllmModel {
   owned_by: string;
   /** Runtime context window — vLLM only. Other backends omit this field. */
   max_model_len?: number;
-  /** llama.cpp vanilla carries training context here. */
-  meta?: { n_ctx_train?: number };
   /** Underlying checkpoint id. vLLM sets this to the HF repo when the model is a
    *  `--served-model-name` alias, so it links aliases back to their real model. */
   root?: string;
-  permission?: unknown[];
 }
 
 /**

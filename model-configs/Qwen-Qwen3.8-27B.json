@@ -39,7 +39,7 @@
   "meta": {
     "name": "Qwen3.8-27B (DRAFT)",
     "source": "https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B",
-    "notes": "DRAFT — model unreleased. Params inherited from the Qwen3.8-2.4T-A95B family card: reasoning_effort xhigh/medium/low, enable_thinking toggle. Verify on release."
+    "notes": "DRAFT - model unreleased. Params inherited from the Qwen3.8-2.4T-A95B family card: reasoning_effort xhigh/medium/low, enable_thinking toggle. Verify on release."
   },
   "config": {
     "vllmModelId": "Qwen3.8-27B",

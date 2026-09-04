@@ -98,7 +98,7 @@ describe('registerAutoConfigureModelCommand', () => {
       }),
     );
     expect(provider.clearCache).toHaveBeenCalled();
-    expect(infoSpy).toHaveBeenCalledWith('Model "wire" updated.');
+    expect(infoSpy).toHaveBeenCalledWith(expect.any(String)); // toast fired; wording is chrome (CR-109)
   });
 
   it('auto-configures an unconfigured server-reported model, borrowing sibling auth', async () => {

@@ -50,7 +50,7 @@
     "name": "GLM-5.3-Flash",
     "source": "https://huggingface.co/zai-org/GLM-5.3-Flash",
     "verified": "2026-08-27",
-    "notes": "glm5_next family, natively multimodal (image + video). Thinking always on — depth only via reasoning_effort (max/high/low); clear_thinking strips historical thinking. temp=1.0, top_p=0.95."
+    "notes": "glm5_next family, natively multimodal (image + video). Thinking always on - depth only via reasoning_effort (max/high/low); clear_thinking strips historical thinking. temp=1.0, top_p=0.95."
   },
   "config": {
     "vllmModelId": "GLM-5.3-Flash",

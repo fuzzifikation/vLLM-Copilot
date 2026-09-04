@@ -20,7 +20,7 @@ For teams running AI on their own vLLM servers for many users, this gives you th
 - **Production vLLM observability**: a live dashboard of server availability, queue status, KV-cache usage, TTFT, throughput, per-request token details, and a cumulative token & cost tracker. Your admins and users will know what is going on!
 - **Multi-server, multi-user by design**: each server and model carries its own endpoint, auth, sampling, and token budget. Different teams, environments, or credentials stay isolated and independently managed. But all models are available in the model picker of familiar Copilot!
 - **Full request control**: model modes give you any vLLM parameter, such as thinking effort, sampling, and structured output. A dedicated **Output Length** dropdown caps response length without a settings edit. Switch both per model from the Copilot picker.
-- **Your model, your rules (uncensoring)**: personality presets strip Copilot's hidden Microsoft safety and identity rules from every request — like serving an abliterated model, but at request time. You own the policy. See [Personalities & System Prompts](#personalities--system-prompts).
+- **Your model, your rules (uncensoring)**: personality presets strip Copilot's hidden Microsoft safety and identity rules from every request - like serving an abliterated model, but at request time. You own the policy. See [Personalities & System Prompts](#personalities--system-prompts).
 - **OpenRouter**: add any of **~415 cloud models** in a few clicks. Useful for teams without GPU capacity. Real context window, capabilities, pricing, and **actual spend** (`usage.cost`) show on the dashboard. See [Using OpenRouter](#using-openrouter).
 - **Other backends supported**: llama.cpp, LM Studio, and Ollama alongside vLLM, each with core features like chat, streaming, tools, personalities, and usage tracking.
 
@@ -148,7 +148,7 @@ vLLM-Copilot gives companies (and individuals) controlled access to GitHub Copil
 **No subscription. No third party receives work content beyond the configured inference server. No affiliation. No central service. No telemetry.** GitHub Copilot supplies the familiar chat, tools, model picker, and other interaction features. Prompts, code, and company data go only to the configured inference server, never to GitHub Copilot or GitHub. Other extension traffic carries no work content; it is limited to model metadata, configuration, metrics, and service status.
 
 - **Multi-server at scale**: add any number of vLLM servers and use their models interchangeably. Each server and model keeps its own endpoint, auth, sampling, and token budget, giving you isolation across teams, environments, or credentials.
-- **Per-server credentials**: auth lives on server entries in the `vllm-copilot.servers` registry (`requestHeaders`), which models reference by `server` id — different scopes and keys are managed independently per server rather than sharing one global key.
+- **Per-server credentials**: auth lives on server entries in the `vllm-copilot.servers` registry (`requestHeaders`), which models reference by `server` id - different scopes and keys are managed independently per server rather than sharing one global key.
 - **Cost tracking per model**: cumulative token and USD spend (Today / Overall), with OpenRouter models preferring their **actual reported cost** (`usage.cost`).
 - **Reliability for daily use**: models misbehave, and this extension repairs it (see [Robustness](#robustness) below), alongside bounded `Retry-After` handling, TLS/proxy/cert diagnostics, and chat session cleanup.
 
@@ -230,7 +230,7 @@ A visual editor for per-model configuration, no `settings.json` required:
 
 **Output length is its own control.** Models and presets whose `maxOutputTokens` is an **array** of response lengths (bundled presets do) get a second, independent **Output Length** dropdown next to the mode picker (e.g. 16K / 32K / 64K), so you cap response length per request without touching settings. VS Code remembers your pick per model, and a shorter pick hands the freed tokens back to your prompt: Copilot's input budget grows to match. Right after the dropdown first appears for a model, VS Code's picker can lag and show only the mode section. Open the model list once and click the **Output Length** chip on the model, which fixes it (see screenshot; VS Code snapshot bug, [reported upstream](https://github.com/microsoft/vscode/issues/333413)).
 
-**Add vLLM Server & Model** auto-generates modes from bundled presets (or OpenRouter reasoning metadata). An example config and the full syntax are in the [Manual → Model modes](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md#model-modes).
+**Add or Reconfigure Server/Model** auto-generates modes from bundled presets (or OpenRouter reasoning metadata). An example config and the full syntax are in the [Manual → Model modes](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md#model-modes).
 </td>
 <td valign="top" width="38%">
 
@@ -319,7 +319,7 @@ OpenRouter is a managed remote: no server to run, nothing to install. Add one fi
 <tr>
 <td valign="top" width="62%">
 
-Right-click a **vLLM** server node → **vLLM Deep-Dive** opens a per-server webview with the full metric set: histogram breakdowns (TTFT/TPOT/token counts) as hoverable bars and the raw metric dump. vLLM-only, since non-vLLM backends don't expose `/metrics`. It takes **one reading** when it opens and then stops polling — run the command again to retake it.
+Right-click a **vLLM** server node → **vLLM Deep-Dive** opens a per-server webview with the full metric set: histogram breakdowns (TTFT/TPOT/token counts) as hoverable bars and the raw metric dump. vLLM-only, since non-vLLM backends don't expose `/metrics`. It takes **one reading** when it opens and then stops polling - run the command again to retake it.
 </td>
 <td valign="top" width="38%">
 
@@ -337,7 +337,7 @@ Right-click a **vLLM** server node → **vLLM Deep-Dive** opens a per-server web
 
 | Command | What it does |
 |---------|--------------|
-| **Add vLLM Server & Model** | Guided flow: enter server URL → discover models → auto-configure → save. An `openrouter.ai` server URL routes into the OpenRouter flow (server → key → model pick) |
+| **Add or Reconfigure Server/Model** | Guided flow: enter server URL → discover models → auto-configure → save. An `openrouter.ai` server URL routes into the OpenRouter flow (server → key → model pick) |
 | **Test & Refresh Models** | Verify servers, list models, correct ID mismatches, check network settings |
 | **Set Model Personality** | Pick a model, pick a personality preset (or **Default** to clear), apply instantly |
 | **vLLM Deep-Dive** | Open per-server webview with full metrics and histograms (right-click a **vLLM** server node) |

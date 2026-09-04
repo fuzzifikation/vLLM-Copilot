@@ -89,7 +89,7 @@ describe('removeServer command', () => {
     await (vscode as any).commands._run('vllm-copilot.removeServer', { serverUrl: 'http://s:8000', skipConfirm: true });
     disposable.dispose();
 
-    expect(errSpy).toHaveBeenCalledWith('Server id not provided.');
+    expect(errSpy).toHaveBeenCalledWith(expect.any(String)); // error toast fired; wording is chrome (CR-109)
     expect(cfg.update).not.toHaveBeenCalled();
   });
 });

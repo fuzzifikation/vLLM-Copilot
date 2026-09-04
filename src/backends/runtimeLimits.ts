@@ -1,4 +1,4 @@
-import { buildEndpoint, type ServerType } from '../state/config.js';
+import { buildEndpoint, KNOWN_SERVER_TYPES, type ServerType } from '../state/config.js';
 import { buildRequestHeaders, fetchWithRetry } from '../shared/fetchRetry.js';
 import { describeError } from '../provider/messageConverter.js';
 import { resolveOpenRouterRuntimeLimits } from './openRouter.js';
@@ -62,7 +62,7 @@ function serverKey(
   serverUrl: string,
   requestHeaders: Record<string, string>,
 ): string {
-  const headers = Object.keys(requestHeaders ?? {})
+  const headers = Object.keys(requestHeaders)
     .sort()
     .map((k) => `${k}:${requestHeaders[k]}`)
     .join('|');
@@ -153,7 +153,12 @@ async function resolveLimitsUncached(
       const data = await serverListOnce(serverKey(serverType, serverUrl, requestHeaders), () =>
         fetchJsonRaw<{ data?: VllmModel[] }>(url, requestHeaders)
       );
-      const model = (data.data || []).find((entry) => entry.id === modelId);
+      // Match on `root` too (CR-54): a LoRA-style deployment addressed by its
+      // base model must resolve here exactly as detectServerType classifies it,
+      // or the detector calls the server vLLM while the resolver declares the
+      // model "will not be served". LM Studio and Ollama accept their alias in
+      // both halves already.
+      const model = (data.data || []).find((entry) => entry.id === modelId || entry.root === modelId);
       const contextWindow = model?.max_model_len;
       if (typeof contextWindow === 'number' && contextWindow > 0) return { contextWindow };
       throw new Error(
@@ -173,7 +178,7 @@ async function resolveLimitsUncached(
       if (typeof contextWindow === 'number' && contextWindow > 0) return { contextWindow };
       throw new Error(
         `LM Studio model "${modelId}" has no context window: GET ${url} reported no loaded instance ` +
-        `with config.context_length (or max_context_length). Load the model in LM Studio — it will not be served.`
+        `with config.context_length (or max_context_length). Load the model in LM Studio - it will not be served.`
       );
     }
     case 'llamacpp': {
@@ -183,7 +188,7 @@ async function resolveLimitsUncached(
       if (typeof contextWindow === 'number' && contextWindow > 0) return { contextWindow };
       throw new Error(
         `llama.cpp model "${modelId}" has no context window: GET ${url} reported no ` +
-        `default_generation_settings.n_ctx. Check the server API key and model id — it will not be served.`
+        `default_generation_settings.n_ctx. Check the server API key and model id - it will not be served.`
       );
     }
     case 'ollama': {
@@ -196,11 +201,23 @@ async function resolveLimitsUncached(
       if (typeof contextWindow === 'number' && contextWindow > 0) return { contextWindow };
       throw new Error(
         `Ollama model "${modelId}" is not loaded (or reports no context_length): GET ${url}. ` +
-        `Load the model with a context size in Ollama — it will not be served.`
+        `Load the model with a context size in Ollama - it will not be served.`
       );
     }
     case 'openrouter':
       return resolveOpenRouterRuntimeLimits(modelId);
+    default: {
+      // Backstop, not a fallback (CR-39): resolveServer normalizes unknown
+      // types to 'vllm' before anything reaches this switch, so arriving here
+      // means a new call path bypassed the choke point. The typed union says
+      // this arm is impossible — the type is a lie about hand-edited JSON, and
+      // falling out silently would resolve `undefined` and let the memo cache
+      // it as a settled SUCCESS.
+      throw new Error(
+        `No runtime-limits resolver for serverType "${String(serverType)}" - expected one of ` +
+        `${KNOWN_SERVER_TYPES.join(', ')}. Fix the registry entry's "serverType" - the model will not be served.`
+      );
+    }
   }
 }
 

@@ -90,7 +90,7 @@ describe('stream response content-type gate', () => {
   it('throws the simple server error message', async () => {
     mockFetchResponse(() => jsonResponse({ error: { message: 'This model maximum context length is 4096 tokens' } }));
     await expect(drain()).rejects.toThrow(
-      'Server error (mid-stream): This model maximum context length is 4096 tokens'
+      'Server error (error response): This model maximum context length is 4096 tokens'
     );
   });
 
@@ -106,7 +106,7 @@ describe('stream response content-type gate', () => {
 
   it('throws a string-form error', async () => {
     mockFetchResponse(() => jsonResponse({ error: 'internal server error' }));
-    await expect(drain()).rejects.toThrow('Server error (mid-stream): internal server error');
+    await expect(drain()).rejects.toThrow('Server error (error response): internal server error');
   });
 
   it('throws HTML bodies as a reverse-proxy error', async () => {

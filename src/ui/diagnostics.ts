@@ -704,10 +704,10 @@ export async function runDiagnostics(
     conclusion = `Server is reachable and ${tlsOkPhrase}, but a proxy returned HTTP 407 (Proxy Authentication Required). Check http.proxy and proxy credentials.`;
   } else if (nodeFetch.status !== undefined && nodeFetch.status >= 500) {
     // VS Code fetch got through TLS — server is erroring.
-    conclusion = `Server is reachable and ${tlsOkPhrase}, but the server returned HTTP ${nodeFetch.status} — the vLLM server itself is erroring. Check the vLLM server logs.`;
+    conclusion = `Server is reachable and ${tlsOkPhrase}, but the server returned HTTP ${nodeFetch.status} - the vLLM server itself is erroring. Check the vLLM server logs.`;
   } else if (nodeFetch.status !== undefined) {
     // VS Code fetch got through TLS but got an unexpected status (404, 405, etc.).
-    conclusion = `Server is reachable and ${tlsOkPhrase}, but returned HTTP ${nodeFetch.status}. Check the serverUrl and endpoint path — the server may not serve this route.`;
+    conclusion = `Server is reachable and ${tlsOkPhrase}, but returned HTTP ${nodeFetch.status}. Check the serverUrl and endpoint path - the server may not serve this route.`;
   } else if (nodeTlsError) {
     // VS Code fetch CANNOT verify the cert — the critical diagnosis.
     // Check settings collected earlier (local variable `settings`, not the report yet).
@@ -715,30 +715,30 @@ export async function runDiagnostics(
     const sysCertsDisabled = settings['http.systemCertificates'] === false;
     const proxySupportOff = settings['http.proxySupport'] === 'off';
     if (proxySupportOff) {
-      conclusion = `TLS certificate verification failed in VS Code's fetch — http.proxySupport is set to 'off', which disables proxy usage. If you're behind a corporate proxy, set it to 'override' (or 'fallback').`;
+      conclusion = `TLS certificate verification failed in VS Code's fetch - http.proxySupport is set to 'off', which disables proxy usage. If you're behind a corporate proxy, set it to 'override' (or 'fallback').`;
     } else if (sysCertsDisabled) {
-      conclusion = `TLS certificate verification failed in VS Code's fetch — http.systemCertificates is set to false, which disables loading OS certificates. Set it to true and restart VS Code.`;
+      conclusion = `TLS certificate verification failed in VS Code's fetch - http.systemCertificates is set to false, which disables loading OS certificates. Set it to true and restart VS Code.`;
     } else if (systemTlsSucceeded || directTlsSucceeded) {
       // System succeeded but Node didn't. This is CONSISTENT with a cert trust
       // gap — Node's OpenSSL needs the complete chain, while SChannel/curl can
       // load missing intermediates from the OS store — but not proof of one:
       // the two paths can also use different proxy routing or trust stores.
       // State it as a possibility, not a fact.
-      conclusion = `TLS certificate verification failed in VS Code's fetch but succeeded in the system native test — the server may not be sending the complete certificate chain, or the OS and Node trust stores differ. ${TLS_CERT_SUGGESTION}`;
+      conclusion = `TLS certificate verification failed in VS Code's fetch but succeeded in the system native test - the server may not be sending the complete certificate chain, or the OS and Node trust stores differ. ${TLS_CERT_SUGGESTION}`;
     } else {
-      conclusion = `TLS certificate verification failed in all transports — the server's certificate chain is incomplete, expired, or untrusted by the OS/Node trust stores. ${TLS_CERT_SUGGESTION}`;
+      conclusion = `TLS certificate verification failed in all transports - the server's certificate chain is incomplete, expired, or untrusted by the OS/Node trust stores. ${TLS_CERT_SUGGESTION}`;
     }
   } else if (!dns?.resolved) {
-    conclusion = 'DNS resolution failed — the host cannot be resolved. Check the serverUrl or network/DNS configuration.';
+    conclusion = 'DNS resolution failed - the host cannot be resolved. Check the serverUrl or network/DNS configuration.';
   } else if (dns?.resolved && !tcp?.ok) {
-    conclusion = `TCP connect to ${dns.resolved}:${port} failed — host is unreachable (firewall, host down, or wrong port).`;
+    conclusion = `TCP connect to ${dns.resolved}:${port} failed - host is unreachable (firewall, host down, or wrong port).`;
   } else {
     // Node fetch failed without a TLS error and without DNS/TCP failure.
     if (systemTlsSucceeded || directTlsSucceeded) {
       const successPath = systemTlsSucceeded ? 'system native test' : 'direct Node transport';
-      conclusion = `VS Code's fetch failed but ${successPath} succeeded — possible proxy or VS Code network configuration issue. Check http.proxy, http.proxySupport, and http.systemCertificates settings.`;
+      conclusion = `VS Code's fetch failed but ${successPath} succeeded - possible proxy or VS Code network configuration issue. Check http.proxy, http.proxySupport, and http.systemCertificates settings.`;
     } else {
-      conclusion = 'No HTTP response received from any transport — likely a network or proxy issue. Check http.proxy, proxy auth (407), or server availability.';
+      conclusion = 'No HTTP response received from any transport - likely a network or proxy issue. Check http.proxy, proxy auth (407), or server availability.';
     }
   }
 
@@ -770,22 +770,22 @@ export function formatReport(r: DiagnosticReport): string {
   // "got an HTTP error response" from "connection failed".
   const fmt = (label: string, res?: FetchResult): void => {
     if (!res) {
-      lines.push(`— ${label} —`, '  (not available on this platform)', '');
+      lines.push(`- ${label} -`, '  (not available on this platform)', '');
       return;
     }
     const backend = res.backend ? ` [${res.backend}]` : '';
     if (res.ok) {
-      lines.push(`— ${label} —`, `  HTTP ${res.status ?? 'OK'} (success)${backend}`, '');
+      lines.push(`- ${label} -`, `  HTTP ${res.status ?? 'OK'} (success)${backend}`, '');
       return;
     }
     if (res.status !== undefined) {
-      lines.push(`— ${label} —`, `  HTTP ${res.status}${res.error ? ` — ${res.error}` : ''}${backend}`, '');
+      lines.push(`- ${label} -`, `  HTTP ${res.status}${res.error ? ` - ${res.error}` : ''}${backend}`, '');
       return;
     }
-    lines.push(`— ${label} —`, `  connection failed${res.error ? `: ${res.error}` : ''}${backend}`, '');
+    lines.push(`- ${label} -`, `  connection failed${res.error ? `: ${res.error}` : ''}${backend}`, '');
   };
   lines.push('---');
-  lines.push('vLLM-Copilot — Network Diagnostics');
+  lines.push('vLLM-Copilot - Network Diagnostics');
   lines.push('---');
   lines.push(`  Extension:  v${r.extensionVersion}`);
   lines.push(`  Node:       ${r.nodeVersion}`);
@@ -794,12 +794,12 @@ export function formatReport(r: DiagnosticReport): string {
   lines.push(`  Target:     ${redactUrlCredentials(r.targetUrl)}`);
   lines.push('---');
   lines.push('');
-  lines.push('— VS Code network settings —');
+  lines.push('- VS Code network settings -');
   for (const [k, v] of Object.entries(r.settings)) {
     lines.push(`  ${k} = ${v === undefined ? '(unset)' : typeof v === 'string' ? JSON.stringify(redactUrlCredentials(v)) : JSON.stringify(v)}`);
   }
   lines.push('');
-  lines.push('— Environment —');
+  lines.push('- Environment -');
   for (const [k, v] of Object.entries(r.env)) {
     lines.push(`  ${k} = ${v === undefined ? '(unset)' : redactUrlCredentials(v)}`);
   }
@@ -813,19 +813,19 @@ export function formatReport(r: DiagnosticReport): string {
   const showDnsTcp = !nodeSucceeded || !systemSucceeded || !directSucceeded || dnsFailed || tcpFailed;
   if (showDnsTcp) {
     if (r.dns) {
-      lines.push('— DNS —');
+      lines.push('- DNS -');
       lines.push(`  ${r.dns.host} → ${r.dns.resolved ?? 'unresolved'}${r.dns.error ? ` (${r.dns.error})` : ''}`);
       lines.push('');
     }
     if (r.tcp) {
-      lines.push('— TCP —');
+      lines.push('- TCP -');
       lines.push(`  ${r.tcp.host}:${r.tcp.port} → ${r.tcp.ok ? 'connected' : 'failed'}${r.tcp.error ? ` (${r.tcp.error})` : ''}`);
       lines.push('');
     }
   }
   // OS-level proxy configuration
   if (r.proxyInfo) {
-    lines.push('— OS proxy configuration —');
+    lines.push('- OS proxy configuration -');
     if (r.proxyInfo.error) {
       lines.push(`  Error: ${r.proxyInfo.error}`);
     } else if (r.proxyInfo.server) {
@@ -841,7 +841,7 @@ export function formatReport(r: DiagnosticReport): string {
   }
   // Internet Explorer proxy settings (Windows registry) — Group Policy can set these silently
   if (r.ieProxyInfo) {
-    lines.push('— IE proxy settings (registry) —');
+      lines.push('- IE proxy settings (registry) -');
     if (r.ieProxyInfo.error) {
       lines.push(`  Error: ${r.ieProxyInfo.error}`);
     } else if (r.ieProxyInfo.enabled) {
@@ -882,7 +882,7 @@ export function formatReport(r: DiagnosticReport): string {
   if (nodeFailed && isTlsError(r.nodeFetch) && (directOk || systemOk)) {
     const okPath = directOk ? 'direct Node transport' : 'system native test';
     lines.push('');
-    lines.push('— Transport comparison —');
+    lines.push('- Transport comparison -');
     lines.push(`  VS Code's patched fetch failed with a TLS error but ${okPath} succeeded.`);
     lines.push('  This may mean the server is not sending the complete certificate chain,');
     lines.push('  or that the OS trust store and Node\'s loaded certificates differ;');
@@ -900,7 +900,7 @@ export function formatReport(r: DiagnosticReport): string {
   }
   // Certificate chain
   if (r.chain) {
-    lines.push('— Certificate chain —');
+    lines.push('- Certificate chain -');
     if (r.chain.error) {
       lines.push(`  Error: ${r.chain.error}`);
     } else {

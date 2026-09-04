@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ServerType } from '../state/config.js';
-import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, toPublicModelConfig, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders, isOpenRouterUrl } from '../state/config.js';
+import { buildEndpoint, resolveVllmModelId, resolveConfigId, normalizeServerUrl, buildModelId, toPublicModelConfig, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders, isOpenRouterUrl, isUsableServerUrl } from '../state/config.js';
 import { replaceModelConfig, readModels, readServers, writeServers, type IdentifiedModelConfig } from '../state/configStore.js';
 import type { ServerEntry } from '../state/serverRegistry.js';
 import { entryMatchesConnection, firstEntryById, generateServerId, resolveServer } from '../state/serverRegistry.js';
@@ -18,7 +18,6 @@ import {
   fetchOpenRouterCatalog,
   perMillion,
   formatUsdRate,
-  formatPerMillionUsd,
   openRouterCatalogConfigFields,
   openRouterInfoDetailLines,
   type OpenRouterModelData,
@@ -46,7 +45,8 @@ export interface ClearCacheProvider {
  * THIS call created the entry — callers that can abandon the save must roll
  * back entries they created, never pre-existing ones. Models never carry
  * server facts — URL, auth, type and label live only on the registry.
- * @internal Exported for the auto-configure flow.
+ * @internal All production callers are inside this module; the export exists
+ * for the flow tests only (the auto-configure flow does not import it).
  */
 export async function ensureServerEntry(options: {
   serverUrl: string;
@@ -63,7 +63,13 @@ export async function ensureServerEntry(options: {
   // just matched. `indexOf` (identity, not id) targets the type backfill at
   // exactly the entry found, never an id-twin.
   const visible = [...firstEntryById(servers).values()];
-  const existing = visible.find(s => entryMatchesConnection(s, normalizedUrl, headers));
+  // Skip entries with no usable URL (CR-51): a blank/host-less `serverUrl`
+  // normalizes to the localhost:8000 SENTINEL, so a hand-mangled entry would
+  // "match" a genuine http://localhost:8000 connection, the flow would claim
+  // the entry exists, point the new model at it — and the runtime resolver
+  // would then refuse that very entry. The matcher must apply the same
+  // isUsableServerUrl rule the resolver applies.
+  const existing = visible.find(s => isUsableServerUrl(s.serverUrl) && entryMatchesConnection(s, normalizedUrl, headers));
   if (existing) {
     // Fill in a MISSING backend type on reuse. "Add Server" registers without
     // probing, so an entry can legitimately arrive type-less; when a model is
@@ -213,10 +219,12 @@ async function handleDuplicateModelGate(
       placeHolder: `Multiple configs share "${wireModelId}" - choose which to replace`,
     });
     if (!picked) {
-      output.appendLine(`[INFO] ${flowLabel} cancelled — duplicate disambiguation abandoned.`);
+      output.appendLine(`[INFO] ${flowLabel} cancelled - duplicate disambiguation abandoned.`);
       return undefined;
     }
-    target = sameModelEntries.find(m => resolveConfigId(m) === picked.description) ?? target;
+    // Index into the same array the QuickPick was built from - description-string
+    // re-lookup would pick the wrong twin when two entries share an id.
+    target = sameModelEntries[items.indexOf(picked)] ?? target;
   }
   const pick = await vscode.window.showInformationMessage(
     `"${wireModelId}" is already configured. Update auth only, or replace entire config?`,
@@ -231,20 +239,12 @@ async function handleDuplicateModelGate(
     return undefined;
   }
   if (pick !== 'Replace Config') {
-    output.appendLine(`[INFO] ${flowLabel} cancelled — no action chosen for existing config.`);
+    output.appendLine(`[INFO] ${flowLabel} cancelled - no action chosen for existing config.`);
     return undefined;
   }
   return { replaceExistingId: resolveConfigId(target), replaceTargetServer: target.server };
 }
 
-/**
- * Persist an added model; on a blocked settings write (invalid settings.json —
- * `config.update` rejects), roll back a registry entry this flow created and
- * surface the failure instead of reporting a save that never landed. Without
- * this the confirm passes, the model write throws past the command, and the
- * freshly created entry — live credentials and all — sits in settings with no
- * model referencing it. Returns true only when the model is actually stored.
- */
 /**
  * Persist a newly added model and ensure the BYOK utility-model default so agent
  * mode works once the model becomes selectable. Only the Add paths reach this
@@ -262,9 +262,6 @@ async function persistAddedModelOrRollback(
 ): Promise<boolean> {
   try {
     await replaceModelConfig(finalConfig);
-    await ensureByokUtilityDefault();
-    onSaved?.();
-    return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     output.appendLine(`[ERROR] Could not save model "${modelId}" to settings: ${msg}`);
@@ -274,6 +271,18 @@ async function persistAddedModelOrRollback(
     );
     return false;
   }
+  // The BYOK bootstrap gets its OWN warn-only catch (CR-31): the model IS saved
+  // at this point. Inside one shared try, a bootstrap rejection toasted "save
+  // failed", rolled back a server entry the saved model still referenced, and
+  // skipped onSaved (the provider cache never cleared).
+  try {
+    await ensureByokUtilityDefault();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[WARN] Model "${modelId}" saved, but the BYOK utility-model default was not set: ${msg}`);
+  }
+  onSaved?.();
+  return true;
 }
 
 /**
@@ -350,13 +359,13 @@ export async function confirmAndSaveAddedModel(
     // one on purpose) and Remove Server deletes it again.
     if (createdServerId) {
       output.appendLine(
-        `[INFO] Copied config for "${modelId}" — registry entry "${createdServerId}" kept, the copied "server" ref points at it.`
+        `[INFO] Copied config for "${modelId}" - registry entry "${createdServerId}" kept, the copied "server" ref points at it.`
       );
     }
     vscode.window.showInformationMessage('Model config copied to clipboard.');
     return false;
   } else {
-    output.appendLine('[INFO] Model add cancelled — confirm dismissed.');
+    output.appendLine('[INFO] Model add cancelled - confirm dismissed.');
     output.show(true);
     // Dismissed with nothing saved: an entry this flow created would sit in
     // settings unreferenced, holding live credentials nobody asked to keep.
@@ -409,15 +418,19 @@ export async function pickOpenRouterModel(
     description: entry.name ?? '',
     detail: [
       entry.context_length ? `${entry.context_length.toLocaleString('en-US')} ctx` : '',
-      // perMillion + formatPerMillionUsd (openRouter.ts) are the single shared
-      // per-token → per-1M conversion and en-US formatting; this only lays out
-      // compact per-1M "in · out".
+      // perMillion (openRouter.ts) is the single shared per-token → per-1M
+      // conversion; formatting is formatUsdRate. This only lays out compact
+      // per-1M "in · out" (the former formatPerMillionUsd wrapper was one
+      // call site — audit U8b absorbed it here).
       (() => {
-        const fmt = (v?: string): string | null => formatPerMillionUsd(perMillion(v));
+        const fmt = (v?: string): string | null => {
+          const per = perMillion(v);
+          return per === undefined ? null : `${formatUsdRate(per)}/1M`;
+        };
         const inStr = fmt(entry.pricing?.prompt);
         const outStr = fmt(entry.pricing?.completion);
         if (!inStr && !outStr) return '';
-        return `in ${inStr ?? '—'} · out ${outStr ?? '—'}`;
+        return `in ${inStr ?? '-'} · out ${outStr ?? '-'}`;
       })(),
     ].filter(Boolean).join(' · '),
   }));
@@ -428,12 +441,14 @@ export async function pickOpenRouterModel(
   qp.matchOnDetail = true;
   qp.ignoreFocusOut = true;
   qp.items = items;
+  let seededLabel: string | undefined;
   if (prefill) {
     qp.value = prefill;
     const preSelected = items.find((i) => i.label === prefill);
     if (preSelected) {
       qp.activeItems = [preSelected];
       qp.selectedItems = [preSelected];
+      seededLabel = preSelected.label;
     }
   }
   // A picked item's label is always a valid wire model id — no re-parsing.
@@ -456,7 +471,15 @@ export async function pickOpenRouterModel(
       // is deliberately NO free-text fallback. A typed id that isn't in the
       // snapshot has no active item, so finish(undefined) and the flow exits as
       // "no model selected" (a model outside the catalog cannot be sized/saved).
-      const picked = qp.selectedItems[0] ?? qp.activeItems[0];
+      // The programmatic seed in `selectedItems` goes STALE the moment the
+      // user edits the filter: typing updates `activeItems` but never clears
+      // the seeded `selectedItems` (CR-49). Once the input diverges from the
+      // seeded label, Enter must confirm the HIGHLIGHTED item, not the model
+      // the prefill picked thirty keystrokes ago.
+      const filterDiverged = seededLabel !== undefined && qp.value !== seededLabel;
+      const picked = filterDiverged
+        ? qp.activeItems[0] ?? qp.selectedItems[0]
+        : qp.selectedItems[0] ?? qp.activeItems[0];
       finish(picked?.label);
     });
     qp.onDidHide(() => finish(undefined));
@@ -503,17 +526,17 @@ export async function runOpenRouterAddFlow(
   //    extra headers for chat; expert headers (e.g. HTTP-Referer for dashboard
   //    attribution) are added by editing the model config in settings.
   const requestHeaders = await promptForServerAuth({
-    apiKeyTitle: 'Add OpenRouter Model — API Key',
+    apiKeyTitle: 'Add OpenRouter Model - API Key',
     apiKeyPrompt: 'OpenRouter API key. Sent as "Authorization: Bearer <key>". Get one at https://openrouter.ai/keys. Chat requires it.',
     apiKeyPlaceholder: 'sk-or-v1-...',
     requireApiKey: true,
-    headersTitle: 'Add OpenRouter Model — Custom Headers (optional)',
+    headersTitle: 'Add OpenRouter Model - Custom Headers (optional)',
     headersPrompt: '(optional) Additional request headers (e.g. HTTP-Referer for the OpenRouter dashboard). JSON format or "Name": "Value". Leave empty for none.',
     headersPlaceholder: '{"HTTP-Referer": "https://github.com"}',
     promptForHeaders: false,
   });
   if (requestHeaders === undefined) {
-    output.appendLine('[WARN] OpenRouter add cancelled — no API key entered.');
+    output.appendLine('[WARN] OpenRouter add cancelled - no API key entered.');
     output.show(true);
     return;
   }
@@ -562,7 +585,7 @@ export async function runOpenRouterAddFlow(
     requestedId = await pickOpenRouterModel(catalog, prefill);
   }
   if (!requestedId) {
-    output.appendLine('[WARN] OpenRouter add cancelled — no model selected.');
+    output.appendLine('[WARN] OpenRouter add cancelled - no model selected.');
     output.show(true);
     return;
   }
@@ -671,7 +694,7 @@ async function handleServerFailure(
 
   // Discard or dismissed → stop
   if (action === 'Discard' || action === undefined) {
-    output.appendLine(`[INFO] Server ${serverUrl} not added — user discarded the failed connection.`);
+    output.appendLine(`[INFO] Server ${serverUrl} not added - user discarded the failed connection.`);
     return true;
   }
 
@@ -688,14 +711,14 @@ async function handleServerFailure(
 
   // Keep Anyway — save a minimal stub so the user can fix it later
   const modelId = await vscode.window.showInputBox({
-    title: 'Keep Anyway — Model ID',
+    title: 'Keep Anyway - Model ID',
     prompt: 'Enter a model identifier for this server. You can auto-configure or edit it later.',
     placeHolder: 'e.g. my-model or the model name from the server',
     ignoreFocusOut: true,
     validateInput: (v) => (v.trim() ? undefined : 'Model ID is required'),
   });
   if (!modelId) {
-    output.appendLine(`[INFO] Keep-Anyway cancelled for ${serverUrl} — no model id entered.`);
+    output.appendLine(`[INFO] Keep-Anyway cancelled for ${serverUrl} - no model id entered.`);
     return true; // cancelled → stop
   }
 
@@ -719,9 +742,9 @@ async function handleServerFailure(
   if (!(await persistAddedModelOrRollback(finalConfig, modelId, created ? serverId : undefined, onSaved, output))) {
     return true;
   }
-  output.appendLine(`[INFO] Saved stub config for "${modelId}" on ${serverUrl} — server was unreachable.`);
+  output.appendLine(`[INFO] Saved stub config for "${modelId}" on ${serverUrl} - server was unreachable.`);
   vscode.window.showInformationMessage(
-    `Stub saved for "${modelId}" on ${serverUrl}. Right-click → Auto-Configure when the server is reachable.`
+    `Stub saved for "${modelId}" on ${serverUrl}. Run "Auto-Configure Model" (command palette or Model Settings) once the server is reachable.`
   );
   return true;
 }
@@ -736,14 +759,14 @@ async function handleServerFailure(
 export function registerAddServerCommand(output: vscode.OutputChannel): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.addServer', async () => {
     const urlInput = await vscode.window.showInputBox({
-      title: 'Add vLLM Server (1/2)',
+      title: 'Add Server (1/2)',
       prompt: 'Enter a server URL (vLLM, LM Studio, llama.cpp, Ollama) to register without a model',
       placeHolder: 'https://host:8000',
       ignoreFocusOut: true,
       validateInput: validateServerUrlInput,
     });
     if (!urlInput) {
-      output.appendLine('[INFO] Add server cancelled — no URL entered.');
+      output.appendLine('[INFO] Add server cancelled - no URL entered.');
       return;
     }
     const serverUrl = normalizeServerUrl(urlInput);
@@ -751,21 +774,21 @@ export function registerAddServerCommand(output: vscode.OutputChannel): vscode.D
       // OpenRouter entries only make sense with a catalog-picked model; the
       // dedicated add flow owns that branch.
       void vscode.window.showInformationMessage(
-        'OpenRouter is set up with "Add or Reconfigure Server/Model" — it always adds a model.'
+        'OpenRouter is set up with "Add or Reconfigure Server/Model" - it always adds a model.'
       );
       return;
     }
 
     const requestHeaders = await promptForServerAuth({
-      apiKeyTitle: 'Add vLLM Server (2/2)',
+      apiKeyTitle: 'Add Server (2/2)',
       apiKeyPrompt: '(optional) vLLM API key, sent as an Authorization header. Leave empty if the server has none.',
       apiKeyPlaceholder: 'abc123... or leave empty',
-      headersTitle: 'Add vLLM Server (2/2)',
+      headersTitle: 'Add Server (2/2)',
       headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty for none.',
       headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
     });
     if (requestHeaders === undefined) {
-      output.appendLine('[INFO] Add server cancelled — auth prompt abandoned.');
+      output.appendLine('[INFO] Add server cancelled - auth prompt abandoned.');
       return;
     }
 
@@ -783,7 +806,7 @@ export function registerAddServerCommand(output: vscode.OutputChannel): vscode.D
       );
       return;
     }
-    output.appendLine(`[INFO] Registered server "${id}" (${serverUrl}) — no model yet.`);
+    output.appendLine(`[INFO] Registered server "${id}" (${serverUrl}) - no model yet.`);
     const pick = await vscode.window.showInformationMessage(
       `Server "${id}" registered. It stays out of the model picker until a model references it.`,
       'Add a Model'
@@ -806,7 +829,7 @@ export function validateServerUrlInput(value: string): string | undefined {
   try {
     url = new URL(raw.includes('://') ? raw : `http://${raw}`);
   } catch {
-    return `"${raw}" is not a valid URL — e.g. https://host:8000`;
+    return `"${raw}" is not a valid URL - e.g. https://host:8000`;
   }
   if (!url.hostname) return 'Enter a full server URL, e.g. https://host:8000';
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return 'Use an http(s) server URL';
@@ -828,14 +851,14 @@ export function registerAddServerModelCommand(
     //    OpenRouter is detected by its host; pasting a full model-page URL only
     //    pre-fills the model picker.
     const urlInput = await vscode.window.showInputBox({
-      title: 'Add vLLM Server & Model (1/4)',
-      prompt: 'Enter a server URL (vLLM, LM Studio, llama.cpp, Ollama), or an openrouter.ai URL — a model-page URL pre-fills the model picker',
+      title: 'Add or Reconfigure Server/Model (1/4)',
+      prompt: 'Enter a server URL (vLLM, LM Studio, llama.cpp, Ollama), or an openrouter.ai URL - a model-page URL pre-fills the model picker',
       placeHolder: 'https://host:8000  ·  https://openrouter.ai  ·  https://openrouter.ai/author/model',
       ignoreFocusOut: true,
       validateInput: validateServerUrlInput,
     });
     if (!urlInput) {
-      output.appendLine('[INFO] Add Server cancelled — no URL entered.');
+      output.appendLine('[INFO] Add Server cancelled - no URL entered.');
       return;
     }
     const serverUrl = normalizeServerUrl(urlInput);
@@ -875,22 +898,22 @@ export function registerAddServerModelCommand(
         return vscode.commands.executeCommand('vllm-copilot.updateServerAuth', serverUrl);
       }
       if (pick !== 'Add Different Model') {
-        output.appendLine(`[INFO] Add Server cancelled — server ${serverUrl} already configured.`);
+        output.appendLine(`[INFO] Add Server cancelled - server ${serverUrl} already configured.`);
         return; // cancelled
       }
     }
 
     // 2. API key + custom headers (optional). Cancellation aborts the flow.
     const requestHeaders = await promptForServerAuth({
-      apiKeyTitle: 'Add vLLM Server & Model (2/4)',
+      apiKeyTitle: 'Add or Reconfigure Server/Model (2/4)',
       apiKeyPrompt: '(optional) vLLM API key. Sent as "Authorization: Bearer <key>". Leave empty if not present.',
       apiKeyPlaceholder: 'abc123... or leave empty',
-      headersTitle: 'Add vLLM Server & Model (3/4)',
+      headersTitle: 'Add or Reconfigure Server/Model (3/4)',
       headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty for none.',
       headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
     });
     if (requestHeaders === undefined) {
-      output.appendLine('[INFO] Add Server cancelled — no API key/headers entered.');
+      output.appendLine('[INFO] Add Server cancelled - no API key/headers entered.');
       return;
     }
     const hasHeaders = Object.keys(requestHeaders).length > 0;
@@ -931,12 +954,12 @@ export function registerAddServerModelCommand(
     }));
     const modelPick = await vscode.window.showQuickPick(modelItems, {
       ignoreFocusOut: true,
-      title: 'Add vLLM Server & Model (4/4)',
+      title: 'Add or Reconfigure Server/Model (4/4)',
       placeHolder: `Select a model on ${serverUrl}`,
     });
     const modelId = modelPick?.label;
     if (!modelId) {
-      output.appendLine(`[INFO] Add Server cancelled — no model selected on ${serverUrl}.`);
+      output.appendLine(`[INFO] Add Server cancelled - no model selected on ${serverUrl}.`);
       return;
     }
 
@@ -973,7 +996,7 @@ export function registerAddServerModelCommand(
       detectedServerType,
     );
     if (!discoveryResult) {
-      output.appendLine(`[INFO] Add Server stopped — auto-configure returned no result for "${modelId}".`);
+      output.appendLine(`[INFO] Add Server stopped - auto-configure returned no result for "${modelId}".`);
       return;
     }
 

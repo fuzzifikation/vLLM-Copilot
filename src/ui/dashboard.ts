@@ -10,7 +10,7 @@ import { ServerMetrics, getMetricsEngine, emptyMetrics, getPollSettingMs } from 
 import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from '../backends/openRouter.js';
 import {
   getLastRequest, getServerUsage, getServerCost, hasServerUsage, onUsageStoreDidChange,
-  computeCost, findModelCost, formatCost, formatCostFine, formatCostSummary, fmtCount, emptyCounts,
+  findModelCost, formatCost, formatCostFine, formatCostSummary, emptyCounts,
   getModelStartedAt,
   type UsageCounts, type CostRates, type LastRequestData,
 } from '../usage/usageStore.js';
@@ -23,24 +23,65 @@ import { firstEntryById } from '../state/serverRegistry.js';
 // only consumers; vllmMetrics produces data, not strings.
 
 function fmtPct(v: number | null): string {
-  return v == null ? '—' : `${Math.round(v)}%`;
+  return v == null ? '-' : `${Math.round(v)}%`;
 }
 
 function fmtMs(ms: number | null): string {
-  if (ms == null) return '—';
+  if (ms == null) return '-';
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
 }
 
 function fmtN(v: number | null): string {
-  return v == null ? '—' : String(v);
+  return v == null ? '-' : String(v);
 }
 
 /** Format a directly-computed tokens/sec value (pooled throughput ratio). */
 function fmtTokPerSec(tokPerSec: number | null): string {
-  if (tokPerSec == null || tokPerSec <= 0) return '—';
+  if (tokPerSec == null || tokPerSec <= 0) return '-';
   return tokPerSec >= 100
     ? `${Math.round(tokPerSec)} tok/s`
     : `${tokPerSec.toFixed(1)} tok/s`;
+}
+
+/**
+ * Abbreviate large token counts for compact dashboard rows: 3883588 -> "3.88M",
+ * 836350 -> "836k", 999 -> "999". Thousands are rounded to whole k (sub-1000
+ * precision is noise); millions keep 2 decimals, trailing zeros stripped.
+ * No space between the number and the unit. Presentation ONLY - the stored
+ * counts are never rounded; this runs at render time on already-accumulated
+ * integers. Moved from usageStore (cluster finding C-1): the tree rows are its
+ * only consumers.
+ */
+function fmtCount(n: number): string {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`;
+  if (n >= 1e3) {
+    const k = Math.round(n / 1e3);
+    if (k >= 1000) { // 999,500 -> 1000k -> "1M"
+      const m = k / 1000;
+      return `${m.toFixed(2).replace(/\.?0+$/, '')}M`;
+    }
+    return `${k}k`;
+  }
+  return String(n);
+}
+
+/**
+ * Cost in the configured unit for the given counts, from per-1M rates.
+ * Fresh input = prompt - cached (cache-read tokens are priced at the cached
+ * rate, not the input rate). Undefined when no rates are configured.
+ * Render-time derivation, and the dashboard is its only consumer (cluster
+ * finding C-1): the store keeps the numbers, the tree does the money math.
+ */
+function computeCost(counts: UsageCounts, rates: CostRates | undefined): number | undefined {
+  if (!rates) return undefined;
+  const input = rates.input ?? 0;
+  const output = rates.output ?? 0;
+  const cachedInput = rates.cachedInput ?? 0;
+  if (input === 0 && output === 0 && cachedInput === 0) return undefined;
+  const freshInput = Math.max(0, counts.prompt - counts.cached);
+  return (freshInput / 1e6) * input
+    + (counts.cached / 1e6) * cachedInput
+    + (counts.completion / 1e6) * output;
 }
 
 function shortUrl(url: string): string {
@@ -69,10 +110,7 @@ class ServerTreeItem extends vscode.TreeItem {
    * @param serverId - Registry entry id. The entry IS the server identity: the
    *   tree id, the engine key, and the Deep-Dive panel key are all this value.
    * @param displayLabel - Optional disambiguated label (e.g. `s:8000 (identity 2)`) when
-   *   several entries point at one URL; defaults to `shortUrl(serverUrl)` or the
-   *   user-set `serverDisplayName`.
-   * @param serverDisplayName - The user-set label WITHOUT any identity suffix —
-   *   carried so the Deep-Dive command can title its panel with the clean name.
+   *   several entries point at one URL; defaults to `shortUrl(serverUrl)`.
    */
   constructor(
     public readonly serverUrl: string,
@@ -80,12 +118,17 @@ class ServerTreeItem extends vscode.TreeItem {
     public readonly metrics: ServerMetrics,
     public readonly serverType?: ServerType,
     displayLabel?: string,
-    public readonly serverDisplayName?: string,
   ) {
     const displayName = displayLabel ?? shortUrl(serverUrl);
+    // CR-25: the pre-first-poll placeholder means "no data yet", NOT offline.
+    // Painting it red "Offline" made every healthy server announce its own
+    // death for up to a full connect timeout on every dashboard show.
+    const loading = metrics.loading === true && !metrics.online;
     const statusIcon = metrics.online
       ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'))
-      : new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.red'));
+      : loading
+        ? new vscode.ThemeIcon('loading~spin')
+        : new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.red'));
     // Compact one-line summary for the collapsed description (absorbed from
     // the former summaryLine helper — this constructor was its only caller).
     const summaryParts: string[] = [];
@@ -106,7 +149,7 @@ class ServerTreeItem extends vscode.TreeItem {
     // No "degraded" label — every backend is a first-class dashboard citizen.
     this.description = metrics.online
       ? (isOpenRouterRelay ? undefined : summary)
-      : 'Offline';
+      : loading ? 'Loading' : 'Offline';
     const modelsLine = isOpenRouterRelay ? '' : `\n*${metrics.models.join(', ') || 'no models'}*`;
     const contextLine = isOpenRouterRelay || metrics.maxModelLen == null
       ? ''
@@ -142,7 +185,6 @@ class ModelsTreeItem extends vscode.TreeItem {
 /** OpenRouter relay: collapsible "Account" node — credits/limits from /api/v1/key. */
 class OpenRouterAccountTreeItem extends vscode.TreeItem {
   constructor(
-    public readonly serverUrl: string,
     public readonly account: OpenRouterAccount,
     /** Total-budget info from /api/v1/credits (may be undefined on a failed probe). */
     public readonly credits: OpenRouterCredits | undefined,
@@ -217,7 +259,7 @@ class OpenRouterModelTreeItem extends vscode.TreeItem {
     // breaks, fall back to the normal tooltip rather than showing a half-truth.
     this.tooltip = clamped && configuredOutput !== undefined && effectiveOutput !== undefined
       ? new vscode.MarkdownString(this.buildClampTooltip(modelLabel, configuredOutput, effectiveOutput, clampCauses))
-      : new vscode.MarkdownString(`${modelLabel} — click for model-level detail (provider, pricing, context, capabilities, usage).`);
+      : new vscode.MarkdownString(`${modelLabel} - click for model-level detail (provider, pricing, context, capabilities, usage).`);
   }
 
   /** Honest tooltip: what binds, and whether that's a silent clamp or a hard failure. */
@@ -230,11 +272,11 @@ class OpenRouterModelTreeItem extends vscode.TreeItem {
     const lines = causes.map((c) => {
       const exact = c.ceiling.toLocaleString('en-US');
       if (c.kind === 'catalog') {
-        return `- **${exact}** (the model's output ceiling) — output is silently clamped; you'll get shorter replies.`;
+        return `- **${exact}** (the model's output ceiling) - output is silently clamped; you'll get shorter replies.`;
       }
-      return `- **${exact}** (pinned provider ${c.providerName ?? 'cap'}) — requests over this cap may **fail**. Unpin or lower the setting.`;
+      return `- **${exact}** (pinned provider ${c.providerName ?? 'cap'}) - requests over this cap may **fail**. Unpin or lower the setting.`;
     });
-    return `${modelLabel} — output budget clamped.\n\nConfigured maxOutputTokens **${configuredOutput.toLocaleString('en-US')}** → effective **${effectiveOutput.toLocaleString('en-US')}**.\n\nBinding constraints:\n${lines.join('\n')}`;
+    return `${modelLabel} - output budget clamped.\n\nConfigured maxOutputTokens **${configuredOutput.toLocaleString('en-US')}** → effective **${effectiveOutput.toLocaleString('en-US')}**.\n\nBinding constraints:\n${lines.join('\n')}`;
   }
 }
 
@@ -267,13 +309,16 @@ class LastRequestTreeItem extends vscode.TreeItem {
   constructor(
     public readonly data: LastRequestData,
     public readonly serverType?: ServerType,
+    /** Registry entry id, folded into the tree id: two entries may share one
+     *  URL (the documented "identity N" case), and tree ids must be unique. */
+    public readonly serverId?: string,
   ) {
     super('Last Request', vscode.TreeItemCollapsibleState.Collapsed);
     this.ttftMs = data.metrics?.time_to_first_token_ms;
     this.generationMs = data.metrics?.generation_time_ms;
     this.queueMs = data.metrics?.queue_time_ms;
     this.iconPath = new vscode.ThemeIcon('info');
-    this.id = `lastRequest:${data.serverUrl}`;
+    this.id = `lastRequest:${serverId ?? ''}:${data.serverUrl}`;
     const ago = timeAgo(data.timestamp);
     this.description = `${ago} · ${data.modelId}`;
     this.tooltip = new vscode.MarkdownString(
@@ -285,10 +330,13 @@ class LastRequestTreeItem extends vscode.TreeItem {
 class TokenUsageTreeItem extends vscode.TreeItem {
   constructor(
     public readonly serverUrl: string,
+    /** Registry entry id, folded into the tree id (unique-per-URL is not
+     *  unique-per-entry — the dashboard renders that scenario itself). */
+    public readonly serverId?: string,
   ) {
     super('Token Usage and Cost', vscode.TreeItemCollapsibleState.Collapsed);
     this.iconPath = new vscode.ThemeIcon('credit-card');
-    this.id = `tokenUsage:${serverUrl}`;
+    this.id = `tokenUsage:${serverId ?? ''}:${serverUrl}`;
     this.contextValue = 'tokenUsage';
     this.tooltip = new vscode.MarkdownString('Cumulative token & cost usage per model for this server. Click to expand. Right-click → Set Cost… / Reset Usage.');
   }
@@ -301,10 +349,12 @@ class ModelUsageTreeItem extends vscode.TreeItem {
     public readonly modelId: string,
     public readonly modelLabel: string,
     todayCost?: string,
+    /** Registry entry id, folded into the tree id (see TokenUsageTreeItem). */
+    public readonly serverId?: string,
   ) {
     super(modelLabel, vscode.TreeItemCollapsibleState.Collapsed);
     if (todayCost) this.description = todayCost;
-    this.id = `modelUsage:${serverUrl}:${modelId}`;
+    this.id = `modelUsage:${serverId ?? ''}:${serverUrl}:${modelId}`;
     this.iconPath = new vscode.ThemeIcon('symbol-class');
     this.tooltip = new vscode.MarkdownString(`Today's usage for ${modelLabel}. Click to expand for the Today / Overall breakdown.`);
   }
@@ -426,7 +476,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     const epoch = ++this.refreshEpoch;
     this.disposeSubscriptions();
     try {
-      const config = await getConfig(this.context);
+      const config = await getConfig();
       // The await above is a genuine suspension point. Abort the continuation if
       // either condition held while getConfig was resolving:
       //  - the sidebar was hidden or the provider disposed (visible flag);
@@ -541,7 +591,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         // suffix, and passing undefined here would make ServerTreeItem fall
         // back to shortUrl — silently dropping a configured display name.
         const label = shared ? `${base} (identity ${n})` : base;
-        return new ServerTreeItem(sub.url, sub.serverId, sub.metrics, sub.serverType, label, sub.serverDisplayName);
+        return new ServerTreeItem(sub.url, sub.serverId, sub.metrics, sub.serverType, label);
       });
       // Action rows (absorbed from AddServerTreeItem/TestRefreshTreeItem —
       // one construction site each).
@@ -552,7 +602,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       const testItem = new vscode.TreeItem('Test & Refresh Models', vscode.TreeItemCollapsibleState.None);
       testItem.iconPath = new vscode.ThemeIcon('vm-running');
       testItem.command = { command: 'vllm-copilot.testAndRefreshModels', title: 'Test & Refresh Models' };
-      testItem.tooltip = new vscode.MarkdownString('Test the vLLM server connection and reload the model list');
+      testItem.tooltip = new vscode.MarkdownString('Test every configured server and reload the model lists');
       return [...items, ...servers, addItem, testItem];
     }
 
@@ -595,6 +645,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
 
   private getServerMetricsChildren(m: ServerMetrics, serverUrl?: string, serverType?: ServerType, serverId?: string): vscode.TreeItem[] {
     const items: vscode.TreeItem[] = [];
+    if (m.loading && !m.online) {
+      return [new MetricTreeItem('Status', 'First poll pending', 'server')];
+    }
     if (!m.online) {
       return [new MetricTreeItem('Error', m.error || 'Connection failed', 'error')];
     }
@@ -614,7 +667,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     const isOpenRouterRelay = serverType === 'openrouter';
     if (isOpenRouterRelay) {
       if (m.account) {
-        items.push(new OpenRouterAccountTreeItem(serverUrl ?? '', m.account, m.credits, serverId ?? ''));
+        items.push(new OpenRouterAccountTreeItem(m.account, m.credits, serverId ?? ''));
       }
       items.push(...this.getRelayModelTreeItems(serverUrl ?? '', serverId ?? ''));
     } else {
@@ -667,7 +720,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         // `> 0` check, 1000/0 prints "Infinity tok/s" at zero TPOT.
         : m.avgTPOTMs != null && m.avgTPOTMs > 0
           ? fmtTokPerSec(1000 / m.avgTPOTMs)
-          : '—';
+          : '-';
       const prefillSpeed = m.avgPrefillTputTokPerSec != null ? fmtTokPerSec(m.avgPrefillTputTokPerSec) : null;
       items.push(new MetricTreeItem(
         'Speed',
@@ -706,7 +759,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       if (hasSpecMetrics) {
         const parts: string[] = [];
         if (m.specAcceptanceRate != null) parts.push(`${Math.round(m.specAcceptanceRate)}%`);
-        else parts.push('—');
+        else parts.push('-');
         if (m.specDraftDepth != null) parts.push(`depth ${m.specDraftDepth.toFixed(1)}`);
         if (m.specDraftsTotal != null) parts.push(`${m.specDraftsTotal} drafts`);
         items.push(new MetricTreeItem(
@@ -746,7 +799,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       // silently vanishes for those forms.
       const lastRequest = getLastRequest(normalizeServerUrl(serverUrl));
       if (lastRequest) {
-        items.push(new LastRequestTreeItem(lastRequest, serverType));
+        items.push(new LastRequestTreeItem(lastRequest, serverType, serverId));
       }
 
       // Cumulative Token Usage — live via onUsageStoreDidChange (see constructor).
@@ -758,7 +811,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       // its own token/cost rows in its expanded details (actual usage.cost), so a
       // server-level sum would be pure duplication.
       if (!isOpenRouterRelay && hasServerUsage(normalizedUrl)) {
-        items.push(new TokenUsageTreeItem(normalizedUrl));
+        items.push(new TokenUsageTreeItem(normalizedUrl, serverId));
       }
     }
 
@@ -779,7 +832,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       items.push(new MetricTreeItem('Invested Total', formatCost(c.total_credits, 'USD'), 'credit-card', 'Total credits ever loaded into this account (all top-ups), from /api/v1/credits.'));
     }
     if (c?.total_credits != null && c?.total_usage != null) {
-      items.push(new MetricTreeItem('Available', formatCost(Math.max(0, c.total_credits - c.total_usage), 'USD'), 'pulse', 'Invested total minus total usage (floor 0) — what you can still spend.'));
+      items.push(new MetricTreeItem('Available', formatCost(Math.max(0, c.total_credits - c.total_usage), 'USD'), 'pulse', 'Invested total minus total usage (floor 0) - what you can still spend.'));
     }
     if (a.limit_remaining != null) {
       items.push(new MetricTreeItem('Credits Remaining', formatCost(a.limit_remaining, 'USD'), 'credit-card', 'OpenRouter credits available on this key.'));
@@ -806,7 +859,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       items.push(new MetricTreeItem('BYOK Usage (monthly)', formatCost(a.byok_usage_monthly, 'USD'), 'key', 'BYOK usage billed this UTC month.'));
     }
     if (a.is_free_tier) {
-      items.push(new MetricTreeItem('Free Tier', 'yes', 'star', 'This account has never paid — subject to free-tier rate limits.'));
+      items.push(new MetricTreeItem('Free Tier', 'yes', 'star', 'This account has never paid - subject to free-tier rate limits.'));
     }
     if (a.is_management_key || a.is_provisioning_key) {
       const kind = a.is_management_key ? 'Management' : 'Provisioning';
@@ -931,7 +984,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       if (pinned?.maxCompletionTokens && pinned.maxCompletionTokens > 0) exactLimits.push(`${pinned.maxCompletionTokens.toLocaleString('en-US')} max output`);
       const limitsTooltip = exactLimits.length > 0
         ? `\n\nPinned provider limits (reported by OpenRouter): ${exactLimits.join(', ')}. ` +
-          `A pinned provider with a smaller window or output cap than the general model envelope serves only that — ` +
+          `A pinned provider with a smaller window or output cap than the general model envelope serves only that - ` +
           `requests that exceed it are filtered or fail. Unpin the provider to route normally.`
         : '';
       items.push(new MetricTreeItem(
@@ -1245,7 +1298,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       // Collapsed description: "$X today and $Y total" — exactly what the
       // API/store reports, never a fabricated window rate.
       const summary = formatCostSummary(today, overall, currency);
-      return new ModelUsageTreeItem(e.serverUrl, modelId, label, summary);
+      return new ModelUsageTreeItem(e.serverUrl, modelId, label, summary, e.serverId);
     });
   }
 

@@ -11,10 +11,13 @@ import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig, preset
  * Auto-configure a model by fetching metadata from HuggingFace and the server.
  *
  * Discovers:
- * - modelModes from chat_template Jinja2 kwargs (enable_thinking, preserve_thinking)
  * - imageInput capability from pipeline_tag
+ * - tool-calling markers from the chat template
  * - context window from the shared backend-aware resolver (resolveRuntimeLimits)
  * - generation defaults from generation_config.json on HuggingFace
+ *
+ * modelModes (Think/No Think) are deliberately NOT synthesized from chat
+ * templates — see the note in step 3 below.
  */
 
 // ---- HuggingFace API types ----
@@ -30,14 +33,11 @@ interface HfModelInfo {
   };
 }
 
-/** @internal Exported for testing. */
-export interface HfGenerationConfig {
-  max_new_tokens?: number;
+interface HfGenerationConfig {
   temperature?: number;
   top_p?: number;
   top_k?: number;
   repetition_penalty?: number;
-  do_sample?: boolean;
 }
 
 // ---- vLLM model info ----
@@ -130,13 +130,22 @@ async function autoConfigureModel(
   const hfLookupId = hfBase ?? modelId;
 
   // 2. Fetch generation_config.json and HuggingFace model info in parallel.
-  // Both fetchers swallow every failure into `null` themselves, so a dead
-  // supplementary source degrades to "no extra data" and never rejects —
+  // Supplementary HF failures degrade to "no extra data" and never reject —
   // plain Promise.all is the honest shape here (audit P8-6 deleted the
-  // unreachable allSettled rejection branches).
+  // unreachable allSettled rejection branches). The two former module-level
+  // fetchers were byte-identical except URL and timeout, so they live here
+  // as one local swallow-to-null helper (audit U8b).
+  const fetchHfJson = async <T>(url: string, timeoutMs: number): Promise<T | null> => {
+    try {
+      const resp = await fetchWithTimeout(url, { timeoutMs });
+      return resp.ok ? (await resp.json() as T) : null;
+    } catch {
+      return null;
+    }
+  };
   const [genConfig, hfInfo] = await Promise.all([
-    fetchGenerationConfig(hfLookupId),
-    fetchHuggingFaceModel(hfLookupId),
+    fetchHfJson<HfGenerationConfig>(`https://huggingface.co/${hfLookupId}/raw/main/generation_config.json`, 10000),
+    fetchHfJson<HfModelInfo>(`https://huggingface.co/api/models/${hfLookupId}`, 15000),
   ]);
 
   if (genConfig) {
@@ -276,37 +285,6 @@ export async function fetchWithTimeout(
   });
 }
 
-// Supplementary fetch failures are reported via the summary array,
-// not as pop-up modals — they would interrupt the auto-configure progress flow.
-
-// ---- HuggingFace fetchers ----
-
-async function fetchHuggingFaceModel(modelId: string): Promise<HfModelInfo | null> {
-  try {
-    const url = `https://huggingface.co/api/models/${modelId}`;
-    const resp = await fetchWithTimeout(url, { timeoutMs: 15000 });
-    if (!resp.ok) {
-      return null;
-    }
-    return await resp.json() as HfModelInfo;
-  } catch {
-    return null;
-  }
-}
-
-async function fetchGenerationConfig(modelId: string): Promise<HfGenerationConfig | null> {
-  try {
-    const url = `https://huggingface.co/${modelId}/raw/main/generation_config.json`;
-    const resp = await fetchWithTimeout(url);
-    if (!resp.ok) {
-      return null;
-    }
-    return await resp.json() as HfGenerationConfig;
-  } catch {
-    return null;
-  }
-}
-
 // ---- vLLM fetcher ----
 
 async function fetchVllmModelInfo(
@@ -329,16 +307,15 @@ async function fetchVllmModelInfo(
  * then either return the preset-merged config or fall through to HuggingFace discovery.
  * Returns `{ modelConfig, summary, suggestedMaxOutputTokens }` or `null` if cancelled.
  *
- * Shared by the Add-server and Auto-configure flows (a preset-match dialog is the
- * only UI dependency), so it lives here rather than in either flow module — keeping
- * the flow modules acyclic.
+ * @internal Module-private. Production enters through resolveModelConfigForAddSafely
+ * below, which owns error presentation; the strict checks here THROW on purpose.
  *
  * @param baseConfig - The user's existing config (for auto-configure) or a minimal identity
  *   config (for add-server). The `server` reference is set by the caller.
  * @param serverRoot - Optional `root` from vLLM server model info (used for preset matching).
  * @param log - Optional output-channel logger (remote preset lookup diagnostics).
  */
-export async function resolveModelConfigForAdd(
+async function resolveModelConfigForAdd(
   context: vscode.ExtensionContext,
   modelId: string,
   serverUrl: string,
@@ -398,7 +375,7 @@ export async function resolveModelConfigForAdd(
     const message =
       `Preset "${fileName}"${origin} matches "${modelId}".\n\n` +
       `Modes: ${modeNames}.${detail ? `\n\n${detail}` : ''}\n\n` +
-      `Using it saves the model to Settings right away — adjust it later in Model Settings.`;
+      `Using it saves the model to Settings right away - adjust it later in Model Settings.`;
     let picked: string | undefined;
     for (;;) {
       const choice = await vscode.window.showInformationMessage(

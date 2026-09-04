@@ -23,7 +23,6 @@ export enum ProgressLocation { Notification = 15 }
 export enum ConfigurationTarget { Global = 1, Workspace = 2, WorkspaceFolder = 3 }
 export enum QuickPickItemKind { Separator = 0, Default = 1 }
 export enum FileType { File = 1, Directory = 2, SymbolicLink = 64 }
-export enum TreeItemCollapsibleState { None = 0, Collapsed = 1, Expanded = 2 }
 
 // ── Message parts ──────────────────────────────────────────────────────────
 export class LanguageModelTextPart {
@@ -172,14 +171,6 @@ export interface OutputChannel extends Disposable {
   show(preserveFocus?: boolean): void;
   hide(): void;
 }
-export interface FileSystemWatcher extends Disposable {
-  ignoreCreateEvents: boolean;
-  ignoreChangeEvents: boolean;
-  ignoreDeleteEvents: boolean;
-  onDidCreate: Event<Uri>;
-  onDidChange: Event<Uri>;
-  onDidDelete: Event<Uri>;
-}
 export interface ConfigurationChangeEvent {
   affectsConfiguration(section: string, scope?: unknown): boolean;
   [key: string]: unknown;
@@ -246,10 +237,6 @@ export const Uri: {
   joinPath: (...uris: unknown[]) => uris[uris.length - 1] as unknown as Uri,
 };
 
-export class RelativePattern {
-  constructor(public base: any, public pattern: string) {}
-}
-
 // ── EventEmitter ───────────────────────────────────────────────────────────
 export class EventEmitter<T> {
   private listeners: ((e: T) => any)[] = [];
@@ -261,42 +248,15 @@ export class EventEmitter<T> {
   dispose(): void { this.listeners = []; }
 }
 
-// ── Tree view surface ──────────────────────────────────────────────────────
-// Minimal stand-in for the vscode tree API (TreeDataProvider, TreeItem, theme
-// classes) so dashboard/deep-dive tree providers can be imported in tests.
-export class ThemeColor {
-  constructor(public readonly id: string) {}
-}
+// ── Theme / markdown classes ───────────────────────────────────────────────
+// Only what test-graph modules construct: hfDiscovery builds ThemeIcons.
+// The tree API (TreeItem/TreeDataProvider/ThemeColor/Command) left with CR-110 —
+// its only consumer, dashboard.ts, has no tests by design.
 export class ThemeIcon {
-  constructor(public readonly id: string, public readonly color?: ThemeColor) {}
+  constructor(public readonly id: string) {}
 }
 export class MarkdownString {
   constructor(public readonly value?: string) {}
-}
-export interface Command {
-  command: string;
-  title: string;
-  arguments?: unknown[];
-  tooltip?: string;
-}
-export class TreeItem {
-  label?: string;
-  id?: string;
-  description?: string | boolean;
-  tooltip?: string | MarkdownString;
-  iconPath?: ThemeIcon | string | Uri | { light: string | Uri; dark: string | Uri };
-  contextValue?: string;
-  command?: Command;
-  collapsibleState?: TreeItemCollapsibleState;
-  constructor(label?: string, collapsibleState?: TreeItemCollapsibleState) {
-    this.label = label;
-    this.collapsibleState = collapsibleState;
-  }
-}
-export interface TreeDataProvider<T> {
-  getTreeItem(element: T): TreeItem;
-  getChildren(element?: T): ProviderResult<T[]>;
-  onDidChangeTreeData?: Event<T | undefined | null | void>;
 }
 
 // ── workspace ──────────────────────────────────────────────────────────────
@@ -304,7 +264,6 @@ export const workspace: {
   getConfiguration(section?: string, scope?: unknown): WorkspaceConfiguration;
   workspaceFolders: readonly WorkspaceFolder[] | undefined;
   fs: { readDirectory(uri: Uri): Promise<[string, FileType][]>; readFile(uri: Uri): Promise<Uint8Array>; };
-  createFileSystemWatcher(globPattern: string | RelativePattern): FileSystemWatcher;
   onDidChangeConfiguration(listener: (e: ConfigurationChangeEvent) => any): Disposable;
   openTextDocument(uri: Uri | string | { language?: string; content?: string }): Thenable<unknown>;
   // Test hooks (typed so tests can set them without casts).
@@ -337,15 +296,6 @@ export const workspace: {
       return hook ? hook(uri) : Promise.resolve(new Uint8Array());
     },
   },
-  createFileSystemWatcher: () => ({
-    ignoreCreateEvents: false,
-    ignoreChangeEvents: false,
-    ignoreDeleteEvents: false,
-    onDidChange: () => ({ dispose: () => {} }),
-    onDidDelete: () => ({ dispose: () => {} }),
-    onDidCreate: () => ({ dispose: () => {} }),
-    dispose: () => {},
-  }),
   onDidChangeConfiguration: () => ({ dispose: () => {} }),
   openTextDocument: (_uri: Uri | string | { language?: string; content?: string }) => Promise.resolve({}),
 };
@@ -353,18 +303,12 @@ export const workspace: {
 // ── env ────────────────────────────────────────────────────────────────────
 export const env: {
   remoteName: string | undefined;
-  uiKind: number;
   appName: string;
-  language: string;
-  uriScheme: string;
   clipboard: { readText(): Promise<string>; writeText(text: string): Promise<void> };
   openExternal(target: string | Uri): Promise<boolean>;
 } = {
   remoteName: undefined,
-  uiKind: 1, // Desktop
   appName: 'Code',
-  language: 'en',
-  uriScheme: 'vscode',
   clipboard: { readText: () => Promise.resolve(''), writeText: () => Promise.resolve() },
   openExternal: () => Promise.resolve(true),
 };
@@ -531,16 +475,13 @@ export interface WebviewViewProvider {
 }
 
 // ── lm namespace (Language Model tools) ────────────────────────────────────
-// Minimal stub: captures tool registrations so tests can inspect/invoke them.
+// registerTool is a no-op: configSchemaTool registers a tool at activation and
+// nothing reads the registration back (the old _mockRegisteredTools capture
+// described tests that do not exist — CR-110).
 export const lm: {
   registerTool(name: string, tool: unknown): Disposable;
-  _mockRegisteredTools: Array<{ name: string; tool: unknown }>;
 } = {
-  registerTool: (name, tool) => {
-    lm._mockRegisteredTools.push({ name, tool });
-    return { dispose: () => {} };
-  },
-  _mockRegisteredTools: [],
+  registerTool: () => ({ dispose: () => {} }),
 };
 
 // ── Misc namespace members ─────────────────────────────────────────────────

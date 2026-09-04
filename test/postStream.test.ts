@@ -175,6 +175,27 @@ describe('graceful termination via handleResponseError', () => {
     expect(lines(output)).not.toContain('[ERROR]');
   });
 
+  it('does NOT swallow TypeError: terminated with a socket-kill cause (CR-35)', () => {
+    // undici wraps EVERY mid-body network kill as TypeError('terminated')
+    // with the real culprit in cause. Swallowing this shape means a proxy
+    // chopping the stream reads to the user as a complete answer.
+    const kill = new Error('other side closed');
+    kill.name = 'SocketError';
+    const { output, progress } = run(new TypeError('terminated', { cause: kill }));
+    expect(lines(output)).toContain('[ERROR]');
+    expect(lines(output)).not.toContain('request terminated');
+    expect(String((progress.reports[0] as any).value)).toContain('⚠️');
+  });
+
+  it('does NOT swallow terminated nested above an ECONNRESET-cause chain (CR-35)', () => {
+    const reset = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    const inner = new TypeError('terminated', { cause: reset });
+    const outer = new Error('fetch failed', { cause: inner });
+    const { output } = run(outer);
+    expect(lines(output)).toContain('[ERROR]');
+    expect(lines(output)).not.toContain('request terminated');
+  });
+
   it('does NOT swallow ERR_STREAM_PREMATURE_CLOSE (network drop must surface)', () => {
     // A premature close is a network/proxy drop, NOT an intentional
     // .terminate(). Swallowing it silently would hide real failures.

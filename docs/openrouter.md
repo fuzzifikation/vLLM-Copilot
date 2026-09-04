@@ -26,7 +26,7 @@ The `:free` suffix on a model ID is a **routing variant** and its own catalog en
 
 ## Manual config
 
-Manual config works the same way — a server entry plus a model that references it:
+Manual config works the same way - a server entry plus a model that references it:
 
 ```json
 "vllm-copilot.servers": [

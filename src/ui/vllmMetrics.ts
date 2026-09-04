@@ -57,6 +57,9 @@ interface ModelAccumulator {
 
 export interface ServerMetrics {
   online: boolean;
+  /** True only on the dashboard's pre-first-poll placeholder: "no data yet",
+   *  deliberately NOT an offline verdict (CR-25). */
+  loading?: boolean;
   version?: string;
   models: string[];
   maxModelLen: number | null;
@@ -120,7 +123,7 @@ export interface ServerRawData {
 }
 
 // ─── Prometheus Parser (dashboard sidebar) ─────────────────────────
-export class MetricsParser {
+class MetricsParser {
   models = new Map<string, ModelAccumulator>();
 
   private getAccum(model: string): ModelAccumulator {
@@ -313,7 +316,7 @@ export class MetricsParser {
   }
 }
 
-export function parseLabels(raw: string | undefined): Record<string, string> {
+function parseLabels(raw: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   if (!raw) return out;
   for (const m of raw.matchAll(/(\w+)="([^"]*)"/g)) {
@@ -321,9 +324,6 @@ export function parseLabels(raw: string | undefined): Record<string, string> {
   }
   return out;
 }
-
-// Re-export for testing
-export type { ModelAccumulator };
 
 // ─── Polling Engine ─────────────────────────────────────────────────
 
@@ -351,6 +351,11 @@ export class ServerMetricsEngine {
   private inFlight = false;
   private _lastAggregated: ServerMetrics | null = null;
   private _lastRaw: ServerRawData | null = null;
+  /** Epoch ms of the last cache fill (`_lastAggregated`/`_lastRaw`), 0 before
+   *  the first completed cycle. The Deep-Dive panel stamps a pushed cache with
+   *  this instead of the render time, so a stale snapshot never wears a fresh
+   *  timestamp. */
+  private _lastSnapshotAt = 0;
   private _disposed = false;
   /**
    * Cached per-backend context window, per model (non-vLLM only).
@@ -418,6 +423,9 @@ export class ServerMetricsEngine {
 
   /** Latest raw server data (synchronous, may be null before first poll). */
   getCachedRaw(): ServerRawData | null { return this._lastRaw; }
+
+  /** Epoch ms when the cached data was captured (0 before the first cycle). */
+  getCachedSnapshotAt(): number { return this._lastSnapshotAt; }
 
   /**
    * Subscribe to poll updates. The callback is invoked after each successful
@@ -638,6 +646,7 @@ export class ServerMetricsEngine {
 
       this._lastAggregated = aggregated;
       this._lastRaw = raw;
+      this._lastSnapshotAt = Date.now();
 
       // Surface the OpenRouter account-probe failure in the output channel ONCE
       // per state transition (ok→fail), not on every 15s poll — repeated identical
@@ -652,7 +661,7 @@ export class ServerMetricsEngine {
           if (ok) {
             this.output?.appendLine(`[INFO] OpenRouter account probe recovered for ${this.serverUrl}.`);
           } else {
-            this.output?.appendLine(`[WARN] OpenRouter account probe failed for ${this.serverUrl} — credits/limits hidden. Check the API key.`);
+            this.output?.appendLine(`[WARN] OpenRouter account probe failed for ${this.serverUrl} - credits/limits hidden. Check the API key.`);
           }
         }
         this.accountProbeSucceeded = ok;
@@ -696,6 +705,40 @@ export function getPollSettingMs(): number {
   } catch {
     return DEFAULT_POLL_MS;
   }
+}
+
+/** Command "vLLM-Copilot: Set Poll Interval": parse an interval ("15s"/"1m",
+ * ≥ 1s floor) and persist vllm-copilot.dashboard.pollIntervalMs. Lives next
+ * to {@link getPollSettingMs} so the key's reader and writer share one file
+ * (R7-P5-2); the dashboard's Refresh-Interval row invokes it by command id. */
+export function registerSetPollIntervalCommand(): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.setPollInterval', async () => {
+    const current = getPollSettingMs();
+    const input = await vscode.window.showInputBox({
+      prompt: 'Set polling interval (e.g. 15s, 30s, 1m)',
+      ignoreFocusOut: true,
+      value: `${current / 1000}s`,
+      validateInput: (val: string) => {
+        const s = val.replace(/s$/, '');
+        const m = val.replace(/m$/, '');
+        if (!isNaN(Number(s)) && Number(s) > 0) return undefined;
+        if (!isNaN(Number(m)) && Number(m) > 0) return undefined;
+        return 'Enter a valid interval (e.g. 15s, 30s, 1m)';
+      },
+    });
+    if (!input) return;
+    let ms: number;
+    if (input.endsWith('m')) {
+      ms = Number(input.slice(0, -1)) * 60 * 1000;
+    } else {
+      ms = Number(input.replace(/s$/, '')) * 1000;
+    }
+    if (ms < 1000) {
+      vscode.window.showErrorMessage('Polling interval must be at least 1s');
+      return;
+    }
+    await vscode.workspace.getConfiguration('vllm-copilot.dashboard').update('pollIntervalMs', ms, vscode.ConfigurationTarget.Global);
+  });
 }
 
 // ─── Engine Registry ────────────────────────────────────────────────
@@ -829,8 +872,24 @@ async function fetchAllEndpoints(
         Promise.resolve(''), // no /metrics
         Promise.resolve(''), // no /load
       ]);
-  clearTimeout(timer);
-  const modelsText = v1ModelsRes?.ok ? await v1ModelsRes.text() : '';
+  // The 5 s deadline stays ARMED across the remaining body reads (CR-41):
+  // Promise.all on fetch resolves at HEADERS, and clearing the timer here left
+  // the `/v1/models` and `/health` body reads with no deadline whatsoever. A
+  // server that answers headers then stalls the body hung those awaits forever,
+  // freezing the poll engine behind tick()'s in-flight guard — stale dashboard
+  // data served silently, a poller that dies without dying. The request signal
+  // rejects in-flight body reads, so the timer now covers the whole exchange;
+  // `/health` is read here too and its parse site consumes the stored text.
+  let modelsText = '';
+  let healthResText = '';
+  try {
+    [modelsText, healthResText] = await Promise.all([
+      v1ModelsRes?.ok ? v1ModelsRes.text() : Promise.resolve(''),
+      healthRes?.ok ? healthRes.text() : Promise.resolve(''),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 
   // ── Shared parse helpers ──
   const parseJsonSafe = <T>(text: string): T | undefined => {
@@ -907,8 +966,8 @@ async function fetchAllEndpoints(
           ? `Health check failed: ${probeRes.status}`
           : `${serverType} /v1/models failed: ${probeRes.status}`;
 
-  // ── Health body (for deep-dive) ──
-  const healthBody = online && healthRes?.ok ? await healthRes.text() : undefined;
+  // ── Health body (for deep-dive) — text already read under the deadline above. ──
+  const healthBody = online && healthRes?.ok ? healthResText : undefined;
 
   // ── OpenRouter relay: account/key health + budget (awaited here so the
   // ── endpoint fetches above ran in parallel — never a serial stall). The probes
@@ -974,11 +1033,12 @@ async function safeFetch(url: string, options: RequestInit): Promise<Response | 
   catch { return null; }
 }
 
-/** Build an empty/error ServerMetrics. Exported for the dashboard's
- * pre-first-poll fallback (one literal, not a per-module twin). */
+/** Build the dashboard's pre-first-poll placeholder (a loading sentinel, not
+ * an offline verdict — CR-25). Exported for the dashboard so there is one
+ * literal, not a per-module twin. */
 export function emptyMetrics(error: string): ServerMetrics {
   return {
-    online: false, error,
+    online: false, loading: true, error,
     models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
     cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
     avgTTFTMs: null, avgTPOTMs: null, avgTputTokPerSec: null, avgPrefillTputTokPerSec: null, preemptions: null, evictions: null,

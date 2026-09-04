@@ -30,7 +30,7 @@ export interface ServerConfig {
 }
 
 /** Result of request assembly: everything the stream call needs. */
-export interface BuildRequestResult {
+interface BuildRequestResult {
   /** Wire id SENT in the request — may carry an OpenRouter routing suffix (`:nitro`/`:exacto`). */
   vllmModelId: string;
   /** Canonical wire id (base slug, no suffix) — the key usage/cost tracking uses. */
@@ -143,7 +143,7 @@ export function buildRequest(
   if (modeParams) {
     output.appendLine(`[INFO] Model mode: "${selectedMode}" → ${JSON.stringify(modeParams)}`);
   } else if (selectedMode) {
-    output.appendLine(`[WARN] Selected mode "${selectedMode}" not found in modelModes for ${model.id} — no mode parameters applied`);
+    output.appendLine(`[WARN] Selected mode "${selectedMode}" not found in modelModes for ${model.id} - no mode parameters applied`);
   } else if (override?.modelModes && Object.keys(override.modelModes).length > 0) {
     output.appendLine(`[WARN] Model has modelModes configured but none was selected for ${model.id}`);
   }
@@ -171,8 +171,18 @@ export function buildRequest(
   // resolve is unreachable — fail loudly rather than send to an empty URL.
   const resolved = resolveServerConfig(override, servers);
   if (!resolved) {
+    // Distinguish the two ways this fails (CR-46): `resolveServerConfig`
+    // returns undefined both for a dangling `server` ref AND for a missing
+    // model entry (deleted in the last picker-TTL, or hand-deleted). Blaming
+    // the registry for a deleted model sends the user to fix a server that is
+    // perfectly fine.
+    if (!override) {
+      throw new Error(
+        `Model "${model.id}" is no longer configured - its model entry was removed from settings. Re-add the model to use it.`
+      );
+    }
     throw new Error(
-      `Model "${model.id}" references an unknown server — no registry entry matches its "server" ref. Fix the reference or re-add the server.`
+      `Model "${model.id}" references an unknown server - no registry entry matches its "server" ref. Fix the reference or re-add the server.`
     );
   }
   const settings = resolveModelSettings(override);

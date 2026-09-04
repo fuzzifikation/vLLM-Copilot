@@ -1,4 +1,4 @@
-# Qwen3.6-27B — Official Inference Parameters
+# Qwen3.6-27B - Official Inference Parameters
 
 ## Source
 
@@ -15,7 +15,7 @@
 
 Qwen recommends the following sets of sampling parameters depending on mode and task type:
 
-### Thinking Mode — General Tasks
+### Thinking Mode - General Tasks
 
 | Parameter | Value |
 |-----------|-------|
@@ -28,7 +28,7 @@ Qwen recommends the following sets of sampling parameters depending on mode and 
 
 Higher temperature gives more diverse reasoning paths.
 
-### Thinking Mode — Precise Coding (e.g., WebDev)
+### Thinking Mode - Precise Coding (e.g., WebDev)
 
 | Parameter | Value |
 |-----------|-------|

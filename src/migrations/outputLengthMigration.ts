@@ -95,6 +95,15 @@ export function planOutputLengthMigration(
 
     const updates: Omit<Partial<ModelConfig>, 'id' | 'server'> = {};
 
+    // Shared dead-parameter cleanup (CR-59): the dropdown pick outranks
+    // defaultParams.max_tokens forever, so that layer is exactly the "completely
+    // dead config" this migration exists to delete — the synthesized branch used
+    // to strip it while the preset branch left it behind.
+    if (typeof m.defaultParams?.max_tokens === 'number') {
+      const { max_tokens: _dropped, ...restParams } = m.defaultParams as Record<string, unknown>;
+      updates.defaultParams = (Object.keys(restParams).length > 0 ? restParams : '') as Partial<ModelConfig>['defaultParams'];
+    }
+
     // 1. Preset vector wins outright (user decision — even over a higher user
     //    scalar). The preset's DECLARED order is kept (head = its default);
     //    sanitization only filters/dedupes/caps. Fewer than 2 survivors is not
@@ -136,10 +145,6 @@ export function planOutputLengthMigration(
     const strippedModes = stripModeMaxTokens(m.modelModes as any);
     updates.maxOutputTokens = synthesized;
     if (strippedModes !== undefined) updates.modelModes = strippedModes as Partial<ModelConfig>['modelModes'];
-    if (typeof m.defaultParams?.max_tokens === 'number') {
-      const { max_tokens: _dropped, ...restParams } = m.defaultParams as Record<string, unknown>;
-      updates.defaultParams = (Object.keys(restParams).length > 0 ? restParams : '') as Partial<ModelConfig>['defaultParams'];
-    }
     proposals.push({
       id, server: m.server, displayName: m.displayName || id,
       from: m.maxOutputTokens, to: synthesized, source: 'synthesized', updates,
@@ -151,14 +156,14 @@ export function planOutputLengthMigration(
 /** Preview document text: one before/after block per proposal, JSONC-ish. */
 export function formatMigrationPreview(proposals: readonly OutputLengthProposal[]): string {
   const lines: string[] = [
-    '// vLLM-Copilot — proposed Output Length menu updates',
+    '// vLLM-Copilot - proposed Output Length menu updates',
     '// Close this editor and choose "Update output length menus" in the vLLM-Copilot notification to apply.',
     '',
   ];
   for (const p of proposals) {
     lines.push(`// ${p.displayName}`);
     lines.push(`//   source: ${p.source === 'preset' ? `preset ${p.sourceFile}` : 'your own configured max_tokens values'}`);
-    lines.push(`//   before: maxOutputTokens: ${p.from === undefined ? '(not set — extension default)' : JSON.stringify(p.from)}`);
+    lines.push(`//   before: maxOutputTokens: ${p.from === undefined ? '(not set - extension default)' : JSON.stringify(p.from)}`);
     lines.push(`//   after:  maxOutputTokens: ${JSON.stringify(p.to)}`);
     if (p.updates.modelModes !== undefined) lines.push(`//   after:  modelModes max_tokens layers removed (the dropdown owns response length now)`);
     if (p.updates.defaultParams !== undefined) lines.push(`//   after:  defaultParams max_tokens removed`);
@@ -203,7 +208,13 @@ export async function maybeOfferOutputLengthMigration(
       await context.globalState.update(MIGRATION_FLAG, 'declined');
       return;
     }
-    if (title !== BTN_UPDATE && title !== BTN_REVIEW) return; // dismissed — ask again next activation
+    // Defensive, currently unreachable: BTN_NOT_NOW is the close affordance,
+    // so ✕/Escape resolves to IT (recorded 'declined' above) and title is
+    // always one of the three. Kept as a belt in case the button set changes;
+    // recording NOTHING decided here means a future true dismiss path re-offers
+    // next activation instead of silently never again (the module header's
+    // "at most once" holds only because today no path reaches this line).
+    if (title !== BTN_UPDATE && title !== BTN_REVIEW) return;
 
     if (title === BTN_REVIEW) {
       const doc = await vscode.workspace.openTextDocument({

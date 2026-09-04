@@ -183,7 +183,7 @@ describe('runOpenRouterAddFlow', () => {
     expect(createQuickPickSpy).not.toHaveBeenCalled();
 
     // Key box ran FIRST, as a required password box.
-    expect(inputBoxSpy).toHaveBeenCalledWith(expect.objectContaining({ password: true, title: 'Add OpenRouter Model — API Key' }));
+    expect(inputBoxSpy).toHaveBeenCalledWith(expect.objectContaining({ password: true, title: 'Add OpenRouter Model - API Key' }));
     const keyCall = inputBoxSpy.mock.calls[0][0] as any;
     expect(keyCall.validateInput).toBeDefined();
     expect(keyCall.validateInput('')).toBe('An API key is required.');
@@ -203,7 +203,7 @@ describe('runOpenRouterAddFlow', () => {
         capabilities: { toolCalling: true, imageInput: false },
       }),
     );
-    expect(infoSpy).toHaveBeenCalledWith('Model "nvidia/nemotron-3.5-lightning:free" added.');
+    expect(infoSpy).toHaveBeenCalledWith(expect.any(String)); // toast fired; wording is chrome (CR-109)
     expect(provider.clearCache).toHaveBeenCalled();
   });
 

@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { buildAuthHeaders, resolveServerType, resolveModelSettings, resolveMaxTokensForRequest, buildModelId, toPublicModelConfig, type ModelConfig } from '../src/state/config.js';
+import { describe, it, expect, afterEach } from 'vitest';
+import * as vscode from 'vscode';
+import { resolveServerType, resolveModelSettings, resolveMaxTokensForRequest, buildModelId, toPublicModelConfig, validateConfig, type ModelConfig } from '../src/state/config.js';
+import { buildAuthHeaders } from '../src/commands/serverAuth.js';
 import type { ServerEntry } from '../src/state/serverRegistry.js';
 
 // ── resolveMaxTokensForRequest ──────────────────────────────────────────
@@ -192,5 +194,44 @@ describe('buildModelId', () => {
     const a = buildModelId('gw-8000', 'glm');
     const b = buildModelId('gw-8000-2', 'glm');
     expect(a).not.toBe(b);
+  });
+});
+
+// ── validateConfig: malformed raw settings (CR-88) ────────────────────────────────
+// CR-36 promised "garbage fails as a warning, not a corpse". The readers shred
+// non-object elements before validateConfig can see them, so the warning must
+// come from the RAW section check. These pin that it actually surfaces.
+
+describe('validateConfig raw-shape warnings (CR-88)', () => {
+  afterEach(() => {
+    vscode.workspace._mockConfig = {};
+  });
+  const cleanConfig = { models: [], servers: [], enableFileLogging: false };
+
+  it('warns when the raw servers section is not an array, even though readers filter it to empty', () => {
+    // The exact hand-edited shape CR-36 was about: getConfig hands validateConfig
+    // a filtered [], so only the raw read can report this.
+    vscode.workspace._mockConfig = { servers: { notAnArray: true } };
+    const warnings = validateConfig(cleanConfig as never);
+    expect(warnings.some(w => w.includes('"vllm-copilot.servers" is not an array'))).toBe(true);
+  });
+
+  it('counts non-object elements instead of silently dropping them', () => {
+    vscode.workspace._mockConfig = { servers: [null, 'x', { id: 'a', serverUrl: 'http://h:1' }] };
+    const warnings = validateConfig(cleanConfig as never);
+    expect(warnings.some(w => /2 malformed elements in "vllm-copilot\.servers"/.test(w))).toBe(true);
+  });
+
+  it('reports a single malformed element in singular form', () => {
+    vscode.workspace._mockConfig = { models: [{ id: 'm', server: 's' }, 5] };
+    const warnings = validateConfig(cleanConfig as never);
+    expect(warnings.some(w => w.includes('1 malformed element in "vllm-copilot.models"'))).toBe(true);
+  });
+
+  it('stays silent when sections are absent or clean', () => {
+    vscode.workspace._mockConfig = {};
+    expect(validateConfig(cleanConfig as never)).toEqual([]);
+    vscode.workspace._mockConfig = { servers: [{ id: 'a', serverUrl: 'http://h:1' }], models: [] };
+    expect(validateConfig(cleanConfig as never)).toEqual([]);
   });
 });

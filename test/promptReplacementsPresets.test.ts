@@ -31,10 +31,13 @@ describe('shipped prompt-replacements files', () => {
       expect(rules.length, `${file} has no usable rules`).toBeGreaterThan(0);
     });
 
-    it(`${file} is a valid personality`, async () => {
+    it(`${file} carries a name and description`, async () => {
       const absPath = replDir + file;
       const meta = await loadPersonalityMeta(absPath);
-      // Every shipped file is a personality: name + description required.
+      // Every shipped prompt-replacements file must carry meta.name +
+      // description. This is NOT an assertion that each is a personality:
+      // prompt-replacements-common.json is the shared rules file, explicitly
+      // excluded from personality discovery by promptReplacer.ts (CR-107).
       expect(meta?.name?.length ?? 0).toBeGreaterThan(0);
       expect(meta?.description?.length ?? 0).toBeGreaterThan(0);
     });

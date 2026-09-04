@@ -53,6 +53,10 @@
   // live state at message time (not a one-shot flag), so it cannot misfire under
   // concurrent refreshes.
   let pendingSave = false;
+  // Whether the form was last rendered against a CONFIGURED store entry (as
+  // opposed to an unconfigured server-model stub, whose save legitimately
+  // creates the entry). The save-time deleted-model guard reads this.
+  let lastRenderConfigured = false;
 
   // Wait for data from extension
   window.addEventListener('message', e => {
@@ -92,6 +96,16 @@
       if (keepDraft) {
         // Merge the new baseline + active-personality label without rebuilding the
         // form, so the rest of the draft (unsaved edits) is not discarded.
+        // Refresh the model baseline itself too: save() spreads S.mc as the
+        // payload base, so a stale entry here would write back fields the form
+        // never renders (cost, family, preset metadata) from a pre-refresh
+        // snapshot. Draft edits are safe — they live in the form controls, which
+        // overwrite the baseline on save. When the entry vanished from the fresh
+        // data, S.mc keeps the old shape and the save-time guard refuses.
+        if (sv && sv.models) {
+          const freshMc = sv.models.find(m => (m.id || m.vllmModelId) === S.selModel);
+          if (freshMc) S.mc = freshMc;
+        }
         const activeName = S.activePersonalities[S.selModel];
         const pSel = document.getElementById('personalitySel');
         const hint = pSel && !pSel.disabled ? document.querySelector('.personality-card .field-hint') : null;
@@ -105,7 +119,9 @@
   });
   vscode.postMessage({ type: 'ready' });
 
-  function E(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  // textContent/innerHTML does NOT escape double quotes, and results land in
+  // value="..."/title="..." attributes for third-party strings (CR-27).
+  function E(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML.replace(/"/g, '&quot;'); }
 
   // Compact token-count label for provider rows: 32768 → "32.8k", 131072 →
   // "131k", 1000000 → "1M". Whole units when ≥ 100 (no noisy decimals), one
@@ -236,7 +252,7 @@
   function render() {
     const r = document.getElementById('root');
     if (!S.servers.length) {
-      r.innerHTML = '<p class="empty-state">No servers configured. Run "Add vLLM Server & Model" first.</p>';
+      r.innerHTML = '<p class="empty-state">No servers configured. Run "Add or Reconfigure Server/Model" first.</p>';
       return;
     }
     const sv = S.servers.find(s => s.key === S.selServer) || S.servers[0];
@@ -275,6 +291,7 @@
     }
     if (!mc) { mc = (allOptions[0] && allOptions[0].mc) || null; if (mc) S.selModel = configKey(mc); }
     S.mc = mc;
+    lastRenderConfigured = !!(mc && sv.models.indexOf(mc) >= 0);
 
     let h = '<div class="selector-row">';
     h += '<label>Server</label><select id="sSel">';
@@ -355,12 +372,12 @@
         if (typeof ep.maxCompletionTokens === 'number' && ep.maxCompletionTokens > 0) titleParts.push(ep.maxCompletionTokens.toLocaleString('en-US') + ' max output');
         const pricingTitle = providerPricingTitle(ep);
         if (pricingTitle) titleParts.push(pricingTitle);
-        const title = titleParts.length > 0 ? ' title="' + E(ep.providerName + ' — ' + titleParts.join(', ')) + '"' : '';
+        const title = titleParts.length > 0 ? ' title="' + E(ep.providerName + ' - ' + titleParts.join(', ')) + '"' : '';
         h += '<option value="' + E(ep.tag) + '"' + (mc.provider === ep.tag ? ' selected' : '') + title + '>' + E(label + limits + pricing) + '</option>';
       });
       h += '</select>';
       if (endpoints.length === 0) {
-        h += '<div class="field-hint">Provider list unavailable — only Auto. Check the connection and reopen Model Settings.</div>';
+        h += '<div class="field-hint">Provider list unavailable - only Auto. Check the connection and reopen Model Settings.</div>';
       }
       // Routing mode — how OpenRouter sorts among providers when routing is Auto.
       // Standard (default) = price-weighted load balancing; Nitro = throughput-first;
@@ -375,7 +392,7 @@
       h += '<option value="nitro"' + (mc.routingMode === 'nitro' ? ' selected' : '') + '>Nitro</option>';
       h += '<option value="exacto"' + (mc.routingMode === 'exacto' ? ' selected' : '') + '>Exacto</option>';
       h += '</select>';
-      h += '<div class="field-hint" id="routingHint"' + (routingDisabled ? '' : ' hidden') + '>Routing is fixed when a provider is pinned — set Provider to Auto to choose a routing mode.</div>';
+      h += '<div class="field-hint" id="routingHint"' + (routingDisabled ? '' : ' hidden') + '>Routing is fixed when a provider is pinned - set Provider to Auto to choose a routing mode.</div>';
     }
     h += '</div>';
 
@@ -395,7 +412,7 @@
       // (an "Add Server (no model)" registry entry, or an unreachable server).
       // The server-level rows above stay functional; the model form is absent,
       // so mc stays null and save() writes server-level fields only.
-      h += '<p class="empty-state">No model to configure on this server yet. Run "Add vLLM Server &amp; Model", or check the server connection.</p>';
+      h += '<p class="empty-state">No model to configure on this server yet. Run "Add or Reconfigure Server/Model", or check the server connection.</p>';
     }
 
     if (S.mc) {
@@ -413,17 +430,17 @@
         '<input type="text" data-f="systemMessageReplacementsFile" value="' + E(String(m.systemMessageReplacementsFile || '')) + '">' +
         '<div class="field-hint">Path to JSON find/replace rules file (relative paths resolve against the workspace root)</div></div>' +
         '<div class="checkbox-row"><input type="checkbox" id="captureCb" ' + (S.systemMessageCapture ? 'checked' : '') + '><label>Record system prompts</label></div>' +
-        '<div class="field-hint">Capture Copilot system prompts to the workspace\'s .vllm/system-messages.json — used to build replacement rules</div>');
+        '<div class="field-hint">Capture Copilot system prompts to the workspace\'s .vllm/system-messages.json - used to build replacement rules</div>');
       h += sec('Token Budget',
         '<div class="field"><label>maxOutputTokens</label>' +
         '<input type="text" data-f="maxOutputTokens" placeholder="65536, 32768, 16384" value="' + E(Array.isArray(m.maxOutputTokens) ? m.maxOutputTokens.join(', ') : String(m.maxOutputTokens ?? '')) + '">' +
-        '<div class="field-hint">Max output tokens — or comma-separated choices (descending, first = default) to show the Copilot picker\'s "Output Length" dropdown. Values above the model cap are hidden. Empty = default 4096</div></div>' +
+        '<div class="field-hint">Max output tokens - or comma-separated choices (descending, first = default) to show the Copilot picker\'s "Output Length" dropdown. Values above the model cap are hidden. Empty = default 4096</div></div>' +
         fields([{ k: 'maxInputTokens', t: 'number', v: m.maxInputTokens ?? '', h: 'Auto-computed; set to reserve headroom' },
         { k: 'estimateCharsPerToken', t: 'number', v: m.estimateCharsPerToken ?? 3.5, h: 'Avg chars/token (default: 3.5)' }]));
       h += sec('Capabilities',
         '<div class="checkbox-row"><input type="checkbox" data-k="caps.toolCalling" ' + ((m.capabilities?.toolCalling ?? true) ? 'checked' : '') + '><label>Tool Calling (default: enabled)</label></div>' +
         '<div class="checkbox-row"><input type="checkbox" data-k="caps.imageInput" ' + (!!m.capabilities?.imageInput ? 'checked' : '') + '><label>Image Input (Vision)</label></div>');
-      h += sec('Request Params', '<div class="field-hint">Baseline parameters — overridden by Model Modes</div>' + dpSection(m));
+      h += sec('Request Params', '<div class="field-hint">Baseline parameters - overridden by Model Modes</div>' + dpSection(m));
       h += sec('Transport', fields([{ k: 'streamInactivityTimeout', t: 'number', v: m.streamInactivityTimeout ?? 0, h: 'SSE timeout in ms (0 = infinite)' },
         { k: 'initialResponseTimeoutMs', t: 'number', v: m.initialResponseTimeoutMs ?? 600000, h: 'First-response-header timeout in ms (0 = infinite)' },
         { k: 'autoContinueRetries', t: 'number', v: m.autoContinueRetries ?? 1, h: 'Auto-retry count (default: 1)' }]));
@@ -595,7 +612,7 @@
             : typeof val === 'string'
               ? '<input type="text" data-mk="' + E(key) + '" value="' + E(val) + '">' 
               : '<input type="number" data-mk="' + E(key) + '" value="' + E(String(val)) + '" step="any">') +
-        '<button class="secondary remove-param-btn" data-mk="' + E(key) + '">⊗</button>' +
+        '<button class="secondary remove-param-btn">⊗</button>' +
         '</div>';
     }
     h += '<div style="margin-top:4px"><button class="secondary add-mode-param-btn">+ Add Parameter</button></div>';
@@ -685,6 +702,10 @@
       const pn = card.dataset.mn;
       const ps = {};
       card.querySelectorAll('[data-mk]').forEach(inp => {
+        // Only real controls carry values — same guard the dp collector below
+        // got after CR-1. Non-input elements in the harvest range have no
+        // .value and would poison the mode params.
+        if (!inp.matches('input,textarea,select')) return;
         const k = inp.dataset.mk;
         let v;
         if (inp.tagName === 'TEXTAREA') v = jsonValueOrString(inp.value);
@@ -717,6 +738,21 @@
     // stubs both carry the registry entry id. Identity fields stay identity fields.
     u.vllmModelId = mc.vllmModelId || mc.id;
     u.id = mc.id || mc.vllmModelId;
+    // Deleted-model guard: the form was built from a configured store entry, but
+    // that entry is gone from the freshest data the webview has (palette delete,
+    // another window, the Remove button while the form was dirty). The store
+    // APPENDS on no match, so saving now would RESURRECT the deleted entry under
+    // a "saved" toast. Refuse honestly. Stub saves (entry never existed) are the
+    // documented create path and stay allowed.
+    if (lastRenderConfigured) {
+      const svNow = S.servers.find(s => s.key === S.selServer) || S.servers[0];
+      const stillThere = !!svNow && (svNow.models || []).some(
+        m => (m.id || m.vllmModelId) === u.id && m.server === u.server);
+      if (!stillThere) {
+        void webviewAlert('This model was deleted from settings while the form was open. Your edits were NOT saved (saving would re-create the deleted entry).');
+        return;
+      }
+    }
     pendingSave = true;
     vscode.postMessage({ type: 'save', config: u });
   }

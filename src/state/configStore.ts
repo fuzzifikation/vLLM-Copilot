@@ -11,7 +11,12 @@ import type { ServerEntry } from './serverRegistry.js';
  * of calling here, to avoid a config ↔ configStore import cycle.
  */
 export function readModels(): ModelConfig[] {
-  return vscode.workspace.getConfiguration('vllm-copilot').get<ModelConfig[]>('models') || [];
+  // Shape guard, not just `|| []`: a hand-edited object/number instead of an
+  // array, or a `null` element, would otherwise reach consumers verbatim
+  // (`entry.id` on null) and can crash activation before the provider is
+  // registered. Garbage fails as discarded entries, never as a corpse.
+  const raw = vscode.workspace.getConfiguration('vllm-copilot').get<unknown>('models');
+  return Array.isArray(raw) ? raw.filter((e): e is ModelConfig => !!e && typeof e === 'object') : [];
 }
 
 /**
@@ -37,7 +42,11 @@ export async function writeModels(models: ModelConfig[]): Promise<void> {
  * Counterpart of {@link readModels} for the server registry.
  */
 export function readServers(): ServerEntry[] {
-  return vscode.workspace.getConfiguration('vllm-copilot').get<ServerEntry[]>('servers') || [];
+  // Same shape guard as {@link readModels}: `|| []` catches absent/null but
+  // NOT `{}` or `[null]`, and this value feeds the activation dedupe block
+  // OUTSIDE any inner try — one hand-typed `{` must not kill every window.
+  const raw = vscode.workspace.getConfiguration('vllm-copilot').get<unknown>('servers');
+  return Array.isArray(raw) ? raw.filter((e): e is ServerEntry => !!e && typeof e === 'object') : [];
 }
 
 /**

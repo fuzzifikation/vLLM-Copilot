@@ -1,10 +1,10 @@
 # Configuration Reference
 
-> **Quick start:** Run **Add vLLM Server & Model** from the Command Palette to auto-generate model entries. Use this reference when you need to customize advanced settings.
+> **Quick start:** Run **Add or Reconfigure Server/Model** from the Command Palette to auto-generate model entries. Use this reference when you need to customize advanced settings.
 
-> **Copilot can write this for you:** the extension registers an on-demand **Language Model Tool** (`vllm-copilot_model_schema`) that hands Copilot Chat the model-entry JSON schema plus the parameter resolution rules. Just ask in chat — e.g. *"configure my Qwen3.6 model with Think / No Think modes"* — and Copilot will generate a valid `vllm-copilot.models` entry. The tool serves the bundled `schemas/vllm-copilot-models.schema.json`; no workspace files are created. If your AI doesn't pick it up automatically, force-attach it by typing `#vllmModelSchema` in the chat input.
+> **Copilot can write this for you:** the extension registers an on-demand **Language Model Tool** (`vllm-copilot_model_schema`) that hands Copilot Chat the model-entry JSON schema plus the parameter resolution rules. Just ask in chat - e.g. *"configure my Qwen3.6 model with Think / No Think modes"* - and Copilot will generate a valid `vllm-copilot.models` entry. The tool serves the bundled `schemas/vllm-copilot-models.schema.json`; no workspace files are created. If your AI doesn't pick it up automatically, force-attach it by typing `#vllmModelSchema` in the chat input.
 
-All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are six top-level settings: `vllm-copilot.servers` (array of **server entries** — endpoints, auth, backend type), `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), `vllm-copilot.enableFileLogging` (request/response logs), `vllm-copilot.logBodyLimit` (log truncation), and `vllm-copilot.dashboard.pollIntervalMs` (metrics polling).
+All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are six top-level settings: `vllm-copilot.servers` (array of **server entries** - endpoints, auth, backend type), `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), `vllm-copilot.enableFileLogging` (request/response logs), `vllm-copilot.logBodyLimit` (log truncation), and `vllm-copilot.dashboard.pollIntervalMs` (metrics polling).
 
 **Servers and models are separate.** A server entry owns `serverUrl`, `requestHeaders`, `serverType` and its display label; a model entry references its server by `server` id and owns everything model-scoped (token budgets, capabilities, params). There is no default or global server: a registry entry is used only because a model references it.
 
@@ -14,11 +14,11 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 
 | Field | Default | Description |
 |-------|:-------:|-------------|
-| `id` | — | **Required.** Unique key referenced by each model's `server`. The Add flow generates a slug from the host/port (e.g. `localhost-8000`; colliding slugs get `-2`, `-3`, …). The id is the server's identity (dashboard node, metrics engine, Deep-Dive panel) and its stable write target. |
-| `serverUrl` | — | **Required.** Server URL (OpenAI-compatible). |
-| `serverType` | `vllm` | Backend protocol. `vllm` \| `lmstudio` \| `llamacpp` \| `ollama` \| `openrouter`. **Set automatically by Add Server**, and auto-detected in Model Settings for unconfigured servers. Missing always means `vllm`. Manual third-party entries must set this — the extension never probes at runtime. |
-| `displayName` | — | Optional **server label** shown in the Dashboard tree and the Model Settings server dropdown instead of the raw URL (e.g. `"IT Server for GLM5.2"`). Set with **Rename Server** (right-click a server node in the Dashboard): the label belongs to exactly the registry entry you right-clicked, so entries sharing one URL (two OpenRouter keys, two gateway tenants) each carry their own. Empty/omitted shows the URL. |
-| `requestHeaders` | `{}` | HTTP headers for this server (auth, routing). **Isolated** — never shared across entries. |
+| `id` | - | **Required.** Unique key referenced by each model's `server`. The Add flow generates a slug from the host/port (e.g. `localhost-8000`; colliding slugs get `-2`, `-3`, …). The id is the server's identity (dashboard node, metrics engine, Deep-Dive panel) and its stable write target. |
+| `serverUrl` | - | **Required.** Server URL (OpenAI-compatible). |
+| `serverType` | `vllm` | Backend protocol. `vllm` \| `lmstudio` \| `llamacpp` \| `ollama` \| `openrouter`. **Set automatically by Add Server**, and auto-detected in Model Settings for unconfigured servers. Missing always means `vllm`. Manual third-party entries must set this - the extension never probes at runtime. |
+| `displayName` | - | Optional **server label** shown in the Dashboard tree and the Model Settings server dropdown instead of the raw URL (e.g. `"IT Server for GLM5.2"`). Set with **Rename Server** (right-click a server node in the Dashboard): the label belongs to exactly the registry entry you right-clicked, so entries sharing one URL (two OpenRouter keys, two gateway tenants) each carry their own. Empty/omitted shows the URL. |
+| `requestHeaders` | `{}` | HTTP headers for this server (auth, routing). **Isolated** - never shared across entries. |
 
 Two entries may share one URL: identity is the URL + sanitized-headers pair, so the same endpoint behind different credentials is two distinct servers, each probed and tracked with its own auth.
 
@@ -26,32 +26,32 @@ Two entries may share one URL: identity is the URL + sanitized-headers pair, so 
 
 | Field | Default | Description |
 |-------|:-------:|-------------|
-| `id` | — | **Required.** Unique entry key. Add flow sets this to `"<model> on <host>"`. |
-| `server` | — | **Required.** The `id` of this model's entry in `vllm-copilot.servers`. Models never carry URLs, auth headers, server types, or server labels. A dangling ref (no such entry) makes the model unusable — fix the ref or re-run **Add vLLM Server & Model**. |
-| `provider` | — | ⚡ **OpenRouter only.** The exact provider slug (from `GET /api/v1/models/{id}/endpoints`) to force routing to that provider via `provider: { only: [slug] }`. Use the **Provider** dropdown in Model Settings — never hand-derive. Omitted/empty = Auto. |
+| `id` | - | **Required.** Unique entry key. Add flow sets this to `"<model> on <host>"`. |
+| `server` | - | **Required.** The `id` of this model's entry in `vllm-copilot.servers`. Models never carry URLs, auth headers, server types, or server labels. A dangling ref (no such entry) makes the model unusable - fix the ref or re-run **Add or Reconfigure Server/Model**. |
+| `provider` | - | ⚡ **OpenRouter only.** The exact provider slug (from `GET /api/v1/models/{id}/endpoints`) to force routing to that provider via `provider: { only: [slug] }`. Use the **Provider** dropdown in Model Settings - never hand-derive. Omitted/empty = Auto. |
 | `routingMode` | `standard` | ⚡ **OpenRouter only.** How OpenRouter sorts/chooses among eligible providers when routing is **Auto** (no `provider` pinned): `standard` (price-weighted load balancing, no suffix), `nitro` (throughput-first + priority tier → wire id `:nitro`), `exacto` (quality/tool-calling-first → wire id `:exacto`). Ignored when a provider is pinned. Set via the **Routing** dropdown in Model Settings. |
 | `vllmModelId` | same as `id` | Actual model ID on the vLLM server (for aliases). |
 | `displayName` | same as `id` | Human-readable name in the model picker. |
 | `family` | auto-detected | Model family (e.g. `qwen3_5`, `llama`). From HuggingFace or extracted from model ID. |
-| `maxOutputTokens` | `4096` | Max tokens per response — a **number**, or an ordered **array** of token counts. An array renders a **second, independent model-picker dropdown** ("Output Length"), decoupled from `modelModes` (behavior): the **first element is the default AND the desired output budget**; entries above the model's clamped ceiling are dropped (if the head drops, the next survivor becomes default). When the dropdown is shown, the user's pick **owns** the request's `max_tokens` — outranking any per-mode/`defaultParams` `max_tokens` — **and is the advertised output budget**: a pick change re-publishes model metadata (same mechanism as mode switches), so a shorter pick grows the advertised prompt budget (context − output). Omit the array (or provide <2 usable values) for no dropdown — there is no auto-derived menu. **Do not combine an array with `max_tokens` in `modelModes`/`defaultParams`:** VS Code delivers the dropdown's default even when untouched, so those values become completely dead config — the picker replaces that layer, it does not merely outrank it. |
-| `maxInputTokens` | computed | Auto-computed as the server context window minus the **effective output budget** (resolved `max_tokens`: Output Length pick when `maxOutputTokens` is an array > `modelModes` entry > `defaultParams.max_tokens` > budget). Set only to reduce further — an explicit pin owns the split, so a shorter output-length pick then no longer grows the input budget. |
+| `maxOutputTokens` | `4096` | Max tokens per response - a **number**, or an ordered **array** of token counts. An array renders a **second, independent model-picker dropdown** ("Output Length"), decoupled from `modelModes` (behavior): the **first element is the default AND the desired output budget**; entries above the model's clamped ceiling are dropped (if the head drops, the next survivor becomes default). When the dropdown is shown, the user's pick **owns** the request's `max_tokens` - outranking any per-mode/`defaultParams` `max_tokens` - **and is the advertised output budget**: a pick change re-publishes model metadata (same mechanism as mode switches), so a shorter pick grows the advertised prompt budget (context − output). Omit the array (or provide <2 usable values) for no dropdown - there is no auto-derived menu. **Do not combine an array with `max_tokens` in `modelModes`/`defaultParams`:** VS Code delivers the dropdown's default even when untouched, so those values become completely dead config - the picker replaces that layer, it does not merely outrank it. |
+| `maxInputTokens` | computed | Auto-computed as the server context window minus the **effective output budget** (resolved `max_tokens`: Output Length pick when `maxOutputTokens` is an array > `modelModes` entry > `defaultParams.max_tokens` > budget). Set only to reduce further - an explicit pin owns the split, so a shorter output-length pick then no longer grows the input budget. |
 | `estimateCharsPerToken` | `3.5` | Chars-per-token for local token estimation. |
-| `defaultParams` | — | Model-scope generation params. Unset params are omitted — the server's default applies. Layered under `modelModes`. |
-| `modelModes` | — | Switchable named presets (Think/No Think, etc.). Bundled presets auto-applied by **Add vLLM Server & Model**; for existing entries, hand-edit and copy from [`model-configs/`](../model-configs/). |
+| `defaultParams` | - | Model-scope generation params. Unset params are omitted - the server's default applies. Layered under `modelModes`. |
+| `modelModes` | - | Switchable named presets (Think/No Think, etc.). Bundled presets auto-applied by **Add or Reconfigure Server/Model**; for existing entries, hand-edit and copy from [`model-configs/`](../model-configs/). |
 | `defaultMode` | first mode | Which mode is active before the user picks one. |
 | `capabilities.toolCalling` | `true` | Model supports tool/function calling. |
 | `capabilities.imageInput` | `false` | Model supports vision/image input. |
 | `streamInactivityTimeout` | `0` (off) | SSE stream timeout in ms. `0` = wait indefinitely. |
 | `initialResponseTimeoutMs` | `600000` | Budget in ms for the server to send the **first response headers**. `0` = wait indefinitely. Raise it if the server is slow to start responding (model loading / queue backlog). |
 | `autoContinueRetries` | `1` | Non-negative integer retry count for empty/truncated responses (assistant prefill). Invalid values are clamped safely; `0` = off. |
-| `systemMessageReplacementsFile` | — | Path to a JSON file of `{ ruleName, find, replace }` pairs applied to every system message. See [System Message Replacements](#system-message-replacements) below. |
-| `cost` | — | Optional per-model cost rates for the dashboard **Token Usage** tracker (per 1,000,000 tokens). See [Token Usage & Cost](#token-usage--cost) below. |
+| `systemMessageReplacementsFile` | - | Path to a JSON file of `{ ruleName, find, replace }` pairs applied to every system message. See [System Message Replacements](#system-message-replacements) below. |
+| `cost` | - | Optional per-model cost rates for the dashboard **Token Usage** tracker (per 1,000,000 tokens). See [Token Usage & Cost](#token-usage--cost) below. |
 
 **Resolution chain (highest wins):** server defaults (unset params are omitted from the request) → model `defaultParams` → the selected `modelModes` entry.
 
 ### Backend-specific context resolution
 
-The context window comes from the **backend's own documented endpoint** (never guessed, never fabricated — a model without one is refused):
+The context window comes from the **backend's own documented endpoint** (never guessed, never fabricated - a model without one is refused):
 
 | `serverType` | Endpoint | Field |
 |---|---|---|
@@ -59,7 +59,7 @@ The context window comes from the **backend's own documented endpoint** (never g
 | `lmstudio` | `GET /api/v1/models` | matching loaded instance `config.context_length`, else `max_context_length` |
 | `llamacpp` | `GET /props?model=<encoded id>` | `default_generation_settings.n_ctx` |
 | `ollama` | `GET /api/ps` | matching `models[].context_length` (model must be loaded) |
-| `openrouter` | `GET https://openrouter.ai/api/v1/models` (the **catalog**) | match the requested id **verbatim** (variants are separate entries); `context_length` → `top_provider.context_length` (smallest positive wins); output ceiling from `top_provider.max_completion_tokens` / `per_request_limits.completion_tokens`, falling back to 10% of the window (capped). The exact-model endpoint is deliberately NOT used — it resolves variants inconsistently. |
+| `openrouter` | `GET https://openrouter.ai/api/v1/models` (the **catalog**) | match the requested id **verbatim** (variants are separate entries); `context_length` → `top_provider.context_length` (smallest positive wins); output ceiling from `top_provider.max_completion_tokens` / `per_request_limits.completion_tokens`, falling back to 10% of the window (capped). The exact-model endpoint is deliberately NOT used - it resolves variants inconsistently. |
 
 `maxInputTokens` is computed from that window (window minus the effective output budget, the resolved `max_tokens`) and can only clamp it further. The picker is a live inventory: a model is listed only while its server answers and reports a real context window for it. An unreachable server, or a model the server does not currently serve, drops the model from the picker; it reappears on its own once the server serves it again (silent lookups are cached for about a minute, deliberate refreshes like settings changes, **Test & Refresh Models**, mode or output-length picks, and a request that fails to connect always probe live). Budgets are never fabricated and no health state is persisted across restarts.
 
@@ -69,12 +69,12 @@ The context window comes from the **backend's own documented endpoint** (never g
 
 Any vLLM chat body field except `model`, `messages`, `stream`, `stream_options`. *(vLLM-only)* marks params OpenAI does not accept.
 
-> **Note:** `max_tokens` sets the **output budget** for its scope. In a `modelModes` entry it gives that mode its own response ceiling; in `defaultParams` it sets the model-scope budget. It overrides `maxOutputTokens` for the request and is clamped to the model's context window and the server-reported output ceiling. Prefer per-mode via `modelModes`. **If `maxOutputTokens` is an array, the user's dropdown selection overrides every `max_tokens` layer above** — modes then describe behavior only, not length.
+> **Note:** `max_tokens` sets the **output budget** for its scope. In a `modelModes` entry it gives that mode its own response ceiling; in `defaultParams` it sets the model-scope budget. It overrides `maxOutputTokens` for the request and is clamped to the model's context window and the server-reported output ceiling. Prefer per-mode via `modelModes`. **If `maxOutputTokens` is an array, the user's dropdown selection overrides every `max_tokens` layer above** - modes then describe behavior only, not length.
 
 | Param | Description |
 |-------|-------------|
-| `temperature` | Sampling temperature (0–2). Omitted when unset — the server's default applies. `0` = greedy |
-| `top_p` | Nucleus sampling threshold (0–1). Omitted when unset — the server's default applies |
+| `temperature` | Sampling temperature (0–2). Omitted when unset - the server's default applies. `0` = greedy |
+| `top_p` | Nucleus sampling threshold (0–1). Omitted when unset - the server's default applies |
 | `max_tokens` | Output budget for this scope. Overrides `maxOutputTokens` (clamped to the context window and the server-reported output ceiling). Set per-mode via `modelModes` to give a mode its own response ceiling. Superseded by the Output Length pick when `maxOutputTokens` is an array |
 | `top_k` | Top-k sampling (int). −1 = disabled *(vLLM-only)* |
 | `min_p` | Minimum probability threshold (0–1) *(vLLM-only)* |
@@ -99,7 +99,7 @@ Any vLLM chat body field except `model`, `messages`, `stream`, `stream_options`.
 | `reasoning_effort` | Reasoning effort (e.g. `high`, `max`, `none`, `xhigh`). On vLLM this auto-maps to `chat_template_kwargs.enable_thinking` (`high`/`max` → true, `none` → false) |
 | `allowed_token_ids` | Restrict generation to these token IDs *(vLLM-only; niche)* |
 
-> **Not enabled by default:** `repetition_detection` is **off** unless you add it to a model's `defaultParams` or a mode. The n-gram detector (`max_pattern_size: 5, min_pattern_size: 2, min_count: 3`) triggers on structured output like XML tables, JSON arrays, and code loops — not just actual repetition — so it is opt-in. If you want it, add it per-model: `"repetition_detection": { "max_pattern_size": 5, "min_pattern_size": 2, "min_count": 3 }`.
+> **Not enabled by default:** `repetition_detection` is **off** unless you add it to a model's `defaultParams` or a mode. The n-gram detector (`max_pattern_size: 5, min_pattern_size: 2, min_count: 3`) triggers on structured output like XML tables, JSON arrays, and code loops - not just actual repetition - so it is opt-in. If you want it, add it per-model: `"repetition_detection": { "max_pattern_size": 5, "min_pattern_size": 2, "min_count": 3 }`.
 
 ---
 
@@ -116,7 +116,7 @@ The **vLLM Dashboard** sidebar shows live metrics for each configured vLLM serve
 | **KV Cache** | Prometheus `kv_cache_usage_perc` | GPU KV cache utilization (0–100%) |
 | **KV Cache Hit** | Prometheus `prompt_tokens_total` vs `prompt_tokens_cached_total` | Percentage of tokens served from KV cache |
 | **Avg TTFT** | Prometheus `time_to_first_token_seconds` | Time to first token (ms) |
-| **Speed** | Prometheus `request_generation_tokens` ÷ `request_decode_time_seconds`, and `request_prompt_tokens` ÷ `request_prefill_time_seconds` | `Output` = Σ generation tokens / Σ decode time (tok/s, output-only — excludes prefill). `Prefill` = Σ prompt tokens / Σ prefill time (tok/s, includes cache-served tokens). Falls back to TPOT inversion when the pooled metric is absent |
+| **Speed** | Prometheus `request_generation_tokens` ÷ `request_decode_time_seconds`, and `request_prompt_tokens` ÷ `request_prefill_time_seconds` | `Output` = Σ generation tokens / Σ decode time (tok/s, output-only - excludes prefill). `Prefill` = Σ prompt tokens / Σ prefill time (tok/s, includes cache-served tokens). Falls back to TPOT inversion when the pooled metric is absent |
 | **Running** | Prometheus `num_requests_running` | Active requests being processed |
 | **Waiting** | Prometheus `num_requests_waiting` | Requests queued, waiting for GPU |
 | **MTP** | Prometheus `spec_decode_*` | Speculative decoding: acceptance %, draft depth, total proposals (only when active) |
@@ -127,7 +127,7 @@ The **vLLM Dashboard** sidebar shows live metrics for each configured vLLM serve
 
 | Setting | Default | Description |
 |---|---|---|
-| `vllm-copilot.dashboard.pollIntervalMs` | `15000` | How often to refresh metrics (ms). Click **Refresh Interval** in the sidebar to change — enter `15s`, `30s`, `1m`, etc. Also editable in Settings |
+| `vllm-copilot.dashboard.pollIntervalMs` | `15000` | How often to refresh metrics (ms). Click **Refresh Interval** in the sidebar to change - enter `15s`, `30s`, `1m`, etc. Also editable in Settings |
 
 ### Last Request Details
 
@@ -150,11 +150,11 @@ Under each server in the Dashboard tree, a collapsible **Last Request** node sho
 
 When server flags aren't set, the node shows a hint: "Start vLLM with `--enable-prompt-tokens-details` and `--enable-per-request-metrics` for full details."
 
-> **Cost row:** when the model has a `cost` config, the Last Request node also shows a **Cost** row — the estimated cost of that single request, derived from the model's per-1M rates. This is the per-prompt money-verification view.
+> **Cost row:** when the model has a `cost` config, the Last Request node also shows a **Cost** row - the estimated cost of that single request, derived from the model's per-1M rates. This is the per-prompt money-verification view.
 
 ### Token Usage & Cost
 
-Under each server, a collapsible **Token Usage and Cost** node shows **cumulative** token consumption across all requests (not just the last one). It updates **immediately** after every completed prompt — it does not wait for the metrics poll interval. The node is **model-first**: one collapsible entry per model (labeled by `displayName`), each with **Today** and **Overall** rows. For the design and data model behind this feature, see [usage.md](usage.md). **OpenRouter servers do not show this node** — every relay model already carries its own token/cost rows in its expanded details, so a server-level aggregate would be pure duplication. (Usage is still recorded, and **Reset Usage** stays available via the palette command.)
+Under each server, a collapsible **Token Usage and Cost** node shows **cumulative** token consumption across all requests (not just the last one). It updates **immediately** after every completed prompt - it does not wait for the metrics poll interval. The node is **model-first**: one collapsible entry per model (labeled by `displayName`), each with **Today** and **Overall** rows. For the design and data model behind this feature, see [usage.md](usage.md). **OpenRouter servers do not show this node** - every relay model already carries its own token/cost rows in its expanded details, so a server-level aggregate would be pure duplication. (Usage is still recorded, and **Reset Usage** stays available via the palette command.)
 
 | Row | Description |
 |---|---|
@@ -163,11 +163,11 @@ Under each server, a collapsible **Token Usage and Cost** node shows **cumulativ
 | **Overall** | All-time tokens plus `· started 5d ago` (when recording began). |
 | **Reset Usage** | Right-click the **Token Usage and Cost** node → clear all usage for this server (all-time, daily, started-at). The Last Request node is kept. |
 
-The price sits on the **model line** (its collapsed summary: `$11.51 today and $31.13 total`); the **Today / Overall** rows are token-only — `800k in · 200k cached · 500k out`, where `in` **excludes** cache and `in + cached = total input` (cached = cache-*read* input tokens). Costs use **fine precision** — sub-cent amounts keep up to 6 decimals (`$0.0007`) rather than collapsing to `$0.00`; AI Credits keep 2 decimals. **OpenRouter models prefer their actual reported cost (`usage.cost`) when present**, falling back to the configured per-1M rates; the two are never summed. Token counts round to whole thousands. **There is no server-level cost sum** — models on one server may use different currencies, so each model's price uses its own currency. Sum costs across models manually. Currency decoration uses a small static map — `$` (USD), `€` (EUR), `£` (GBP), `¥` (JPY/CNY), `credits` (AI Credits) — and any other currency falls back to its raw code (`EUR 12.35`); no currency library is bundled.
+The price sits on the **model line** (its collapsed summary: `$11.51 today and $31.13 total`); the **Today / Overall** rows are token-only - `800k in · 200k cached · 500k out`, where `in` **excludes** cache and `in + cached = total input` (cached = cache-*read* input tokens). Costs use **fine precision** - sub-cent amounts keep up to 6 decimals (`$0.0007`) rather than collapsing to `$0.00`; AI Credits keep 2 decimals. **OpenRouter models prefer their actual reported cost (`usage.cost`) when present**, falling back to the configured per-1M rates; the two are never summed. Token counts round to whole thousands. **There is no server-level cost sum** - models on one server may use different currencies, so each model's price uses its own currency. Sum costs across models manually. Currency decoration uses a small static map - `$` (USD), `€` (EUR), `£` (GBP), `¥` (JPY/CNY), `credits` (AI Credits) - and any other currency falls back to its raw code (`EUR 12.35`); no currency library is bundled.
 
 **Entry points (right-click the Token Usage and Cost node):** **Set Cost…** configures the per-1M rates through guided prompts (model → input/output/cached-input → currency) and writes the `cost` block for you; **Reset Usage** clears the server's counters. The dashboard re-renders immediately after either.
 
-**Cost configuration** — optional per-model rates, in **currency units per 1,000,000 tokens**:
+**Cost configuration** - optional per-model rates, in **currency units per 1,000,000 tokens**:
 
 ```jsonc
 "vllm-copilot.models": [
@@ -186,18 +186,18 @@ The price sits on the **model line** (its collapsed summary: `$11.51 today and $
 ```
 
 - **All rates are per 1,000,000 tokens.** Most providers publish per-1M prices (OpenAI, Anthropic, DeepSeek); if yours bills per 1K, multiply by 1000.
-- **`currency`** is a display label only — enter the rates *in that unit*. Use `"AI Credits"` to compare with the Copilot model picker: 1 AI credit = $0.01, so enter credit values directly (no conversion is applied).
-- **Rates are derived at render time, never stored.** Edit a rate and every historical total re-prices instantly — no migration.
+- **`currency`** is a display label only - enter the rates *in that unit*. Use `"AI Credits"` to compare with the Copilot model picker: 1 AI credit = $0.01, so enter credit values directly (no conversion is applied).
+- **Rates are derived at render time, never stored.** Edit a rate and every historical total re-prices instantly - no migration.
 - **Omit `cost` or set all rates to `0`** → no cost lines for that model (e.g. a free local server).
 - **Cost formula** (per request/bucket): `(prompt − cached)/1M × input + cached/1M × cachedInput + completion/1M × output`. Fresh input is priced at `input`; cache-read input at `cachedInput`.
 
-**Reset via command palette** — `vLLM-Copilot: Reset Usage` lets you pick *All servers* or a single server.
+**Reset via command palette** - `vLLM-Copilot: Reset Usage` lets you pick *All servers* or a single server.
 
 ---
 
 ## Typical Example
 
-A working chat model — minimum viable config. No modes, no custom params, just a model pointing at a registered server. Everything else uses defaults (`maxOutputTokens: 4096`; sampling params are omitted so the server's defaults apply):
+A working chat model - minimum viable config. No modes, no custom params, just a model pointing at a registered server. Everything else uses defaults (`maxOutputTokens: 4096`; sampling params are omitted so the server's defaults apply):
 
 ```json
 "vllm-copilot.servers": [
@@ -212,13 +212,13 @@ A working chat model — minimum viable config. No modes, no custom params, just
 ]
 ```
 
-> **Tip:** Run **Add vLLM Server & Model** to generate this — it auto-detects `family`, `max_model_len`, and capabilities, and applies a bundled preset if one fits.
+> **Tip:** Run **Add or Reconfigure Server/Model** to generate this - it auto-detects `family`, `max_model_len`, and capabilities, and applies a bundled preset if one fits.
 
 ---
 
 ## Full Syntax Reference
 
-> ⚠️ **This is a syntax reference, not a recommended starting point.** Do not copy these values — they cover every supported field/param so you can see the JSON shape. For real starting points, use **Add vLLM Server & Model** or see the [Typical Example](#typical-example) above.
+> ⚠️ **This is a syntax reference, not a recommended starting point.** Do not copy these values - they cover every supported field/param so you can see the JSON shape. For real starting points, use **Add or Reconfigure Server/Model** or see the [Typical Example](#typical-example) above.
 
 ```jsonc
 "vllm-copilot.servers": [
@@ -247,7 +247,7 @@ A working chat model — minimum viable config. No modes, no custom params, just
     "server": "localhost-8000",                        // required; id of this model's entry in vllm-copilot.servers
 
     // ── Token budgets ─────────────────────────────────────
-    // `max_model_len` (context window) is auto-discovered from /v1/models — do NOT set it here.
+    // `max_model_len` (context window) is auto-discovered from /v1/models - do NOT set it here.
     "maxOutputTokens": 8192,                           // max tokens per response (default 4096)
     "maxInputTokens": 28672,                           // optional; clamp below (window − effective output budget)
     "estimateCharsPerToken": 3.5,                      // for local token estimation (default 3.5)
@@ -267,9 +267,9 @@ A working chat model — minimum viable config. No modes, no custom params, just
     "systemMessageReplacementsFile": ".vllm/prompt-replacements.json",
 
     // ── defaultParams: always-on, model-scope ────────────
-    // Layered under selected mode. Unset sampling params are omitted — the server default applies.
+    // Layered under selected mode. Unset sampling params are omitted - the server default applies.
     "defaultParams": {
-      // — Standard sampling (OpenAI-compatible) —
+      // - Standard sampling (OpenAI-compatible) -
       "temperature": 0.7,                // 0–2. 0 = greedy
       "top_p": 0.95,                     // 0–1, nucleus threshold
       "top_k": 40,                       // int; −1 = disabled (vLLM-only)
@@ -280,19 +280,19 @@ A working chat model — minimum viable config. No modes, no custom params, just
       "length_penalty": 1.0,             // beam-search only; 1.0 = none
       "seed": 42,                        // int for reproducibility; omit for random
 
-      // — Stop conditions —
+      // - Stop conditions -
       "stop": ["\n\nUser:", "\n\n\n"],   // str | list[str]
       "stop_token_ids": [151645, 151643],// list[int] (vLLM-only)
       "include_stop_str_in_output": false,// bool, default false (vLLM-only)
       "ignore_eos": false,               // ⚠️ true = never stops on EOS; use with min_tokens (vLLM-only)
       "min_tokens": 1,                   // ignore stop until N tokens emitted
 
-      // — Output detokenization —
+      // - Output detokenization -
       "skip_special_tokens": true,        // default true (vLLM-only)
       "spaces_between_special_tokens": true, // default true (vLLM-only)
       "truncate_prompt_tokens": -1,      // −1 = none; cap prompt length server-side (vLLM-only)
 
-      // — vLLM-specific features —
+      // - vLLM-specific features -
       "bad_words": ["I cannot", "I apologize", "As an AI"], // blocked tokens (vLLM-only)
       "repetition_detection": {          // N-gram early-stop; distinct from repetition_penalty (vLLM-only)
         "max_pattern_size": 4,           // longest N-gram tracked
@@ -302,13 +302,13 @@ A working chat model — minimum viable config. No modes, no custom params, just
       "thinking_token_budget": 4096,     // reasoning models; −1 = unlimited (needs --reasoning-parser)
       "allowed_token_ids": [13, 330, 1463], // only allow these token IDs (vLLM-only; niche)
 
-      // — Chat template (per-model) —
+      // - Chat template (per-model) -
       "chat_template_kwargs": {           // passed to the tokenizer's chat template
         "enable_thinking": true,
         "preserve_thinking": true
       },
 
-      // — Structured output (pick ONE: json | regex | choice | grammar) —
+      // - Structured output (pick ONE: json | regex | choice | grammar) -
       // vLLM ≥ v0.12.0. All four are mutually exclusive within one params block.
       "structured_outputs": {
         "json": {
@@ -357,7 +357,7 @@ A working chat model — minimum viable config. No modes, no custom params, just
 
 ## Multiple Servers with Isolated Auth
 
-Each server entry carries its own `requestHeaders`; they are never shared. The same URL can even be registered twice under different credentials — that is two distinct servers, each probed and called with its own auth:
+Each server entry carries its own `requestHeaders`; they are never shared. The same URL can even be registered twice under different credentials - that is two distinct servers, each probed and called with its own auth:
 
 ```json
 "vllm-copilot.servers": [
@@ -381,7 +381,7 @@ Each server entry carries its own `requestHeaders`; they are never shared. The s
 
 ## System Message Replacements
 
-After capturing system messages (see [Custom System Prompt](./custom-system-prompt.md)), create a JSON file of find/replace rules. Each rule is an exact substring match applied sequentially — empty `replace` removes the matched text:
+After capturing system messages (see [Custom System Prompt](./custom-system-prompt.md)), create a JSON file of find/replace rules. Each rule is an exact substring match applied sequentially - empty `replace` removes the matched text:
 
 ```json
 [
@@ -402,7 +402,7 @@ Then set `systemMessageReplacementsFile` on the model entry to point to this fil
 
 **How it works:**
 - Exact substring match (no regex)
-- Applied to **every** system message (not just the first) — chat, progress, title generation, etc.
+- Applied to **every** system message (not just the first) - chat, progress, title generation, etc.
 - Applied in array order, sequentially
 - Matched `ruleName`s are logged in the capture file so you can verify
 
@@ -422,7 +422,7 @@ Personalities apply in the **Agents window** too: the shared file and preset fil
 |--------|------|-------------|
 | **Supportive Mentor** | `prompt-replacements/prompt-replacements-supportive-mentor.json` | Patient mentor who builds better engineers. High standards, honest feedback, explains the why, celebrates progress. Invested in you, not just your code. |
 | **Critical Senior Dev** | `prompt-replacements/prompt-replacements-critical-senior.json` | Sharp collaborator who challenges assumptions and surfaces trade-offs. Helps push the project forward. |
-| **Sarcastic Robot** | `prompt-replacements/prompt-replacements-sarcastic-robot.json` | Brilliant, condescending, politically incorrect. Finds human code amusingly primitive — but fixes it anyway. |
+| **Sarcastic Robot** | `prompt-replacements/prompt-replacements-sarcastic-robot.json` | Brilliant, condescending, politically incorrect. Finds human code amusingly primitive - but fixes it anyway. |
 | **Spartan** | `prompt-replacements/prompt-replacements-spartan.json` | Absolute minimalism. Zero fluff. Short answers. Code first, words only when necessary. |
 
 **Usage:** In the **vLLM Model Settings** sidebar, pick a model and choose a personality from the dropdown in the model's **General** section. Or use `Ctrl+Shift+P` → **Set Model Personality**. Picking a personality copies it into the extension's **global storage** (`personalities/`) so it follows you across workspaces and survives extension upgrades. **Default (no personality)** clears the replacement and restores Copilot's original system prompt.
@@ -443,7 +443,7 @@ Or set the path manually on the model entry:
 
 Relative paths resolve against the **workspace root**; absolute paths (like the global storage path the picker writes) work from any workspace.
 
-**Want to customize a preset?** Bundled presets are **extension-owned and re-synced on every apply** — editing the global copy of a bundled preset gets clobbered the next time you re-apply it. Put custom behavior in your own replacement file via `systemMessageReplacementsFile` (relative `.vllm/` paths still work) or a user-created personality in global storage. Custom files also receive the shared boilerplate removals appended after their own rules; those rules only delete Microsoft boilerplate and never inject text. See [System Message Replacements](#system-message-replacements).
+**Want to customize a preset?** Bundled presets are **extension-owned and re-synced on every apply** - editing the global copy of a bundled preset gets clobbered the next time you re-apply it. Put custom behavior in your own replacement file via `systemMessageReplacementsFile` (relative `.vllm/` paths still work) or a user-created personality in global storage. Custom files also receive the shared boilerplate removals appended after their own rules; those rules only delete Microsoft boilerplate and never inject text. See [System Message Replacements](#system-message-replacements).
 
 ---
 
@@ -463,34 +463,34 @@ Relative paths resolve against the **workspace root**; absolute paths (like the 
 
 | If… | Run this |
 |---|---|
-| You want to know whether your configured servers are reachable and which models loaded | **Test & Refresh Models** — pings `GET /v1/models` per configured server, lists models, surfaces full error causes for failed servers, and warns if VS Code's network gating settings (`http.proxySupport`, `http.fetchAdditionalSupport`, `http.systemCertificates`) are non-default. TLS failures get a conditional certificate-trust suggestion appended. On failure it offers to escalate to **Diagnose Connection**. |
-| A model or server won't connect and you need to find out **why** (TLS, proxy, DNS, cert chain) | **Diagnose Connection** — runs a deep multi-test report against one URL. See below for what it gathers. |
+| You want to know whether your configured servers are reachable and which models loaded | **Test & Refresh Models** - pings `GET /v1/models` per configured server, lists models, surfaces full error causes for failed servers, and warns if VS Code's network gating settings (`http.proxySupport`, `http.fetchAdditionalSupport`, `http.systemCertificates`) are non-default. TLS failures get a conditional certificate-trust suggestion appended. On failure it offers to escalate to **Diagnose Connection**. |
+| A model or server won't connect and you need to find out **why** (TLS, proxy, DNS, cert chain) | **Diagnose Connection** - runs a deep multi-test report against one URL. See below for what it gathers. |
 
-**What Diagnose Connection gathers (goes to its own Output channel — copy-paste to share):**
+**What Diagnose Connection gathers (goes to its own Output channel - copy-paste to share):**
 
 - **Environment:** extension version, Node version, VS Code version, platform
 - **Target URL** + parsed host/port
 - **DNS resolution** for the hostname
 - **TCP connect** test against host:port
-- **Node fetch** (OpenSSL, the same path VS Code's patched `globalThis.fetch` uses) — status code or unwrapped error
+- **Node fetch** (OpenSSL, the same path VS Code's patched `globalThis.fetch` uses) - status code or unwrapped error
 - **System-native fetch** for comparison: PowerShell `Invoke-WebRequest` (SChannel) on Windows, `curl` (Secure Transport / OpenSSL) elsewhere
 - **Certificate chain inspection** (only on TLS errors, Windows: SChannel chain via PowerShell, others: `openssl s_client`)
 - **Proxy detection:** WinHTTP config (Windows) + Windows IE/registry proxy settings (Group Policy can set these silently)
 - **VS Code settings dump:** `http.proxy`, `http.proxySupport`, `http.fetchAdditionalSupport`, `http.systemCertificates`, `http.systemCertificatesNode`, `http.noProxy`, `http.proxyStrictSSL`, etc.
 - **Env vars:** `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED` (proxy URLs are credential-redacted in the report)
-- **Conclusion:** a one-line classification — *reachable* (TLS valid), *auth failure* (401/403), *proxy auth* (407), *server error* (5xx), *TLS trust gap* (system native worked, Node didn't), *DNS/TCP failure*, *proxy/config issue*
+- **Conclusion:** a one-line classification - *reachable* (TLS valid), *auth failure* (401/403), *proxy auth* (407), *server error* (5xx), *TLS trust gap* (system native worked, Node didn't), *DNS/TCP failure*, *proxy/config issue*
 
-> **Why both a Node fetch and a system-native fetch?** If Node fetch fails with a TLS error but PowerShell/curl succeeds, that points to a cert trust gap — e.g. a missing corporate intermediate — but it is not proof of one: the two paths can also use different proxy routing or trust stores. The full error cause is in the report (e.g. `SELF_SIGNED_CERT_IN_CHAIN`, `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`).
+> **Why both a Node fetch and a system-native fetch?** If Node fetch fails with a TLS error but PowerShell/curl succeeds, that points to a cert trust gap - e.g. a missing corporate intermediate - but it is not proof of one: the two paths can also use different proxy routing or trust stores. The full error cause is in the report (e.g. `SELF_SIGNED_CERT_IN_CHAIN`, `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`).
 
 ### Common issues
 
 | Problem | Solution |
 |---------|----------|
 | Can't connect | Run **Test & Refresh Models**. If it fails, run **Diagnose Connection** on the failing URL. Confirm `vllm serve` is running and the firewall allows the port. |
-| Requests fail on a corporate network | Set VS Code's `http.proxy` setting (e.g. `http://proxy.corp:8080`). The extension uses VS Code's patched `globalThis.fetch` (installed by the extension host at startup), which respects `http.proxy`, `http.noProxy`, and the `HTTP(S)_PROXY` environment variables per-request. Loopback hosts are always bypassed. The patched fetch loads the OS certificate store (`http.systemCertificates`, on by default), so TLS-inspecting proxies and internally-issued server certs work without extra setup. The patch is gated by `http.proxySupport` (default `override`) and `http.fetchAdditionalSupport` (default `true`) — both must stay enabled. |
+| Requests fail on a corporate network | Set VS Code's `http.proxy` setting (e.g. `http://proxy.corp:8080`). The extension uses VS Code's patched `globalThis.fetch` (installed by the extension host at startup), which respects `http.proxy`, `http.noProxy`, and the `HTTP(S)_PROXY` environment variables per-request. Loopback hosts are always bypassed. The patched fetch loads the OS certificate store (`http.systemCertificates`, on by default), so TLS-inspecting proxies and internally-issued server certs work without extra setup. The patch is gated by `http.proxySupport` (default `override`) and `http.fetchAdditionalSupport` (default `true`) - both must stay enabled. |
 | `fetch failed` / certificate errors behind a reverse proxy | The certificate may be expired, self-signed, or trusted differently by your OS than by VS Code. If it is valid and trusted by your OS, try `"http.systemCertificatesNode": true` in your user settings and reload the window (`Developer: Reload Window`), or run **Diagnose Connection** to confirm. Note: `http.proxyStrictSSL: false` does **not** disable TLS verification for fetch (undici always verifies). |
 | `UNABLE_TO_VERIFY_LEAF_SIGNATURE` / `SELF_SIGNED_CERT_IN_CHAIN` on a corporate reverse proxy | The proxy may not be sending the intermediate CA, or the OS and Node trust stores differ. If your certificate is valid and trusted by the OS, try VS Code's own `"http.systemCertificatesNode": true` setting, or run **Diagnose Connection**. See [Known limitations](#known-limitations) below. |
-| 401 Unauthorized | The server entry's `requestHeaders` are wrong — edit the entry in `vllm-copilot.servers` (or use **Update Auth**) or re-run **Add vLLM Server & Model** |
+| 401 Unauthorized | The server entry's `requestHeaders` are wrong - edit the entry in `vllm-copilot.servers` (or use **Update Auth**) or re-run **Add or Reconfigure Server/Model** |
 | No models in picker | Run **Test & Refresh Models**. Verify each model's `server` matches a `vllm-copilot.servers` entry and that `GET /v1/models` returns entries |
 | Copilot spins forever | Check Output channel (`View → Output → vLLM-Copilot`) for errors |
 | Tool calls fail | Start vLLM with `--enable-auto-tool-choice --tool-call-parser <parser>` |
@@ -500,7 +500,7 @@ Relative paths resolve against the **workspace root**; absolute paths (like the 
 
 #### Certificate errors behind a reverse proxy
 
-A reverse proxy in front of vLLM may send only its leaf certificate without the intermediate CA, which can make VS Code's patched `globalThis.fetch` reject the TLS handshake (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `SELF_SIGNED_CERT_IN_CHAIN`, …). The same errors can also come from an expired or self-signed certificate, or from the OS trust store and Node's loaded certificates differing — the two transports can use different proxy routing too.
+A reverse proxy in front of vLLM may send only its leaf certificate without the intermediate CA, which can make VS Code's patched `globalThis.fetch` reject the TLS handshake (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `SELF_SIGNED_CERT_IN_CHAIN`, …). The same errors can also come from an expired or self-signed certificate, or from the OS trust store and Node's loaded certificates differing - the two transports can use different proxy routing too.
 
 **A conditional setting:**
 
@@ -508,7 +508,7 @@ A reverse proxy in front of vLLM may send only its leaf certificate without the 
 "http.systemCertificatesNode": true
 ```
 
-Set it in your **user settings** (`Preferences: Open User Settings (JSON)`), then reload the window (`Developer: Reload Window`). It's experimental and defaults to `false`. It changes which trust store Node loads, so it only helps when the certificate is actually valid and already trusted by your OS — it cannot repair an expired certificate. Run **Diagnose Connection** to confirm what's actually wrong.
+Set it in your **user settings** (`Preferences: Open User Settings (JSON)`), then reload the window (`Developer: Reload Window`). It's experimental and defaults to `false`. It changes which trust store Node loads, so it only helps when the certificate is actually valid and already trusted by your OS - it cannot repair an expired certificate. Run **Diagnose Connection** to confirm what's actually wrong.
 
 This extension surfaces this automatically: when an error looks like a certificate problem, chat requests, **Test & Refresh Models**, and the **Add Server** dialog suggest running **Diagnose Connection**, and mention the setting above as a conditional step.
 
@@ -518,14 +518,14 @@ This extension surfaces this automatically: when an error looks like a certifica
 
 | Command | Description |
 |---------|-------------|
-| **Add vLLM Server & Model** | Guided flow: enter a server URL + optional API key/headers, discover its models, then apply a bundled preset (if one fits) or auto-configure from HuggingFace, and save |
+| **Add or Reconfigure Server/Model** | Guided flow: enter a server URL + optional API key/headers, discover its models, then apply a bundled preset (if one fits) or auto-configure from HuggingFace, and save |
 | **Test & Refresh Models** | Verify every configured server is reachable, list models. If any connection fails, shows the full error cause and offers to run a deep diagnostic. TLS failures get a conditional certificate-trust suggestion (which may include `http.systemCertificatesNode`). Also checks VS Code's network gating settings (`http.proxySupport`, `http.fetchAdditionalSupport`, `http.systemCertificates`) and warns if any are non-default |
 | **Diagnose Connection** | Deep network diagnostic: compares PowerShell (SChannel) vs Node `fetch` (OpenSSL), checks DNS/TCP, dumps VS Code settings + env vars, builds SChannel cert chain (Windows). Report goes to a dedicated Output channel for copy-pasting |
 | **Open Log File** | Open today's debug log |
 | **Configure Utility Model** | Switch the utility model used for MCP servers and Copilot agent mode (`mainAgent`, `copilot`, or `none`) |
 | **Clear Log Files** | Delete all debug log files (except the currently active one) |
 
-The following appear under the **vLLM-Copilot: Utilities** category — maintenance tools, not daily workflow:
+The following appear under the **vLLM-Copilot: Utilities** category - maintenance tools, not daily workflow:
 
 | Command | Description |
 |---------|-------------|

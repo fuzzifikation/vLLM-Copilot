@@ -1,7 +1,7 @@
 /**
  * Set Model Personality workflow: pick a model, pick/clear a personality preset,
  * and persist via the config store. Extracted from the root `commands.ts` facade
- * (refactor-plan §2.3) so the workflow — including the server-less guard — is
+ * so the workflow — including the server-less guard — is
  * independently testable.
  */
 
@@ -33,7 +33,7 @@ export function registerSetModelPersonalityCommand(
   return vscode.commands.registerCommand(
     'vllm-copilot.setModelPersonality',
     async () => {
-      const cfg = await getConfig(context);
+      const cfg = await getConfig();
       const models = cfg.models || [];
       const servers = cfg.servers || [];
 

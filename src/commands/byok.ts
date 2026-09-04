@@ -22,7 +22,6 @@ const MAIN_AGENT_BYOK_UTILITY_MODEL_DEFAULT = 'mainAgent';
  * selected main agent model is BYOK."
  *
  * This is idempotent — if already set, it does nothing.
- * @internal Exported for testing.
  */
 export async function ensureByokUtilityDefault(): Promise<void> {
   const chatConfig = vscode.workspace.getConfiguration('chat');
@@ -74,8 +73,6 @@ const OUR_EXTENSION_ID = 'System-Sciences.vllm-copilot';
  * including an explicit `false` (that is an opt-out, not an oversight). For
  * `supportAgentsWindow` (a map), only OUR key is considered — other
  * extensions' entries are preserved, and only a missing entry is added.
- *
- * @internal Exported for testing.
  */
 export async function ensureAgentHostModelsEnabled(): Promise<void> {
   const chatConfig = vscode.workspace.getConfiguration('chat');

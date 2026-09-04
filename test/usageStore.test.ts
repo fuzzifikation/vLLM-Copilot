@@ -1,12 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import * as vscode from 'vscode';
-import {
-  initUsageStore, recordRequest, getLastRequest, getServerUsage, getServerCost, hasServerUsage,
-  getServersWithUsage, resetUsage, computeCost, findModelCost, getModelStartedAt,
-  formatCost, formatCostFine, formatCostSummary, fmtCount, resetUsageStoreForTests, onUsageStoreDidChange,
-  type LastRequestData,
-} from '../src/usage/usageStore.js';
-import type { ModelConfig } from '../src/state/config.js';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type * as vscode from 'vscode';
+import type { LastRequestData } from '../src/usage/usageStore.js';
+
+// R7-P14-1: the store exposes NO production reset hook. Fresh module state
+// comes from vi.resetModules() + a dynamic re-import - literally what a
+// window reload does. Every stateful call goes through the namespace S.
 
 /** Mirrors usageStore's private day-bucket key (kept un-exported on purpose). */
 function todayKey(ts: number = Date.now()): string {
@@ -55,31 +53,36 @@ const output = { appendLine: vi.fn() } as any;
 const flushWrites = (m: ReturnType<typeof makeMemento>, n: number) =>
   vi.waitFor(() => expect(m.writes).toBeGreaterThanOrEqual(n));
 
+type UsageStore = typeof import('../src/usage/usageStore.js');
+let S: UsageStore;
+async function freshStore(): Promise<void> {
+  vi.resetModules();
+  S = await import('../src/usage/usageStore.js');
+}
+
 describe('recordRequest — last request + accumulation', () => {
-  beforeEach(() => resetUsageStoreForTests());
-  afterEach(() => resetUsageStoreForTests());
+  beforeEach(freshStore);
 
   it('ignores non-finite and absent actual cost (vLLM/local records nothing)', () => {
-    recordRequest(req({ actualCost: undefined }));
-    recordRequest(req({ actualCost: Number.NaN }));
-    expect(getServerCost(url).allTime).toEqual({});
+    S.recordRequest(req({ actualCost: undefined }));
+    S.recordRequest(req({ actualCost: Number.NaN }));
+    expect(S.getServerCost(url).allTime).toEqual({});
   });
 
   it('ignores a negative actual cost (invalid server data must not subtract)', () => {
-    recordRequest(req({ actualCost: -0.5 }));
-    recordRequest(req({ promptTokens: 5, actualCost: -1 }));
-    expect(getServerCost(url).allTime).toEqual({});
-    expect(getServerCost(url).today).toEqual({});
+    S.recordRequest(req({ actualCost: -0.5 }));
+    S.recordRequest(req({ promptTokens: 5, actualCost: -1 }));
+    expect(S.getServerCost(url).allTime).toEqual({});
+    expect(S.getServerCost(url).today).toEqual({});
   });
 
 describe('persistence (globalState)', () => {
-  beforeEach(() => resetUsageStoreForTests());
-  afterEach(() => resetUsageStoreForTests());
+  beforeEach(freshStore);
 
   it('persists and reloads the cumulative totals across activations', async () => {
     const m = makeMemento();
-    initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
-    recordRequest(req({ promptTokens: 100, completionTokens: 50, cachedTokens: 10 }));
+    S.initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
+    S.recordRequest(req({ promptTokens: 100, completionTokens: 50, cachedTokens: 10 }));
     await flushWrites(m, 1);
 
     expect(m.stored.version).toBe(3);
@@ -88,11 +91,11 @@ describe('persistence (globalState)', () => {
     expect(typeof m.stored.startedAt[url]['m1']).toBe('number'); // first-record stamp persisted
 
     // Simulate a window reload: fresh module state, same memento.
-    resetUsageStoreForTests();
-    initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
-    const usage = getServerUsage(url);
+    await freshStore();
+    S.initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
+    const usage = S.getServerUsage(url);
     expect(usage.allTime['m1'].prompt).toBe(100);
-    expect(getModelStartedAt(url, 'm1')).toBe(m.stored.startedAt[url]['m1']);
+    expect(S.getModelStartedAt(url, 'm1')).toBe(m.stored.startedAt[url]['m1']);
   });
 
   it('migrates version-1 data in place (startedAt defaults to {})', async () => {
@@ -102,13 +105,13 @@ describe('persistence (globalState)', () => {
       days: {},
     };
     const m = makeMemento(v1);
-    initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
+    S.initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
 
-    expect(getServerUsage(url).allTime['m1'].prompt).toBe(100); // counts preserved
-    expect(getModelStartedAt(url, 'm1')).toBeUndefined();       // no stamp for legacy data
+    expect(S.getServerUsage(url).allTime['m1'].prompt).toBe(100); // counts preserved
+    expect(S.getModelStartedAt(url, 'm1')).toBeUndefined();       // no stamp for legacy data
 
     // a new record persists as version 3 with a stamp
-    recordRequest(req({ promptTokens: 7 }));
+    S.recordRequest(req({ promptTokens: 7 }));
     await flushWrites(m, 1);
     expect(m.stored.version).toBe(3);
     expect(m.stored.startedAt[url]['m1']).toBeTypeOf('number');
@@ -122,15 +125,15 @@ describe('persistence (globalState)', () => {
       startedAt: { [url]: { m1: 12345 } },
     };
     const m = makeMemento(v2);
-    initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
+    S.initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
 
     // counts + stamps preserved; no actual cost invented for legacy records
-    expect(getServerUsage(url).allTime['m1'].prompt).toBe(100);
-    expect(getModelStartedAt(url, 'm1')).toBe(12345);
-    expect(getServerCost(url).allTime).toEqual({});
+    expect(S.getServerUsage(url).allTime['m1'].prompt).toBe(100);
+    expect(S.getModelStartedAt(url, 'm1')).toBe(12345);
+    expect(S.getServerCost(url).allTime).toEqual({});
 
     // a new record with actual cost persists as version 3 alongside the legacy counts
-    recordRequest(req({ promptTokens: 7, actualCost: 0.0012 }));
+    S.recordRequest(req({ promptTokens: 7, actualCost: 0.0012 }));
     await flushWrites(m, 1);
     expect(m.stored.version).toBe(3);
     expect(m.stored.allTime[url]['m1'].prompt).toBe(107); // legacy counts accumulated into
@@ -147,27 +150,27 @@ describe('persistence (globalState)', () => {
       daysCost: { [todayKey()]: { [url]: { m1: 0.0037 } } },
     };
     const m = makeMemento(v3);
-    initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
+    S.initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
 
-    expect(getServerUsage(url).allTime['m1'].prompt).toBe(100);
-    expect(getServerCost(url).allTime['m1']).toBeCloseTo(0.0037, 10);
-    expect(getServerCost(url).today['m1']).toBeCloseTo(0.0037, 10);
-    expect(getModelStartedAt(url, 'm1')).toBe(12345);
+    expect(S.getServerUsage(url).allTime['m1'].prompt).toBe(100);
+    expect(S.getServerCost(url).allTime['m1']).toBeCloseTo(0.0037, 10);
+    expect(S.getServerCost(url).today['m1']).toBeCloseTo(0.0037, 10);
+    expect(S.getModelStartedAt(url, 'm1')).toBe(12345);
   });
 
   it('ignores a corrupt blob with a truthy primitive allTime (no crash on first record)', () => {
     const m = makeMemento({ version: 3 as const, allTime: 5, days: {} });
-    initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
+    S.initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
     // Corruption detected at load — the store starts fresh instead of crashing
     // on the first recordRequest with a strict-mode TypeError.
-    recordRequest(req({ promptTokens: 10 }));
-    expect(getServerUsage(url).allTime['m1'].prompt).toBe(10);
+    S.recordRequest(req({ promptTokens: 10 }));
+    expect(S.getServerUsage(url).allTime['m1'].prompt).toBe(10);
   });
 
   it('ignores corrupt/missing persisted data and starts fresh', () => {
     const m = makeMemento({ version: 99, bogus: true });
-    initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
-    expect(hasServerUsage(url)).toBe(false);
+    S.initUsageStore({ globalState: m.memento, subscriptions: [] } as any, output);
+    expect(S.hasServerUsage(url)).toBe(false);
   });
 });
 });

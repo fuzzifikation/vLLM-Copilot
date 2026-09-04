@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/fuzzifikation/vLLM-Copilot/blob/main/schemas/vllm-copilot-models.schema.json",
   "title": "vLLM-Copilot Model Entry",
-  "description": "One entry of the `vllm-copilot.models` array in VS Code settings. Each entry references its server from the `vllm-copilot.servers` registry via the required `server` field and carries its own params, budgets, and modes. Server facts (URL, auth, type, label) live ONLY on the registry entry. There is NO global server. This schema mirrors `ModelConfig` in src/config.ts.",
+  "description": "One entry of the `vllm-copilot.models` array in VS Code settings. Each entry references its server from the `vllm-copilot.servers` registry via the required `server` field and carries its own params, budgets, and modes. Server facts (URL, auth, type, label) live ONLY on the registry entry. There is NO global server. This schema mirrors `ModelConfig` in src/state/config.ts. NOTE: a rare migration-orphan entry (a pre-registry model the registry migration could not adopt, kept verbatim with inline server facts and no `server` ref) intentionally violates the required `server` field — the extension's warnings and the editor squiggle are the prompt to complete the migration, not a schema bug.",
   "type": "object",
   "additionalProperties": false,
   "required": ["id", "server"],

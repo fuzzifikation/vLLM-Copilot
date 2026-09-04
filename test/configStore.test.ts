@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as vscode from 'vscode';
-import { replaceModelConfig, patchModelConfig, readModels, writeModels, type IdentifiedModelConfig, type ModelIdentity } from '../src/state/configStore.js';
+import { replaceModelConfig, patchModelConfig, readModels, readServers, writeModels, writeServers, type IdentifiedModelConfig, type ModelIdentity } from '../src/state/configStore.js';
 import { ModelConfig } from '../src/state/config.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -222,7 +222,7 @@ describe('replaceModelConfig (configStore) — replace semantics', () => {
     expect(stored.map(m => m.id)).toEqual(['preset-a', 'preset-b']);
   });
 
-  // ── Step 1: replace-mode characterization (refactor-plan §4.1 #1/#2/#4) ──
+  // ── Step 1: replace-mode characterization (#1/#2/#4) ──
   // These pin the CURRENT replace contract of replaceModelConfig (configStore) so the
   // configStore unification (step 3b) cannot silently change behavior.
 
@@ -689,8 +689,32 @@ describe('readModels / writeModels (single settings access path)', () => {
     expect(readModels()).toEqual([]);
   });
 
-  it('reads the stored array without normalizing entries', () => {
-    expect(readModels()).toBe(existingConfig);
+  it('reads the stored entries verbatim — same element objects, no normalization', () => {
+    const entry = { id: 'raw', server: 'srv', vllmModelId: 'with trailing slash/' } as ModelConfig;
+    existingConfig = [entry];
+    const read = readModels();
+    expect(read).toHaveLength(1);
+    expect(read[0]).toBe(entry); // untouched element, not a normalized copy
+  });
+
+  it('discards malformed stored shapes instead of propagating them (CR-36)', () => {
+    // The activation dedupe consumed readServers() unguarded and died on a
+    // hand-edited `{`: the read boundary is where garbage must stop. Same rule
+    // for models — a `[null]` element would detonate every `entry.id` consumer.
+    mockWorkspace()._mockConfig = { get: () => ({ not: 'an array' }), update: updateSpy, inspect: () => undefined };
+    expect(readModels()).toEqual([]);
+    mockWorkspace()._mockConfig = { get: () => [null, 'x', 5, { id: 'ok', server: 's' }], update: updateSpy, inspect: () => undefined };
+    expect(readModels()).toEqual([{ id: 'ok', server: 's' }]);
+    // The registry side is the one that actually killed activation.
+    mockWorkspace()._mockConfig = { get: (key: string) => (key === 'servers' ? { not: 'an array' } : undefined), update: updateSpy, inspect: () => undefined };
+    expect(readServers()).toEqual([]);
+    mockWorkspace()._mockConfig = { get: (key: string) => (key === 'servers' ? [null, { id: 'ok', serverUrl: 'http://h:8001' }] : undefined), update: updateSpy, inspect: () => undefined };
+    expect(readServers()).toEqual([{ id: 'ok', serverUrl: 'http://h:8001' }]);
+  });
+
+  it('writeServers rejects when the settings write fails, so a caller cannot report success', async () => {
+    updateSpy.mockRejectedValueOnce(new Error('Settings file is read-only'));
+    await expect(writeServers([])).rejects.toThrow('read-only');
   });
 });
 

@@ -4,8 +4,7 @@
  * Pure module: no vscode imports, no side effects.
  */
 
-import type { ServerType } from './config.js';
-import { isUsableServerUrl, normalizeServerUrl, sanitizeRequestHeaders, sameHeaders } from './serverCore.js';
+import { isUsableServerUrl, normalizeServerUrl, sanitizeRequestHeaders, sameHeaders, KNOWN_SERVER_TYPES, type ServerType } from './serverCore.js';
 
 /** A registered server. The only place server facts live. */
 export interface ServerEntry {
@@ -25,8 +24,23 @@ export interface ServerEntry {
 export interface EffectiveServer {
   serverUrl: string;                      // normalized
   requestHeaders: Record<string, string>; // sanitized
-  serverType: ServerType;                 // entry value, 'vllm' when omitted
+  /** Entry value when it names a KNOWN_SERVER_TYPE; 'vllm' for omitted,
+   *  blank, and anything a hand-edit smuggled past the type system. */
+  serverType: ServerType;
   displayName?: string;
+}
+
+/**
+ * Normalization choke point for the backend type (CR-39). The declared value
+ * comes from hand-editable JSON, so the `ServerType` annotation is a lie until
+ * proven against the runtime list. Anything unknown resolves as vLLM — which is
+ * what validateConfig's warning PROMISES ("requests fall back to vLLM
+ * behavior") and what the chat body builder's `serverType !== 'vllm'` strip
+ * implements. Without this, a typo'd type flowed verbatim into the limits
+ * resolver and the model died with a bare TypeError at discovery.
+ */
+function normalizeServerType(declared: ServerType | undefined): ServerType {
+  return declared && KNOWN_SERVER_TYPES.includes(declared) ? declared : 'vllm';
 }
 
 /**
@@ -44,7 +58,7 @@ export function resolveServer(serverId: string, servers: ServerEntry[]): Effecti
   return {
     serverUrl: normalizeServerUrl(entry.serverUrl),
     requestHeaders: sanitizeRequestHeaders(entry.requestHeaders ?? {}),
-    serverType: entry.serverType ?? 'vllm',
+    serverType: normalizeServerType(entry.serverType),
     ...(entry.displayName !== undefined ? { displayName: entry.displayName } : {}),
   };
 }

@@ -1,7 +1,7 @@
 /**
  * Test & Refresh workflow: group configured models by server, probe each unique
  * server once, and surface a consolidated status. Extracted from the root
- * `commands.ts` facade (refactor-plan §2.3) so the workflow — including its pure
+ * `commands.ts` facade so the workflow — including its pure
  * grouping helpers — is independently testable.
  */
 
@@ -9,7 +9,6 @@ import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider/provider.js';
 import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveServerType } from '../state/config.js';
 import type { ModelConfig } from '../state/config.js';
-import type { ServerEntry } from '../state/serverRegistry.js';
 import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
 import { listServerModels, resolveRuntimeLimits, ServerProbeError, type ServerModelEntry } from '../backends/runtimeLimits.js';
 import { runDiagnostics, formatReport } from '../ui/diagnostics.js';
@@ -97,14 +96,14 @@ export function registerTestAndRefreshModelsCommand(
   outputChannel: vscode.OutputChannel
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.testAndRefreshModels', async () => {
-    const cfg = await getConfig(context);
+    const cfg = await getConfig();
     const models = cfg.models || [];
     const servers = cfg.servers || [];
 
     if (models.length === 0) {
       const pick = await vscode.window.showInformationMessage(
         'No models are configured yet.',
-        'Add vLLM Server & Model'
+        'Add or Reconfigure Server/Model'
       );
       if (pick) await vscode.commands.executeCommand('vllm-copilot.addServerModel');
       return;
@@ -214,7 +213,7 @@ export function registerTestAndRefreshModelsCommand(
               maxModelLen = limits.contextWindow;
             } catch (err) {
               ctxError = describeError(err);
-              outputChannel.appendLine(`[WARN] Model "${vllmModelId}" matched but has no resolvable context: ${ctxError} — it will not be served.`);
+              outputChannel.appendLine(`[WARN] Model "${vllmModelId}" matched but has no resolvable context: ${ctxError} - it will not be served.`);
             }
             matched.push({ config: model, vllmModelId, maxModelLen, ctxError });
           } else {
@@ -375,9 +374,9 @@ export function registerTestAndRefreshModelsCommand(
 
     // ── 4. Post-check corrective actions ──
 
-    // 4a. Unreachable servers: network check + diagnostic offer (see 4b).
-    // No per-server "configure now" wizard here — the consolidated 3c hint
-    // (Open Server Settings) is the single place users adopt unconfigured models.
+    // 4a. Deliberately no per-server "configure now" wizard: the consolidated
+    // 3c hint ('Open Model Settings') is the single place users adopt
+    // unconfigured models. The network check + diagnostic offer is 4b below.
 
     // 4b. For errored servers: network check + diagnostic offer.
     try {

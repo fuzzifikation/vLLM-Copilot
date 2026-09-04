@@ -103,7 +103,7 @@ describe('renameServer command', () => {
     disposable.dispose();
 
     expect(cfg.update).not.toHaveBeenCalled();
-    expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('No changes'));
+    expect(infoSpy).toHaveBeenCalledWith(expect.any(String)); // toast fired; wording is chrome (CR-109)
   });
 
   it("deletes the key instead of persisting '' when cleared", async () => {

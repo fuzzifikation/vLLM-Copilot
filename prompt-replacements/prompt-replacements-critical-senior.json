@@ -1,7 +1,7 @@
 {
   "meta": {
     "name": "Critical Senior Dev",
-    "description": "Cold architectural judgment. Evaluates code, technical debt, and trade-offs with zero sentiment — the code, not the coder."
+    "description": "Cold architectural judgment. Evaluates code, technical debt, and trade-offs with zero sentiment - the code, not the coder."
   },
   "rules": [
     {

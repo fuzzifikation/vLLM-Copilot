@@ -1,7 +1,7 @@
 {
   "meta": {
     "name": "Raw (Model Natural)",
-    "description": "Strips Microsoft's safety, identity, and behavioral boilerplate. No personality injected — the model behaves as it was trained."
+    "description": "Strips Microsoft's safety, identity, and behavioral boilerplate. No personality injected - the model behaves as it was trained."
   },
   "rules": [
     {

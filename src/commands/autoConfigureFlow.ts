@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from '../state/config.js';
-import { resolveConfigId, resolveVllmModelId, buildModelId } from '../state/config.js';
+import { resolveConfigId, resolveVllmModelId, buildModelId, findModelConfigIndex } from '../state/config.js';
 import { replaceModelConfig, readModels, readServers, type IdentifiedModelConfig } from '../state/configStore.js';
 import { resolveServer } from '../state/serverRegistry.js';
 import { resolveModelConfigForAddSafely } from './hfDiscovery.js';
@@ -19,8 +19,8 @@ export function registerAutoConfigureModelCommand(
   return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { server?: string; id?: string }) => {
     const existing = readModels();
     if (existing.length === 0) {
-      output.appendLine('[INFO] Auto-configure cancelled — no models configured.');
-      vscode.window.showInformationMessage('No models configured. Use "Add vLLM Server & Model" first.');
+      output.appendLine('[INFO] Auto-configure cancelled - no models configured.');
+      vscode.window.showInformationMessage('No models configured. Use "Add or Reconfigure Server/Model" first.');
       return;
     }
     // Server facts live on the registry; models reference entries by `server` id.
@@ -59,7 +59,7 @@ export function registerAutoConfigureModelCommand(
           undefined, undefined, argEntry.serverType
         );
         if (!discoveryResult) {
-          output.appendLine(`[INFO] Auto-configure stopped for new model "${vllmId}" — discovery returned no result.`);
+          output.appendLine(`[INFO] Auto-configure stopped for new model "${vllmId}" - discovery returned no result.`);
           return;
         }
 
@@ -94,16 +94,15 @@ export function registerAutoConfigureModelCommand(
         placeHolder: 'Select a model to re-configure',
       });
       if (!selected) {
-        output.appendLine('[INFO] Auto-configure cancelled — no model selected.');
+        output.appendLine('[INFO] Auto-configure cancelled - no model selected.');
         return;
       }
 
+      // `selected` is one of the object references `items` was just built from
+      // (one item per `existing` entry, no filtering), so the index lookup
+      // cannot miss — the old not-found guard was unreachable (CR-91).
       const idx = items.indexOf(selected);
       modelConfig = existing[idx];
-      if (!modelConfig) {
-        output.appendLine('[INFO] Auto-configure cancelled — selected model not found in config.');
-        return;
-      }
 
       vllmId = resolveVllmModelId(modelConfig) || '';
       if (!vllmId) {
@@ -128,7 +127,7 @@ export function registerAutoConfigureModelCommand(
       modelServer.serverType // persist the model's own backend type
     );
     if (!discoveryResult) {
-      output.appendLine(`[INFO] Auto-configure stopped for "${vllmId}" — discovery returned no result.`);
+      output.appendLine(`[INFO] Auto-configure stopped for "${vllmId}" - discovery returned no result.`);
       return;
     }
 
@@ -136,40 +135,49 @@ export function registerAutoConfigureModelCommand(
     //    Only infrastructure/personal fields survive from the user's old config.
     //    Server facts (URL, auth, type) live on the registry entry the model
     //    references — the `server` ref is preserved verbatim.
-    const newConfig: ModelConfig = {
-      ...discoveryResult.modelConfig,
-      id: modelConfig.id,
-      vllmModelId: modelConfig.vllmModelId,
-      server: modelConfig.server,
-      systemMessageReplacementsFile: modelConfig.systemMessageReplacementsFile,
-      autoContinueRetries: modelConfig.autoContinueRetries,
-      streamInactivityTimeout: modelConfig.streamInactivityTimeout,
-      initialResponseTimeoutMs: modelConfig.initialResponseTimeoutMs,
-      // Token-budget overrides are user-configured (webview "reserve headroom" /
-      // chars-per-token fields) and must survive re-configure like the other
-      // transport settings. replaceModelConfig strips undefined, so unset values
-      // are inert here.
-      maxInputTokens: modelConfig.maxInputTokens,
-      estimateCharsPerToken: modelConfig.estimateCharsPerToken,
-      // User decisions, not model facts (the presets.ts doctrine): the
-      // configured cost, the OpenRouter pin/routing choice, and a user-chosen
-      // label survive a re-configure. replaceModelConfig strips top-level
-      // undefined, so the ?? fallbacks below mean: user value wins, discovery
-      // fills the gap. Without this, one Auto-Configure silently deletes the
-      // cost that anchors the whole dashboard history.
-      cost: modelConfig.cost ?? discoveryResult.modelConfig.cost,
-      provider: modelConfig.provider ?? discoveryResult.modelConfig.provider,
-      routingMode: modelConfig.routingMode ?? discoveryResult.modelConfig.routingMode,
-      displayName: modelConfig.displayName ?? discoveryResult.modelConfig.displayName,
+    //    `preserveFrom` is parameterized on purpose (CR-43, the personality.ts
+    //    doctrine): the Save branch re-reads the store and passes the LIVE entry,
+    //    because discovery + the modal can take minutes, during which the entry
+    //    may be edited (personal fields must survive from the NEW value, not a
+    //    pre-dialog snapshot) or deleted outright (writing the snapshot through
+    //    replaceModelConfig would APPEND it back to life).
+    const buildMerged = (preserveFrom: ModelConfig): ModelConfig => {
+      const merged: ModelConfig = {
+        ...discoveryResult.modelConfig,
+        id: preserveFrom.id,
+        vllmModelId: preserveFrom.vllmModelId,
+        server: preserveFrom.server,
+        systemMessageReplacementsFile: preserveFrom.systemMessageReplacementsFile,
+        autoContinueRetries: preserveFrom.autoContinueRetries,
+        streamInactivityTimeout: preserveFrom.streamInactivityTimeout,
+        initialResponseTimeoutMs: preserveFrom.initialResponseTimeoutMs,
+        // Token-budget overrides are user-configured (webview "reserve headroom" /
+        // chars-per-token fields) and must survive re-configure like the other
+        // transport settings. replaceModelConfig strips undefined, so unset values
+        // are inert here.
+        maxInputTokens: preserveFrom.maxInputTokens,
+        estimateCharsPerToken: preserveFrom.estimateCharsPerToken,
+        // User decisions, not model facts (the presets.ts doctrine): the
+        // configured cost, the OpenRouter pin/routing choice, and a user-chosen
+        // label survive a re-configure. replaceModelConfig strips top-level
+        // undefined, so the ?? fallbacks below mean: user value wins, discovery
+        // fills the gap. Without this, one Auto-Configure silently deletes the
+        // cost that anchors the whole dashboard history.
+        cost: preserveFrom.cost ?? discoveryResult.modelConfig.cost,
+        provider: preserveFrom.provider ?? discoveryResult.modelConfig.provider,
+        routingMode: preserveFrom.routingMode ?? discoveryResult.modelConfig.routingMode,
+        displayName: preserveFrom.displayName ?? discoveryResult.modelConfig.displayName,
+      };
+      if (discoveryResult.suggestedMaxOutputTokens !== undefined && merged.maxOutputTokens === undefined) {
+        merged.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
+      }
+      return merged;
     };
-    if (discoveryResult.suggestedMaxOutputTokens !== undefined && newConfig.maxOutputTokens === undefined) {
-      newConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
-    }
 
     // 4. Confirm dialog, then save or copy. The auto-configure path guards
     //    identity (vllmId via resolveVllmModelId, non-blank serverUrl) before
-    //    building newConfig; the store's runtime check is the backstop against
-    //    a malformed write. No BYOK write here — the model already exists.
+    //    merging; the store's runtime check is the backstop against a malformed
+    //    write. No BYOK write here — the model already exists.
     output.appendLine(`[INFO] Auto-configure ${vllmId}:`);
     output.appendLine(discoveryResult.summary.join('\n'));
     const action = await vscode.window.showInformationMessage(
@@ -179,11 +187,35 @@ export function registerAutoConfigureModelCommand(
       'Copy JSON'
     );
     if (action === 'Save') {
-      await replaceModelConfig(newConfig as IdentifiedModelConfig);
+      // Existence re-check at write time against a fresh read (CR-13 doctrine,
+      // the pattern personality.ts comments): the modal may have sat open while
+      // the Model Settings webview or another window removed the entry.
+      const liveModels = readModels();
+      const liveIdx = findModelConfigIndex(liveModels, resolveConfigId(modelConfig) ?? '', modelConfig.server ?? '');
+      if (liveIdx < 0) {
+        output.appendLine(
+          `[WARN] Auto-configure aborted: model "${vllmId}" was removed while the confirm dialog was open - not writing (a write here would resurrect the deleted entry).`
+        );
+        void vscode.window.showWarningMessage(
+          `vLLM-Copilot: model "${vllmId}" was deleted while this dialog was open - changes not saved.`
+        );
+        return;
+      }
+      try {
+        await replaceModelConfig(buildMerged(liveModels[liveIdx]) as IdentifiedModelConfig);
+      } catch (err) {
+        output.appendLine(
+          `[ERROR] Auto-configure: write failed for "${vllmId}": ${err instanceof Error ? err.message : String(err)}`
+        );
+        void vscode.window.showErrorMessage(
+          `vLLM-Copilot: could not save model "${vllmId}" - settings unchanged.`
+        );
+        return;
+      }
       provider.clearCache();
       vscode.window.showInformationMessage(`Model "${vllmId}" updated.`);
     } else if (action === 'Copy JSON') {
-      await vscode.env.clipboard.writeText(JSON.stringify(newConfig, null, 2));
+      await vscode.env.clipboard.writeText(JSON.stringify(buildMerged(modelConfig), null, 2));
       vscode.window.showInformationMessage('Model config copied to clipboard.');
     }
   });

@@ -158,8 +158,11 @@ function parseOpenRouterModelRef(
     // Query strings, fragments, trailing slashes are already excluded by URL parsing.
     requestedId = `${author}/${slug}`;
   } else {
-    // Bare slug — strip a leading `~` (family-latest alias form) for the lookup,
-    // but keep it in the requested id so chat can address what the user picked.
+    // Bare slug. A leading `~` (family-latest alias form) is PARSED but also
+    // KEPT in the requested id — the catalog carries the tilde as part of the
+    // id itself, and normalizeOpenRouterFromCatalog matches `requestedId`
+    // VERBATIM (CR-56: there is deliberately no strip-for-lookup step; making
+    // the code match the old comment would break tilde resolution).
     // Rebuild the requested id from the parsed segments (NOT the raw input) so
     // stray leading/trailing/double slashes can't poison the chat id.
     const tilde = trimmed.startsWith('~');
@@ -292,19 +295,14 @@ export function perMillion(rate?: string | null): number | undefined {
  * Locale-independent per-1M USD rate display. Forces `en-US` so a price ALWAYS
  * uses `.` as the decimal separator (`$0.66`) regardless of the user's OS
  * locale — a `$` amount rendered with a comma decimal (`$0,66`, de-DE) reads as
- * a different number and is confusing next to a dollar sign. `undefined` → "—".
+ * a different number and is confusing next to a dollar sign. `undefined` → "-".
  *
  * Single shared formatter: the onboarding picker, the confirm dialog, and the
  * dashboard pricing rows all render through this, so money never drifts across
  * surfaces.
  */
 export function formatUsdRate(value?: number): string {
-  return value === undefined ? '—' : `$${value.toLocaleString('en-US', { maximumFractionDigits: 4 })}`;
-}
-
-/** `formatUsdRate` + the "/1M" suffix — the per-1M pricing display (`$0.66/1M`), or null when unparseable. */
-export function formatPerMillionUsd(value?: number): string | null {
-  return value === undefined ? null : `${formatUsdRate(value)}/1M`;
+  return value === undefined ? '-' : `$${value.toLocaleString('en-US', { maximumFractionDigits: 4 })}`;
 }
 
 /** True when the model advertises a capability in `supported_parameters`. */
@@ -398,10 +396,17 @@ function normalizeOpenRouterModel(
       // mode (reasoning on) + "No Think" (when disableable) is the honest shape.
       modelModes['Think'] = { reasoning: { enabled: true } };
     } else {
-      // Effort ladder from supported_efforts (descending, skipping 'none');
-      // fall back to a single 'high' when the API omits the allowlist OR the
-      // list is empty / only 'none' (contradictory metadata — treat like missing).
-      const ladder = (reasoningCfg?.supported_efforts ?? []).filter((e) => e !== 'none');
+      // Effort ladder from supported_efforts (API ships no order — the
+      // highest-effort defaultMode fallback below relies on catalog ordering,
+      // which is a contract this module does not get); skipping 'none'. Elements
+      // are validated, not trusted: an empty-string or null entry would turn
+      // thinkModeLabel's `effort[0].toUpperCase()` into a TypeError, which the
+      // metrics engine files under TRANSIENT — the model would then be retried
+      // forever in silence instead of reported (CR-55). Fall back to a single
+      // 'high' when the API omits the allowlist OR the usable list is empty.
+      const ladder = (reasoningCfg?.supported_efforts ?? []).filter(
+        (e): e is string => typeof e === 'string' && e !== '' && e !== 'none'
+      );
       const efforts = ladder.length > 0 ? ladder : ['high'];
       for (const effort of efforts) {
         const label = thinkModeLabel(effort);
@@ -578,7 +583,7 @@ export function normalizeOpenRouterFromCatalog(
   if (!entry) {
     throw new OpenRouterModelNotFoundError(
       `OpenRouter model "${parsed.requestedId}" not found in the current OpenRouter catalog. ` +
-      `Model ids must match a listed entry exactly — variants like ":free" are separate catalog entries and must be included.`
+      `Model ids must match a listed entry exactly - variants like ":free" are separate catalog entries and must be included.`
     );
   }
   return normalizeOpenRouterModel(entry, parsed.requestedId);
@@ -607,7 +612,7 @@ async function fetchOpenRouterModel(requestedId: string): Promise<OpenRouterMode
     catalog = await fetchOpenRouterCatalog();
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    throw new Error(`OpenRouter model "${requestedId}" lookup failed: GET ${OPENROUTER_API_BASE}/v1/models — ${detail}`);
+    throw new Error(`OpenRouter model "${requestedId}" lookup failed: GET ${OPENROUTER_API_BASE}/v1/models - ${detail}`);
   }
   return normalizeOpenRouterFromCatalog(catalog, requestedId);
 }
@@ -717,7 +722,7 @@ async function fetchOpenRouterModelEndpoints(
     return endpoints;
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    throw new Error(`OpenRouter model "${requestedId}" endpoints lookup failed: GET ${url} — ${detail}`);
+    throw new Error(`OpenRouter model "${requestedId}" endpoints lookup failed: GET ${url} - ${detail}`);
   }
 }
 
@@ -770,7 +775,15 @@ export async function getOpenRouterModelEndpointsCached(
 
   const promise = fetchOpenRouterModelEndpoints(wireId, PROVIDER_LIST_FETCH_TIMEOUT_MS)
     .then((providers) => {
-      if (providers.length > 0) providerListCache.set(wireId, { providers, fetchedAt: Date.now() });
+      if (providers.length > 0) {
+        providerListCache.set(wireId, { providers, fetchedAt: Date.now() });
+      } else {
+        // A 200 with an empty data array defeats every cache policy (CR-29):
+        // nothing gets cached, so every metrics tick and settings refresh dials
+        // the API again forever, each burning the 2 s abort budget. Throttle
+        // empty successes through the same backoff as failures.
+        providerListRetryAt.set(wireId, Date.now() + PROVIDER_LIST_RETRY_MS);
+      }
       return providers;
     })
     .catch((err) => {
@@ -789,11 +802,12 @@ export async function getOpenRouterModelEndpointsCached(
 
 /**
  * Clear the module-level OpenRouter caches — provider-list values, in-flight
- * dedup, failure backoff, and the catalog memo. Production caller: the
- * activation config listener flushes it when `vllm-copilot.servers`/`.models`
- * change, so settings edits (auth rotation, server URL fixes, model
- * add/remove) surface fresh provider lists instead of serving stale entries
- * for the rest of the TTL. Tests reuse it for isolation.
+ * dedup, failure backoff, and the catalog memo. Production callers: the
+ * activation config listener (flushes when `vllm-copilot.servers`/`.models`
+ * change, so auth rotation, server URL fixes, and model add/remove surface
+ * fresh provider lists instead of serving stale entries for the rest of the
+ * TTL) and Test & Refresh (its finally block — see the runtimeLimits.ts
+ * module doc). Tests reuse it for isolation.
  */
 export function resetOpenRouterCaches(): void {
   providerListCache.clear();

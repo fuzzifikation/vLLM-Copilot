@@ -1,14 +1,15 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { VllmClient } from '../src/provider/vllmClient.js';
+import { ChatTransport } from '../src/provider/chatTransport.js';
 import * as configModule from '../src/state/config.js';
 import type { VllmConfig } from '../src/state/config.js';
 
 /**
  * VllmClient is a thin facade over ChatTransport, so these tests only cover what
- * the facade itself is responsible for: owning the configuration cache, passing
- * server type through to the request body, and enforcing the initial request
- * timeout. Pure body construction lives in chatTransport.test.ts; runtime limits
- * in runtimeLimits.test.ts.
+ * the facade itself owns: the configuration cache, argument-faithful delegation
+ * to ChatTransport.stream, and the initial request timeout. Body construction
+ * and per-backend adaptation are pinned once in chatTransport.test.ts; runtime
+ * limits in runtimeLimits.test.ts.
  */
 
 /** Build a minimal fake ExtensionContext / OutputChannel for the client. */
@@ -19,88 +20,35 @@ function makeOutput(): any {
   return { appendLine: (s: string) => process.env.VLLM_TEST_TRACE && console.log(s) };
 }
 
-describe('chatCompletionStream backend adaptation (via buildChatBody)', () => {
-  const sseResponse = () =>
-    new Response('data: [DONE]\n\n', {
-      status: 200,
-      headers: { 'content-type': 'text/event-stream' },
-    });
+describe('chatCompletionStream facade delegation', () => {
+  /**
+   * The facade's ONLY job is not losing an argument on the way through:
+   * `chatCompletionStream` is byte-for-byte `yield*` into ChatTransport.stream,
+   * so every body-shape pin (vLLM continuation controls, per-backend strips,
+   * the ollama tool_choice WARN, the 200-JSON error-response marker) lives once in
+   * chatTransport.test.ts — the four copies this replaced pinned the same
+   * branches twice and contradicted this file's own header (CR-103). Drop
+   * `serverType` here and every backend silently speaks vLLM: that is the
+   * breakage this pin catches.
+   */
+  // Restore explicitly, not just via the file's other describe: an un-restored
+  // prototype spy silently swallows the timeout suite's real transport.
+  afterEach(() => vi.restoreAllMocks());
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  function streamResult(fetchSpy: ReturnType<typeof vi.fn>) {
-    const url = fetchSpy.mock.calls[fetchSpy.mock.calls.length - 1][0];
-    const init = fetchSpy.mock.calls[fetchSpy.mock.calls.length - 1][1] as any;
-    return JSON.parse(init.body) as Record<string, any>;
-  }
-
-  it('vllm: preserves continue_final_message/add_generation_prompt and tool_choice (byte-identical)', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
-      () => Promise.resolve(sseResponse())
+  it('threads model, messages, options, token and the full serverConfig into ChatTransport.stream', async () => {
+    const streamSpy = vi.spyOn(ChatTransport.prototype, 'stream').mockImplementation(
+      async function* () {}
     );
     const client = new VllmClient(makeContext(), makeOutput());
-    const options = { continue_final_message: true, add_generation_prompt: false, tool_choice: 'auto' as const, temperature: 0.7 };
-    await client.chatCompletionStream('m', [], options as any, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any, { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'vllm' }).next();
-    const body = streamResult(fetchSpy);
-    expect(body.continue_final_message).toBe(true);
-    expect(body.add_generation_prompt).toBe(false);
-    expect(body.tool_choice).toBe('auto');
-    expect(body.temperature).toBe(0.7);
-  });
-
-  it('llamacpp: strips vLLM-only continuation controls but keeps the prefill message', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
-      () => Promise.resolve(sseResponse())
-    );
-    const client = new VllmClient(makeContext(), makeOutput());
-    const options = { continue_final_message: true, add_generation_prompt: false };
-    const messages = [{ role: 'user' as const, content: 'hi' }, { role: 'assistant' as const, content: 'prefill' }];
-    await client.chatCompletionStream('m', messages as any, options as any, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any, { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'llamacpp' }).next();
-    const body = streamResult(fetchSpy);
-    expect(body.continue_final_message).toBeUndefined();
-    expect(body.add_generation_prompt).toBeUndefined();
-    expect(body.messages).toContainEqual({ role: 'assistant', content: 'prefill' });
-  });
-
-  it('ollama: removes tool_choice with one [WARN] but keeps tools', async () => {
-    const calls: string[] = [];
-    const output = { appendLine: (s: string) => { calls.push(s); } };
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
-      () => Promise.resolve(sseResponse())
-    );
-    const client = new VllmClient(makeContext(), output as any);
-    const options = { tool_choice: 'required' as const, tools: [{ type: 'function' as const, function: { name: 'f' } }] };
-    const serverConfig = { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'ollama' } as const;
     const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any;
-    // Two requests with tool_choice — the WARN fires exactly ONCE (per session),
-    // not per request. The misleading "ONE [WARN]" comment once described a
-    // per-request append; it is now actually once.
-    await client.chatCompletionStream('m', [] as any, options as any, token, serverConfig).next();
-    await client.chatCompletionStream('m', [] as any, options as any, token, serverConfig).next();
-    const body = streamResult(fetchSpy);
-    expect(body.tool_choice).toBeUndefined();
-    expect(body.tools).toHaveLength(1);
-    const warns = calls.filter((s) => s.includes('[WARN]') && s.includes('tool_choice'));
-    expect(warns).toHaveLength(1);
-  });
-
-  it('throws the backend-neutral mid-stream marker when the server returns a 200 JSON error body', async () => {
-    // A 200 response with a JSON error object instead of an SSE stream — no HTTP
-    // status to classify on, so formatError relies on this exact marker.
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
-      () => Promise.resolve(new Response(JSON.stringify({ error: { message: 'model is overloaded' } }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }))
+    const serverConfig = { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'ollama' } as const;
+    // Consume the generator to completion so the facade's timeout machinery
+    // unwinds cleanly (a half-iterated generator leaks a rejection into the
+    // next test in this file).
+    for await (const _ of client.chatCompletionStream('m', [] as any, { tool_choice: 'auto' } as any, token, serverConfig)) { /* empty stream */ }
+    expect(streamSpy).toHaveBeenCalledWith(
+      'm', [], expect.objectContaining({ tool_choice: 'auto' }), token, serverConfig,
     );
-    const client = new VllmClient(makeContext(), makeOutput());
-    const gen = client.chatCompletionStream('m', [] as any, {} as any,
-      { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any,
-      { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'vllm' });
-    await expect(gen.next()).rejects.toThrow('Server error (mid-stream): model is overloaded');
-    expect(fetchSpy).toHaveBeenCalled();
   });
 });
 

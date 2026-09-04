@@ -8,12 +8,12 @@
  */
 
 import * as vscode from 'vscode';
-import { processSSEChunk, finalizePendingToolCalls } from './sseParser.js';
+import { processSSEChunk, finalizePendingToolCalls, type PendingToolCall } from './sseParser.js';
 import { createParser, type EventSourceMessage } from 'eventsource-parser';
 import type { StreamEvent } from '../types.js';
 import type { FileLogger } from '../shared/logger.js';
 
-export interface StreamReaderOptions {
+interface StreamReaderOptions {
   /** Inactivity timeout in ms. 0 = disabled (wait indefinitely). */
   inactivityMs: number;
   /** File logger for stream chunk logging. Optional. */
@@ -51,7 +51,7 @@ export async function* readSseStream(
   options: StreamReaderOptions
 ): AsyncGenerator<StreamEvent> {
   const { inactivityMs, fileLogger, output } = options;
-  const pendingToolCalls = new Map<number, { id: string; name: string; args: string }>();
+  const pendingToolCalls = new Map<number, PendingToolCall>();
   let contentChunks = 0;
 
   // Wire cancellation directly to reader.cancel() so the HTTP stream is torn
@@ -182,9 +182,14 @@ export async function* readSseStream(
           value = result.value;
         }
       } catch (err) {
-        // reader.cancel() fires when cancellation token triggers. This rejects the
-        // pending read() so the stream tears down immediately. Catch here so the
-        // loop can exit cleanly via break instead of propagating an error to the provider.
+        // The cancellation token triggers reader.cancel() above. Per the WHATWG
+        // Streams spec, cancel() FULFILLS a pending read() with { done: true }
+        // — it does NOT reject (only abort() does), so the loop normally exits
+        // via the done path, not here. A rejection arriving with cancellation
+        // already requested is an underlying stream error racing the cancel:
+        // tear down quietly via break instead of propagating to the provider.
+        // (Do not "fix" this by switching to abort() — it would start rejecting
+        // politely-closed reads.)
         if (token.isCancellationRequested) break;
         // Re-throw inactivity timeouts directly — they already have a descriptive message.
         if (err instanceof Error && err.message.startsWith('Stream inactivity timeout')) {

@@ -7,6 +7,7 @@
   const vscode = acquireVsCodeApi();
   let lastData = null;
   let lastError = '';
+  let lastSnapshotAt = 0;
   let histogramTooltip = null;
 
   // ── Message handler ──────────────────────────────────────────
@@ -19,7 +20,18 @@
       // Why the server looks empty. The raw payload carries no failure info, so
       // without this an unreachable server renders as a blank panel.
       lastError = data.error || '';
-      render();
+      // When the payload was captured (epoch ms). A cached push from an offline
+      // engine carries its fill time, so the footer never stamps stale data
+      // with 'now'. 0 = no stamp known, fall back to render time.
+      lastSnapshotAt = typeof data.snapshotAt === 'number' ? data.snapshotAt : 0;
+      // Mirror serverSettings.js: a broken payload must paint its failure, not
+      // leave the panel frozen on the previous state forever (CR-26).
+      try {
+        render();
+      } catch (err) {
+        document.getElementById('content').innerHTML =
+          '<div class="error-msg">Render error: ' + E(String(err && err.message ? err.message : err)) + '</div>';
+      }
       // Reset find overlay state — innerHTML replaced all DOM nodes
       if (window._findMatches) {
         window._findMatches = [];
@@ -210,7 +222,9 @@
   function E(s) {
     var d = document.createElement('div');
     d.textContent = s;
-    return d.innerHTML;
+    // textContent/innerHTML does NOT escape double quotes, and results land in
+    // value="..."/title="..." attributes for third-party strings (CR-27).
+    return d.innerHTML.replace(/"/g, '&quot;');
   }
 
   function buildSection(title, sourceBadge, contentHtml) {
@@ -223,14 +237,14 @@
   }
 
   function formatValue(v) {
-    if (v === null || v === undefined) return '<span class="value-zero">—</span>';
+    if (v === null || v === undefined) return '<span class="value-zero">-</span>';
     if (typeof v === 'boolean') {
       return v
         ? '<span class="badge badge-green">true</span>'
         : '<span class="badge badge-gray">false</span>';
     }
     if (typeof v === 'string') {
-      if (v === '' || v === 'null') return '<span class="value-zero">—</span>';
+      if (v === '' || v === 'null') return '<span class="value-zero">-</span>';
       return '<span class="value-number">' + E(v) + '</span>';
     }
     var n = Number(v);
@@ -257,9 +271,9 @@
   }
 
   function labelsHtml(labels) {
-    if (!labels || Object.keys(labels).length === 0) return '<span class="value-zero">—</span>';
+    if (!labels || Object.keys(labels).length === 0) return '<span class="value-zero">-</span>';
     var filtered = Object.entries(labels).filter(function (e) { return e[0] !== 'le'; });
-    if (filtered.length === 0) return '<span class="value-zero">—</span>';
+    if (filtered.length === 0) return '<span class="value-zero">-</span>';
     return filtered.map(function (e) {
       return '<span style="color:var(--vscode-foreground)">' + E(e[0]) + '</span>=<span style="color:var(--vscode-textLink-foreground)">' + E(e[1]) + '</span>';
     }).join('<br>');
@@ -348,7 +362,7 @@
 
       var labelSuffix = Object.entries(g.labels).map(function (kv) { return kv[0] + '=' + kv[1]; }).join(' ');
       var desc = buckets[0].description || '';
-      var sub = (labelSuffix ? labelSuffix + ' — ' : '') + desc;
+      var sub = (labelSuffix ? labelSuffix + ' - ' : '') + desc;
 
       fragments.push('<div class="histogram-container">' +
         '<div class="histogram-subtitle">' + E(sub) + '</div>' +
@@ -481,7 +495,7 @@
         }
         detail = '<span style="color:var(--vscode-descriptionForeground);font-size:12px;margin-left:8px">HTTP ' + hs + '</span>';
         if (hb && hb !== 'OK' && hb !== '"OK"') {
-          detail += '<span style="color:var(--vscode-descriptionForeground);font-size:12px;margin-left:4px">— ' + E(hb) + '</span>';
+          detail += '<span style="color:var(--vscode-descriptionForeground);font-size:12px;margin-left:4px">- ' + E(hb) + '</span>';
         }
       } else {
         badge = '<span class="badge badge-gray">No response</span>';
@@ -502,7 +516,7 @@
       } else {
         loadHtml += '<div class="kv-item">' +
           '<span class="kv-label">Server Load</span>' +
-          '<span class="kv-value"><span class="value-zero">—</span></span></div>';
+          '<span class="kv-value"><span class="value-zero">-</span></span></div>';
       }
       loadHtml += '</div>';
       html += buildSection('Server Load', '/load', loadHtml);
@@ -657,7 +671,10 @@
 
     document.getElementById('content').innerHTML = html;
     // One-shot panel: say so, since re-opening is the only way to retake it.
+    // Stamp the CAPTURE time (stale cache under an offline banner must not
+    // claim 'now'), falling back to render time when none was sent.
+    var stampAt = lastSnapshotAt > 0 ? new Date(lastSnapshotAt) : new Date();
     document.getElementById('lastUpdated').textContent =
-      'Snapshot ' + new Date().toLocaleTimeString() + ' · re-open to refresh';
+      'Snapshot ' + stampAt.toLocaleTimeString() + ' · re-open to refresh';
   }
 })();

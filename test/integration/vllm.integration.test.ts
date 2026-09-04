@@ -5,15 +5,16 @@ import * as configModule from '../../src/state/config.js';
 /**
  * Integration tests that hit a real vLLM-compatible server.
  *
- * To run:
- *   export VLLM_INTEGRATION=1
- *   export VLLM_SERVER_URL=http://localhost:8000      # required
- *   export VLLM_API_KEY=your-key                       # optional
- *   export VLLM_MODEL_ID=meta-llama/Llama-3-8B-Instruct # optional; first listed if omitted
+ * To run (any OS — the flag is set by the vitest mode, no shell env-prefix needed):
  *   npm run test:integration
  *
- * The suite is skipped entirely if VLLM_INTEGRATION is not set, so it won't break CI
- * environments that don't have a server.
+ * Environment knobs (all optional):
+ *   VLLM_SERVER_URL  default http://localhost:8000
+ *   VLLM_API_KEY     sent as Authorization: Bearer when set
+ *   VLLM_MODEL_ID    default: first model the server lists
+ *
+ * Skipped unless the integration mode sets VLLM_INTEGRATION=1 (vitest.config.ts),
+ * so `npm test` never dials a server.
  */
 
 const ENABLED = process.env.VLLM_INTEGRATION === '1';
@@ -117,8 +118,13 @@ d('vLLM integration', () => {
     })();
 
     const events = await promise.catch(() => []);
-    // We don't assert on event count (servers may flush more before noticing abort),
-    // just that the loop terminated and didn't hang.
+    // Two guarantees, both falsifiable: the loop TERMINATED (no hang — the
+    // await itself would time out otherwise) and cancellation actually cut
+    // generation short. A server ignoring the abort would stream the full
+    // 1024-token essay as hundreds of delta events; honoring it stops within a
+    // few chunks of the cancel (CR-105: the old `Array.isArray` assertion was
+    // true either way and could not fail).
     expect(Array.isArray(events)).toBe(true);
+    expect(events.length).toBeLessThan(100);
   }, 60_000);
 });

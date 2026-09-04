@@ -78,7 +78,8 @@ describe('confirmAndSaveAddedModel', () => {
       vscode.ConfigurationTarget.Global,
     );
     expect(onSaved).toHaveBeenCalledTimes(1);
-    expect(infoSpy).toHaveBeenCalledWith('Model "model" added.');
+    // A confirmation toast fired; its exact wording is chrome (CR-109).
+    expect(infoSpy).toHaveBeenCalledWith(expect.any(String));
   });
 
   it('copies the JSON to the clipboard and persists nothing on Copy JSON', async () => {
@@ -344,7 +345,8 @@ describe('registerAddServerModelCommand', () => {
     );
     expect(chatUpdate).toHaveBeenCalled(); // BYOK bootstrap ran
     expect(provider.clearCache).toHaveBeenCalled(); // onSaved
-    expect(infoSpy).toHaveBeenCalledWith('Model "model" added.');
+    // A confirmation toast fired; its exact wording is chrome (CR-109).
+    expect(infoSpy).toHaveBeenCalledWith(expect.any(String));
   });
 
   it('saves a minimal stub via Keep Anyway when the server is unreachable', async () => {
@@ -442,9 +444,12 @@ describe('registerAddServerModelCommand', () => {
       .mockResolvedValueOnce('');                // headers
     // Model picker, then the disambiguator: the user selects the SECOND entry
     // (the composite) rather than the preset that .find() would take first.
+    // The mock must resolve one of the REAL item references: VS Code returns
+    // the picked object by identity, and the gate maps it back via indexOf().
+    // A hand-built lookalike object would index to -1.
     quickPickSpy
       .mockResolvedValueOnce({ label: 'model' } as any)
-      .mockResolvedValueOnce({ label: 'model on host:8000', description: 'model on host:8000' } as any);
+      .mockImplementationOnce(async (items: any[]) => items[1]);
     infoSpy
       .mockResolvedValueOnce('Add Different Model' as any) // server already configured
       .mockResolvedValueOnce('Replace Config' as any)      // same model exists

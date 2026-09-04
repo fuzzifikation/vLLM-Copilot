@@ -1,7 +1,7 @@
 /**
  * VS Code command registrations for the extension's user-facing commands.
  *
- * Stable public facade (refactor-plan §2.3): the substantive workflows live in
+ * Stable public facade: the substantive workflows live in
  * `src/commands/*` (testAndRefresh.ts, personality.ts, addServerFlow.ts, …) and
  * are re-exported here; the thin per-command registrations below stay put.
  * `extension.ts` keeps importing from this root facade.
@@ -9,9 +9,9 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider/provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders } from '../state/config.js';
+import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders, findModelConfigIndex } from '../state/config.js';
 import type { ModelConfig } from '../state/config.js';
-import { firstEntryById, type ServerEntry } from '../state/serverRegistry.js';
+import { firstEntryById } from '../state/serverRegistry.js';
 import { patchModelConfig, readModels, readServers, writeModels, writeServers } from '../state/configStore.js';
 import { promptForServerAuth } from './serverAuth.js';
 import { FileLogger } from '../shared/logger.js';
@@ -29,6 +29,33 @@ import { resetUsage, getServersWithUsage } from '../usage/usageStore.js';
 import { isOpenRouterUrl } from '../state/config.js';
 
 /**
+ * Run a settings write so a rejection never escapes as VS Code's anonymous
+ * "command failed" notification (CR-48). The user gets a named error toast and
+ * the Output channel gets the `[ERROR]` line — the same honesty vocabulary the
+ * Add Server flow wrote for this exact failure (`reportEntryWriteFailure`).
+ * `configStore` propagates write errors on purpose; every caller that then
+ * reports success must funnel through here. Returns false when the write
+ * failed — callers must stop and must NOT report success or clear caches.
+ */
+async function attemptWrite(
+  outputChannel: vscode.OutputChannel,
+  label: string,
+  write: () => Promise<unknown>,
+): Promise<boolean> {
+  try {
+    await write();
+    return true;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    outputChannel.appendLine(`[ERROR] ${label}: settings write failed - ${detail}`);
+    void vscode.window.showErrorMessage(
+      `vLLM-Copilot: ${label} failed - settings unchanged. ${detail}`
+    );
+    return false;
+  }
+}
+
+/**
  * Diagnose connection issues for a single model.
  *
  * Runs a deep diagnostic (SChannel vs Node fetch, DNS, TCP, cert chain) and
@@ -41,7 +68,7 @@ export function registerDiagnoseConnectionCommand(
   outputChannel: vscode.OutputChannel,
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.diagnoseConnection', async () => {
-    const config = await getConfig(context);
+    const config = await getConfig();
     const models = config.models || [];
 
     if (models.length === 0) {
@@ -205,7 +232,9 @@ export function registerCleanSessionsCommand(
 }
 
 /**
- * Update auth (API key + request headers) for all models on a server.
+ * Update auth (API key + request headers) for a server URL: every registry
+ * ENTRY on that URL rotates together (ratified §5 scope - auth lives on the
+ * registry entry, not on models; see the body comment).
  * Triggered from right-click context menu on a server node in the dashboard.
  */
 export function registerUpdateServerAuthCommand(
@@ -254,7 +283,7 @@ export function registerUpdateServerAuthCommand(
         headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
       });
       if (collected === undefined) {
-        outputChannel.appendLine(`[INFO] Update Auth cancelled for ${serverUrl} — no credentials entered.`);
+        outputChannel.appendLine(`[INFO] Update Auth cancelled for ${serverUrl} - no credentials entered.`);
         return; // cancelled
       }
       combinedHeaders = sanitizeRequestHeaders(collected);
@@ -294,12 +323,12 @@ export function registerUpdateServerAuthCommand(
       }
     }
     if (transitions.length === 0) {
-      outputChannel.appendLine(`[INFO] Update Auth: no changes for ${serverUrl} — fields left empty keep their current values.`);
+      outputChannel.appendLine(`[INFO] Update Auth: no changes for ${serverUrl} - fields left empty keep their current values.`);
       vscode.window.showInformationMessage(`No auth changes for ${serverUrl}. Enter a new key or headers to update.`);
       return;
     }
 
-    await writeServers(updatedServers);
+    if (!(await attemptWrite(outputChannel, 'Update Auth', () => writeServers(updatedServers)))) return;
     _provider.clearCache();
     // Push the new headers to the metrics engines so an open deep-dive uses
     // fresh auth. Update-if-present only: Update Auth must not create a
@@ -398,7 +427,7 @@ export function registerRenameServerCommand(
     else next.displayName = trimmedName;
     const nextServers = existingServers.map((s, i) => (i === index ? next : s));
 
-    await writeServers(nextServers);
+    if (!(await attemptWrite(outputChannel, 'Rename Server', () => writeServers(nextServers)))) return;
     provider.clearCache();
     // Retitle this entry's open Deep-Dive panel immediately — without this it
     // keeps the old label until closed and reopened.
@@ -458,7 +487,7 @@ export function registerRemoveServerCommand(
     if (referencing.length > 0) {
       const names = referencing.map(m => m.displayName || m.id).join(', ');
       outputChannel.appendLine(
-        `[WARN] Remove Server refused for "${serverId}" (${label}) — still referenced by ${referencing.length} model(s): ${names}.`
+        `[WARN] Remove Server refused for "${serverId}" (${label}) - still referenced by ${referencing.length} model(s): ${names}.`
       );
       vscode.window.showWarningMessage(
         `Server "${label}" is still used by ${referencing.length} model(s): ${names}. Remove those models first (Remove Model), then remove the server.`
@@ -490,14 +519,14 @@ export function registerRemoveServerCommand(
     if (nowReferencing.length > 0) {
       const names = nowReferencing.map(m => m.displayName || m.id).join(', ');
       outputChannel.appendLine(
-        `[WARN] Remove Server aborted for "${serverId}" — now referenced by ${nowReferencing.length} model(s): ${names}.`
+        `[WARN] Remove Server aborted for "${serverId}" - now referenced by ${nowReferencing.length} model(s): ${names}.`
       );
       vscode.window.showWarningMessage(
-        `Server "${label}" is now used by ${nowReferencing.length} model(s): ${names}. Removal cancelled — remove those models first.`
+        `Server "${label}" is now used by ${nowReferencing.length} model(s): ${names}. Removal cancelled - remove those models first.`
       );
       return;
     }
-    await writeServers(currentServers.filter(s => s.id !== serverId));
+    if (!(await attemptWrite(outputChannel, 'Remove Server', () => writeServers(currentServers.filter(s => s.id !== serverId))))) return;
     _provider.clearCache();
     outputChannel.appendLine(`[INFO] Removed server "${serverId}" (${label}).`);
     vscode.window.showInformationMessage(`Removed server "${label}".`);
@@ -538,7 +567,7 @@ export function registerRemoveModelCommand(
       return;
     }
 
-    await writeModels(filtered);
+    if (!(await attemptWrite(outputChannel, 'Remove Model', () => writeModels(filtered)))) return;
     _provider.clearCache();
     outputChannel.appendLine(`[INFO] Removed model "${configId}" from server "${server}".`);
     vscode.window.showInformationMessage(`Removed model "${configId}" from server "${server}".`);
@@ -663,9 +692,9 @@ export function registerConfigureCostCommand(
       });
     };
 
-    const input = await askRate(existing.input, `Input cost per 1M tokens (${currencyNow}) — fresh, uncached input.`);
+    const input = await askRate(existing.input, `Input cost per 1M tokens (${currencyNow}) - fresh, uncached input.`);
     if (input === undefined) return;
-    const output = await askRate(existing.output, `Output cost per 1M tokens (${currencyNow}) — includes reasoning tokens.`);
+    const output = await askRate(existing.output, `Output cost per 1M tokens (${currencyNow}) - includes reasoning tokens.`);
     if (output === undefined) return;
     const cachedInput = await askRate(existing.cachedInput, `Cache-read input cost per 1M tokens (${currencyNow}).`);
     if (cachedInput === undefined) return;
@@ -690,7 +719,22 @@ export function registerConfigureCostCommand(
       cachedInput: numOrZero(cachedInput),
       currency,
     };
-    await patchModelConfig({ id: configId, server: model.server }, { cost });
+    // Existence re-check at write time (the personality.ts doctrine, CR-47):
+    // every dialog above runs with ignoreFocusOut while the Model Settings
+    // webview stays live, so the model may have been deleted mid-flow.
+    // patchModelConfig APPENDS on no match — writing now would resurrect the
+    // entry as a zombie, with the composite config id smuggled in as its wire
+    // id: unsendable, parked forever, rendered in every cost list.
+    if (findModelConfigIndex(readModels(), configId, model.server) < 0) {
+      outputChannel.appendLine(
+        `[WARN] Set Cost aborted: model "${configId}" no longer exists on server "${model.server}".`
+      );
+      vscode.window.showWarningMessage(
+        `Model "${picked.label}" was removed while this dialog was open - cost not set.`
+      );
+      return;
+    }
+    if (!(await attemptWrite(outputChannel, 'Set Cost', () => patchModelConfig({ id: configId, server: model.server }, { cost })))) return;
     outputChannel.appendLine(`[INFO] Set cost for ${picked.label} (${currency}): in ${cost.input}, out ${cost.output}, cached-in ${cost.cachedInput} per 1M.`);
     vscode.window.showInformationMessage(`Cost set for ${picked.label}.`);
   });

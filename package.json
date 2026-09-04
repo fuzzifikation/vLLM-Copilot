@@ -233,6 +233,10 @@
           "when": "false"
         },
         {
+          "command": "vllm-copilot.updateServerAuth",
+          "when": "false"
+        },
+        {
           "command": "vllm-copilot.renameServer",
           "when": "false"
         },
@@ -286,7 +290,7 @@
             "type": "array",
             "scope": "application",
             "default": [],
-            "markdownDescription": "Server registry: each entry is one server (URL + auth + type), referenced by `id` from `vllm-copilot.models`. Managed via the Dashboard and the vLLM-Copilot commands; hand-editing is possible but the commands keep models and servers in sync. Stored in **User settings only** — the extension always writes there, so a workspace-layer value would be silently ignored.",
+            "markdownDescription": "Server registry: each entry is one server (URL + auth + type), referenced by `id` from `vllm-copilot.models`. Managed via the Dashboard and the vLLM-Copilot commands; hand-editing is possible but the commands keep models and servers in sync. Stored in **User settings only** - the extension always writes there, so a workspace-layer value would be silently ignored.",
             "items": {
               "type": "object",
               "required": [
@@ -333,7 +337,7 @@
             "type": "array",
             "scope": "application",
             "default": [],
-            "markdownDescription": "Per-model configuration: server reference, params, modes. Server connection facts (URL, auth, type) live in the `vllm-copilot.servers` registry. See README Configuration Reference for details. Stored in **User settings only** — the extension always writes there, so a workspace-layer value would be silently ignored.",
+            "markdownDescription": "Per-model configuration: server reference, params, modes. Server connection facts (URL, auth, type) live in the `vllm-copilot.servers` registry. See README Configuration Reference for details. Stored in **User settings only** - the extension always writes there, so a workspace-layer value would be silently ignored.",
             "items": {
               "type": "object",
               "required": [
@@ -408,7 +412,7 @@
                 },
                 "modelModes": {
                   "type": "object",
-                  "markdownDescription": "Custom model modes for the model picker dropdown. Each key is a label shown to the user, and the value is an object of parameters merged into the vLLM request body. **Sampling parameters** (temperature, top_p, etc.) can be included per mode and will override global settings when that mode is active.\n\n**Example (Qwen3.6 with per-mode sampling):**\n```json\n{\n  \"Think\": {\n    \"chat_template_kwargs\": { \"enable_thinking\": true, \"preserve_thinking\": true },\n    \"temperature\": 1.0,\n    \"top_p\": 0.95,\n    \"presence_penalty\": 0.0\n  },\n  \"No Think\": {\n    \"chat_template_kwargs\": { \"enable_thinking\": false },\n    \"temperature\": 0.7,\n    \"top_p\": 0.8,\n    \"presence_penalty\": 1.5\n  }\n}\n```\n\n💡 **Add vLLM Server & Model** auto-detects these from HuggingFace for new entries; for existing entries, copy from `model-configs/` and hand-edit.",
+                  "markdownDescription": "Custom model modes for the model picker dropdown. Each key is a label shown to the user, and the value is an object of parameters merged into the vLLM request body. Sampling parameters (temperature, top_p, etc.) can be included per mode and are sent in that mode's requests; a parameter a mode omits falls back to the model entry's own params, then to the server default.\n\n**Example (Qwen3.6 with per-mode sampling):**\n```json\n{\n  \"Think\": {\n    \"chat_template_kwargs\": { \"enable_thinking\": true, \"preserve_thinking\": true },\n    \"temperature\": 1.0,\n    \"top_p\": 0.95,\n    \"presence_penalty\": 0.0\n  },\n  \"No Think\": {\n    \"chat_template_kwargs\": { \"enable_thinking\": false },\n    \"temperature\": 0.7,\n    \"top_p\": 0.8,\n    \"presence_penalty\": 1.5\n  }\n}\n```\n\n💡 Modes for new models come from bundled presets (`model-configs/`); OpenRouter models get them from the server's reasoning metadata. They are not auto-detected from HuggingFace. For existing entries, copy from `model-configs/` and hand-edit.",
                   "additionalProperties": {
                     "type": "object",
                     "description": "Parameters to merge into the vLLM request body when this mode is selected."
@@ -528,7 +532,7 @@
     "watch": "tsc -watch -p ./",
     "test": "vitest run",
     "test:typecheck": "tsc -p test/tsconfig.json --noEmit",
-    "test:integration": "VLLM_INTEGRATION=1 vitest run test/integration",
+    "test:integration": "vitest run --mode integration test/integration",
     "validate-webview-js": "node -e \"const fs=require('fs');const path=require('path');const files=fs.readdirSync('resources').filter(f=>f.endsWith('.js'));files.forEach(f=>{try{const code=fs.readFileSync(path.join('resources',f),'utf8');require('vm').createScript(code);console.log('OK: '+f)}catch(e){console.error('FAIL: '+f+': '+e.message);process.exitCode=1}})\"",
     "license:check": "license-checker-rseidelsohn --production --excludePrivatePackages --onlyAllow \"MIT;ISC;Apache-2.0;BSD-2-Clause;BSD-3-Clause;CC0-1.0;CC-BY-3.0;BlueOak-1.0.0\"",
     "license:notices": "node scripts/generate-notices.mjs",
@@ -539,6 +543,7 @@
     "dep:check": "dependency-cruiser src && dependency-cruiser src -c .dependency-cruiser.consumers.cjs",
     "dep:graph": "node scripts/dep-graph.mjs",
     "rent": "node scripts/rent-census.mjs",
+    "cluster": "node scripts/cluster-census.mjs",
     "build": "npm run license:check && npm run compile && npm run dep:check && npm run rent -- --fail-on=dead && npm run test:typecheck && npm test && npx @vscode/vsce package"
   },
   "devDependencies": {

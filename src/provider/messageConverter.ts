@@ -403,7 +403,7 @@ export function formatError(err: unknown): string {
     return `Context window exceeded. The conversation is too long for the model. Use /compact or start a new chat.`;
   }
   if (combined.includes('closed prematurely') || combined.includes('Premature close') || combined.includes('ERR_STREAM_PREMATURE_CLOSE')) {
-    return `The connection was closed prematurely by the network or a reverse proxy. This happens when a proxy (Cloudflare, nginx, corporate gateway) drops the connection mid-stream, or when the network drops while the model is still generating. Try again — if it persists, check whether a proxy timeout is too short for this model's response time.`;
+    return `The connection was closed prematurely by the network or a reverse proxy. This happens when a proxy (Cloudflare, nginx, corporate gateway) drops the connection mid-stream, or when the network drops while the model is still generating. Try again - if it persists, check whether a proxy timeout is too short for this model's response time.`;
   }
   if (combined.includes('other side closed') || combined.includes('ECONNRESET') || combined.includes('socket hang up') || combined.includes('SocketError')) {
     return `The server closed the connection unexpectedly. This can happen if the server is under heavy load or a reverse proxy (e.g. Cloudflare) timed out the idle connection.`;
@@ -434,7 +434,7 @@ export function formatError(err: unknown): string {
  * OS store (it cannot repair an expired certificate). No technical essay.
  */
 export const TLS_CERT_SUGGESTION =
-  `This may be a certificate issue — the server's certificate could be expired, self-signed, or trusted differently by your OS than by VS Code. Run "Diagnose Connection" to confirm. If the certificate is valid and trusted by your OS, you can also try setting "http.systemCertificatesNode": true in your user settings and reload the window (Developer: Reload Window).`;
+  `This may be a certificate issue - the server's certificate could be expired, self-signed, or trusted differently by your OS than by VS Code. Run "Diagnose Connection" to confirm. If the certificate is valid and trusted by your OS, you can also try setting "http.systemCertificatesNode": true in your user settings and reload the window (Developer: Reload Window).`;
 
 /** Error fragments that indicate a TLS certificate verification failure. */
 const TLS_ERROR_PATTERNS = [
@@ -470,7 +470,7 @@ function _classifyMessage(msg: string): string {
   if (msg.includes('Initial request timed out')) {
     // The abort string carries the ACTUAL configured value (e.g. "after 600000ms").
     const m = msg.match(/after (\d+)ms/);
-    return `The server did not respond within ${m ? `${m[1]}ms` : 'the configured timeout'} — the model may still be loading or the server busy/queued. To allow more time, set the per-model "initialResponseTimeoutMs" setting in vllm-copilot.models to a higher value (milliseconds; 0 = wait indefinitely). See Output for details.`;
+    return `The server did not respond within ${m ? `${m[1]}ms` : 'the configured timeout'} - the model may still be loading or the server busy/queued. To allow more time, set the per-model "initialResponseTimeoutMs" setting in vllm-copilot.models to a higher value (milliseconds; 0 = wait indefinitely). See Output for details.`;
   }
   if (msg === 'User cancelled' || msg === 'Request cancelled by user') {
     return `Request was cancelled.`;
@@ -480,18 +480,35 @@ function _classifyMessage(msg: string): string {
   if (isTlsCertificateError(msg)) {
     return `TLS certificate verification failed. ${TLS_CERT_SUGGESTION}`;
   }
-  // Proxy authentication errors
-  if (msg.includes('407') || msg.includes('Proxy Auth') || msg.includes('PROXY_AUTH_REQUIRED')) {
-    return `Proxy authentication failed. Your corporate proxy requires authentication. Check VS Code's http.proxy setting and ensure proxy credentials are configured.`;
+  // Two server-error payloads formatError must resolve before the proxy
+  // classifier touches them: (a) "error response" — the server answered with a
+  // JSON error body before any token streamed (checkResponseContentType); (b)
+  // "mid-stream" — the request streamed a 200, then the server aborted with an
+  // error event (streamReader). Both surface the server's own text, for any
+  // backend, not just OpenRouter/402. Running first also keeps a payload that
+  // merely contains a 407-ish digit run out of the proxy diagnosis. Not
+  // anchored to the string start — cause-chain entries format as "<Name> <message>".
+  const errorResponse = msg.match(/Server error \(error response\): ([\s\S]*)$/);
+  if (errorResponse) {
+    return `Server error. ${errorResponse[1]}`;
   }
-  // Mid-stream server error (no HTTP status — the request already streamed a 200
-  // before the server aborted, e.g. a credit/moderation/overload rejection).
-  // Surface the server's own text the same way as the pre-stream Server error
-  // [code] path, for any backend, not just OpenRouter/402. Not anchored to the
-  // string start — cause-chain entries are formatted as "<Name> <message>".
   const midStream = msg.match(/Server error \(mid-stream\): ([\s\S]*)$/);
   if (midStream) {
     return `Server error (mid-stream). ${midStream[1]}`;
+  }
+  // Proxy authentication errors. The 407 test is STATUS-anchored (CR-64): a
+  // bare includes('407') diagnosed any message containing the digit run
+  // 4-0-7 ("input (1407 tokens)", a backend on port 4070) as a corporate-proxy
+  // credential problem. Real shapes are "HTTP 407: ..." / "status 407" /
+  // "code: 407" — the digit token must stand next to its status context.
+  if (
+    /\bHTTP 407\b/.test(msg)
+    || /\bstatus 407\b/i.test(msg)
+    || /\bcode[\s]*[=:]\s*407\b/.test(msg)
+    || msg.includes('Proxy Auth')
+    || msg.includes('PROXY_AUTH_REQUIRED')
+  ) {
+    return `Proxy authentication failed. Your corporate proxy requires authentication. Check VS Code's http.proxy setting and ensure proxy credentials are configured.`;
   }
   return msg; // not matched
 }

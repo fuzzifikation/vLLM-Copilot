@@ -1,24 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { VllmClient } from '../src/provider/vllmClient.js';
-import * as configModule from '../src/state/config.js';
 
 function makeContext(): any { return { secrets: { get: async () => undefined } }; }
 function makeOutput(): any { return { appendLine: () => {} }; }
-
-function stubConfig() {
-  vi.spyOn(configModule, 'getConfig').mockResolvedValue({
-    serverUrl: 'http://test', apiKey: '',
-    models: [], temperature: 0, topP: 1, topK: -1, minP: 0,
-    repetitionPenalty: 1, maxOutputTokens: 100, presencePenalty: 0, frequencyPenalty: 0,
-    seed: -1, stopSequences: [], minOutputTokens: 0,
-    requestHeaders: {}, enableFileLogging: false, estimateCharsPerToken: 3.5,
-    streamInactivityTimeout: 0, autoContinueRetries: 1,
-    badWords: [],
-    ignoreEos: false,
-    repetitionDetection: null,
-    structuredOutput: null,
-  } as any);
-}
 
 /** Build a Response with an SSE body composed of the given lines (one per `data:` line). */
 function sseResponse(lines: string[]): Response {
@@ -46,7 +30,10 @@ function sseResponseChunked(lines: string[]): Response {
 }
 
 describe('VllmClient.chatCompletionStream', () => {
-  beforeEach(() => stubConfig());
+  // No config stub by design: chatCompletionStream passes the caller's
+  // serverConfig straight into ChatTransport.stream — nothing on this path
+  // reads settings (the deleted stubConfig mocked a pre-registry shape for
+  // a reader that does not exist, CR-102).
   afterEach(() => vi.restoreAllMocks());
 
   it('yields text content from a basic streamed response', async () => {

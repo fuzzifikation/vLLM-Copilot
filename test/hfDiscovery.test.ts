@@ -1,19 +1,22 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { resolveModelConfigForAdd, resolveModelConfigForAddSafely } from '../src/commands/hfDiscovery.js';
+import { resolveModelConfigForAddSafely } from '../src/commands/hfDiscovery.js';
 import { clearRuntimeLimitsCache } from '../src/backends/runtimeLimits.js';
 
 /**
- * HuggingFace auto-discovery pins. `autoConfigureModel` is module-private
- * (U9 demotion); these drive it through its only production entry,
- * `resolveModelConfigForAdd`, with no presets seeded so the resolver falls
- * straight through to the auto-discovery branch. Global fetch is stubbed and
- * routed by URL so nothing hits the network: /v1/models → vLLM,
+ * HuggingFace auto-discovery pins. `autoConfigureModel` and the preset resolver
+ * are module-private (U9 demotion + U8b); these drive them through the sole
+ * production entry, `resolveModelConfigForAddSafely`, with no presets seeded so
+ * the resolver falls straight through to the auto-discovery branch. The wrapper
+ * converts the resolver's strict THROWS into `null` plus a logged error, so
+ * failure pins assert the logged detail, not a rejection. Global fetch is
+ * stubbed and routed by URL so nothing hits the network: /v1/models → vLLM,
  * /api/models/ → HF model info, /generation_config.json → HF generation
  * config, anything else (the remote-preset index) → 404 → silent miss.
  */
-describe('autoConfigureModel (via resolveModelConfigForAdd)', () => {
+describe('autoConfigureModel (via resolveModelConfigForAddSafely)', () => {
   const extContext = { extensionUri: vscode.Uri.file('/ext') } as any;
+  const fakeOutput = () => ({ appendLine: vi.fn(), show: vi.fn() }) as any;
 
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -52,9 +55,12 @@ describe('autoConfigureModel (via resolveModelConfigForAdd)', () => {
 
     seedNoPresets();
     // Strict policy: a model without a resolvable context window is not saved.
-    await expect(
-      resolveModelConfigForAdd(extContext, 'm', 'http://host:8000'),
-    ).rejects.toThrow(/HTTP 503/);
+    // The wrapper converts the strict throw into null + a logged actionable
+    // error carrying the same HTTP detail.
+    const output = fakeOutput();
+    const result = await resolveModelConfigForAddSafely(output, extContext, 'm', 'http://host:8000');
+    expect(result).toBeNull();
+    expect(output.appendLine).toHaveBeenCalledWith(expect.stringContaining('HTTP 503'));
     // No HF lookup happened — the flow aborted at the mandatory context check.
     expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/api/models/m'))).toBe(false);
   });
@@ -75,7 +81,7 @@ describe('autoConfigureModel (via resolveModelConfigForAdd)', () => {
     });
 
     seedNoPresets();
-    const result = await resolveModelConfigForAdd(extContext, 'plain-text', 'http://host:8000');
+    const result = await resolveModelConfigForAddSafely(fakeOutput(), extContext, 'plain-text', 'http://host:8000');
 
     // The template is present but has no tool support — the step-4 fallback must
     // not re-claim tool calling that the model's own template proves it lacks.
@@ -103,7 +109,7 @@ describe('autoConfigureModel (via resolveModelConfigForAdd)', () => {
     });
 
     seedNoPresets();
-    const result = await resolveModelConfigForAdd(extContext, 'vision-thing', 'http://host:8000');
+    const result = await resolveModelConfigForAddSafely(fakeOutput(), extContext, 'vision-thing', 'http://host:8000');
 
     expect(result!.summary.join('\n')).toContain('Vision support detected (model_type: qwen2_5_vl)');
     expect(result!.modelConfig.capabilities).toEqual({ toolCalling: false, imageInput: true });
@@ -118,7 +124,7 @@ describe('autoConfigureModel (via resolveModelConfigForAdd)', () => {
     });
 
     seedNoPresets();
-    await resolveModelConfigForAdd(extContext, 'm', 'http://host:8000', { 'X-API-Key': 'secret' });
+    await resolveModelConfigForAddSafely(fakeOutput(), extContext, 'm', 'http://host:8000', { 'X-API-Key': 'secret' });
 
     const vllmCall = fetchFn.mock.calls.find(([u]) => String(u).endsWith('/v1/models'));
     expect(vllmCall).toBeDefined();
@@ -127,8 +133,9 @@ describe('autoConfigureModel (via resolveModelConfigForAdd)', () => {
   });
 });
 
-describe('resolveModelConfigForAdd', () => {
+describe('the OpenRouter route (via resolveModelConfigForAddSafely)', () => {
   const extContext = { extensionUri: vscode.Uri.file('/ext') } as any;
+  const fakeOutput = () => ({ appendLine: vi.fn(), show: vi.fn() }) as any;
   const PRESET_JSON =
     '{ "presetVersion": 1, "match": ["org/Model"], "config": { "vllmModelId": "org/Model", "modelModes": { "balanced": {} } } }';
 
@@ -197,8 +204,8 @@ describe('resolveModelConfigForAdd', () => {
     vi.stubGlobal('fetch', fetchFn);
     const infoSpy = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(undefined as any);
 
-    const result = await resolveModelConfigForAdd(
-      extContext, 'x-ai/grok-4.6', 'https://openrouter.ai/api', undefined,
+    const result = await resolveModelConfigForAddSafely(
+      fakeOutput(), extContext, 'x-ai/grok-4.6', 'https://openrouter.ai/api', undefined,
       undefined, undefined, 'openrouter',
     );
 

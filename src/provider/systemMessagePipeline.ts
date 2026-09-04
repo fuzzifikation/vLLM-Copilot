@@ -13,7 +13,7 @@ import {
 /**
  * Capture entry for a single system message, written to .vllm/system-messages.json.
  */
-export interface CaptureEntry {
+interface CaptureEntry {
   receivedContent: string;
   deliveredContent: string;
   rulesApplied: string[];
@@ -70,9 +70,10 @@ export class SystemMessagePipeline {
   ) {
     // Default writer: capture entries to .vllm/system-messages.json
     // (fire-and-forget, serialized). `captureEntries` already contains every
-    // system message from the turn — the processor records all of them, both
-    // replaced and passthrough — so there is no separate passthrough pass
-    // here. Deduplication is by `receivedContent`.
+    // NON-EMPTY system message from the turn — replaced and passthrough
+    // alike; empty-text system messages pass through uncaptured (see the
+    // `!receivedContent` branch in processSystemMessages) — so there is no
+    // separate passthrough pass here. Deduplication is by `receivedContent`.
     this.captureWriter = captureWriter ?? (async (captureEntries: CaptureEntry[]) => {
       const folders = vscode.workspace.workspaceFolders;
       if (!folders?.length || captureEntries.length === 0) return;

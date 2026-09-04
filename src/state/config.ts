@@ -1,30 +1,19 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { resolveOutputBudgetScalar } from '../shared/tokenBudget.js';
-import { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders, isOpenRouterUrl, isUsableServerUrl } from './serverCore.js';
+import { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders, isOpenRouterUrl, isUsableServerUrl, KNOWN_SERVER_TYPES, type ServerType } from './serverCore.js';
 import { entryMatchesConnection, resolveServer } from './serverRegistry.js';
 
-// The connection primitives live in serverCore.ts (leaf module) so config.ts
-// and serverRegistry.ts can share them without an import cycle — that cycle
-// used to force a duplicated resolver here. Re-exported for existing consumers.
+// The connection primitives (and the ServerType enum) live in serverCore.ts
+// (leaf module) so config.ts and serverRegistry.ts can share them without an
+// import cycle — that cycle used to force a duplicated resolver here.
+// Re-exported for existing consumers.
 // Server identity is the registry ENTRY ID; nothing here derives one.
-export { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders, isOpenRouterUrl, isUsableServerUrl };
+export { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders, isOpenRouterUrl, isUsableServerUrl, KNOWN_SERVER_TYPES };
+export type { ServerType };
 
-/**
- * The backend that serves this model. Every model targets its own server; the
- * backend determines which metadata endpoint yields its served context window
- * and which request fields are adapted.
- *
- * Missing `serverType` ALWAYS means vLLM (intentional product policy — every
- * released configuration is vLLM). Secondary backends are explicit opt-in via
- * the Add Server flow or manual config.
- */
-export type ServerType = 'vllm' | 'lmstudio' | 'llamacpp' | 'ollama' | 'openrouter';
-
-/** The enum values above as a runtime array — settings.json is hand-editable,
- *  so validateConfig checks `serverType` against THIS, not against the type
- *  system that stopped existing the moment the user opened the file. */
-export const KNOWN_SERVER_TYPES: readonly ServerType[] = ['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter'];
+// ServerType and KNOWN_SERVER_TYPES are declared in serverCore.ts (see the
+// import above) and re-exported here for existing consumers.
 
 export interface ModelConfig {
   /**
@@ -194,7 +183,7 @@ export const DEFAULT_MODEL_SETTINGS = {
 } as const;
 
 /** Typed per-model settings resolved against the built-in defaults. */
-export interface ResolvedModelSettings {
+interface ResolvedModelSettings {
   maxOutputTokens: number;
   estimateCharsPerToken: number;
   streamInactivityTimeout: number;
@@ -497,27 +486,6 @@ export function buildEndpoint(baseUrl: string, path: string): string {
 }
 
 /**
- * Build the auth header for a vLLM request from an API key. The vLLM `--api-key`
- * check validates `Authorization: Bearer <key>`, so that is the single header we
- * emit. Other schemes (e.g. a gateway's `x-api-key` or Cloudflare Access headers)
- * are a separate concern — users add those as custom request headers. Returns an
- * empty object when no key is set.
- *
- * ⚠️ **Scope: write paths only.** Its only caller is `commands/serverAuth.ts`
- * (the auth prompt and header-merge sites) constructing headers from
- * user-provided key input. Runtime chat requests do NOT call this — auth comes
- * from the registry entry's `requestHeaders`, resolved via
- * `resolveServerConfig`. Wiring this into runtime code would silently add or
- * omit the wrong headers.
- */
-export function buildAuthHeaders(apiKey?: string): Record<string, string> {
-  if (!apiKey) return {};
-  return {
-    Authorization: `Bearer ${apiKey}`,
-  };
-}
-
-/**
  * Merge newly entered auth into a server entry's existing request headers.
  *
  * Updating auth must NEVER wipe a field the user didn't touch. Replacing the
@@ -556,14 +524,52 @@ export function mergeAuthHeaders(
  * transport settings live on models and their registry entries, resolved at
  * request time via `resolveServerConfig` / `resolveRequestParams` / `resolveModelSettings`.
  */
-export async function getConfig(_context: vscode.ExtensionContext): Promise<VllmConfig> {
+export async function getConfig(): Promise<VllmConfig> {
   const section = vscode.workspace.getConfiguration('vllm-copilot');
 
+  // Shape guards mirror configStore's readModels/readServers: a hand-edited
+  // non-array section or a `null` element must not detonate every consumer
+  // (this read feeds validateConfig and getConfig directly, bypassing
+  // configStore to dodge the import cycle).
+  const rawModels = section.get<unknown>('models');
+  const rawServers = section.get<unknown>('servers');
   return {
-    models: section.get<ModelConfig[]>('models') || [],
-    servers: section.get<import('./serverRegistry.js').ServerEntry[]>('servers') || [],
+    models: Array.isArray(rawModels)
+      ? rawModels.filter((e): e is ModelConfig => !!e && typeof e === 'object')
+      : [],
+    servers: Array.isArray(rawServers)
+      ? rawServers.filter((e): e is import('./serverRegistry.js').ServerEntry => !!e && typeof e === 'object')
+      : [],
     enableFileLogging: section.get<boolean>('enableFileLogging') ?? false,
   };
+}
+
+/**
+ * Malformed-shape report against the RAW settings sections (CR-88). Every
+ * in-process reader (`getConfig`, `readModels`, `readServers`) shape-filters
+ * non-object elements before `validateConfig` can see them, so hand-edited
+ * garbage must be checked at the source: a warning that inspects the filtered
+ * array can only ever be silent about exactly what the filters shredded.
+ */
+function rawShapeWarnings(warnings: string[]): void {
+  const section = vscode.workspace.getConfiguration('vllm-copilot');
+  for (const key of ['servers', 'models'] as const) {
+    const label = key === 'servers' ? 'Server registry' : 'Model settings';
+    const raw = section.get<unknown>(key);
+    if (raw === undefined) continue; // section absent — nothing hand-edited yet
+    if (!Array.isArray(raw)) {
+      warnings.push(`${label}: "vllm-copilot.${key}" is not an array. The whole section is ignored until it is fixed to a JSON array.`);
+      continue;
+    }
+    const garbage = raw.filter(e => !e || typeof e !== 'object').length;
+    if (garbage > 0) {
+      warnings.push(
+        garbage === 1
+          ? `${label}: 1 malformed element in "vllm-copilot.${key}" is not an object and is ignored - remove it.`
+          : `${label}: ${garbage} malformed elements in "vllm-copilot.${key}" are not objects and are ignored - remove them.`
+      );
+    }
+  }
 }
 
 /**
@@ -574,6 +580,9 @@ export async function getConfig(_context: vscode.ExtensionContext): Promise<Vllm
  */
 export function validateConfig(config: VllmConfig): string[] {
   const warnings: string[] = [];
+  // Garbage is reported against the raw sections BEFORE the loops below,
+  // because those loops only ever see reader-filtered entries (CR-88).
+  rawShapeWarnings(warnings);
 
   // Registry-level checks: server ids must be unique (a model references by id,
   // so a duplicate id is ambiguous), and unknown/blank ids are unreachable.
@@ -584,16 +593,20 @@ export function validateConfig(config: VllmConfig): string[] {
   // of secrets), then compares sanitized headers within the bucket.
   const byUrl = new Map<string, { id: string; entry: import('./serverRegistry.js').ServerEntry }[]>();
   for (const entry of config.servers) {
+    // No non-object guard here on purpose: readers filter `[null]`-class
+    // elements before this array exists, and rawShapeWarnings() above already
+    // counted and reported them at the raw section (CR-88). Re-adding a guard
+    // here would just be unreachable code with a warning nobody can see.
     const id = entry.id;
     // typeof, not just truthiness: a hand-edited numeric id would sail past
     // `!id` and then never match any string `model.server` at resolve time —
     // the resolver compares with ===, so reject non-strings here.
     if (typeof id !== 'string' || !id) {
-      warnings.push('A server registry entry is missing its id — models cannot reference it.');
+      warnings.push('A server registry entry is missing its id - models cannot reference it.');
       continue;
     }
     if (serverIds.has(id)) {
-      warnings.push(`Server registry: duplicate id "${id}" — each server entry must have a unique id.`);
+      warnings.push(`Server registry: duplicate id "${id}" - each server entry must have a unique id.`);
     }
     serverIds.add(id);
     // serverType is validated too (the strictly cosmetic routingMode gets an
@@ -601,7 +614,7 @@ export function validateConfig(config: VllmConfig): string[] {
     // less). Unknown values still pass through to runtime (vLLM fallback),
     // but the user hears about it.
     if (entry.serverType !== undefined && !KNOWN_SERVER_TYPES.includes(entry.serverType)) {
-      warnings.push(`Server registry: entry "${id}" has serverType "${String(entry.serverType)}" — expected one of ${KNOWN_SERVER_TYPES.join(', ')}. Requests fall back to vLLM behavior.`);
+      warnings.push(`Server registry: entry "${id}" has serverType "${String(entry.serverType)}" - expected one of ${KNOWN_SERVER_TYPES.join(', ')}. Requests fall back to vLLM behavior.`);
     }
     // A blank or host-less serverUrl normalizes to the localhost:8000 sentinel,
     // which would silently route this entry's headers (credentials included)
@@ -609,7 +622,7 @@ export function validateConfig(config: VllmConfig): string[] {
     // such entries (resolveServer → undefined); say so, or the user just
     // wonders why every model on this entry fails to connect.
     if (!isUsableServerUrl(entry.serverUrl)) {
-      warnings.push(`Server registry: entry "${id}" has no usable serverUrl — models referencing it cannot connect. Set "serverUrl" to a real host.`);
+      warnings.push(`Server registry: entry "${id}" has no usable serverUrl - models referencing it cannot connect. Set "serverUrl" to a real host.`);
       continue;
     }
     // Same URL + same auth = the same connection. Allowed (each id is a valid
@@ -622,7 +635,7 @@ export function validateConfig(config: VllmConfig): string[] {
       // twins get the duplicate-id warning already — skip the redundancy one.)
       const twin = bucket.find(prev => prev.id !== id && entryMatchesConnection(prev.entry, url, headers));
       if (twin) {
-        warnings.push(`Server registry: entries "${twin.id}" and "${id}" are the same server connection (same URL and auth) — one of them is redundant.`);
+        warnings.push(`Server registry: entries "${twin.id}" and "${id}" are the same server connection (same URL and auth) - one of them is redundant.`);
       }
       bucket.push({ id, entry });
       byUrl.set(url, bucket);
@@ -636,17 +649,22 @@ export function validateConfig(config: VllmConfig): string[] {
   // wire id.
   const seenIds = new Set<string>();
   for (const model of config.models) {
+    // Non-object elements: same deal as the server loop — filtered upstream,
+    // reported by rawShapeWarnings() (CR-88), never reach this loop.
     const display = model.id || model.vllmModelId || '(unnamed model)';
     // Raw comparison: `id` is used verbatim as the key by personalities, the
     // webview, and config writes — a padded id is a different key, not a typo.
+    // typeof mirrors the server-loop check: a JSON number `"id": 5` passes
+    // `!id` clean here yet every downstream key site stringifies it, so `5`
+    // and `"5"` would diverge in mixed paths.
     const id = model.id;
-    if (!id) {
+    if (typeof id !== 'string' || !id) {
       warnings.push(
-        `Model "${display}": missing id — each model entry must have a unique id (the extension key for personalities and settings).`
+        `Model "${display}": missing id - each model entry must have a unique id (the extension key for personalities and settings).`
       );
     } else {
       if (seenIds.has(id)) {
-        warnings.push(`Model "${display}": duplicate id — each model entry must have a unique id.`);
+        warnings.push(`Model "${display}": duplicate id - each model entry must have a unique id.`);
       }
       seenIds.add(id);
     }
@@ -657,7 +675,7 @@ export function validateConfig(config: VllmConfig): string[] {
     if (!ref) {
       warnings.push(`Model "${display}" has no server reference and cannot be reached. Set its "server" to a registry entry id.`);
     } else if (!serverIds.has(ref)) {
-      warnings.push(`Model "${display}" references unknown server "${ref}" — no registry entry has that id. Fix the reference or add the server.`);
+      warnings.push(`Model "${display}" references unknown server "${ref}" - no registry entry has that id. Fix the reference or add the server.`);
     }
 
     // routingMode must be one of the OpenRouter variants when present — anything
@@ -675,7 +693,7 @@ export function validateConfig(config: VllmConfig): string[] {
     if (Array.isArray(model.maxOutputTokens)) {
       const lengths = model.maxOutputTokens;
       if (lengths.length === 0) {
-        warnings.push(`Model "${display}": maxOutputTokens is an empty array — treated as unset (default budget, no dropdown).`);
+        warnings.push(`Model "${display}": maxOutputTokens is an empty array - treated as unset (default budget, no dropdown).`);
       } else {
         if (lengths.some(n => !Number.isInteger(n) || n <= 0)) {
           warnings.push(`Model "${display}": maxOutputTokens as a vector must contain positive integers only.`);
@@ -712,10 +730,19 @@ export function validateConfig(config: VllmConfig): string[] {
       const modeKeys = Object.keys(model.modelModes);
       if (!modeKeys.includes(model.defaultMode)) {
         warnings.push(
-          `Model "${display}": defaultMode "${model.defaultMode}" is not a valid mode — ` +
+          `Model "${display}": defaultMode "${model.defaultMode}" is not a valid mode - ` +
           `available modes are: ${modeKeys.map(k => `"${k}"`).join(', ')}.`
         );
       }
+    } else if (model.defaultMode && !model.modelModes) {
+      // The other half of the pairing (CR-62): a defaultMode with NO modelModes
+      // is dead config — no dropdown, no mode, silently ignored. The webview's
+      // empty-the-modes-editor path leaves exactly this shape behind, since
+      // defaultMode is not in its clearable-on-empty set.
+      warnings.push(
+        `Model "${display}": defaultMode "${model.defaultMode}" is set but modelModes is absent - ` +
+        `no mode dropdown will appear and defaultMode is ignored. Remove defaultMode or define modelModes.`
+      );
     }
 
     for (const [modeName, modeParams] of Object.entries(model.modelModes ?? {})) {
@@ -762,8 +789,11 @@ function validateRequestParams(params: Record<string, unknown> | undefined, labe
  * `server` registry id — NOT the wire id, since several presets may share a
  * `vllmModelId`. Returns -1 if no match is found.
  *
- * Shared by {@link replaceModelConfig} (configStore.ts) and the webview's patch
- * path (serverSettingsView.ts) so matching logic stays in one place.
+ * The single identity matcher for locating a stored model entry: every
+ * write-path caller (replace/patch in configStore, the command flows,
+ * personality, migrations, the webview patch path) goes through here so
+ * matching stays in one place. Deliberately no caller roster — the previous
+ * one named 2 of 7 call sites and rotted (CR-70).
  */
 export function findModelConfigIndex(
   models: ModelConfig[],

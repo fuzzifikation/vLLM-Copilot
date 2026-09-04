@@ -52,6 +52,8 @@ export async function consumeStream(
   // the loop — the final chunk always has the correct cumulative stats.
   let pendingUsage: WireUsage | undefined;
   let pendingMetrics: WireMetrics | undefined;
+  // Trailing characters of the last content chunk, for split-tag detection.
+  let thinkWindow = '';
 
   for await (const event of stream) {
     if (token.isCancellationRequested) {
@@ -73,16 +75,27 @@ export async function consumeStream(
       // Detect raw thinking tags leaking into content. When vLLM is started without
       // a matching --reasoning-parser, the model's <thinking>...</thinking> markers arrive
       // as plain content instead of the `reasoning` field, then VS Code strips them.
-      if (!outcome.sawRawThinkTags && RAW_THINK_TAG.test(event.content)) {
-        outcome.sawRawThinkTags = true;
+      if (!outcome.sawRawThinkTags) {
+        // Sliding tail window: a <thinking> tag straddling two network chunks
+        // must not silently defeat the missing-parser diagnostic (CR-20).
+        // '</thinking>' is the longest needle at 11 chars; 16 carried chars
+        // cover any split point.
+        const probe = thinkWindow + event.content;
+        if (RAW_THINK_TAG.test(probe)) outcome.sawRawThinkTags = true;
+        thinkWindow = probe.slice(-16);
       }
       progress.report(new vscode.LanguageModelTextPart(event.content));
     }
 
     // Handle finalized tool calls
     if (event.finishedToolCalls.length > 0) {
+      // A tool call is the model's first output just as much as text is; without
+      // this stamp a pure tool-call turn reported TTFT as null (CR-19).
+      if (outcome.firstTokenTime === undefined) outcome.firstTokenTime = Date.now() - startTime;
       for (const tc of event.finishedToolCalls) {
-        if (!reportedToolCallIds.has(tc.id) && tc.name) {
+        // tc.name is guaranteed: finalizePendingToolCalls (the sole producer)
+        // drops name-less entries. Only the id-dedup is a real guard here.
+        if (!reportedToolCallIds.has(tc.id)) {
           const parsedArgs = parseToolCallArgs(tc);
           // If args couldn't be repaired, fall back to {} — matching VS Code BYOK's
           // behavior. Dropping the call entirely makes it look like the model stopped
@@ -93,7 +106,7 @@ export async function consumeStream(
           outcome.hadToolCalls = true;
           if (parsedArgs === null) {
             output.appendLine(
-              `[WARN] Tool call ${tc.id} (${tc.name}): args unparseable, falling back to {} — raw: ${tc.arguments.substring(0, 200)}`
+              `[WARN] Tool call ${tc.id} (${tc.name}): args unparseable, falling back to {} - raw: ${tc.arguments.substring(0, 200)}`
             );
           }
           progress.report(
@@ -164,8 +177,11 @@ export async function consumeStream(
  * lying `completion_tokens: "500"` string would string-concat into the
  * all-time totals forever (0 + "500" = "0500"); NaN/null would crash the
  * reporting lines AFTER the full answer already streamed. Garbage reads as 0.
- * (Actual cost needs no clamp here — usageStore's accumulateCost already
- * rejects non-finite/negative values.)
+ * `cost` is clamped here too, not just in usageStore's accumulateCost: the raw
+ * value also flows through `lastRequest` into the dashboard's `formatAmount`
+ * (`.toFixed`) and `logTokenUsage`, paths the accumulation guard never covers.
+ * A lying relay's `"cost": "0.00002"` would throw AFTER the answer completed
+ * and permanently poison the dashboard's Last Request node.
  */
 function sanitizeUsage(u: WireUsage): WireUsage {
   const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
@@ -180,5 +196,6 @@ function sanitizeUsage(u: WireUsage): WireUsage {
     total_tokens: n(u.total_tokens),
     prompt_tokens_details: nums(u.prompt_tokens_details),
     completion_tokens_details: nums(u.completion_tokens_details),
+    cost: typeof u.cost === 'number' && Number.isFinite(u.cost) && u.cost >= 0 ? u.cost : undefined,
   };
 }

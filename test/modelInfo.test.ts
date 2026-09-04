@@ -127,7 +127,7 @@ describe('buildModelInfo outputMenuCeiling (pick-as-advertised scaling)', () => 
 
 describe('extractFamilyWithSource', () => {
   it('reports fromFallback=true for org-name fallback (GLM/ChatGLM not in list)', () => {
-    // GLM — exactly the case the known-bugs doc flagged. Intentionally not in
+    // GLM — exactly the family-fallback trap the old known-bugs doc flagged. Intentionally not in
     // KNOWN_FAMILIES; the authoritative family must come from a preset or HF.
     expect(extractFamilyWithSource('zai-org/GLM-5.2')).toEqual({
       family: 'zai-org',

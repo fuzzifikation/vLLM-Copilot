@@ -52,7 +52,7 @@ describe('parseOpenRouterModelRef', () => {
     expect(r).toEqual({ requestedId: 'meta-llama/llama-3.3-70b-instruct:free' });
   });
 
-  it('parses a ~family-latest alias: strips ~ for lookup, keeps it for chat', () => {
+  it('parses a ~family-latest alias: keeps the ~ intact for the verbatim catalog lookup AND chat', () => {
     const r = parse('~deepseek/family-latest');
     expect(r).toEqual({ requestedId: '~deepseek/family-latest' });
   });

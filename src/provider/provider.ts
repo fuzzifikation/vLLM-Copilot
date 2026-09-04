@@ -90,8 +90,13 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     this.modelCacheGeneration++;
     this.cachedModels = null;
     this.modelContextWindows.clear();
-    this.lastSelectedMode.clear();
-    this.lastSelectedLength.clear();
+    // lastSelectedMode / lastSelectedLength deliberately SURVIVE (CR-45): they
+    // mirror VS Code's own persisted picker selections, not cached server
+    // truth. Wiping them on any `vllm-copilot.*` change (file logging, log
+    // limits, ...) made the advertised output budget silently revert to the
+    // menu head until the next request re-reported the pick. Only the picker
+    // schema changing could justify a reset, and VS Code persists the user's
+    // pick across exactly that event too.
     this.client.invalidateConfigCache();
     this._onDidChangeLanguageModelChatInformation.fire();
   }
@@ -279,7 +284,8 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         `You are connected to **${remoteHost}**, but this extension is running on your local machine. ` +
         `LLM requests will fail or behave unexpectedly.\n\n` +
         `**To fix this:**\n` +
-        `1. Open the Extensions view: \\\`Ctrl+Shift+X\\\`\n` +
+        `1. Open the Extensions view: \`Ctrl+Shift+X\`
+` +
         `2. Click the "..." menu in the extensions toolbar → **Install in ${remoteHost}...** (or look for the 📥 icon)\n` +
         `3. Search for **vLLM-Copilot** and install it on the remote\n` +
         `4. Try your request again`

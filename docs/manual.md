@@ -23,9 +23,9 @@ The detailed guide to vLLM-Copilot. The [README](../README.md) is the quick pitc
 
 ## Getting started
 
-- **Quick Start** — install, add a server/model, first chat: see the [README Quick Start](../README.md#quick-start).
-- **Requirements** — GitHub Copilot Chat (no subscription needed) plus either a running model server or an OpenRouter API key: see [Quick Start](../README.md#quick-start).
-- **Remote setups (SSH/WSL/Containers)** — the extension runs on the remote host (`extensionKind: workspace`). Install it while connected to the remote window; a local-first install won't be picked up by the remote automatically. See the note in [Quick Start](../README.md#quick-start).
+- **Quick Start** - install, add a server/model, first chat: see the [README Quick Start](../README.md#quick-start).
+- **Requirements** - GitHub Copilot Chat (no subscription needed) plus either a running model server or an OpenRouter API key: see [Quick Start](../README.md#quick-start).
+- **Remote setups (SSH/WSL/Containers)** - the extension runs on the remote host (`extensionKind: workspace`). Install it while connected to the remote window; a local-first install won't be picked up by the remote automatically. See the note in [Quick Start](../README.md#quick-start).
 
 ---
 
@@ -35,7 +35,7 @@ Three ideas explain most of how the extension is designed.
 
 ### 1. Servers and models are separate
 
-Servers live in their own registry, `vllm-copilot.servers`: each entry owns a `serverUrl`, optional `requestHeaders` (auth), `serverType`, and display label. Every entry in `vllm-copilot.models` references exactly one server by its `server` id and carries its own token budgets, capabilities, and params — never URLs or auth. The same server entry can back many models; the same URL can exist as two entries under different credentials. Different teams, environments, or credentials stay isolated because nothing is shared between entries. There is **no global/default server**: an entry is only used because a model references it.
+Servers live in their own registry, `vllm-copilot.servers`: each entry owns a `serverUrl`, optional `requestHeaders` (auth), `serverType`, and display label. Every entry in `vllm-copilot.models` references exactly one server by its `server` id and carries its own token budgets, capabilities, and params - never URLs or auth. The same server entry can back many models; the same URL can exist as two entries under different credentials. Different teams, environments, or credentials stay isolated because nothing is shared between entries. There is **no global/default server**: an entry is only used because a model references it.
 
 The only other global settings are diagnostics and logging (`vllm-copilot.systemMessageCapture`, `vllm-copilot.enableFileLogging`, `vllm-copilot.logBodyLimit`) and the dashboard poll interval (`vllm-copilot.dashboard.pollIntervalMs`).
 
@@ -98,21 +98,21 @@ All settings live under `vllm-copilot` in VS Code Settings (`Ctrl+,` → search 
 
 Server entries carry **`serverUrl`** (required), **`requestHeaders`** (auth/routing, isolated per entry), optional **`serverType`** and **`displayName`**. Model entries reference their server via **`server`** (the entry's `id`). The important model fields:
 
-- **`id`** / **`vllmModelId`** — entry key vs. actual model ID on the server (allows aliases).
-- **`maxOutputTokens`** / **`maxInputTokens`** — output cap and the computed input budget.
-- **`defaultParams`** — model-wide baseline request params (snake_case vLLM body keys).
-- **`modelModes`** / **`defaultMode`** — switchable named presets, and which one starts active.
-- **`maxOutputTokens`** — max response tokens. As an **array**, an ordered list of token counts shown as a second model-picker dropdown ("Output Length"), independent of modes: the first entry is the default and the desired budget; when the dropdown is present the user's pick overrides `max_tokens`.
-- **`capabilities`** — `toolCalling` (default true) and `imageInput` (vision, default false).
-- **`autoContinueRetries`** — retries for empty/truncated responses (default 1).
-- **`systemMessageReplacementsFile`** — path to a find/replace JSON file for system messages.
-- **`cost`** — per-model cost rates for the usage tracker (per 1M tokens).
+- **`id`** / **`vllmModelId`** - entry key vs. actual model ID on the server (allows aliases).
+- **`maxOutputTokens`** / **`maxInputTokens`** - output cap and the computed input budget.
+- **`defaultParams`** - model-wide baseline request params (snake_case vLLM body keys).
+- **`modelModes`** / **`defaultMode`** - switchable named presets, and which one starts active.
+- **`maxOutputTokens`** - max response tokens. As an **array**, an ordered list of token counts shown as a second model-picker dropdown ("Output Length"), independent of modes: the first entry is the default and the desired budget; when the dropdown is present the user's pick overrides `max_tokens`.
+- **`capabilities`** - `toolCalling` (default true) and `imageInput` (vision, default false).
+- **`autoContinueRetries`** - retries for empty/truncated responses (default 1).
+- **`systemMessageReplacementsFile`** - path to a find/replace JSON file for system messages.
+- **`cost`** - per-model cost rates for the usage tracker (per 1M tokens).
 
 Full reference with every field, defaults, and the complete parameter table: **[Configuration Reference](configuration-reference.md)**.
 
 ### Quick minimal config
 
-The **Add vLLM Server & Model** command generates this automatically. A minimal hand-written entry looks like:
+The **Add or Reconfigure Server/Model** command generates this automatically. A minimal hand-written entry looks like:
 
 ```json
 "vllm-copilot.servers": [
@@ -153,11 +153,11 @@ Model modes are **named configurations** for a model that you switch between fro
 }
 ```
 
-The **Add vLLM Server & Model** command auto-generates modes from bundled presets (`model-configs/`) or HuggingFace data. Model-specific recommendations (e.g. Qwen sampling parameters): **[Model Modes & inference parameters](modelmodes.md)**.
+The **Add or Reconfigure Server/Model** command auto-generates modes from bundled presets (`model-configs/`) or HuggingFace data. Model-specific recommendations (e.g. Qwen sampling parameters): **[Model Modes & inference parameters](modelmodes.md)**.
 
-Output **length** is deliberately not a mode knob. Models and presets whose `maxOutputTokens` is an **array** get a second, independent **"Output Length"** dropdown next to the mode picker; the user's pick overrides any `max_tokens` set in modes or `defaultParams` (always clamped to the model's ceiling). The pick is also what the extension **advertises** to Copilot as the output budget — and since Copilot derives the prompt budget as (context − output), **a shorter pick hands the freed tokens to your prompt**: more headroom for long conversations when you don't need a 64K answer. A **shorter** pick lands on the very next response's `max_tokens` instantly; a **longer** pick lands once Copilot's context display re-resolves on the first request after the change (the extension re-publishes model metadata then — the same mechanism, and the same one-request lag, mode switches use). The wire never exceeds the advertised output budget: Copilot sizes the prompt against it, so promising more could overflow the context window (or hard-fail on providers that validate it). If you pinned `maxInputTokens` explicitly, you own the split and the trade-off does not apply. Modes describe behavior — thinking depth, sampling — not response size.
+Output **length** is deliberately not a mode knob. Models and presets whose `maxOutputTokens` is an **array** get a second, independent **"Output Length"** dropdown next to the mode picker; the user's pick overrides any `max_tokens` set in modes or `defaultParams` (always clamped to the model's ceiling). The pick is also what the extension **advertises** to Copilot as the output budget - and since Copilot derives the prompt budget as (context − output), **a shorter pick hands the freed tokens to your prompt**: more headroom for long conversations when you don't need a 64K answer. A **shorter** pick lands on the very next response's `max_tokens` instantly; a **longer** pick lands once Copilot's context display re-resolves on the first request after the change (the extension re-publishes model metadata then - the same mechanism, and the same one-request lag, mode switches use). The wire never exceeds the advertised output budget: Copilot sizes the prompt against it, so promising more could overflow the context window (or hard-fail on providers that validate it). If you pinned `maxInputTokens` explicitly, you own the split and the trade-off does not apply. Modes describe behavior - thinking depth, sampling - not response size.
 
-Right after an update or after giving a model its first menu, VS Code's settings dropdown can lag and show only the mode section — a known VS Code snapshot quirk ([microsoft/vscode#333413](https://github.com/microsoft/vscode/issues/333413); the model list hover already shows an **Output Length** chip when the menu is live). If the section is missing: open the model list once and click the **Output Length** chip on the model; the menu opens from there and the settings dropdown heals immediately.
+Right after an update or after giving a model its first menu, VS Code's settings dropdown can lag and show only the mode section - a known VS Code snapshot quirk ([microsoft/vscode#333413](https://github.com/microsoft/vscode/issues/333413); the model list hover already shows an **Output Length** chip when the menu is live). If the section is missing: open the model list once and click the **Output Length** chip on the model; the menu opens from there and the settings dropdown heals immediately.
 
 ---
 
@@ -165,13 +165,13 @@ Right after an update or after giving a model its first menu, VS Code's settings
 
 ### Server Dashboard
 
-A native Tree View sidebar (no webviews, no extra ports) with live metrics per configured server: queue status (running/waiting/idle), expandable metrics (context window, vLLM version, KV cache usage and hit rate, TTFT, output and prefill speed), MTP/speculative decoding stats, and Last Request Details (token counts, TTFT, queue time, generation time, throughput — updated immediately after every prompt, not on the poll interval). Open it with the **V** icon in the activity bar (left sidebar). Command alternative: **View → vLLM-Copilot → Dashboard**.
+A native Tree View sidebar (no webviews, no extra ports) with live metrics per configured server: queue status (running/waiting/idle), expandable metrics (context window, vLLM version, KV cache usage and hit rate, TTFT, output and prefill speed), MTP/speculative decoding stats, and Last Request Details (token counts, TTFT, queue time, generation time, throughput - updated immediately after every prompt, not on the poll interval). Open it with the **V** icon in the activity bar (left sidebar). Command alternative: **View → vLLM-Copilot → Dashboard**.
 
 ### Server Deep-Dive
 
 A vLLM-only webview with the full server metric set: histogram breakdowns (TTFT/TPOT/token counts) with hoverable bars and the raw metric dump. Right-click a vLLM server node → **vLLM Deep-Dive**.
 
-The panel reads the server **once** when it opens and then goes quiet — it never keeps a server polling in the background. Re-run the command to take a fresh reading.
+The panel reads the server **once** when it opens and then goes quiet - it never keeps a server polling in the background. Re-run the command to take a fresh reading.
 
 ### Token usage & cost
 
@@ -240,7 +240,7 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 
 | Command | What it does |
 |---------|--------------|
-| **Add vLLM Server & Model** | Guided flow: enter server URL → discover models → auto-configure → save. An `openrouter.ai` URL routes into the OpenRouter flow. |
+| **Add or Reconfigure Server/Model** | Guided flow: enter server URL → discover models → auto-configure → save. An `openrouter.ai` URL routes into the OpenRouter flow. |
 | **Test & Refresh Models** | Verify servers, list models, correct ID mismatches, check network settings. |
 | **Set Model Personality** | Pick a model, pick a personality preset (or **Default** to clear). |
 | **Configure Utility Model** | Switch utility model for MCP servers (`mainAgent` / `copilot` / `none`). |
@@ -274,7 +274,7 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 | [Token & Cost Usage Tracker](usage.md) | Usage/cost data model, persistence, retention, reset behavior. |
 | [Using OpenRouter](openrouter.md) | OpenRouter setup, URL table, manual config, attribution headers. |
 | [Custom System Prompt / Personality Presets](custom-system-prompt.md) | System-prompt capture & replace pipeline. |
-| [Auto-Continue](auto-continue.md) | Empty/truncated response retry — how it works, config, and known limitations. |
+| [Auto-Continue](auto-continue.md) | Empty/truncated response retry - how it works, config, and known limitations. |
 | [Agents window](agents-window.md) | Using vLLM models in the VS Code "Open in Agents" window (Agent Host BYOK). |
 | [Copilot integration](copilot-integration.md) | How the extension plugs into Copilot, sessions, tool calls. |
 

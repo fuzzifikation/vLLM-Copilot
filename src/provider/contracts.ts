@@ -70,4 +70,11 @@ export interface StreamOutcome {
   firstTokenTime?: number;
   /** Full accumulated text content for this turn (used as assistant prefill/continuation on retry). */
   contentBuffer?: string;
+  /**
+   * Sticky across auto-continue resets: ANY attempt of this request streamed
+   * content or a tool call to the user. Per-attempt fields reset between
+   * retries; this bit survives so post-stream diagnostics can never report
+   * "the model returned no output" over output the user already saw (CR-38).
+   */
+  everStreamed?: boolean;
 }

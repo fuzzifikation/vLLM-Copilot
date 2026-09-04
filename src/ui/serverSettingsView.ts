@@ -256,7 +256,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     const view = this.view;
     if (!view || !this.isWebviewReady) return;
     const generation = ++this.refreshGeneration;
-    const config = await getConfig(this.context);
+    const config = await getConfig();
     // One group per ENTRY, in `servers[]` array order. The entry IS the server:
     // no URL/header folding — each entry is probed and labelled with its own
     // credentials, and models attach through their `server` reference.
@@ -295,7 +295,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
             entries.push({ owned_by: m.ownedBy, max_model_len: m.maxModelLen });
           }
         } catch (err) {
-          this.outputChannel.appendLine(`[WARN] Model Settings: model list probe failed for ${url}: ${err instanceof Error ? err.message : String(err)} — server-reported models hidden.`);
+          this.outputChannel.appendLine(`[WARN] Model Settings: model list probe failed for ${url}: ${err instanceof Error ? err.message : String(err)} - server-reported models hidden.`);
         }
         // /v1/models can only identify vLLM and llama.cpp. LM Studio / Ollama have no
         // /v1/models signature — when the endpoint signal is inconclusive (or unreachable),

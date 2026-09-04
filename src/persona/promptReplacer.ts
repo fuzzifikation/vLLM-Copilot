@@ -162,7 +162,7 @@ export async function loadPromptReplacements(filePath: string): Promise<PromptRe
     return rules;
   } catch (err) {
     if (err instanceof Error && 'code' in err && (err as any).code === 'ENOENT') {
-      // File not found — caller (provider.ts) is responsible for logging if needed.
+      // File not found — caller (systemMessagePipeline.ts) is responsible for logging if needed.
       return [];
     }
     throw err;

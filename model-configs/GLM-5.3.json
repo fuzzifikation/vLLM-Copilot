@@ -53,7 +53,7 @@
     "name": "GLM-5.3",
     "source": "https://huggingface.co/zai-org/GLM-5.3",
     "verified": "2026-08-30",
-    "notes": "Full GLM-5.3 (glm_moe_dsa, same base as GLM-5.2, text-only). Thinking always on — depth only via reasoning_effort (max/high/low); clear_thinking strips historical thinking. temp=1.0, top_p=0.95. Flash has its own preset."
+    "notes": "Full GLM-5.3 (glm_moe_dsa, same base as GLM-5.2, text-only). Thinking always on - depth only via reasoning_effort (max/high/low); clear_thinking strips historical thinking. temp=1.0, top_p=0.95. Flash has its own preset."
   },
   "config": {
     "vllmModelId": "GLM-5.3",

@@ -1,11 +1,33 @@
 import * as vscode from 'vscode';
-import { buildAuthHeaders } from '../state/config.js';
 import { jsonrepair } from 'jsonrepair';
+
+/**
+ * Build the auth header for a vLLM server entry from an API key. The vLLM
+ * `--api-key` check validates `Authorization: Bearer <key>`, so that is the
+ * single header we emit. Other schemes (e.g. a gateway's `x-api-key` or
+ * Cloudflare Access headers) are a separate concern - users add those as
+ * custom request headers. Returns an empty object when no key is set.
+ *
+ * ⚠️ **Scope: write paths only.** Runtime chat requests do NOT call this -
+ * auth comes from the registry entry's `requestHeaders`, resolved via
+ * `resolveServerConfig`. Wiring this into runtime code would silently add or
+ * omit the wrong headers. Relocated from `state/config.ts` to its only caller
+ * (cluster finding C-2); the config docstring had been advertising this
+ * loneliness for a while.
+ * @internal Exported for testing (the Bearer-shape wire tripwire).
+ */
+export function buildAuthHeaders(apiKey?: string): Record<string, string> {
+  if (!apiKey) return {};
+  return {
+    Authorization: `Bearer ${apiKey}`,
+  };
+}
 
 /**
  * Parse a user-entered headers string into a validated `Record<string, string>`.
  * Accepts either JSON (`{"X-API-Key":"..."}`) or blank (no headers).
- * Returns `undefined` on parse/type error (caller shows the message).
+ * Returns `{ error }` on parse/type error (the caller shows the message);
+ * never `undefined` - that cancel convention belongs to `promptForServerAuth`.
  *
  * Forgiving: accepts strict JSON (`{"X-API-Key":"..."}`) and, via `jsonrepair`,
  * common shorthand — missing outer braces (`"X-API-Key":"..."`), unquoted

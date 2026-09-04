@@ -1,7 +1,7 @@
 # Custom System Prompt Override
 
-**Status:** Implemented (v0.17.0) — capture + replacement pipeline is unified and position-preserving
-**Related:** [feature-ideas.md](./feature-ideas.md) — "Custom System Prompt Override" entry
+**Status:** Implemented (v0.17.0) - capture + replacement pipeline is unified and position-preserving
+**Related:** [feature-ideas.md](./feature-ideas.md) - "Custom System Prompt Override" entry
 **Research:** VS Code Copilot source code analysis, 2026-07-14
 
 ---
@@ -10,9 +10,9 @@
 
 Copilot injects hidden boilerplate into every system message that the user cannot see, edit, or opt out of. This includes:
 
-1. **Model-specific instructions** — ~21KB of agent behavior rules
-2. **Reusable building blocks** — `<SafetyRules />`, `<CopilotIdentityRules />`, etc.
-3. **Per-request variations** — model name, date, operating system, tools available
+1. **Model-specific instructions** - ~21KB of agent behavior rules
+2. **Reusable building blocks** - `<SafetyRules />`, `<CopilotIdentityRules />`, etc.
+3. **Per-request variations** - model name, date, operating system, tools available
 
 **The user cannot see or edit the Copilot boilerplate.** It's injected by VS Code and hidden. This feature gives them visibility and granular control.
 
@@ -58,7 +58,7 @@ All prompts import these shared components:
 ### Dynamic Values
 
 Only `CopilotIdentityRules` injects dynamic content:
-- **`{this.promptEndpoint.name}`** — The model name (e.g., "MiX: Qwen3.6-27B", "GPT-5", "Claude Sonnet 4")
+- **`{this.promptEndpoint.name}`** - The model name (e.g., "MiX: Qwen3.6-27B", "GPT-5", "Claude Sonnet 4")
 
 All other blocks are static text.
 
@@ -107,7 +107,7 @@ Many more types exist in the VS Code source (search, terminal, git, debugging, e
 
 **Rationale:**
 - Reusable blocks appear in **dozens of different prompt types**
-- Cannot patch VS Code — must intercept at runtime
+- Cannot patch VS Code - must intercept at runtime
 - Same boilerplate appears across many message types
 - Users want to remove/modify specific blocks (e.g., safety rules), not replace entire messages
 
@@ -121,7 +121,7 @@ Many more types exist in the VS Code source (search, terminal, git, debugging, e
 - Zero dependencies (no `js-yaml` package needed)
 - Already the project pattern (`model-configs/*.json`, `package.json`)
 - Schema validation is trivial
-- Users won't edit by hand — they'll copy exact strings from `system-messages.json`
+- Users won't edit by hand - they'll copy exact strings from `system-messages.json`
 
 ```json
 [
@@ -155,7 +155,7 @@ Each entry has an optional `ruleName` field for human-readable identification. T
 **Rationale:**
 - Simpler, no edge cases with regex escaping
 - Users get exact strings from the capture file (`system-messages.json`)
-- Exact match is deterministic — no surprise matches
+- Exact match is deterministic - no surprise matches
 
 **Trade-off:** Cannot match dynamic content (like model name). For model name, users can match the static prefix: `"you must state that you are using "` and replace the whole line.
 
@@ -205,7 +205,7 @@ In JSON, newlines are represented as `\n`. Multi-line finds remove entire blocks
 The capture and replacement steps are consolidated into one pipeline (`captureAndReplaceSystemMessages`) that:
 
 1. Iterates the full Copilot message array
-2. For each role 3 (system) message — regardless of position:
+2. For each role 3 (system) message - regardless of position:
    - Extracts the original text
    - Captures to `.vllm/system-messages.json` (if capture enabled)
    - Applies configured replacements
@@ -250,10 +250,10 @@ Send to vLLM
 
 **Rules:**
 - File location: `.vllm/system-messages.json` (no `debug/` subfolder)
-- Only role 3 (system) messages are captured — role field omitted from JSON
-- `receivedContent` — always present (original Copilot text, source of dedup)
-- `deliveredContent` — always present when capture is on (equals `receivedContent` if no replacements configured)
-- `rulesApplied` — always present when capture is on (empty array if no replacements configured or no rules matched)
+- Only role 3 (system) messages are captured - role field omitted from JSON
+- `receivedContent` - always present (original Copilot text, source of dedup)
+- `deliveredContent` - always present when capture is on (equals `receivedContent` if no replacements configured)
+- `rulesApplied` - always present when capture is on (empty array if no replacements configured or no rules matched)
 - Replacements are applied to every role 3 message on every request (independent of capture)
 - Capture to file happens only once per unique message (dedup by `receivedContent`)
 
@@ -271,47 +271,47 @@ The extension recommends a `.vllm/` directory at the workspace root for project-
 
 ## Detecting Prompt Drift (Canary)
 
-The personality presets (`prompt-replacements/`) apply **exact-substring** `find` rules against Copilot's *hidden* system-prompt boilerplate. Microsoft edits that boilerplate without notice, and when a `find` stops matching, the rule silently no-ops — the personality still "works" (other rules still hit) but the boilerplate the user believes is stripped stays in.
+The personality presets (`prompt-replacements/`) apply **exact-substring** `find` rules against Copilot's *hidden* system-prompt boilerplate. Microsoft edits that boilerplate without notice, and when a `find` stops matching, the rule silently no-ops - the personality still "works" (other rules still hit) but the boilerplate the user believes is stripped stays in.
 
 **`npm run check:prompt-drift`** compares every shipped preset `find` against the current VS Code prompt source on GitHub (`microsoft/vscode`) and reports two signals:
 
-1. **Rule match** — does each `find` still exist in the current source? Prose is extracted from the `.tsx` source (JSX text nodes, whitespace-insensitive) or `.ts` source (string-literal values), then matched with whitespace collapsed. A `✗ NOT FOUND` rule is dead — it will no longer apply in production.
-2. **SHA canary** — the script pins the GitHub blob SHA of each watched source file. Any change fires a warning even if individual `find` strings survive (e.g. a wording change elsewhere in the same file, or a rename).
+1. **Rule match** - does each `find` still exist in the current source? Prose is extracted from the `.tsx` source (JSX text nodes, whitespace-insensitive) or `.ts` source (string-literal values), then matched with whitespace collapsed. A `✗ NOT FOUND` rule is dead - it will no longer apply in production.
+2. **SHA canary** - the script pins the GitHub blob SHA of each watched source file. Any change fires a warning even if individual `find` strings survive (e.g. a wording change elsewhere in the same file, or a rename).
 
 Watched files (OpenAI-family agent prompt + shared base components, matching what the extension's OpenAI-compatible endpoint receives):
 
-- `base/safetyRules.tsx` — `<SafetyRules />`, `<LegacySafetyRules />`, `<Gpt5SafetyRule />`
-- `base/copilotIdentity.tsx` — identity rules + "Follow the user's requirements carefully"
-- `agent/agentPrompt.tsx` — main agent first line
-- `agent/defaultAgentInstructions.tsx`, `agent/openai/defaultOpenAIPrompt.tsx` — core agent instructions
-- `prompt/vscode-node/promptVariablesService.ts` — the runtime-generated template-variable tail
+- `base/safetyRules.tsx` - `<SafetyRules />`, `<LegacySafetyRules />`, `<Gpt5SafetyRule />`
+- `base/copilotIdentity.tsx` - identity rules + "Follow the user's requirements carefully"
+- `agent/agentPrompt.tsx` - main agent first line
+- `agent/defaultAgentInstructions.tsx`, `agent/openai/defaultOpenAIPrompt.tsx` - core agent instructions
+- `prompt/vscode-node/promptVariablesService.ts` - the runtime-generated template-variable tail
 
 **Workflow (the "regularly check" loop):**
 
 1. Run `npm run check:prompt-drift`.
 2. If it reports all good → nothing to do.
-3. If a rule is dead or a file changed → **re-verify against a fresh capture** (`vllm-copilot.systemMessageCapture: true`, run a chat, inspect `.vllm/system-messages.json`) — the capture is the rendered ground truth the canary can only approximate from source.
+3. If a rule is dead or a file changed → **re-verify against a fresh capture** (`vllm-copilot.systemMessageCapture: true`, run a chat, inspect `.vllm/system-messages.json`) - the capture is the rendered ground truth the canary can only approximate from source.
 4. Update the preset `find` rules for the new wording.
 5. After manual verification, run `node scripts/check-prompt-drift.mjs --update-baseline` to pin the current SHAs.
 
-**Caveat:** this is a **canary**, not proof. Source prose is not always a perfect reflection of the rendered prompt (model-family variants differ — e.g. `zaiPrompts.tsx` uses different wording for the project-type line; runtime composition can reorder text). When it fires, the capture-based check is authoritative.
+**Caveat:** this is a **canary**, not proof. Source prose is not always a perfect reflection of the rendered prompt (model-family variants differ - e.g. `zaiPrompts.tsx` uses different wording for the project-type line; runtime composition can reorder text). When it fires, the capture-based check is authoritative.
 
 ---
 
 ## Implementation Status
 
 ### ✅ Done
-- `src/promptReplacer.ts` — load + apply replacements, exact substring match, `ApplyResult` with `matchedRuleNames`
-- `src/config.ts` — `systemMessageReplacementsFile` on `ModelConfig`
-- `package.json` — schema for `systemMessageReplacementsFile`
-- `prompt-replacements/prompt-replacements-common.json` — **shared rules**: 6 personality-neutral removals for classic chat (SafetyRules/Legacy/Gpt5 variants + three Copilot-identity-rule variants) plus **5 CLI-runtime rules** (see next bullet). Appended automatically after the personality's own rules for every active personality (any `systemMessageReplacementsFile`, including custom files); never listed in the picker, never copied to global storage, extension-owned.
-- `prompt-replacements/*.json`: personality presets (Raw (Model Natural), Supportive Mentor, Critical Senior Dev, Sarcastic Robot, Spartan) — **voice only** (identity swap, core principles, tail reinforcement). The removal rules they used to duplicate now live once, in the common file.
-- **CLI-runtime (Agents window) support.** The Agents-window prompt is different text from classic chat, and its source is not public (the CLI ships as a compiled binary). Rules targeting it are tagged `"scope": "cli"` (dev/canary metadata; the runtime loader ignores it). Common ships 5 (code-change rules rewrite, `prohibited_actions` → user-owned `security_protocol`, co-author-trailer removal, `gh` shell fix, identity re-registration strip); each voice persona ships 3 (CLI identity, `<style>`-anchored guidelines, tail reinforcement). Raw ships 2 removals (CLI identity opener, tone line) and injects nothing — with the re-registration sentence taken by common, Raw's Agents-window prompt carries no assistant identity at all, matching its classic behavior (it also deletes the classic opener line). CLI finds never appear in classic chat and vice versa (both directions verified).
-- **CLI prompt drift** has two cheap detectors instead of runtime machinery: a static all-fire test (`test/cliPromptRules.test.ts`, every `scope: "cli"` rule must match `scripts/cli-prompt-reference.txt` exactly once, runs on every `npm test`) and a live auditor (`npm run check:cli-rules` against a fresh `systemMessageCapture` — reports dead anchors; `--persona <file>` makes non-firing a hard error). Regenerate the reference after re-capturing: `node scripts/extract-cli-reference.mjs <capture>` (it strips everything but the anchored regions and verifies capture entries agree).
+- `src/promptReplacer.ts` - load + apply replacements, exact substring match, `ApplyResult` with `matchedRuleNames`
+- `src/config.ts` - `systemMessageReplacementsFile` on `ModelConfig`
+- `package.json` - schema for `systemMessageReplacementsFile`
+- `prompt-replacements/prompt-replacements-common.json` - **shared rules**: 6 personality-neutral removals for classic chat (SafetyRules/Legacy/Gpt5 variants + three Copilot-identity-rule variants) plus **5 CLI-runtime rules** (see next bullet). Appended automatically after the personality's own rules for every active personality (any `systemMessageReplacementsFile`, including custom files); never listed in the picker, never copied to global storage, extension-owned.
+- `prompt-replacements/*.json`: personality presets (Raw (Model Natural), Supportive Mentor, Critical Senior Dev, Sarcastic Robot, Spartan) - **voice only** (identity swap, core principles, tail reinforcement). The removal rules they used to duplicate now live once, in the common file.
+- **CLI-runtime (Agents window) support.** The Agents-window prompt is different text from classic chat, and its source is not public (the CLI ships as a compiled binary). Rules targeting it are tagged `"scope": "cli"` (dev/canary metadata; the runtime loader ignores it). Common ships 5 (code-change rules rewrite, `prohibited_actions` → user-owned `security_protocol`, co-author-trailer removal, `gh` shell fix, identity re-registration strip); each voice persona ships 3 (CLI identity, `<style>`-anchored guidelines, tail reinforcement). Raw ships 2 removals (CLI identity opener, tone line) and injects nothing - with the re-registration sentence taken by common, Raw's Agents-window prompt carries no assistant identity at all, matching its classic behavior (it also deletes the classic opener line). CLI finds never appear in classic chat and vice versa (both directions verified).
+- **CLI prompt drift** has two cheap detectors instead of runtime machinery: a static all-fire test (`test/cliPromptRules.test.ts`, every `scope: "cli"` rule must match `scripts/cli-prompt-reference.txt` exactly once, runs on every `npm test`) and a live auditor (`npm run check:cli-rules` against a fresh `systemMessageCapture` - reports dead anchors; `--persona <file>` makes non-firing a hard error). Regenerate the reference after re-capturing: `node scripts/extract-cli-reference.mjs <capture>` (it strips everything but the anchored regions and verifies capture entries agree).
 - **Merge order is load-bearing: persona first, then common.** Persona replace-rules anchor on text that the common remove-rules delete (the short/impersonal line also lives inside the safety blocks); reversing the order silently kills those replacements. Pinned by the chain test in `test/promptReplacer.test.ts`.
-- `src/provider/systemMessagePipeline.ts` — `SystemMessagePipeline.processSystemMessages()` unified pipeline (capture + replace in one pass)
-- `src/provider/messageConverter.ts` — simplified, no replacement logic (pure conversion only)
-- Replacements are applied to a **clone** of the system messages — VS Code's original messages are never mutated
+- `src/provider/systemMessagePipeline.ts` - `SystemMessagePipeline.processSystemMessages()` unified pipeline (capture + replace in one pass)
+- `src/provider/messageConverter.ts` - simplified, no replacement logic (pure conversion only)
+- Replacements are applied to a **clone** of the system messages - VS Code's original messages are never mutated
 - Capture file at `.vllm/system-messages.json` with `receivedContent` / `deliveredContent` / `rulesApplied`
 - **Unit tests:** `test/promptReplacer.test.ts` (apply + parser), `test/providerSystemMessages.test.ts` (pipeline end-to-end, incl. the capture write path)
 
@@ -319,4 +319,4 @@ Watched files (OpenAI-family agent prompt + shared base components, matching wha
 
 ## Key Principle
 
-**We receive the final compounded system message from Copilot.** All user instruction files (`.github/copilot-instructions.md`, `AGENTS.md`, `CLAUDE.md`) are already baked in by Copilot before they reach us. We have no control over how Copilot injects them — we only see the result. Our capture and replacement pipeline operates on these final compounded messages only.
+**We receive the final compounded system message from Copilot.** All user instruction files (`.github/copilot-instructions.md`, `AGENTS.md`, `CLAUDE.md`) are already baked in by Copilot before they reach us. We have no control over how Copilot injects them - we only see the result. Our capture and replacement pipeline operates on these final compounded messages only.

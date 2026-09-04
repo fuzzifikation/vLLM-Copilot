@@ -42,7 +42,20 @@ function buildChatBody(
   return body;
 }
 
-/** Pre-flight wire validation: message array shape + system-messages-first ordering. */
+/**
+ * Pre-flight wire validation: message array shape, role strings, system-messages-first.
+ *
+ * This is an intentional REGRESSION TRIPWIRE, not input handling (CR-94). It is
+ * unreachable by production input: the sole caller feeds it `convertMessages()`
+ * output, which is an array of literal roles with system messages first by
+ * construction, plus an optional trailing assistant prefill. It stays anyway:
+ * vLLM-compatible servers reject a misordered envelope with an opaque 400, and
+ * a future messageConverter refactor that breaks system-first would otherwise
+ * surface as "Copilot silently stopped working". Loud failure at our own
+ * boundary, with the role sequence in the message, is the whole point. The
+ * validation tests in chatTransport.test.ts drive it deliberately - they are
+ * exercising a tripwire, not documenting live input handling.
+ */
 function validateMessages(messages: unknown): void {
   if (!Array.isArray(messages)) {
     throw new Error(`Invalid messages in request body: expected array, got ${typeof messages}`);
@@ -81,7 +94,7 @@ async function checkResponseContentType(response: Response): Promise<void> {
       // `error.metadata.raw` surfaces instead of the terse `message` stub.
       const message = serverErrorMessage(data.error)
         ?? (typeof data.error === 'object' ? JSON.stringify(data.error) : String(data.error));
-      throw new Error(`Server error (mid-stream): ${String(message).slice(0, 500)}`);
+      throw new Error(`Server error (error response): ${String(message).slice(0, 500)}`);
     }
     throw new Error(`Server returned unexpected JSON response (expected SSE stream)`);
   }
@@ -158,7 +171,7 @@ export class ChatTransport {
         },
         serverConfig?.requestHeaders ?? {},
         (error, delayMs) => this.output.appendLine(`[WARN] ${error}, retrying in ${delayMs}ms…`),
-        (status) => this.output.appendLine(`[INFO] Retry succeeded — received HTTP ${status}`),
+        (status) => this.output.appendLine(`[INFO] Retry succeeded - received HTTP ${status}`),
       );
 
       clearTimeout(initialResponseTimer);
@@ -190,7 +203,7 @@ export class ChatTransport {
     if (this.warnedOllamaToolChoice) return;
     this.warnedOllamaToolChoice = true;
     this.output.appendLine(
-      `[WARN] Ollama does not support tool_choice — removed from request (tools preserved).`
+      `[WARN] Ollama does not support tool_choice - removed from request (tools preserved).`
     );
   }
 }

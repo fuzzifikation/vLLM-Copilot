@@ -145,7 +145,7 @@ export async function discoverModels(
           // in the model picker so this is non-fatal, but the user should
           // know the discovery path didn't reach HuggingFace.
           output.appendLine(
-            `[WARN] Model "${modelId}" — family estimated as "${family}" from org-name fallback (no preset/HuggingFace family available). Family is informational only; use a preset or run auto-discovery for authoritative values.`
+            `[WARN] Model "${modelId}" - family estimated as "${family}" from org-name fallback (no preset/HuggingFace family available). Family is informational only; use a preset or run auto-discovery for authoritative values.`
           );
       }, effectiveOutputTokens, outputMenuCeiling);
       return { model, contextWindow: limits.contextWindow, error: null };
@@ -186,7 +186,7 @@ export async function discoverModels(
   }
   for (const dup of duplicateIds) {
     output.appendLine(
-      `[WARN] Duplicate model id "${dup}" — multiple configs share this id and collapse to one picker entry. Give each model a unique "id".`
+      `[WARN] Duplicate model id "${dup}" - multiple configs share this id and collapse to one picker entry. Give each model a unique "id".`
     );
   }
 

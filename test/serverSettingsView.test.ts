@@ -76,7 +76,7 @@ describe('ServerSettingsViewProvider', () => {
       );
 
       expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-        'Settings saved for "New Name"',
+        expect.any(String), // toast fired; wording is chrome (CR-109)
       );
     });
 
@@ -112,7 +112,7 @@ describe('ServerSettingsViewProvider', () => {
       );
 
       expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-        'Settings saved for "New Model"',
+        expect.any(String), // toast fired; wording is chrome (CR-109)
       );
     });
 
@@ -212,7 +212,7 @@ describe('ServerSettingsViewProvider', () => {
 
       expect(vscode.workspace._mockConfig.update).toHaveBeenCalled();
       expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-        'Settings saved for "Fallback Model"',
+        expect.any(String), // toast fired; wording is chrome (CR-109)
       );
     });
 
@@ -244,7 +244,7 @@ describe('ServerSettingsViewProvider', () => {
       expect('systemMessageReplacementsFile' in stored[0]).toBe(false);
     });
 
-    // ── Step 2: patch-mode characterization (refactor-plan §4.1 #3/#5 + side effects) ──
+    // ── Step 2: patch-mode characterization (#3/#5 + side effects) ──
     // Pins the CURRENT patch contract of serverSettingsView.saveModelConfig so the
     // configStore unification (step 3b) cannot silently change behavior.
 

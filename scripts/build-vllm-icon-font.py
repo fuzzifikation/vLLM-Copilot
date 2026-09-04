@@ -16,7 +16,7 @@ TWO overlapping wedges:
 Mapped into a monochrome glyph from the 96x96 SVG viewBox (y-down) into a
 1000-unit em (y-up) with ~100-unit side bearings, scale 10x.
 
-Run:  python temp/build-vllm-icon-font.py
+Run:  python scripts/build-vllm-icon-font.py
 Requires: fonttools (+ brotli for woff2)
 """
 

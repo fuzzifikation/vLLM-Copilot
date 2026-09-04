@@ -46,14 +46,13 @@ export const PRESET_CONFIG_KEYS: ReadonlySet<string> = new Set<keyof PresetConfi
 /**
  * Public GitHub blob base for viewing preset files in the browser — the
  * clickable/copyable link shown to users. Mirrors the raw fetch base in
- * `src/presetRemote.ts` (raw content vs. rendered blob, same repo+branch+dir).
+ * `src/commands/presetRemote.ts` (raw content vs. rendered blob, same repo+branch+dir).
  */
 const PRESET_BLOB_BASE = 'https://github.com/fuzzifikation/vLLM-Copilot/blob/main/model-configs';
 
 /**
  * Public URL to view a preset file on GitHub. Strips the internal `remote:`
  * tag — a fetched preset is the same file that lives in the repo.
- * @internal Exported for testing.
  */
 export function presetBlobUrl(sourceFile: string): string {
   return `${PRESET_BLOB_BASE}/${sourceFile.replace(/^remote:/, '')}`;
@@ -137,7 +136,6 @@ function stripJsonComments(text: string): string {
 /**
  * Load all model presets from the model-configs/ directory in the extension.
  * Returns an array of presets with their source filenames.
- * @internal Exported for testing.
  */
 export async function loadModelPresets(
   extensionUri: vscode.Uri
@@ -185,7 +183,6 @@ export async function loadModelPresets(
  * feature. The underlying JSON parse stays forgiving (comment stripping +
  * `jsonrepair`) so an authoring slip doesn't silently drop a whole preset.
  * Returns null when the file is unusable (unparseable or fails validation).
- * @internal Exported for testing.
  */
 export function parsePresetFile(text: string, sourceFile: string): ModelPreset | null {
   const raw = parsePresetRawJson(text);
@@ -299,8 +296,6 @@ export function parsePresetRawJson(text: string): Record<string, unknown> | null
  *
  * Presets only set `vllmModelId`/`match` (never `id` — the user's own identifier
  * in settings), so matching never leaks the preset's id into the user's config.
- *
- * @internal Exported for testing.
  */
 export function findPresetForModel(
   presets: ModelPreset[],

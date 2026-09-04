@@ -83,28 +83,43 @@ export async function maybeRunServerRegistryMigration(
 
     for (const s of plan.skipped) {
       output.appendLine(
-        `[WARN] Server registry migration: model "${s.id}" (${s.reason}) — kept in settings, unreachable until it references a server.`
+        `[WARN] Server registry migration: model "${s.id}" (${s.reason}) - kept in settings, unreachable until it references a server.`
       );
     }
 
     for (const c of plan.conflicts) {
       output.appendLine(
-        `[WARN] Server registry migration: models ${c.modelIds.map(id => `"${id}"`).join(', ')} share ${c.serverUrl} but declare different backends (${c.protocols.join(', ')}). Entry "${c.serverId}" now decides the protocol for all of them — fix any model that speaks a different one.`
+        `[WARN] Server registry migration: models ${c.modelIds.map(id => `"${id}"`).join(', ')} share ${c.serverUrl} but declare different backends (${c.protocols.join(', ')}). Entry "${c.serverId}" now decides the protocol for all of them - fix any model that speaks a different one.`
       );
     }
 
     if (plan.servers.length === 0 && plan.skipped.length === models.length) {
-      // No model had a usable serverUrl — nothing to adopt, nothing to rewrite.
-      await context.globalState.update(MIGRATION_FLAG, 'done');
-      output.appendLine('[INFO] Server registry migration: no serverUrl on any model — nothing adopted.');
+      // Two all-skipped states look identical here (CR-58):
+      // - NOTHING REPAIRABLE: no model carries a serverUrl value at all, or a
+      //   retry found every model already migrated (they carry `server` refs)
+      //   → legitimately done.
+      // - REPAIRABLE: a skipped model still carries a legacy `serverUrl` VALUE
+      //   that was rejected (blank/host-less garbage a hand-edit can fix).
+      //   Marking done would lock out exactly the state the user CAN repair —
+      //   the same policy the empty-read branch above follows. Leave the
+      //   marker off and let the next activation re-check.
+      const repairable = models.some(m =>
+        typeof m.serverUrl === 'string' && m.serverUrl.trim() !== ''
+      );
+      if (!repairable) {
+        await context.globalState.update(MIGRATION_FLAG, 'done');
+        output.appendLine('[INFO] Server registry migration: no serverUrl on any model - nothing adopted.');
+      } else {
+        output.appendLine('[WARN] Server registry migration: every model was skipped - fix the "serverUrl" values in settings.json; the next start will adopt them (marker NOT set, this migration stays armed).');
+      }
       return;
     }
 
     const nextServers = [...existingServers, ...plan.servers];
     // Header values are redacted in both dumps — the Output channel is
     // user-visible and routinely pasted into bug reports (see redactHeaders).
-    output.appendLine(`[INFO] Server registry migration — before:\n${JSON.stringify({ servers: redactHeaders(existingServers), models: redactHeaders(models) }, null, 2)}`);
-    output.appendLine(`[INFO] Server registry migration — after:\n${JSON.stringify({ servers: redactHeaders(nextServers), models: redactHeaders(plan.models) }, null, 2)}`);
+    output.appendLine(`[INFO] Server registry migration - before:\n${JSON.stringify({ servers: redactHeaders(existingServers), models: redactHeaders(models) }, null, 2)}`);
+    output.appendLine(`[INFO] Server registry migration - after:\n${JSON.stringify({ servers: redactHeaders(nextServers), models: redactHeaders(plan.models) }, null, 2)}`);
 
     try {
       // Servers first: an interrupted migration must never leave models

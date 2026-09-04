@@ -20,7 +20,7 @@ import { isTransportFailureText, iterateCauses } from './messageConverter.js';
  * resolve re-probes rather than reusing the stale snapshot.
  */
 function isTransportFailure(err: unknown): boolean {
-  if (typeof err === 'string' || !(err instanceof Error)) return false;
+  if (!(err instanceof Error)) return false; // a string is never instanceof Error; the old extra disjunct was a subset (CR-93)
   const combined = [err, ...iterateCauses(err)]
     .map(c => (c instanceof Error ? `${c.name} ${c.message}` : String(c)))
     .join(' ');
@@ -42,12 +42,19 @@ function createOutcome(): StreamOutcome {
     finishReason: undefined,
     firstTokenTime: undefined,
     contentBuffer: undefined,
+    everStreamed: false,
   };
 }
 
-/** Reset all mutable fields on the outcome object for a retry attempt. */
+/**
+ * Reset all per-attempt fields on the outcome object for a retry. `everStreamed`
+ * is STICKY across the whole request (CR-38): once any attempt has put visible
+ * output on the user's screen, post-stream diagnostics must not later claim the
+ * model "returned no output" — the reset final attempt judges only itself.
+ */
 function resetOutcome(outcome: StreamOutcome): void {
-  Object.assign(outcome, createOutcome());
+  const everStreamed = outcome.everStreamed || outcome.hadContent || outcome.hadToolCalls;
+  Object.assign(outcome, createOutcome(), { everStreamed });
 }
 
 /**
@@ -142,7 +149,7 @@ export async function runChatResponse(
       // last attempt's, producing a garbage "Generation (measured)" row. The
       // request-wide `startTime` still drives overall post-stream diagnostics.
       const attemptStartTime = Date.now();
-      // Continuation mode (continue_final_message) is a vLLM-only feature. For
+      // Continuation mode (continue_final_message) is a vLLM-only feature. The
       // secondary backends' chat protocol strips those flags but KEEPS the assistant
       // prefill — so a colon-continuation would send the partial text as a COMPLETE
       // assistant turn and the server would regenerate from scratch, making the user see
@@ -218,7 +225,7 @@ export async function runChatResponse(
       const mode = assistantPrefill.length > 0 ? 'continuation' : 'prefill';
       resetOutcome(outcome);
       output.appendLine(
-        `[INFO] ${model.id}: ${reason} — retrying with assistant ${mode} (attempt ${attempt + 1}/${maxRetries + 1})`
+        `[INFO] ${model.id}: ${reason} - retrying with assistant ${mode} (attempt ${attempt + 1}/${maxRetries + 1})`
       );
     }
 

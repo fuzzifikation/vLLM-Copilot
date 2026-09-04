@@ -12,7 +12,8 @@
 import * as vscode from 'vscode';
 import { getMetricsEngine } from './vllmMetrics.js';
 import type { ServerRawData, ServerMetrics } from './vllmMetrics.js';
-import type { ServerType } from '../state/config.js';
+import { normalizeServerUrl, sanitizeRequestHeaders, type ServerType } from '../state/config.js';
+import { readServers } from '../state/configStore.js';
 
 interface ReadyMessage {
   type: 'ready';
@@ -50,6 +51,45 @@ export function updateDeepDiveTitle(serverId: string, displayName?: string): voi
   if (holder) {
     holder.panel.title = `vLLM Deep-Dive: ${displayName || holder.args.serverUrl}`;
   }
+}
+
+/**
+ * Register the dashboard's "vLLM Deep-Dive" command. Domain logic — registry
+ * lookup by entry id, vLLM-only guard, connection-fact normalization — lives
+ * in this file, the deep-dive's home, not in an activation-file closure
+ * (R7-P5-1). extension.ts just registers it.
+ */
+export function registerOpenDeepDiveCommand(
+  context: vscode.ExtensionContext,
+  outputChannel: vscode.OutputChannel,
+): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.openDeepDive', async (arg?: any) => {
+    // The dashboard tree item carries the registry ENTRY id — never match by
+    // URL: one URL can host several credential identities, and URL-matching
+    // would open the panel with whichever entry happens to be first.
+    const entry = readServers().find(s => s.id === arg?.serverId);
+    if (!entry) {
+      vscode.window.showErrorMessage('Server not found: it may have been removed. Refresh the Dashboard.');
+      return;
+    }
+    const serverType = entry.serverType ?? 'vllm';
+    // Deep-Dive is a vLLM metrics view — non-vLLM backends don't expose
+    // /metrics, so the panel would be all empty rows. Guard even though the
+    // context menu already hides it for non-vLLM servers (defense in depth).
+    if (serverType !== 'vllm') {
+      vscode.window.showInformationMessage(
+        `Deep-Dive is a vLLM-only view. ${serverType} servers don't expose vLLM metrics (KV cache, throughput, TTFT).`
+      );
+      return;
+    }
+    // We already hold the entry; normalize it directly instead of looking it
+    // up again by id. The guard above admits vLLM entries only, so there is
+    // no backend special case here — every server is renamable.
+    const serverUrl = normalizeServerUrl(entry.serverUrl);
+    const requestHeaders = sanitizeRequestHeaders(entry.requestHeaders ?? {});
+    const displayName = entry.displayName?.trim() || undefined;
+    openDeepDive(entry.id, serverUrl, requestHeaders, serverType, context, outputChannel, displayName);
+  });
 }
 
 export function openDeepDive(
@@ -113,8 +153,11 @@ export function openDeepDive(
   /** `error` is the probe failure reason — it lives on the aggregated metrics,
    *  never in the raw payload, so without it an unreachable server renders as a
    *  blank panel. */
-  function pushData(raw: ServerRawData, error?: string): void {
-    panel.webview.postMessage({ type: 'data', raw, error });
+  /** `snapshotAt` is when the payload was captured (epoch ms), not when it is
+   *  rendered — the cache push carries the engine's fill time so an offline
+   *  panel stamps the snapshot's real age under the failure banner. */
+  function pushData(raw: ServerRawData, error?: string, snapshotAt?: number): void {
+    panel.webview.postMessage({ type: 'data', raw, error, snapshotAt });
   }
 
   /** Take exactly one reading: whatever the engine already holds, plus the next
@@ -135,7 +178,7 @@ export function openDeepDive(
     // Cache first so the panel paints instantly; it can still be stale (or
     // missing), so the live cycle below is what actually refreshes the view.
     const cached = engine.getCachedRaw();
-    if (cached) pushData(cached, offlineError(engine.getCachedAggregated()));
+    if (cached) pushData(cached, offlineError(engine.getCachedAggregated()), engine.getCachedSnapshotAt());
 
     // The callback disposes its OWN subscription, never whatever `reading` holds
     // at the time — a re-take may already have replaced it.
@@ -144,7 +187,7 @@ export function openDeepDive(
       // panel was the last viewer (the engine is reference-counted).
       sub.dispose();
       if (reading === sub) reading = undefined;
-      pushData(raw, offlineError(aggregated));
+      pushData(raw, offlineError(aggregated), Date.now());
     });
     reading = sub;
     // The engine may already be polling for the dashboard, whose next tick can be

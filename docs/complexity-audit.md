@@ -115,8 +115,6 @@ flowchart TD
 
 | ID | Finding | Severity |
 |----|---------|----------|
-| P1-1 | **Same `options.modelConfiguration` parsed twice**: `provider.ts` (with `Number.isFinite` + `max(1,floor)`) vs `requestBuilder.ts` (raw, delegates to `config.ts` picker-floor). Same object passed verbatim through `runChatResponse`, same two fields, and the validation checks already differ between the two copies. Amputation: one `readPickerSelection(options)`, 2 call sites. Extends into P6-1 (same drift family). | low-med |
-| P1-2 | **Dead output-budget layering**: `max_tokens` is set from the model config, spread from Copilot `modelOptions`, merged again through defaultParams/mode in `config.ts`, then `requestBuilder` overwrites it unconditionally. Harmless on the wire (the overwrite IS the invariant) but every layered `max_tokens` write before it is dead weight kept alive by a comment essay, and `DEFAULT_REQUEST_PARAMS` is now `{}`, so the bottom of that chain is empty. Amputation: drop `max_tokens` from the spread. | low |
 
 ### Minimal graph
 
@@ -142,7 +140,6 @@ flowchart TD
 
 | ID | Finding | Severity |
 |----|---------|----------|
-| P2-4 | **Transport-failure rule implemented twice**: the `ECONNREFUSED`/`fetch failed`/`ENOTFOUND` triad lives as `isTransportFailure` in `streamOrchestrator.ts` and again inside `formatError`'s transport branch in `messageConverter.ts`. Drift here makes the error copy say "cannot connect" while the retry/cache logic disagrees, or inverse. Same family as P1-1/P6-1. Amputation: export the predicate, `formatError` calls it (~6 duplicated lines). | low |
 
 Timing note (not a finding): the transport/reader pair actually runs THREE
 timer phases, initial-response timeout, post-headers content-type sniff
@@ -253,7 +250,6 @@ flowchart TD
 
 | ID | Finding | Severity |
 |----|---------|----------|
-| P5-8 | **Undocumented upward edge** (CLOSED): `migrations/registryMigration.ts` reached `backends/openRouter.ts` solely for the 5-line host predicate `isOpenRouterUrl`, dragging openRouter's fetch graph into boot while the dep-cruiser lane silently permitted it (`backends/` absent from the forbidden list). Fixed as prescribed: `isOpenRouterUrl` lives in the leaf `state/serverCore.ts` (re-exported through `state/config.ts`), every consumer reads it there, and the lane's forbidden list now includes `backends/`, so the "depend on nobody above them" promise is enforced. | low-med |
 
 ### Minimal graph
 
@@ -296,7 +292,6 @@ it clears on `.servers`/`.models` edits and Test & Refresh.
 
 | ID | Finding | Severity |
 |----|---------|----------|
-| P6-1 | **Output-budget rule computed twice + picker floor body written 3 times.** The advertising side (`outputMenuCeiling`/`effectiveOutputTokens` in `discovery.ts`, `buildModelInfo`) and the wire side (`resolveMaxTokensForRequest`) implement the same contract with zero shared body; the identical `finite ? max(1,floor) : undefined` picker-floor appears at `provider.ts`, `config.ts` x2 (recount verified; the old blueprint miscounted a `tokenBudget` floor of an already-resolved number and missed one `config.ts` site; other floors elsewhere take different inputs and are not the same rule). No disagreement today, invariant holds by construction, same drift family as P1-1. Minimal shared piece: one `normalizePickerTokens()` over exactly the 3 identical sites; sharing the whole clamp chain is bigger and riskier than the drift it prevents. | low-med |
 
 ### Minimal graph
 
@@ -325,7 +320,6 @@ flowchart LR
 
 | ID | Finding | Severity |
 |----|---------|----------|
-| P7-8 | **Two caller-list comments in `config.ts` lie.** `buildAuthHeaders`'s comment claims addServerFlow + commands.ts; its sole caller is `commands/serverAuth.ts` (3 sites). `normalizeModelEntry`'s comment claims sharing with "the webview's patch path"; the webview never imports it (it goes through `patchModelConfig`). Comments that misdirect the next reader cost more than they document. Amputation: fix both comments. | low (doc truth) |
 
 ### Minimal graph
 
@@ -361,9 +355,6 @@ flowchart TD
 
 | ID | Finding | Severity |
 |----|---------|----------|
-| P8-2 | **OpenRouter projection exists twice** (admitted by the source's own mirror comment above `autoConfigureOpenRouterModel`): config assembly and summary lines are forked between `runOpenRouterAddFlow` and `autoConfigureOpenRouterModel`, same six conditional spreads copied. The catalog FETCH is correctly shared and memoized; only projection is forked. Sync-by-comment is sync-by-hope. Amputation: `projectOpenRouterInfo(info) -> {configFields, summaryLines}`. | low |
-| P8-6 | **Dead branch pair**: `hfDiscovery.ts` handles `Promise.allSettled` rejections for the two HF fetchers, but both fetchers swallow every failure to `null` internally, so the rejection branches can never fire; two summary lines are unreachable and the allSettled comment is a fossil. Amputation: delete both branches (allSettled can then drop to all, user's call). | low |
-| P8-7 | **Redundant probe on the HF auto-discover add path**: four identical `GET /v1/models` fire during one add (auth probe, `detectServerType`, `fetchVllmModelInfo`, resolver's list memo) while `serverRoot` is ALREADY in hand at the call site - `hfDiscovery`'s autoconfigure ignores the parameter it receives and re-fetches. This is a wasted fetch, not a transport merge (the pre-emptive waiver on collapsing independent transports is untouched). Amputation: seed the root from the passed `serverRoot` and skip the fetch when provided; the re-configure path keeps its own fetcher. | low |
 
 ### Minimal graph
 
@@ -528,7 +519,6 @@ flowchart LR
 
 | ID | Finding | Severity |
 |----|---------|----------|
-| P14-2 | **Two-name chain doing one job**: `reportTokenUsage` is a pure pass-through over `createUsageDataPart`, which census-flagged as exported with zero production namers outside its own file (tests are its only external customer, and tests do not buy exports). Amputation: collapse into one function, reroute the tests to drive `reportTokenUsage` with a fake progress (structure-wins ruling). | low |
 
 ### Minimal graph
 
@@ -596,7 +586,6 @@ deliberately unused (variant-confusion guard, documented and tripwired).
 
 | ID | Finding | Severity |
 |----|---------|----------|
-| P16-3 | "Is this OpenRouter" answered two ways. Re-counted: host-predicate family = 8 call expressions in 4 files (`runtimeLimits`, `addServerFlow`, `commands`, `registryMigration`); declarative `serverType` family = 13 literals in 6 files plus type-keyed dispatch. The recommended doc comment declaring the FIELD the sole runtime truth does NOT exist yet (the predicate's own comment scopes its uses but never says it). Recommendation unchanged: ACCEPT + 2-line comment. Dual-truth in name, documented division in practice. | low |
 
 ### Cache inventory
 
@@ -701,8 +690,6 @@ SHA baseline, whitespace-collapsed); cli-rules = static half in `npm test`
 
 | ID | Finding | Severity |
 |----|---------|----------|
-| P19-2 | `sanitizePresetMeta` (14 LOC, private, sole caller `parsePresetEnvelope`) is the one collapsible node under the reuse-or-absorb law in the parse chain. Amputation: fold it in; the lenient-meta asymmetry survives in the comment. | low |
-| P19-3 | `stripJsonComments` is TEST_ONLY-exported: zero external production namers, its only real caller is in-file. Tests do not buy exports (structure-wins ruling). Amputation: un-export; reroute the two test files to a local strip or `JSON.parse(jsonrepair(text))`. | low |
 
 ### Minimal graph
 
@@ -783,7 +770,7 @@ code review. No structure is sacrificed for test ceremony.
 
 ### Tooling: the census is a command
 
-Three npm scripts, all read-only, all safe to run anytime:
+Four npm scripts, all read-only, all safe to run anytime:
 
 - `npm run dep:check` - dependency-cruiser gates at FILE level, split in two
   cruises because one graph cannot tell two truths at once:
@@ -812,6 +799,46 @@ Three npm scripts, all read-only, all safe to run anytime:
   `scripts/*.mjs`. `--tsv` for machine diff, `--max-small=N` only moves the
   ABSORB_SMALL highlight knob (not a keep-threshold), `--fail-on=dead` is
   wired into `npm run build`: dead named things fail packaging.
+- `npm run cluster` - `scripts/cluster-census.mjs`, **pass 3: does each
+  function live in the right file?** rent asks "should this function exist",
+  dep:check asks "may this file import that"; nothing asked placement until
+  now. Builds the function call graph (TypeScript compiler API, production
+  `src/**` only - tests are not customers, doctrine), attributes nodes to
+  files, patches the two blind spots the call graph cannot see (webview
+  message-type pairs to `resources/*.js` pseudo-nodes, weight 0.5; shared
+  import symbols, weight 0.25, hub symbols above `--hub=15` skipped so
+  wire-types cannot fake a merge-everything attractor), then prints:
+  `MOVE_GAIN` (a function whose call weight points mostly at ONE other file,
+  `--min-share=0.6`/`--min-weight=2`, gated on >= 1 real call edge toward the
+  target so patches alone cannot nominate trivia; `extFiles=1` + `home 0` is
+  the strong move signal, `extFiles>=2` with no home use is usually an honest
+  module API), `SCC_CROSS` (function-level cycles spanning files - the
+  ping-pong a clean file DAG hides), `MODULARITY` (Q of the current file
+  partition vs a deterministic greedy reference - diagnostic smoke alarm,
+  never a refactoring plan), `CONDUCTANCE` (cut/volume per file; a
+  conversation-starter - leaf/registry/library files are cut-heavy BY
+  DESIGN). Determinism: sorted traversals, alphabetical tie-breaks, same
+  bytes in equals same report out (`--tsv` diffs, run twice to prove it).
+  The graph is evidence, not law: every candidate gets the pass-1 Intent
+  test and the pass-2 rent test before it earns a move, and class members
+  nominated by their callers are read as API-surface notes, not move orders.
+  **TOOLS exception (user ruling 2026-09-04):** a common-helpers file is a
+  legitimate shape - helpers consumed everywhere and rarely calling each
+  other are a TOOLBOX, not a misplaced cluster. The exemption is earned
+  mechanically, never claimed: `src/shared/` only (the declared toolbox
+  directory), stateless (no top-level `let`/`var`), loosely self-coupled
+  (internal call edges <= function count), and >= 4 distinct consumer
+  files. Qualified files print `[TOOLS]`, their conductance is annotated
+  not nagged, and a MOVE_GAIN on one of their helpers with >= 2 consumers
+  is skipped (generality proven, helper stays). A single-consumer helper
+  in a toolbox stays NOMINATED: a machine can disprove laziness but can
+  never prove a helper is general, so that ruling stays human. Shared
+  files that FAIL the shape test (module state, dense internals) are
+  printed as `[not yet]` - they are domain modules in toolbox clothing,
+  and the profile refuses to launder them (sessionManager, live example:
+  state + 40 internal edges + 3 consumers = proper cohesive module, not
+  a toolbox, and it needs no exemption because its conductance is already
+  low).
 
 Census policy: names matching `register*`/`ensure*` whose sole production
 caller is the `extension.ts` activation block are command/lifecycle WIRING -
@@ -824,15 +851,123 @@ the table instead of trusting memory or this document, and diff the census
 afterward. The census is also the amputation tripwire: if an absorbed
 function had a live organ, `npm run compile` screams.
 
+## Pass 3 findings: placement (cluster lens, 2026-09-04)
+
+The lens nominated 19 candidates; every one was checked against bytes before
+any ruling. Executed:
+
+- **C-1** `usageStore` display family: `fmtCount` (18 dashboard call sites,
+  zero in-store) and `computeCost` (pure render-time money math, dashboard
+  only) moved into `dashboard.ts`'s formatting section as private functions
+  (same precedent as the U7 move). Test reroute: `usageStore.test.ts` carried
+  dead imports of both - deleted, no pin lost. WAIVED siblings with reasons:
+  `emptyCounts` (3 in-store call sites, moving it would force the
+  usageStore -> dashboard import cycle), `getModelStartedAt` /
+  `getServerUsage` / `resetUsage` (store accessors: the graph reads a single
+  consumer as homelessness, the store IS their job), `formatCost` (live
+  internal caller `formatCostSummary`).
+- **C-2** `config.buildAuthHeaders` -> `commands/serverAuth.ts`, its only
+  caller; the config docstring had been apologizing for exactly this for
+  months. Bearer-shape tripwire pin rerouted, export kept as tripwire crew.
+
+Ruled KEEP / noted (no action): **C-3** `config.normalizeModelEntry`
+(ModelConfig invariant guardian, belongs with the type; the graph is evidence
+not law); **C-4** `promptReplacer.loadPersonalityMeta` weak 3-edge signal;
+`register*` candidates are ENTRY wiring (standing rule); class members
+nominated by external callers (`FileLogger#isActive`,
+`OpenRouterAccountTreeItem#ctor`, `VllmClient#chatCompletionStream`) are
+API-surface notes; `buildModelId`, `formatUsdRate`, `finalizePendingToolCalls`
+are honest module APIs (multi-file consumers).
+
+Post-move baseline: candidates 19 -> 16, Q 0.704 -> 0.736, SCCs still 0.
+Remaining 16 are the waived/noise set above plus new same-family echoes.
+
+## Round 7: full re-review via the portable agent (2026-09-04, executed same session)
+
+Clean-slate review under the language-agnostic `Structural Review` agent; all
+prior IDs stay dead, standing rulings (rules 7/8/9) were loaded as law.
+Native tooling won per Step 0 (`dep:check` / `rent` / `cluster`, evidence
+snapshots in `temp/`, double-run determinism verified). dep:check clean,
+SCCs 0, Q held baseline: no regression, the ratchet holds. Survivors: 3,
+verified against bytes before execution, all executed same session.
+
+- **R7-P5-1** (placement): the 30-line anonymous `openDeepDive` command
+  closure in `extension.ts` (domain logic: entry lookup by id, vLLM guard,
+  URL/header normalization, sole reason two config helpers were imported)
+  absorbed into `registerOpenDeepDiveCommand` in `ui/deepDiveView.ts`, the
+  domain home. The census now sees it: `BIG_SINGLE`, caller
+  `extension.ts::(module scope)` = ENTRY wiring, ruled keep.
+- **R7-P5-2** (placement): the anonymous `setPollInterval` closure moved to
+  `registerSetPollIntervalCommand` in `ui/vllmMetrics.ts`, directly under
+  `getPollSettingMs` - the key's writer and reader now share one file.
+  Census row as expected. One forced adjustment: the closure's
+  `validateInput` returned `null` (accepted only by old dts); now returns
+  `undefined`. Falsy-contract unchanged.
+- **R7-P14-1** (existence): `usageStore.resetUsageStoreForTests` deleted
+  (prod:0, test:1, no escape applies). `usageStore.test.ts` rerouted per
+  structure-beats-seams: `vi.resetModules()` + dynamic namespace per test
+  (30 call sites; the mid-test "window reload" case literally re-imports),
+  plus 8 dead names swept from its import block. TEST_ONLY 13 -> 12.
+
+Both closures were invisible to every census while anonymous - the ENTRY-
+class blind spot made flesh; grepping `vscode.commands.registerCommand` in
+`extension.ts` now returns 0 and belongs in the next round's checks.
+
+Notable waivers (full graveyard in the review report): the `usageStore`
+collapse-chain nominations are a false chain (`mergePersisted` is a
+5-plane merge fan-out with per-plane clamp/reset semantics);
+`isVersionAtLeast` not absorbed (would inline a documented gate invariant
+into the path's largest builder); the webview's local `clearCache?.()` is
+multi-trigger fan-in onto one owner, not dual ownership; TEST_ONLY names
+whose bodies are internally REUSED stay un-export-hygiene, not structure.
+
+Post-round baseline: candidates 16 unchanged (moves don't touch the call
+graph's shape), Q 0.736 -> 0.753 (placement improved: two blocks now sit
+where their weight points), SCCs 0, tests 826 pass / 3 skip.
+
+**Census caveat, permanent**: rent's `prod:N` counts distinct caller
+MODULES, not call sites. `normalizeModelEntry` prints `prod:1` while
+having four call sites (`configStore.ts:129,134,203,209`). C-3's KEEP is
+strengthened, and any ABSORB_SMALL execution must recount sites by hand
+first. Also this round caught the search index hallucinating a ledger
+section that did not exist on disk: rule 9e now covers your own grep tool.
+
 ## Open queue (pending user rulings)
 
-| ID | Sev | State | Recommendation |
-|----|-----|-------|----------------|
-| P20-1 | low | pending | `autoConfigureOpenRouterModel` is now `ABSORB_SMALL` (22 lines, one production caller: `resolveModelConfigForAdd`'s openrouter branch - census-verified after the P8-2 projections landed). Fold into that branch, or keep the name for its @throws contract? |
-| U8b remainder | low | pending rulings per name | fold the two HF fetchers into `autoConfigureModel` (byte-identical bodies, URL-only diff); collapse `resolveModelConfigForAdd` into its Safely wrapper (TEST_ONLY export); KEEP `fetchVllmModelInfo` (throws, root resolver on re-configure); absorb `formatPerMillionUsd` (1 site); absorb `resolveOpenRouterRuntimeLimits` (3-line wrapper, 1 site) |
-| Un-export hygiene | - | batch | TEST_ONLY exports (census-verified): `ensureServerEntry` (pays rent: 4 in-file callers, export is test-bought), `pickOpenRouterModel`, `buildOpenRouterSummary` (reduced head under P8-2; export still test-bought), `runOpenRouterAddFlow`, `ResolvedModelSettings`, `userDataRootFromGlobalStorage` |
+No open queue. The three standing items were ruled at fix-pass 6 (2026-09-03):
+
+- **P20-1**: KEEP `autoConfigureOpenRouterModel` as a named function. Its
+  @throws contract (`OpenRouterCatalogUnavailable` → caller falls back to the
+  byok draft + background refetch) is the concept; absorbing it into
+  `autoConfigureModel`'s branch would hide a cross-process failure mode inside
+  a linear flow. Rent law respected: the name guards a documented contract, it
+  is not a pass-through.
+- **U8b**: EXECUTED in full. The two HF fetchers folded into
+  `autoConfigureModel` (gloss + generation config stay live on two call sites
+  and remain functions); `resolveModelConfigForAdd` collapsed into its Safely
+  wrapper; `formatPerMillionUsd` deleted; `resolveOpenRouterRuntimeLimits`
+  ruled KEEP (its three-line body encodes the no-merge load-order rule where
+  the invariant lives); `fetchVllmModelInfo` KEEP as ruled.
+- **Un-export hygiene**: EXECUTED where it was junk (`ResolvedModelSettings`
+  type un-exported, internalized in `config.ts`; `ConfigExports` facade
+  deleted). The remaining test-only exports are the **auth tripwire crew**
+  (`isModelNotInRuntimeError`, `isRetriableFetchError`, `isAuthError`) and the
+  flow entry points (`promptAddServer`, `runAutoConfigureFlow`,
+  `discoverAndAddHfModels`, `ensureServerEntry`, `pickOpenRouterModel`,
+  `buildOpenRouterSummary`, `runOpenRouterAddFlow`,
+  `userDataRootFromGlobalStorage`) - all ruled KEEP under the tests-vs-structure
+  doctrine: they pin the silent-failure classes (un-authed 401, no-catalog
+  price lie) that a wrong refactor would ship silently. The doctrine already
+  accepted structure concessions to test seams (2026-09-03).
 
 ### Executed units (gauntlet-green, census-diffed)
+
+- **Fix pass 6** (round-1 re-review execution, 2026-09-03): the per-path
+  amputations this ledger recorded as executed had their rows pruned here
+  (P1-1, P1-2, P2-4, P5-8, P6-1, P7-8, P8-2, P8-6, P8-7, P14-2, P16-3, P19-2,
+  P19-3); git history carries the diffs. The round-1 survivor fixes
+  (CR-19/20/22/25/26/27/29/31/74/81/87/94) shipped with it; CR-94's validator
+  documented as a deliberate tripwire, not a bug.
 
 - **P1-1 + P6-1**: one `readPickerSelection` reader and one
   `normalizePickerTokens` rule in `state/config.ts`; provider tracking and the
@@ -905,7 +1040,7 @@ rulings were each re-verified against current bytes this pass.
 | P13-1 | OpenRouter pin/suffix copy sites | **waived** (recount: 3 sites, not 4; the composer is already shared and pinning kills any-endpoint honesty) |
 | removeServer refuse x2 | pre- vs post-confirm refuse copy | **waived** (deliberately different messages: "still used... Remove those models first" vs "now used... Removal cancelled" - unifying them would erase which race was caught) |
 | U10 / PF-4 | VllmClient spine wrappers | **closed as keep** (the wrappers are one-liners, and the provider-level DI seam `dependencies?.client` already carries the tests; killing the class would strand the config-cache pair for zero graph gain) |
-| Style | em dash in user-visible strings | **ruled**: UI toasts, error copy, diagnostics conclusions, quick-pick labels, and the shared error joins use ` - `; the `messageConverter` status-text parse cuts on ` - ` in lockstep with `fetchRetry`'s status line; source comments are exempt; the dashboard's `—` "no data" placeholder is typography, kept |
+| Style | em dash in user-visible strings | **ruled and executed in full** (2026-09-04 completion): no `—` anywhere a human reads - UI toasts, error copy, diagnostics, quick-picks, validation warnings, tooltips, webviews, settings.json writes, dashboard placeholder glyphs (the earlier typography exemption is revoked), AND the shipped text corpus: README, CHANGELOG, `docs/**`, `package.json` descriptions, `model-configs/` README and `notes` (they render in the add consent dialog), and personality `description` fields (they render in the quick pick). The `messageConverter` status-text parse cuts on ` - ` in lockstep with `fetchRetry`'s status line; exemptions: source comments, en dashes in numeric ranges (`0.0-2.0` family), the `configSchemaTool` LLM prompt, and personality `replace` bodies (model-facing prompt text, same family, ruled 2026-09-04) |
 | (struck) | "modelLabel x3" dedup candidate | **struck** - no such function or variable exists anywhere; all hits were a reused parameter name in `dashboard.ts`. Ledger phantoms die here |
 | (struck) | P17-1 twin-predicate sub-claim | **struck this pass** - the two probes use different primitives; only the 3-join getter survives |
 

@@ -43,7 +43,11 @@ describe('system message processing', () => {
       { models: [{ id: 'model', server: 'srv' }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }], enableFileLogging: false },
     );
 
-    expect(result).toEqual([userMsg]);
+    // `toBe` identity, not deep equality: the title promises by-reference
+    // pass-through; a deep-equality assertion would let a cloning
+    // implementation pass while breaking the never-mutated contract (CR-104).
+    expect(result).toHaveLength(1);
+    expect(result[0]).toBe(userMsg);
   });
 
   it('returns the original messages when a malformed replacements file is configured', async () => {

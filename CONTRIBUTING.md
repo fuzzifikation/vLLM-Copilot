@@ -48,4 +48,4 @@ All production (shipped) dependencies must carry permissive open-source licenses
 - Include the extension version and VS Code version.
 - Include relevant logs (`Ctrl+Shift+P` → Open Log File).
 - Use `Diagnose Connection` for network/TLS issues — include the output.
-- Check `known-bugs.md` first — it might already be documented.
+- Check `docs/code-review.md` first — it might already be documented.

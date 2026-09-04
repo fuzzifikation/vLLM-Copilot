@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider/provider.js';
-import { getConfig, validateConfig, normalizeServerUrl, sanitizeRequestHeaders } from './state/config.js';
+import { getConfig, validateConfig } from './state/config.js';
 import { FileLogger } from './shared/logger.js';
 import { registerAddServerModelCommand, registerAddServerCommand } from './commands/addServerFlow.js';
 import { registerAutoConfigureModelCommand } from './commands/autoConfigureFlow.js';
@@ -14,7 +14,7 @@ import { syncBundledPersonalities } from './persona/personalityStore.js';
 import { readServers, writeServers } from './state/configStore.js';
 import { dedupeServerIds } from './state/serverRegistry.js';
 import { resetOpenRouterCaches } from './backends/openRouter.js';
-import { getPollSettingMs } from './ui/vllmMetrics.js';
+import { registerSetPollIntervalCommand } from './ui/vllmMetrics.js';
 import {
   registerDiagnoseConnectionCommand,
   registerOpenLogFileCommand,
@@ -35,7 +35,7 @@ import { maybeOfferOutputLengthMigration } from './migrations/outputLengthMigrat
 import { maybeRunServerRegistryMigration } from './migrations/serverRegistryMigration.js';
 import { DashboardTreeProvider } from './ui/dashboard.js';
 import { ServerSettingsViewProvider } from './ui/serverSettingsView.js';
-import { openDeepDive } from './ui/deepDiveView.js';
+import { registerOpenDeepDiveCommand } from './ui/deepDiveView.js';
 import { registerConfigSchemaTool } from './shared/configSchemaTool.js';
 
 const VENDOR_ID = 'vllm-copilot';
@@ -59,7 +59,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // Running locally while connected to a remote — notify user and offer to install on the remote host.
     if (vscode.env.remoteName && context.extension.extensionKind === vscode.ExtensionKind.UI) {
       const remoteHost = vscode.env.remoteName;
-      outputChannel.appendLine(`[WARN] Extension is running locally while connected to ${remoteHost} remote — it must be installed on the remote to function.`);
+      outputChannel.appendLine(`[WARN] Extension is running locally while connected to ${remoteHost} remote - it must be installed on the remote to function.`);
       const helpAction = `Show Me`;
       vscode.window.showWarningMessage(
         `vLLM-Copilot is not installed on the ${remoteHost} remote. Chat features will not work until installed.`,
@@ -163,11 +163,11 @@ export async function activate(context: vscode.ExtensionContext) {
         try {
           await writeServers(repairedServers);
           void vscode.window.showInformationMessage(
-            `vLLM-Copilot: duplicate server ids found in settings — renamed so every entry stays usable: ${list}.`
+            `vLLM-Copilot: duplicate server ids found in settings - renamed so every entry stays usable: ${list}.`
           );
         } catch (err) {
           outputChannel.appendLine(
-            `[ERROR] Server registry repair could not write the renamed ids — until settings.json is fixed, requests reach the FIRST entry of each duplicate id. ${err instanceof Error ? err.message : String(err)}`
+            `[ERROR] Server registry repair could not write the renamed ids - until settings.json is fixed, requests reach the FIRST entry of each duplicate id. ${err instanceof Error ? err.message : String(err)}`
           );
         }
       }
@@ -180,7 +180,7 @@ export async function activate(context: vscode.ExtensionContext) {
     await maybeRunServerRegistryMigration(context, outputChannel);
 
     // One-time activation summary
-    const fullConfig = await getConfig(context);
+    const fullConfig = await getConfig();
     outputChannel.appendLine(`[INFO] vLLM-Copilot activated (${fullConfig.models.length} model(s) configured)`);
 
     // Heal stale global copies of bundled presets. Personalities are copied to
@@ -274,37 +274,8 @@ export async function activate(context: vscode.ExtensionContext) {
       registerRemoveModelCommand(context, activeProvider, outputChannel),
       registerResetUsageCommand(outputChannel),
       registerConfigureCostCommand(context, outputChannel),
-    );
-
-    // Deep-Dive: open editor-area webview for a single server
-    context.subscriptions.push(
-      vscode.commands.registerCommand('vllm-copilot.openDeepDive', async (arg?: any) => {
-        // The dashboard tree item carries the registry ENTRY id — never match by
-        // URL: one URL can host several credential identities, and URL-matching
-        // would open the panel with whichever entry happens to be first.
-        const entry = readServers().find(s => s.id === arg?.serverId);
-        if (!entry) {
-          vscode.window.showErrorMessage('Server not found: it may have been removed. Refresh the Dashboard.');
-          return;
-        }
-        const serverType = entry.serverType ?? 'vllm';
-        // Deep-Dive is a vLLM metrics view — non-vLLM backends don't expose
-        // /metrics, so the panel would be all empty rows. Guard even though the
-        // context menu already hides it for non-vLLM servers (defense in depth).
-        if (serverType !== 'vllm') {
-          vscode.window.showInformationMessage(
-            `Deep-Dive is a vLLM-only view. ${serverType} servers don't expose vLLM metrics (KV cache, throughput, TTFT).`
-          );
-          return;
-        }
-        // We already hold the entry; normalize it directly instead of looking it
-        // up again by id. The guard above admits vLLM entries only, so there is
-        // no backend special case here — every server is renamable.
-        const serverUrl = normalizeServerUrl(entry.serverUrl);
-        const requestHeaders = sanitizeRequestHeaders(entry.requestHeaders ?? {});
-        const displayName = entry.displayName?.trim() || undefined;
-        openDeepDive(entry.id, serverUrl, requestHeaders, serverType, context, outputChannel, displayName);
-      }),
+      registerOpenDeepDiveCommand(context, outputChannel),
+      registerSetPollIntervalCommand(),
     );
 
     // Register dashboard tree view (native sidebar UI)
@@ -324,36 +295,6 @@ export async function activate(context: vscode.ExtensionContext) {
     const serverSettingsView = new ServerSettingsViewProvider(context, outputChannel, () => activeProvider.clearCache());
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider('vllm-copilot.serverSettings', serverSettingsView)
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand('vllm-copilot.setPollInterval', async () => {
-        const current = getPollSettingMs();
-        const input = await vscode.window.showInputBox({
-          prompt: 'Set polling interval (e.g. 15s, 30s, 1m)',
-          ignoreFocusOut: true,
-          value: `${current / 1000}s`,
-          validateInput: (val: string) => {
-            const s = val.replace(/s$/, '');
-            const m = val.replace(/m$/, '');
-            if (!isNaN(Number(s)) && Number(s) > 0) return null;
-            if (!isNaN(Number(m)) && Number(m) > 0) return null;
-            return 'Enter a valid interval (e.g. 15s, 30s, 1m)';
-          },
-        });
-        if (!input) return;
-        let ms: number;
-        if (input.endsWith('m')) {
-          ms = Number(input.slice(0, -1)) * 60 * 1000;
-        } else {
-          ms = Number(input.replace(/s$/, '')) * 1000;
-        }
-        if (ms < 1000) {
-          vscode.window.showErrorMessage('Polling interval must be at least 1s');
-          return;
-        }
-        await vscode.workspace.getConfiguration('vllm-copilot.dashboard').update('pollIntervalMs', ms, vscode.ConfigurationTarget.Global);
-      }),
     );
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);

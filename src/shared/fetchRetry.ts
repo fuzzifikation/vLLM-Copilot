@@ -26,9 +26,17 @@ export function buildRequestHeaders(
     if (typeof v === 'string') headers[k] = v;
   }
 
-  // Layer 2: caller-specific headers (e.g., Content-Type — always wins)
+  // Layer 2: caller-specific headers (e.g., Content-Type) always win — and
+  // header names are case-INsensitive (CR-22). Without the case-folded delete,
+  // a base 'content-type' and a caller 'Content-Type' both survived and fetch
+  // comma-joined them into one corrupt value.
   for (const [k, v] of Object.entries(callerHeaders ?? {})) {
-    if (typeof v === 'string') headers[k] = v;
+    if (typeof v !== 'string') continue;
+    const lower = k.toLowerCase();
+    for (const existing of Object.keys(headers)) {
+      if (existing !== k && existing.toLowerCase() === lower) delete headers[existing];
+    }
+    headers[k] = v;
   }
 
   return headers;
@@ -180,6 +188,11 @@ export async function fetchWithRetry(
     return response;
   }
 
-  // Should not reach here, but satisfy exhaustiveness
+  // The real terminal path when every attempt failed WITHOUT an HTTP answer:
+  // each network-error `continue` above exits the loop without throwing, so
+  // this throw carries the user-visible "Request failed after 2 attempts:
+  // Network error: ..." (a 429-then-network-error lands here too). The old
+  // "should not reach here" label was false — nothing about this is
+  // exhaustiveness filler (CR-68).
   throw new Error(`Request failed after ${MAX_ATTEMPTS} attempts: ${lastError}`);
 }
