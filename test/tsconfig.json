@@ -9,11 +9,12 @@
     "types": ["node"],
     // Test files resolve `vscode` to the unit-test mock (test/__mocks__/vscode.ts),
     // the surface the tests were written against; vitest performs the same alias
-    // at runtime. Editor-only: `tsc` (both -p and -b) does not honor `paths` for
-    // ambient module names like `vscode`, so this is NOT a build gate. Src modules
-    // imported by tests are compiled in this project too — a relaxed view that
-    // only affects editor typing, never the shipped extension (root tsconfig
-    // type-checks src against real VS Code in the build).
+    // at runtime. tsc DOES honor this `paths` mapping for the ambient `vscode`
+    // name, so `npm run test:typecheck` (in the build chain) IS a real gate:
+    // src modules imported by tests are type-checked against the mock here.
+    // Anything src/ uses as a VALUE (e.g. vscode.Disposable.from) must exist
+    // at runtime in the mock, not just as an interface. The root tsconfig
+    // still type-checks src against real @types/vscode in `npm run compile`.
     "paths": {
       "vscode": ["./__mocks__/vscode.ts"]
     }

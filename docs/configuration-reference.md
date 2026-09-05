@@ -19,7 +19,7 @@ All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vll
 | `id` | - | **Required.** Unique key referenced by each model's `server`. The Add flow generates a slug from the host/port (e.g. `localhost-8000`; colliding slugs get `-2`, `-3`, …). The id is the server's identity (dashboard node, metrics engine, Deep-Dive panel) and its stable write target. |
 | `serverUrl` | - | **Required.** Server URL (OpenAI-compatible). |
 | `serverType` | `vllm` | Backend protocol. `vllm` \| `lmstudio` \| `llamacpp` \| `ollama` \| `openrouter`. **Set automatically by Add Server**, and auto-detected in Model Settings for unconfigured servers. Missing always means `vllm`. Manual third-party entries must set this - the extension never probes at runtime. |
-| `displayName` | - | Optional **server label** shown in the Dashboard tree and the Model Settings server dropdown instead of the raw URL (e.g. `"IT Server for GLM5.2"`). Set with **Rename Server** (right-click a server node in the Dashboard): the label belongs to exactly the registry entry you right-clicked, so entries sharing one URL (two OpenRouter keys, two gateway tenants) each carry their own. Empty/omitted shows the URL. |
+| `displayName` | - | Optional **server label** shown in the Dashboard tree and the Model Settings server dropdown instead of the raw URL (e.g. `"IT Server for GLM5.2"`). Set with **Rename** (right-click a server node in the Dashboard): the label belongs to exactly the registry entry you right-clicked, so entries sharing one URL (two OpenRouter keys, two gateway tenants) each carry their own. Empty/omitted shows the URL. |
 | `requestHeaders` | `{}` | HTTP headers for this server (auth, routing). **Isolated** - never shared across entries. |
 
 Two entries may share one URL: identity is the URL + sanitized-headers pair, so the same endpoint behind different credentials is two distinct servers, each probed and tracked with its own auth.
@@ -228,7 +228,7 @@ A working chat model - minimum viable config. No modes, no custom params, just a
     "id": "localhost-8000",                            // required; referenced by each model's "server"
     "serverUrl": "http://localhost:8000",              // required
     "serverType": "vllm",                              // vllm | lmstudio | llamacpp | ollama | openrouter (default vllm)
-    "displayName": "IT Server for GLM5.2",             // optional Dashboard label (Rename Server writes this)
+    "displayName": "IT Server for GLM5.2",             // optional Dashboard label (Rename writes this)
     "requestHeaders": {                                // auth/routing; never shared across entries
       "Authorization": "Bearer <your-token>"
     }

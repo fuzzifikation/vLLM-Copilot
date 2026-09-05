@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.36.1
+
+The server registry landed in 1.36.0, and the first thing it owed users was control over how their servers are presented.
+
+### Added
+
+- **Server order is yours.** Drag a server row onto another row in the Dashboard and it lands there (drop below the list for the bottom), or use **Move ↑ / Move ↓** in the server's right-click menu. The order lives in the `vllm-copilot.servers` array itself - no new setting, and the Dashboard and Model Settings follow it wherever you put a server.
+
 ## v1.36.0 - The server registry
 
 The goal of this release: with server facts stored inside every model entry, any server-level feature had to be built, stored and edited once per model copy, and none of the server-level UX and UI improvements we want could land. Servers becoming one registry entry each is the backbone for them. This release lays that foundation; the features built on it come later.

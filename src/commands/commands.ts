@@ -441,6 +441,116 @@ export function registerRenameServerCommand(
 }
 
 /**
+ * Reorder a server registry entry inside the `servers` array. No new property
+ * is born: the array order IS the display order — the Dashboard and Server
+ * Settings iterate `servers[]` in settings order (first-entry-wins per id,
+ * same rule as the runtime resolver), so reordering the array moves the rows.
+ * Called by the Dashboard's drag-and-drop controller with the dragged entry id
+ * and the id of the row it was dropped on (`undefined` = empty tree space =
+ * move to the bottom). The dragged entry lands ON the row it was dropped on:
+ * splice at the target's ORIGINAL index — after removing the dragged entry
+ * that inserts below the target on a downward drag and above it on an upward
+ * one, which is exactly "the row under the cursor". The tree repaints itself
+ * via `onDidChangeConfiguration`, no manual refresh needed.
+ */
+export function registerMoveServerCommand(
+  _context: vscode.ExtensionContext,
+  provider: VllmChatModelProvider,
+  outputChannel: vscode.OutputChannel,
+): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.moveServer', async (draggedId?: unknown, targetId?: unknown) => {
+    if (typeof draggedId !== 'string' || !draggedId) {
+      vscode.window.showErrorMessage('Server id not provided.');
+      return;
+    }
+    if (targetId !== undefined && typeof targetId !== 'string') {
+      outputChannel.appendLine(`[ERROR] Move Server: bad target id "${String(targetId)}" - expected a server id or undefined.`);
+      return;
+    }
+
+    // Fresh read at drop time; both ids address the FIRST entry with that id,
+    // the same first-entry-wins rule the resolver and the dashboard use.
+    const servers = readServers();
+    const sourceIdx = servers.findIndex(s => s.id === draggedId);
+    if (sourceIdx === -1) {
+      vscode.window.showWarningMessage(`No registered server with id "${draggedId}".`);
+      return;
+    }
+    const targetIdx = targetId === undefined
+      ? servers.length - 1
+      : servers.findIndex(s => s.id === targetId);
+    if (targetIdx === -1) {
+      // Stale tree node under the cursor (another window edited the registry):
+      // fail loudly, never silently reorder nothing.
+      vscode.window.showWarningMessage(`No registered server with id "${targetId}".`);
+      return;
+    }
+    if (sourceIdx === targetIdx) return; // dropped on its own row - a no-op, not a write
+
+    const next = servers.slice();
+    const [entry] = next.splice(sourceIdx, 1);
+    next.splice(targetIdx, 0, entry);
+
+    if (!(await attemptWrite(outputChannel, 'Move Server', () => writeServers(next)))) return;
+    provider.clearCache();
+    outputChannel.appendLine(`[INFO] Moved server "${draggedId}" to position ${targetIdx + 1}.`);
+  });
+}
+
+/**
+ * One-step server reordering for the Dashboard's inline hover buttons
+ * (▲▼ per server row). Same law as {@link registerMoveServerCommand}: the
+ * `servers[]` array order IS the display order, so a neighbour swap in the
+ * array moves the row, and the config-change listener repaints both UIs.
+ *
+ * TWO separate argument-free commands, deliberately: menu contribution
+ * `arguments` never reach tree-item commands (the tree forwards its own
+ * context argument and drops the contribution's - the defect that made the
+ * first Move Up/Down menu a silent no-op), so the direction is baked into
+ * the command identity instead of smuggled through an argument.
+ */
+export function registerMoveServerStepCommands(
+  _context: vscode.ExtensionContext,
+  provider: VllmChatModelProvider,
+  outputChannel: vscode.OutputChannel,
+): vscode.Disposable {
+  const step = async (arg: any, delta: 1 | -1): Promise<void> => {
+    // VS Code forwards the tree item (context) as the first argument; every
+    // server node carries its registry `serverId`.
+    const serverId = typeof arg === 'object' ? arg?.serverId : undefined;
+    if (typeof serverId !== 'string' || !serverId) {
+      vscode.window.showErrorMessage('Server id not provided.');
+      return;
+    }
+    // Fresh read at click time; addresses the FIRST entry with this id, the
+    // same first-entry-wins rule the resolver and the dashboard use.
+    const servers = readServers();
+    const index = servers.findIndex(s => s.id === serverId);
+    if (index === -1) {
+      vscode.window.showWarningMessage(`No registered server with id "${serverId}".`);
+      return;
+    }
+    const target = index + delta;
+    if (target < 0 || target >= servers.length) {
+      vscode.window.showInformationMessage(
+        `Server "${servers[index].displayName?.trim() || serverId}" is already at the ${delta < 0 ? 'top' : 'bottom'} of the list.`
+      );
+      return;
+    }
+    const next = servers.slice();
+    [next[index], next[target]] = [next[target], next[index]];
+
+    if (!(await attemptWrite(outputChannel, 'Move Server', () => writeServers(next)))) return;
+    provider.clearCache();
+    outputChannel.appendLine(`[INFO] Moved server "${serverId}" ${delta < 0 ? 'up' : 'down'}.`);
+  };
+  return vscode.Disposable.from(
+    vscode.commands.registerCommand('vllm-copilot.moveServerUp', (arg?: any) => step(arg, -1)),
+    vscode.commands.registerCommand('vllm-copilot.moveServerDown', (arg?: any) => step(arg, 1)),
+  );
+}
+
+/**
  * Remove a server registry entry.
  * Triggered from right-click context menu on a server node in the dashboard.
  *

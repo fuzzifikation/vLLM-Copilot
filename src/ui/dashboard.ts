@@ -172,6 +172,44 @@ class ServerTreeItem extends vscode.TreeItem {
   }
 }
 
+/** The dashboard tree's own drag payload type (API-recommended format:
+ *  `application/vnd.code.tree.<treeidlowercase>`). `dropMimeTypes` must list
+ *  it or drops from this very tree are never delivered to `handleDrop`;
+ *  same-controller drops hand the raw `.value` back verbatim. */
+const DND_MIME = 'application/vnd.code.tree.vllm-copilot.dashboard';
+
+/**
+ * Drag-and-drop reordering of server rows. The payload is only the dragged
+ * entry's registry id — tree items are rebuilt on every repaint, so object
+ * identity is worthless; the id is exactly what `moveServer` addresses.
+ * Drop semantics: the dragged server lands ON the row it was dropped on
+ * (the stable API has no between-row drop indicator, so "onto" is all there
+ * is); a drop in empty tree space moves it to the bottom. The write, cache
+ * clear, and logging live in the `moveServer` command — the controller stays
+ * a pure translator from gesture to command call. Non-server rows are inert:
+ * `handleDrag` adds nothing for them, and dropping onto one is ignored (VS
+ * Code highlights any hovered row regardless; there is no canDrop hook).
+ */
+export class DashboardDndController implements vscode.TreeDragAndDropController<vscode.TreeItem> {
+  readonly dragMimeTypes = [DND_MIME];
+  readonly dropMimeTypes = [DND_MIME];
+
+  handleDrag(source: readonly vscode.TreeItem[], dataTransfer: vscode.DataTransfer): void {
+    // Single-select tree: `source` is just the dragged item.
+    const item = source[0];
+    if (item instanceof ServerTreeItem) {
+      dataTransfer.set(DND_MIME, new vscode.DataTransferItem(item.serverId));
+    }
+  }
+
+  handleDrop(target: vscode.TreeItem | undefined, dataTransfer: vscode.DataTransfer): void {
+    const draggedId = dataTransfer.get(DND_MIME)?.value;
+    if (typeof draggedId !== 'string' || !draggedId) return; // external drag or inert source row
+    if (target !== undefined && !(target instanceof ServerTreeItem)) return; // child/metric/action row
+    void vscode.commands.executeCommand('vllm-copilot.moveServer', draggedId, target?.serverId);
+  }
+}
+
 /** Collapsible "Model IDs" node with each model as a child */
 class ModelsTreeItem extends vscode.TreeItem {
   constructor(public readonly modelNames: string[]) {

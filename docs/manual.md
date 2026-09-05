@@ -245,9 +245,11 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 | **Set Model Personality** | Pick a model, pick a personality preset (or **Default** to clear). |
 | **Configure Utility Model** | Switch utility model for MCP servers (`mainAgent` / `copilot` / `none`). |
 | **Update Auth** | Rotate API key or change auth headers for a server (right-click on server node). |
+| **Rename** | Set a display label for the right-clicked server entry; empty clears it and shows the URL (right-click on server node). |
 | **vLLM Deep-Dive** | Open the per-server metrics webview (right-click a vLLM server node). |
 | **Remove Model** | Remove a single configured model (button in Model Settings). |
-| **Remove Server** | Remove the right-clicked server entry only (with confirm). Refuses while any model still references it; other registry entries on the same URL are untouched. |
+| **Delete** | Remove the right-clicked server entry only (with confirm). Refuses while any model still references it; other registry entries on the same URL are untouched. |
+| **Move ↑ / Move ↓** | Reorder server rows from the server's right-click menu, or drag one server row onto another (it lands there; dropping below the list moves it to the bottom). The order lives in the `vllm-copilot.servers` array itself - the Dashboard and Model Settings follow it. |
 | **Open Log File** | Open today's debug log. |
 | **Clear Log Files** | Delete all debug logs except the active one. |
 | **Diagnose Connection** | Deep TLS/proxy/DNS/cert diagnostic report (utilities). |

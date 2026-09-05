@@ -22,6 +22,8 @@ import {
   registerCleanSessionsCommand,
   registerUpdateServerAuthCommand,
   registerRenameServerCommand,
+  registerMoveServerCommand,
+  registerMoveServerStepCommands,
   registerRemoveServerCommand,
   registerRemoveModelCommand,
   registerResetUsageCommand,
@@ -33,7 +35,7 @@ import { setExtensionVersion } from './ui/diagnostics.js';
 import { initUsageStore } from './usage/usageStore.js';
 import { maybeOfferOutputLengthMigration } from './migrations/outputLengthMigration.js';
 import { maybeRunServerRegistryMigration } from './migrations/serverRegistryMigration.js';
-import { DashboardTreeProvider } from './ui/dashboard.js';
+import { DashboardTreeProvider, DashboardDndController } from './ui/dashboard.js';
 import { ServerSettingsViewProvider } from './ui/serverSettingsView.js';
 import { registerOpenDeepDiveCommand } from './ui/deepDiveView.js';
 import { registerConfigSchemaTool } from './shared/configSchemaTool.js';
@@ -270,6 +272,8 @@ export async function activate(context: vscode.ExtensionContext) {
       registerSetModelPersonalityCommand(context, activeProvider, outputChannel),
       registerUpdateServerAuthCommand(context, activeProvider, outputChannel),
       registerRenameServerCommand(context, activeProvider, outputChannel),
+      registerMoveServerCommand(context, activeProvider, outputChannel),
+      registerMoveServerStepCommands(context, activeProvider, outputChannel),
       registerRemoveServerCommand(context, activeProvider, outputChannel),
       registerRemoveModelCommand(context, activeProvider, outputChannel),
       registerResetUsageCommand(outputChannel),
@@ -281,7 +285,10 @@ export async function activate(context: vscode.ExtensionContext) {
     // Register dashboard tree view (native sidebar UI)
     const dashboardTree = new DashboardTreeProvider(context, outputChannel);
     context.subscriptions.push(dashboardTree);
-    const dashboardView = vscode.window.createTreeView('vllm-copilot.dashboard', { treeDataProvider: dashboardTree });
+    const dashboardView = vscode.window.createTreeView('vllm-copilot.dashboard', {
+      treeDataProvider: dashboardTree,
+      dragAndDropController: new DashboardDndController(),
+    });
     context.subscriptions.push(dashboardView);
 
     // Only poll when the sidebar is actually visible

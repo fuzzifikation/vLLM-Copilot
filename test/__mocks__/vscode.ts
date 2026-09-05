@@ -121,7 +121,15 @@ export interface LanguageModelChatProvider {
 }
 
 // ── Core interfaces ────────────────────────────────────────────────────────
+// Real API: `Disposable` is a type AND a value (static `from`). The interface
+// keeps the type structural (mocks hand out plain `{ dispose() }` objects);
+// the merged namespace supplies the runtime factory src/ calls.
 export interface Disposable { dispose(): void; }
+export namespace Disposable {
+  export function from(...disposables: { dispose(): any }[]): Disposable {
+    return { dispose: () => disposables.forEach(d => d.dispose()) };
+  }
+}
 export interface CancellationToken {
   isCancellationRequested: boolean;
   onCancellationRequested: Event<any>;
