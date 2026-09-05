@@ -9,7 +9,7 @@
       "runtimeExecutable": "${execPath}",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}",
-        "--enable-proposed-api=private.vllm-copilot",
+        "--enable-proposed-api=System-Sciences.vllm-copilot",
         "${workspaceFolder}"
       ],
       "outFiles": [

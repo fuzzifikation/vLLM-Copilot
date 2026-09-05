@@ -989,14 +989,22 @@ The three older standing items were ruled at fix-pass 6 (2026-09-03):
 - **Un-export hygiene**: EXECUTED where it was junk (`ResolvedModelSettings`
   type un-exported, internalized in `config.ts`; `ConfigExports` facade
   deleted). The remaining test-only exports are the **auth tripwire crew**
-  (`isModelNotInRuntimeError`, `isRetriableFetchError`, `isAuthError`) and the
-  flow entry points (`promptAddServer`, `runAutoConfigureFlow`,
-  `discoverAndAddHfModels`, `ensureServerEntry`, `pickOpenRouterModel`,
-  `buildOpenRouterSummary`, `runOpenRouterAddFlow`,
+  (`isModelNotInRuntimeError`,
+  `isRetriableFetchError`, `isAuthError`) and the live flow seams
+  (`ensureServerEntry`, `runOpenRouterAddFlow`,
   `userDataRootFromGlobalStorage`) - all ruled KEEP under the tests-vs-structure
   doctrine: they pin the silent-failure classes (un-authed 401, no-catalog
   price lie) that a wrong refactor would ship silently. The doctrine already
   accepted structure concessions to test seams (2026-09-03).
+  ROUND-8 CORRECTION (2026-09-05): this list had rotted.
+  `promptAddServer`, `runAutoConfigureFlow`, `discoverAndAddHfModels` no
+  longer exist (deleted by the wizard rebuild); `pickOpenRouterModel`,
+  `buildOpenRouterSummary`, `formatMigrationPreview` lost their test
+  consumers and are now module-private (census: INTERNAL_SINGLE, 0
+  external users - the `export` was pure lie, one still said "Exported
+  for testing" with no test left). When a seam's test dies, the export's
+  KEEP ruling dies with it - re-check crew membership after any flow
+  rebuild.
 
 ### Executed units (gauntlet-green, census-diffed)
 

@@ -34,14 +34,15 @@
     if (hint) hint.hidden = !pinned;
   }
   // Field edits bubble input/change from inside #root. Navigation and auto-applied
-  // controls are excluded: the server/model selects (their re-render resets dirty)
-  // and the personality dropdown + capture toggle (auto-save via their own handlers).
+  // controls are excluded: the server/model selects and the Choices.js wrapper
+  // around the model picker (their re-render resets dirty), the personality
+  // dropdown + capture toggle (auto-save via their own handlers).
   // Modal inputs live outside #root, so they are naturally excluded.
   document.addEventListener('input', e => {
-    if (e.target.closest && e.target.closest('#root') && !e.target.closest('#sSel, #mSel, #sTypeSel, #personalitySel, #captureCb')) markDirty();
+    if (e.target.closest && e.target.closest('#root') && !e.target.closest('#sSel, #mSel, #sTypeSel, #personalitySel, #captureCb, .choices')) markDirty();
   });
   document.addEventListener('change', e => {
-    if (e.target.closest && e.target.closest('#root') && !e.target.closest('#sSel, #mSel, #sTypeSel, #personalitySel, #captureCb')) markDirty();
+    if (e.target.closest && e.target.closest('#root') && !e.target.closest('#sSel, #mSel, #sTypeSel, #personalitySel, #captureCb, .choices')) markDirty();
   });
 
   // Set before posting a 'save' and consumed by the next 'data' message. A save is
@@ -57,6 +58,9 @@
   // opposed to an unconfigured server-model stub, whose save legitimately
   // creates the entry). The save-time deleted-model guard reads this.
   let lastRenderConfigured = false;
+  // Live Choices.js instance wrapping the model select - destroyed at the top
+  // of every render() because render() rebuilds the form HTML wholesale.
+  let mChoices = null;
 
   // Wait for data from extension
   window.addEventListener('message', e => {
@@ -250,6 +254,9 @@
   }
 
   function render() {
+    // The form HTML is rebuilt wholesale below - tear down the searchable
+    // model picker first so it detaches cleanly from the old select.
+    if (mChoices) { mChoices.destroy(); mChoices = null; }
     const r = document.getElementById('root');
     if (!S.servers.length) {
       r.innerHTML = '<p class="empty-state">No servers configured. Run "Add or Reconfigure Server/Model" first.</p>';
@@ -294,7 +301,10 @@
     lastRenderConfigured = !!(mc && sv.models.indexOf(mc) >= 0);
 
     let h = '<div class="selector-row">';
-    h += '<label>Server</label><select id="sSel">';
+    // Server + Server Type share one row (~70/30): both address the server, and
+    // stacked they waste the vertical space of the long form below.
+    h += '<div class="selector-pair">';
+    h += '<div class="pair-col"><label>Server</label><select id="sSel">';
     // A URL may host several header identities (per-model credentials). The option
     // VALUE is the group key; the label prefers the user-set server display name,
     // falling back to the URL, disambiguated when more than one identity shares it.
@@ -312,17 +322,23 @@
       const label = urlCount[s.url] > 1 ? base + ' (identity ' + n + ')' : base;
       h += '<option value="' + E(s.key) + '"' + (s.key === S.selServer ? ' selected' : '') + '>' + E(label) + '</option>';
     });
-    h += '</select>';
+    h += '</select></div>';
     // Backend type comes from the registry entry; unset shows vllm (policy
     // default). Changing it writes the ENTRY immediately (own 'setServerType'
     // message, excluded from the model-form dirty tracking) — never the model.
     // serverType describes the SERVER, so it sits next to the Server selector —
     // general → specific (serverType → Server → Model).
-    h += '<label>Server Type</label><select id="sTypeSel">' +
+    h += '<div class="pair-col"><label>Server Type</label><select id="sTypeSel">' +
       ['vllm', 'openrouter', 'llamacpp', 'lmstudio', 'ollama'].map(t =>
       '<option value="' + t + '"' + ((sv.serverType || sv.detectedServerType || 'vllm') === t ? ' selected' : '') + '>' + t + '</option>').join('') +
-      '</select>';
-    h += '<label>Model (vllmModelId)</label><select id="mSel">';
+      '</select></div>';
+    h += '</div>';
+    h += '<label>Model (vllmModelId)</label>';
+    // Enhanced into a searchable dropdown right after the form is wired
+    // (Choices.js below): type to narrow, arrows to move, Enter/click to
+    // commit - required for OpenRouter's ~415-model catalog, applied to every
+    // backend so the model picker is one code path.
+    h += '<select id="mSel">';
     // Option VALUE is the extension `id` (the key for personalities/settings);
     // the LABEL shows the real vllmModelId. When several presets share a wire id
     // the label is disambiguated with the composite id.
@@ -466,7 +482,26 @@
     });
 
     document.getElementById('sSel').onchange = () => { S.selServer = document.getElementById('sSel').value; render(); };
-    document.getElementById('mSel').onchange = () => { S.selModel = document.getElementById('mSel').value; render(); };
+    // Searchable model picker (vendored Choices.js, see resources/choices.min.*).
+    // The library builds its own control around the native select: click opens
+    // the dropdown, typing filters label AND id, arrow keys move the highlight,
+    // Enter/click commits - focus never leaves the control. Commit arrives as a
+    // 'change' event on the (now hidden) select, whose .value the library keeps
+    // in sync - the same commit path as a plain native select. If the script
+    // ever fails to load, the native select stays as-is and still works.
+    const mSel = document.getElementById('mSel');
+    if (window.Choices) {
+      mChoices = new window.Choices(mSel, {
+        searchEnabled: true,
+        searchPlaceholderValue: 'Search ' + allOptions.length + ' models...',
+        searchResultLimit: -1,   // show every match, not the default four
+        shouldSort: false,       // configured-first order is deliberate - keep it
+        itemSelectText: '',      // no "Press to select" strip eating dropdown rows
+        noResultsText: 'No model matches that search',
+        allowHTML: false,        // labels are server-reported text - never HTML
+      });
+    }
+    mSel.addEventListener('change', () => { S.selModel = mSel.value; render(); });
     // Server type is an entry-level fact — applying it posts immediately and the
     // host's 'vllm-copilot.servers' listener answers with a fresh re-render.
     document.getElementById('sTypeSel').onchange = () => {

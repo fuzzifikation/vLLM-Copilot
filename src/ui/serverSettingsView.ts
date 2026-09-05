@@ -166,6 +166,15 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     const stylePath = vscode.Uri.joinPath(this.context.extensionUri, 'resources', 'serverSettings.css');
     const scriptUri = webviewView.webview.asWebviewUri(scriptPath);
     const styleUri = webviewView.webview.asWebviewUri(stylePath);
+    // Vendored Choices.js (searchable model picker) - loaded before our own
+    // assets so the library defines window.Choices at first render and our
+    // CSS overrides its theme variables.
+    const choicesJsUri = webviewView.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'resources', 'choices.min.js')
+    );
+    const choicesCssUri = webviewView.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'resources', 'choices.min.css')
+    );
 
     webviewView.webview.options = { enableScripts: true, localResourceRoots: [resourcesUri] };
 
@@ -240,11 +249,13 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webviewView.webview.cspSource}; script-src ${webviewView.webview.cspSource};">
+  <link href="${choicesCssUri}" rel="stylesheet">
   <link href="${styleUri}" rel="stylesheet">
 </head>
 <body>
   <div id="root"><p class="empty-state">Loading...</p></div>
   <div class="modal-overlay" id="modal"><div class="modal-box" id="modalBody"></div></div>
+  <script src="${choicesJsUri}"></script>
   <script src="${scriptUri}"></script>
 </body>
 </html>`;

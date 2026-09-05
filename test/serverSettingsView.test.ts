@@ -8,11 +8,9 @@ describe('ServerSettingsViewProvider', () => {
   let provider: ServerSettingsViewProvider;
   let mockContext: any;
   let mockOutputChannel: any;
-  let mockConfig: ModelConfig[];
 
   beforeEach(() => {
     resetOpenRouterCaches();
-    mockConfig = [];
     mockOutputChannel = {
       appendLine: vi.fn(),
       dispose: vi.fn(),

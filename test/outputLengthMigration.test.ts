@@ -2,9 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as vscode from 'vscode';
 import {
   planOutputLengthMigration,
-  formatMigrationPreview,
   maybeOfferOutputLengthMigration,
-  type OutputLengthProposal,
 } from '../src/migrations/outputLengthMigration.js';
 import type { ModelConfig } from '../src/state/config.js';
 import type { ModelPreset } from '../src/commands/presets.js';
@@ -151,7 +149,7 @@ describe('maybeOfferOutputLengthMigration', () => {
     vi.mocked(vscode.window).showErrorMessage = error as never;
     context = {
       extensionUri: vscode.Uri.file('/ext'),
-      globalState: { _v: undefined as string | undefined, get(k: string) { return k === 'vllmCopilot.outputLengthMigration.v1' ? this._v : undefined; }, async update(k: string, v: string) { this._v = v; } },
+      globalState: { _v: undefined as string | undefined, get(k: string) { return k === 'vllmCopilot.outputLengthMigration.v1' ? this._v : undefined; }, async update(_k: string, v: string) { this._v = v; } },
     };
     output = { appendLine: vi.fn() };
   });

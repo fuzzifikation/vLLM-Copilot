@@ -1,11 +1,12 @@
 # Changelog
 
-## v1.36.0-rc1 - The server registry
+## v1.36.0 - The server registry
 
 The goal of this release: with server facts stored inside every model entry, any server-level feature had to be built, stored and edited once per model copy, and none of the server-level UX and UI improvements we want could land. Servers becoming one registry entry each is the backbone for them. This release lays that foundation; the features built on it come later.
 
 ### Added
 
+- **Searchable model picker in Model Settings.** OpenRouter's ~400-model catalog is now navigable: click the model dropdown, type to narrow - any part of the id matches - arrow keys move through the matches, Enter or a click selects. Same behavior on every backend.
 - **Servers without a model.** A new **vLLM-Copilot: Add Server (no model)** command registers a server on its own, and **Remove Server** sits in the Dashboard's server context menu. Model list and registry never drift apart.
 
 ### Changed

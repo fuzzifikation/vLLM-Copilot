@@ -233,9 +233,11 @@ for (const start of chainEdges.keys()) {
 }
 
 // ---------- naive JS pass (resources/*.js, scripts/*.mjs) ----------
+// Vendored third-party dists (minified) are not our code — never censused.
+const isVendored = (f) => f.endsWith('.min.js');
 const jsHints = [];
 const jsFiles = [
-  ...readdirSync('resources').filter((f) => f.endsWith('.js')).map((f) => `resources/${f}`),
+  ...readdirSync('resources').filter((f) => f.endsWith('.js') && !isVendored(f)).map((f) => `resources/${f}`),
   ...readdirSync('scripts').filter((f) => f.endsWith('.mjs')).map((f) => `scripts/${f}`),
 ];
 for (const file of jsFiles) {

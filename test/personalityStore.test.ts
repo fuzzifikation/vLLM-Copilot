@@ -1,19 +1,19 @@
 /**
  * Tests for the global personality store (personalityStore.ts).
- * Covers discovery (bundled + global, deduped by name),
- * materialization into global storage, and active-personality resolution.
+ * Covers materialization into global storage (ensureGlobalPersonality:
+ * atomic copy, user-file protection) and the startup re-sync of bundled
+ * presets (syncBundledPersonalities: stale-copy refresh, user-file
+ * immunity). Discovery scanning and active-personality resolution are
+ * production-only paths, not pinned here.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
-  discoverPersonalities,
   ensureGlobalPersonality,
-  resolveActivePersonality,
   getGlobalPersonalitiesDir,
   syncBundledPersonalities,
 } from '../src/persona/personalityStore.js';
-import { COMMON_REPLACEMENTS_FILENAME } from '../src/persona/promptReplacer.js';
 
 const fsMock = vi.hoisted(() => {
   const files = new Map<string, string>();
@@ -72,7 +72,7 @@ describe('personalityStore', () => {
     (vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: WS } }];
   });
 
-  describe('discoverPersonalities', () => {
+  describe('ensureGlobalPersonality & syncBundledPersonalities', () => {
 
     it('copies a bundled preset into global storage (atomically)', async () => {
       const bundled = path.join(EXT, 'prompt-replacements');

@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { buildModelInfo, extractFamilyWithSource } from '../src/provider/modelInfo.js';
-import type { TokenBudget } from '../src/shared/tokenBudget.js';
 
 describe('buildModelInfo picker id derivation', () => {
   it('uses an explicit id as the picker id', () => {

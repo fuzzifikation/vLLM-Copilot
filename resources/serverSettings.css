@@ -55,6 +55,13 @@ details[open] > summary::before { content: '\25BC'; }
 .field-param .remove-param-btn { position: absolute; top: 2px; right: 0; width: 22px; padding: 2px 0; font-size: 1.1em; line-height: 1; text-align: center; }
 .selector-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .selector-row label { font-size: 0.8em; color: var(--vscode-descriptionForeground); }
+/* Server + Server Type share one row (~70/30). min-width:0 keeps the long
+   server names from blowing out the flex box (overflow is handled by the
+   select's own ellipsis). */
+.selector-pair { display: flex; gap: 8px; }
+.selector-pair .pair-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.selector-pair .pair-col:first-child { flex: 7; }
+.selector-pair .pair-col:last-child { flex: 3; }
 .action-btn-row { display: flex; gap: 6px; margin: 8px 0; }
 .modal-overlay {
   display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -117,3 +124,42 @@ button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-off
 .dirty-status { font-size: 0.75em; margin-right: auto; color: var(--vscode-descriptionForeground); }
 .dirty-status.dirty { color: var(--vscode-inputValidation-warningForeground, var(--vscode-editorWarning-foreground, #cca700)); }
 #saveBtn:disabled, #revertBtn:disabled { opacity: 0.5; cursor: default; }
+/* ============================================================
+   Choices.js (searchable model picker) - theme to match VS Code.
+   This file loads AFTER choices.min.css, so these overrides win.
+   ============================================================ */
+:root {
+  /* Every token gets a fallback chain: a token missing from the webview's
+     injected set would otherwise make the custom property invalid-at-computed-
+     value and silently fall back to the library's LIGHT defaults (#f9f9f9 bg,
+     #333 text) - invisible dark-on-dark. */
+  --choices-font-size-lg: 13px;
+  --choices-font-size-md: 13px;
+  --choices-font-size-sm: 11px;
+  --choices-bg-color: var(--vscode-dropdown-background, var(--vscode-input-background, #3c3c3c));
+  --choices-bg-color-dropdown: var(--vscode-dropdown-background, var(--vscode-input-background, #3c3c3c));
+  --choices-text-color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #cccccc));
+  --choices-item-color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #cccccc));
+  --choices-item-disabled-color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground, #999));
+  color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #cccccc));
+  --choices-keyline-color: var(--vscode-dropdown-border, var(--vscode-input-border, #3c3c3c));
+  --choices-primary-color: var(--vscode-focusBorder);
+  --choices-highlight-color: var(--vscode-focusBorder);
+  --choices-highlighted-color: var(--vscode-list-hoverBackground, var(--vscode-dropdown-background));
+  --choices-bg-color-disabled: var(--vscode-inputOption-disabledBackground, var(--vscode-dropdown-background));
+  --choices-disabled-color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground, #999));
+  --choices-invalid-color: var(--vscode-inputValidation-errorBorder, #be1100);
+  --choices-border-radius: 0;
+  --choices-border-radius-item: 0;
+  --choices-input-height: 26px;
+  --choices-guttering: 0;
+  --choices-z-index: 10;
+}
+.choices { margin-bottom: 0; }
+.choices__inner { min-height: 26px; padding: 2px 24px 2px 6px; font-size: 13px; }
+.choices[data-type*=select-one] .choices__inner { cursor: pointer; }
+.choices__list--dropdown .choices__item { font-size: 13px; padding: 3px 8px; }
+/* Explicit colors, never inheritance: the library ships NO text color for
+   select-one parts, so a missing token or UA default here renders invisible. */
+.choices, .choices__item, .choices__list--single { color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #cccccc)); }
+.choices__input { color: var(--vscode-input-foreground, #cccccc); background-color: var(--vscode-dropdown-background, var(--vscode-input-background, #3c3c3c)); }

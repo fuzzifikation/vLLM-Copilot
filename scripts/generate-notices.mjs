@@ -74,7 +74,37 @@ licenseCheckerInit(
 			}
 		}
 
+		// Vendored assets: third-party dist files copied into resources/ (the
+		// webview CSP forbids CDNs). They ship in the VSIX but are NOT npm
+		// production dependencies, so the scan above cannot see them - they
+		// are listed here from their devDependency source instead. Kept in
+		// sync by `npm run vendor:choices`.
+		const vendored = [
+			{
+				name: 'choices.js',
+				npmDir: 'choices.js',
+				used: 'resources/choices.min.js, resources/choices.min.css (searchable model picker in the Model Settings webview)',
+			},
+		];
+		for (const v of vendored) {
+			const dir = path.join(root, 'node_modules', v.npmDir);
+			const pkgJson = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+			lines.push('--------------------------------------------------');
+			lines.push(`${pkgJson.name}@${pkgJson.version} (vendored)`);
+			lines.push(`License: ${pkgJson.license || 'UNKNOWN'}`);
+			lines.push(`Used as: ${v.used}`);
+			lines.push('');
+			const lic = ['LICENSE', 'LICENSE.md'].map(f => path.join(dir, f)).find(f => fs.existsSync(f));
+			if (lic) {
+				lines.push(fs.readFileSync(lic, 'utf8').trim().replace(/\r\n/g, '\n'));
+				lines.push('');
+			} else {
+				lines.push('(license text not available)');
+				lines.push('');
+			}
+		}
+
 		fs.writeFileSync(outFile, lines.join('\n'));
-		console.log(`Wrote ${outFile} (${entries.length} packages)`);
+		console.log(`Wrote ${outFile} (${entries.length} packages + ${vendored.length} vendored)`);
 	}
 );

@@ -1,11 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import * as vscode from 'vscode';
-import { ConfigurationTarget } from 'vscode';
+import { describe, it, expect } from 'vitest';
 import { mergeAuthHeaders } from '../src/state/config.js';
-import { registerUpdateServerAuthCommand } from '../src/commands/commands.js';
 
 /**
- * Tests for the "Update Auth" command and its header-merge helper.
+ * Tests for the header-merge helper behind the "Update Auth" command.
  *
  * The critical regression: updating auth used to REPLACE each model's whole
  * requestHeaders object, so rotating only the API key silently deleted existing
@@ -14,19 +11,6 @@ import { registerUpdateServerAuthCommand } from '../src/commands/commands.js';
  * Authorization, entered headers merge on top, and fields left empty keep their
  * current value.
  */
-
-const output = { appendLine: vi.fn(), show: vi.fn() } as any;
-const provider = { clearCache: vi.fn() } as any;
-
-/** A spyable WorkspaceConfiguration serving models plus an optional server registry. */
-function makeConfig(models: any[], servers: any[] = []): any {
-  return {
-    get: vi.fn((k: string) => (k === 'models' ? models : k === 'servers' ? servers : undefined)),
-    has: () => false,
-    update: vi.fn(async () => {}),
-    inspect: () => undefined,
-  };
-}
 
 describe('mergeAuthHeaders', () => {
   it('returns the same reference when nothing is entered (no-op)', () => {

@@ -103,7 +103,7 @@ describe('resolveRuntimeLimits — per-backend limits and retry', () => {
   });
 
   it('openrouter: resolves a :free id to the FREE catalog entry by exact match', async () => {
-    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((url: any) => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
       return Promise.resolve(jsonResponse(200, {
         data: [
           { id: 'deepseek/deepseek-chat', context_length: 163840, pricing: { prompt: '0.000000274', completion: '0.0000010287' } },
@@ -365,7 +365,7 @@ describe('detectServerType', () => {
   });
 
   it('throws "unsupported server" naming every expected signature when nothing matches', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
       () => Promise.resolve(jsonResponse({ data: [{ id: 'm', object: 'model', owned_by: 'mystery' }] }))
     );
     await expect(detectServerType('http://test', {}, 'm')).rejects.toThrow(/Unsupported server/);
@@ -375,7 +375,7 @@ describe('detectServerType', () => {
   });
 
   it('throws immediately on auth failure (never treats it as "not this signature")', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
       () => Promise.resolve(new Response(JSON.stringify({ error: 'forbidden' }), { status: 403, headers: { 'content-type': 'application/json' } }))
     );
     await expect(detectServerType('http://test', {}, 'm')).rejects.toThrow(/HTTP 403/);

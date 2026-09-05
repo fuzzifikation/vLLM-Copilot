@@ -220,7 +220,7 @@ describe('discoverModels', () => {
   it('queries models in parallel; a dead server drops only its own models', async () => {
     const output = makeOutput();
     const client = makeClient({
-      getModelContextWindow: async (serverType: string, url: string) => {
+      getModelContextWindow: async (_serverType: string, url: string) => {
         if (url === server) return { contextWindow: 4096 };
         throw new Error('no context window');
       },

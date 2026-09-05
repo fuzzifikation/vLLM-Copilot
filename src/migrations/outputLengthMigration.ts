@@ -154,7 +154,7 @@ export function planOutputLengthMigration(
 }
 
 /** Preview document text: one before/after block per proposal, JSONC-ish. */
-export function formatMigrationPreview(proposals: readonly OutputLengthProposal[]): string {
+function formatMigrationPreview(proposals: readonly OutputLengthProposal[]): string {
   const lines: string[] = [
     '// vLLM-Copilot - proposed Output Length menu updates',
     '// Close this editor and choose "Update output length menus" in the vLLM-Copilot notification to apply.',

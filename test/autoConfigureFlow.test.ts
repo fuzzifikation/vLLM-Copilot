@@ -23,7 +23,6 @@ describe('registerAutoConfigureModelCommand', () => {
     hide: vi.fn(),
   } as any;
   let infoSpy: ReturnType<typeof vi.spyOn>;
-  let quickPickSpy: ReturnType<typeof vi.spyOn>;
   let replaceSpy: ReturnType<typeof vi.spyOn>;
   let resolveSpy: ReturnType<typeof vi.spyOn>;
   let chatUpdate: ReturnType<typeof vi.fn>;
@@ -31,7 +30,7 @@ describe('registerAutoConfigureModelCommand', () => {
   beforeEach(() => {
     (vscode as any).commands._registrations = [];
     infoSpy = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(undefined);
-    quickPickSpy = vi.spyOn(vscode.window, 'showQuickPick').mockResolvedValue(undefined);
+    vi.spyOn(vscode.window, 'showQuickPick').mockResolvedValue(undefined);
     chatUpdate = vi.fn().mockResolvedValue(undefined);
     replaceSpy = vi
       .spyOn(configStore, 'replaceModelConfig')

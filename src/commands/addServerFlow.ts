@@ -400,9 +400,8 @@ interface OpenRouterCatalogEntry {
  * SAME snapshot. There is deliberately NO free-text fallback: a model that isn't
  * in the catalog cannot be sized or saved, so the flow fetches the catalog
  * before showing the picker rather than collecting an id it can't confirm.
- * @internal Exported for testing.
  */
-export async function pickOpenRouterModel(
+async function pickOpenRouterModel(
   catalog: OpenRouterCatalogEntry[],
   prefill?: string,
 ): Promise<string | undefined> {
@@ -490,7 +489,7 @@ export async function pickOpenRouterModel(
 /** Human-readable summary lines for the OpenRouter confirm dialog. The flow-
  * specific head lines stay here; the shared detail middle comes from the
  * backend's projection (audit P8-2 — same lines Auto-Configure shows). */
-export function buildOpenRouterSummary(info: OpenRouterModelInfo): string {
+function buildOpenRouterSummary(info: OpenRouterModelInfo): string {
   const lines: string[] = [];
   lines.push(`OpenRouter model: ${info.wireModelId}`);
   if (info.canonicalSlug && info.canonicalSlug !== info.wireModelId) lines.push(`Canonical: ${info.canonicalSlug}`);

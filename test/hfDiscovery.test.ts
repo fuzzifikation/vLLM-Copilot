@@ -136,36 +136,9 @@ describe('autoConfigureModel (via resolveModelConfigForAddSafely)', () => {
 describe('the OpenRouter route (via resolveModelConfigForAddSafely)', () => {
   const extContext = { extensionUri: vscode.Uri.file('/ext') } as any;
   const fakeOutput = () => ({ appendLine: vi.fn(), show: vi.fn() }) as any;
-  const PRESET_JSON =
-    '{ "presetVersion": 1, "match": ["org/Model"], "config": { "vllmModelId": "org/Model", "modelModes": { "balanced": {} } } }';
 
   const jsonResponse = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-
-  const stubDiscovery = () => {
-    // autoConfigureModel does real fetch; route /v1/models and HF so the
-    // Auto-Discover / no-preset branches resolve through it. Any requested
-    // model gets a valid window (mandatory no-context-no-model check).
-    const fn = vi.fn(async (url: string) => {
-      if (String(url).endsWith('/v1/models')) {
-        return jsonResponse({ data: [{ id: 'org/Model', max_model_len: 8192 }, { id: 'unknown-model', max_model_len: 8192 }] });
-      }
-      if (String(url).includes('/api/models/')) {
-        return jsonResponse({ id: 'x', config: { model_type: 'qwen' } });
-      }
-      return jsonResponse({}, 404);
-    });
-    vi.stubGlobal('fetch', fn);
-    return fn;
-  };
-
-  /** Seed the mock workspace.fs with a single preset file. */
-  const seedPreset = () => {
-    (vscode as any).workspace._mockFsReadDirectory = () =>
-      Promise.resolve([['Preset.json', vscode.FileType.File]]);
-    (vscode as any).workspace._mockFsReadFile = () =>
-      Promise.resolve(new TextEncoder().encode(PRESET_JSON));
-  };
 
   /** Seed the mock workspace.fs with no preset files. */
   const seedNoPresets = () => {

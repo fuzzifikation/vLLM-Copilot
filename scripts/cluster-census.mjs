@@ -202,7 +202,8 @@ for (const sf of files) {
 
 // ---------- blind spot 1: webview message pairs (weight 0.5) ----------
 const TYPE_RE = /(?:case\s+|type\s*[:=]==?\s*)['"]([\w./-]+)['"]/g;
-const jsFiles = readdirSync('resources').filter((f) => f.endsWith('.js')).sort();
+// Vendored minified dists (choices.min.js) are not our code - no message-pair scan.
+const jsFiles = readdirSync('resources').filter((f) => f.endsWith('.js') && !f.endsWith('.min.js')).sort();
 for (const jf of jsFiles) {
   const jsText = readFileSync(path.join('resources', jf), 'utf8');
   const jsTypes = new Set([...jsText.matchAll(TYPE_RE)].map((m) => m[1]));
