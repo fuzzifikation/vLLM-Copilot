@@ -5,9 +5,9 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getConfig, buildEndpoint, findModelConfigIndex, toPublicModelConfig, normalizeServerUrl, sanitizeRequestHeaders, resolveConfigId, resolveVllmModelId, KNOWN_SERVER_TYPES, type ModelConfig, type ServerType } from '../state/config.js';
+import { getConfig, findModelConfigIndex, toPublicModelConfig, normalizeServerUrl, sanitizeRequestHeaders, resolveConfigId, resolveVllmModelId, KNOWN_SERVER_TYPES, type ModelConfig, type ServerType } from '../state/config.js';
 import { patchModelConfig, readModels, readServers, writeServers, type ModelIdentity } from '../state/configStore.js';
-import { firstEntryById, type ServerEntry } from '../state/serverRegistry.js';
+import { firstEntryById } from '../state/serverRegistry.js';
 import { listServerModels } from '../backends/runtimeLimits.js';
 import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from '../backends/openRouter.js';
 

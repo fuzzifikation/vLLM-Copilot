@@ -48,6 +48,8 @@ scripts/
 # Repo/build config (not needed at runtime)
 .gitignore
 package-lock.json
+.dependency-cruiser.cjs
+.dependency-cruiser.consumers.cjs
 
 # Test files (local testing only — never ship)
 AGENTS.md

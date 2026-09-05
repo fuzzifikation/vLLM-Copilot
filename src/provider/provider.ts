@@ -72,7 +72,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     private fileLogger?: FileLogger,
     dependencies?: { client?: ProviderClient }
   ) {
-    this.client = dependencies?.client ?? new VllmClient(context, output, fileLogger);
+    this.client = dependencies?.client ?? new VllmClient(output, fileLogger);
     this.systemMessages = new SystemMessagePipeline(output);
   }
 

@@ -16,7 +16,6 @@ export class VllmClient {
   private readonly chatTransport: ChatTransport;
 
   constructor(
-    private context: vscode.ExtensionContext,
     output: vscode.OutputChannel,
     fileLogger?: FileLogger,
   ) {

@@ -13,7 +13,7 @@ Some models - most notably Qwen-family reasoning models - occasionally return an
 
 Without auto-continue these would surface as a ⚠️ "model produced only reasoning tokens" warning (or a silent `\n` to dodge VS Code's "no response returned" popup). With it, the extension retries transparently and you get your answer.
 
-A third "empty" case - the model produces nothing at all (no reasoning, no content, no tool calls) - indicates a server/configuration problem, not an incomplete response. Auto-continue does **not** apply there.
+A third "empty" case - the model produces nothing at all (no reasoning, no content, no tool calls) - usually indicates a server/configuration problem rather than an incomplete response. Auto-continue still retries it (same trigger, same budget) as cheap insurance against a transient hiccup; if it stays empty, the budget runs out and the ⚠️ diagnostic reports it as "empty response after N attempt(s)".
 
 ---
 

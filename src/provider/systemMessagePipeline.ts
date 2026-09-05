@@ -108,50 +108,48 @@ export class SystemMessagePipeline {
       // Load replacement rules for the model's override (relative paths resolve
       // against the workspace root). Load failures are swallowed HERE (warn, no
       // replacements) so the capture path stays alive even when the file is broken.
+      // No outer try/catch: every fallible call below has its own guard, and the
+      // path resolvers are pure `path.resolve` — an outer catch could only fire
+      // on code that cannot throw (verified when the redundant one was removed).
       let replacements: PromptReplacement[] = [];
       if (override?.systemMessageReplacementsFile) {
+        const replacementsFile = resolveWorkspaceRelativePath(override.systemMessageReplacementsFile);
+        let fileExists = true;
         try {
-          const replacementsFile = resolveWorkspaceRelativePath(override.systemMessageReplacementsFile);
-          let fileExists = true;
+          await fs.access(replacementsFile);
+        } catch {
+          fileExists = false;
+          this.output.appendLine(`[WARN] Replacements file not found: ${replacementsFile}`);
+        }
+        if (fileExists) {
+          // Shared boilerplate removals append to EVERY active personality (Default —
+          // no replacements file — never reaches this code path, so the vanilla prompt
+          // stays untouched). Order is load-bearing: persona rules run FIRST, because
+          // persona replace-rules anchor on text that the shared remove-rules delete
+          // (e.g. the short/impersonal line also lives inside the safety blocks).
+          // The two loads are INDEPENDENT try/catches on purpose: the common file is
+          // shared infrastructure, and one corrupt prompt-replacements-common.json
+          // (bad VSIX, hand edit, disk rot) must degrade to persona-only rules — not
+          // throw away the persona rules that parsed fine and silently revert every
+          // model to the vanilla prompt.
+          let personaRules: PromptReplacement[] = [];
           try {
-            await fs.access(replacementsFile);
-          } catch {
-            fileExists = false;
-            this.output.appendLine(`[WARN] Replacements file not found: ${replacementsFile}`);
+            personaRules = await loadPromptReplacements(replacementsFile);
+          } catch (err) {
+            this.output.appendLine(`[WARN] Personality replacements failed to load, continuing without it: ${err instanceof Error ? err.message : String(err)}`);
           }
-          if (fileExists) {
-            // Shared boilerplate removals append to EVERY active personality (Default —
-            // no replacements file — never reaches this code path, so the vanilla prompt
-            // stays untouched). Order is load-bearing: persona rules run FIRST, because
-            // persona replace-rules anchor on text that the shared remove-rules delete
-            // (e.g. the short/impersonal line also lives inside the safety blocks).
-            // The two loads are INDEPENDENT try/catches on purpose: the common file is
-            // shared infrastructure, and one corrupt prompt-replacements-common.json
-            // (bad VSIX, hand edit, disk rot) must degrade to persona-only rules — not
-            // throw away the persona rules that parsed fine and silently revert every
-            // model to the vanilla prompt.
-            let personaRules: PromptReplacement[] = [];
-            try {
-              personaRules = await loadPromptReplacements(replacementsFile);
-            } catch (err) {
-              this.output.appendLine(`[WARN] Personality replacements failed to load, continuing without it: ${err instanceof Error ? err.message : String(err)}`);
-            }
-            let commonRules: PromptReplacement[] = [];
-            try {
-              commonRules = await loadPromptReplacements(getBundledCommonReplacementsPath());
-            } catch (err) {
-              this.output.appendLine(`[WARN] Shared common-replacements failed to load, continuing persona-only: ${err instanceof Error ? err.message : String(err)}`);
-            }
-            replacements = [...personaRules, ...commonRules];
-            if (replacements.length > 0) {
-              this.output.appendLine(
-                `[INFO] Loaded ${personaRules.length} personality + ${commonRules.length} shared replacement rule(s) from ${replacementsFile}`
-              );
-            }
+          let commonRules: PromptReplacement[] = [];
+          try {
+            commonRules = await loadPromptReplacements(getBundledCommonReplacementsPath());
+          } catch (err) {
+            this.output.appendLine(`[WARN] Shared common-replacements failed to load, continuing persona-only: ${err instanceof Error ? err.message : String(err)}`);
           }
-        } catch (err) {
-          this.output.appendLine(`[WARN] Failed to load replacements: ${err instanceof Error ? err.message : String(err)}`);
-          replacements = [];
+          replacements = [...personaRules, ...commonRules];
+          if (replacements.length > 0) {
+            this.output.appendLine(
+              `[INFO] Loaded ${personaRules.length} personality + ${commonRules.length} shared replacement rule(s) from ${replacementsFile}`
+            );
+          }
         }
       }
 

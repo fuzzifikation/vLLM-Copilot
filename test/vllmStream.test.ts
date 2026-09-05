@@ -1,7 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { VllmClient } from '../src/provider/vllmClient.js';
 
-function makeContext(): any { return { secrets: { get: async () => undefined } }; }
 function makeOutput(): any { return { appendLine: () => {} }; }
 
 /** Build a Response with an SSE body composed of the given lines (one per `data:` line). */
@@ -45,7 +44,7 @@ describe('VllmClient.chatCompletionStream', () => {
     ];
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(sseResponse(lines));
 
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     const events: any[] = [];
     for await (const e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
       events.push(e);
@@ -66,7 +65,7 @@ describe('VllmClient.chatCompletionStream', () => {
     ];
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(sseResponse(lines));
 
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     const events: any[] = [];
     for await (const e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
       events.push(e);
@@ -88,7 +87,7 @@ describe('VllmClient.chatCompletionStream', () => {
     ];
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(sseResponseChunked(lines));
 
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     let text = '';
     for await (const e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
       text += e.content;
@@ -110,7 +109,7 @@ describe('VllmClient.chatCompletionStream', () => {
     const response = new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(response);
 
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     let text = '';
     let finish: string | undefined;
     for await (const e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
@@ -130,7 +129,7 @@ describe('VllmClient.chatCompletionStream', () => {
     ];
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(sseResponse(lines));
 
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     const usages: any[] = [];
     for await (const e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
       if (e.usage) usages.push(e.usage);
@@ -148,7 +147,7 @@ describe('VllmClient.chatCompletionStream', () => {
     ];
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(sseResponse(lines));
 
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     let text = '';
     for await (const e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
       text += e.content;
@@ -163,7 +162,7 @@ describe('VllmClient.chatCompletionStream', () => {
     ];
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(sseResponse(lines));
 
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     const run = async () => {
       for await (const _e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
         // drain
@@ -189,7 +188,7 @@ describe('VllmClient.chatCompletionStream', () => {
       new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } })
     );
 
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     let caught: unknown;
     try {
       for await (const _e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {

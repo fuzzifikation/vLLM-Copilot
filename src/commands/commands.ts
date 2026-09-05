@@ -10,7 +10,6 @@
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider/provider.js';
 import { getConfig, buildEndpoint, resolveServerConfig, resolveConfigId, normalizeServerUrl, resolveVllmModelId, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders, findModelConfigIndex } from '../state/config.js';
-import type { ModelConfig } from '../state/config.js';
 import { firstEntryById } from '../state/serverRegistry.js';
 import { patchModelConfig, readModels, readServers, writeModels, writeServers } from '../state/configStore.js';
 import { promptForServerAuth } from './serverAuth.js';
@@ -64,7 +63,6 @@ async function attemptWrite(
  * basic test succeeds.
  */
 export function registerDiagnoseConnectionCommand(
-  context: vscode.ExtensionContext,
   outputChannel: vscode.OutputChannel,
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.diagnoseConnection', async () => {

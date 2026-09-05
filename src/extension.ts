@@ -258,10 +258,10 @@ export async function activate(context: vscode.ExtensionContext) {
     // and the commands/ flow modules). Test & Refresh is the central workflow; Add Server &
     // Model is the entry-point wizard; the rest are utility/maintenance commands.
     context.subscriptions.push(
-      registerTestAndRefreshModelsCommand(context, activeProvider, outputChannel),
-      registerDiagnoseConnectionCommand(context, outputChannel),
+      registerTestAndRefreshModelsCommand(activeProvider, outputChannel),
+      registerDiagnoseConnectionCommand(outputChannel),
       registerAddServerModelCommand(context, activeProvider, outputChannel),
-      registerAddServerCommand(outputChannel),
+      registerAddServerCommand(context, activeProvider, outputChannel),
       registerAutoConfigureModelCommand(context, activeProvider, outputChannel),
       registerConfigureUtilityModelCommand(outputChannel),
       registerOpenLogFileCommand(fileLogger),

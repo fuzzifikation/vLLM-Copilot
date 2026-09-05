@@ -91,7 +91,6 @@ function checkNetworkGatingSettings(): string[] {
  * Cache is cleared so discovery re-runs.
  */
 export function registerTestAndRefreshModelsCommand(
-  context: vscode.ExtensionContext,
   provider: VllmChatModelProvider,
   outputChannel: vscode.OutputChannel
 ): vscode.Disposable {

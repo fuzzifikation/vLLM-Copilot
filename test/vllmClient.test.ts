@@ -12,10 +12,7 @@ import type { VllmConfig } from '../src/state/config.js';
  * limits in runtimeLimits.test.ts.
  */
 
-/** Build a minimal fake ExtensionContext / OutputChannel for the client. */
-function makeContext(): any {
-  return { secrets: { get: async () => undefined } };
-}
+/** Build a minimal fake OutputChannel for the client. */
 function makeOutput(): any {
   return { appendLine: (s: string) => process.env.VLLM_TEST_TRACE && console.log(s) };
 }
@@ -39,7 +36,7 @@ describe('chatCompletionStream facade delegation', () => {
     const streamSpy = vi.spyOn(ChatTransport.prototype, 'stream').mockImplementation(
       async function* () {}
     );
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any;
     const serverConfig = { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'ollama' } as const;
     // Consume the generator to completion so the facade's timeout machinery
@@ -72,7 +69,7 @@ describe('chatCompletionStream initial request timeout', () => {
           else signal.addEventListener('abort', onAbort, { once: true });
         })
     );
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) };
     const gen = client.chatCompletionStream(
       'm', [], {} as any, token as any,
@@ -107,7 +104,7 @@ describe('chatCompletionStream initial request timeout', () => {
           else signal.addEventListener('abort', onAbort, { once: true });
         })
     );
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) };
     const gen = client.chatCompletionStream(
       'm', [], {} as any, token as any,
@@ -139,7 +136,7 @@ describe('chatCompletionStream initial request timeout', () => {
           else signal.addEventListener('abort', onAbort, { once: true });
         })
     );
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) };
     const gen = client.chatCompletionStream(
       'm', [], {} as any, token as any,
@@ -166,14 +163,14 @@ describe('config cache', () => {
 
   it('reads settings once and reuses the cached promise', async () => {
     const getConfig = vi.spyOn(configModule, 'getConfig').mockResolvedValue(config);
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     await Promise.all([client.getConfigCached(), client.getConfigCached()]);
     expect(getConfig).toHaveBeenCalledTimes(1);
   });
 
   it('re-reads settings after invalidateConfigCache', async () => {
     const getConfig = vi.spyOn(configModule, 'getConfig').mockResolvedValue(config);
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     await client.getConfigCached();
     client.invalidateConfigCache();
     await client.getConfigCached();
@@ -184,7 +181,7 @@ describe('config cache', () => {
     const getConfig = vi.spyOn(configModule, 'getConfig')
       .mockRejectedValueOnce(new Error('bad settings.json'))
       .mockResolvedValue(config);
-    const client = new VllmClient(makeContext(), makeOutput());
+    const client = new VllmClient(makeOutput());
     await expect(client.getConfigCached()).rejects.toThrow('bad settings.json');
     await expect(client.getConfigCached()).resolves.toBe(config);
     expect(getConfig).toHaveBeenCalledTimes(2);

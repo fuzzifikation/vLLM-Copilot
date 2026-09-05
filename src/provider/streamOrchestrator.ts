@@ -49,11 +49,13 @@ function createOutcome(): StreamOutcome {
 /**
  * Reset all per-attempt fields on the outcome object for a retry. `everStreamed`
  * is STICKY across the whole request (CR-38): once any attempt has put visible
- * output on the user's screen, post-stream diagnostics must not later claim the
- * model "returned no output" — the reset final attempt judges only itself.
+ * output on the user's screen — answer, tool call, or a thinking block they
+ * watched — post-stream diagnostics must not later claim the model "returned no
+ * output". The reset final attempt still judges itself for the retry decision:
+ * `shouldRetry` reads the fresh fields, so reasoning-then-empty keeps nudging.
  */
 function resetOutcome(outcome: StreamOutcome): void {
-  const everStreamed = outcome.everStreamed || outcome.hadContent || outcome.hadToolCalls;
+  const everStreamed = outcome.everStreamed || outcome.hadContent || outcome.hadToolCalls || outcome.hadReasoning;
   Object.assign(outcome, createOutcome(), { everStreamed });
 }
 

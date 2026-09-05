@@ -217,3 +217,38 @@ describe('graceful termination via handleResponseError', () => {
     expect(lines(b.output)).toContain('[ERROR]');
   });
 });
+
+// The chat-warning gate of reportPostStreamDiagnostics (CR-38, P2-5 ruling):
+// the sticky everStreamed bit decides whether the in-chat "returned no
+// output" line contradicts output the user already watched (answer, tool
+// call, or a thinking block). The Output-channel diagnostics stay honest
+// either way.
+describe('empty-response chat warning gate', () => {
+  function run(o: StreamOutcome, attempts = 2) {
+    const output = makeOutput();
+    const progress = makeProgress();
+    reportPostStreamDiagnostics(
+      makeModel('model-p'), makeOptions(), o, Date.now() - 100, progress as any, attempts, output,
+    );
+    return { output, progress };
+  }
+
+  it('suppresses the chat warning when an earlier attempt streamed visible output', () => {
+    // Reasoning streamed on attempt 1 latches everStreamed at reset; the
+    // final attempt is empty. Chat must stay silent (the user watched a
+    // thinking block), Output stays per-attempt honest.
+    const { output, progress } = run(outcome({ finishReason: 'stop', everStreamed: true }));
+    expect(lines(output)).toContain('empty response after 2 attempt(s)');
+    expect(progress.reports).toHaveLength(0);
+  });
+
+  it('warns in chat on a reasoning-only stop when retries are off', () => {
+    // autoContinueRetries=0: this warning is the user's only signal. The
+    // reason string names the reasoning tokens explicitly - honest even
+    // though a thinking block rendered.
+    const { output, progress } = run(outcome({ finishReason: 'stop', hadReasoning: true, everStreamed: false }), 1);
+    expect(lines(output)).toContain('empty response (');
+    expect(progress.reports).toHaveLength(1);
+    expect(String((progress.reports[0] as any).value)).toContain('only producing reasoning/thinking tokens');
+  });
+});

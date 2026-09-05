@@ -7,6 +7,12 @@
     "sourceMap": true,
     "rootDir": "src",
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowUnreachableCode": false,
     "outDir": "out",
     "skipLibCheck": true
   },

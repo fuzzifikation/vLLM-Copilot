@@ -670,11 +670,16 @@ export async function runOpenRouterAddFlow(
 }
 
 /**
- * Prompt user what to do when a server cannot be contacted during Add Server.
- * Presents three options: Discard, Run Diagnostic, or Keep Anyway.
- * Always stops the wizard — the caller should `return` after calling this.
+ * Prompt user what to do when a registered server cannot be contacted while a
+ * model is added to it. The server entry was already persisted by the flow's
+ * server step (the 'Add Server' doctrine registers without probing), so the
+ * choice is about the MODEL: keep the server unconfigured (Skip), run a
+ * diagnostic, or save a minimal stub model anyway. The server entry is never
+ * removed here. Always stops the wizard — the caller should `return` after
+ * calling this.
  */
 async function handleServerFailure(
+  serverId: string,
   serverUrl: string,
   requestHeaders: Record<string, string>,
   detail: string,
@@ -687,14 +692,14 @@ async function handleServerFailure(
   const action = await vscode.window.showWarningMessage(
     `Cannot connect to ${serverUrl}: ${tlsDetail}`,
     { modal: true },
-    'Discard',
+    'Skip Model',
     'Run Diagnostic',
-    'Keep Anyway',
+    'Add Stub Model',
   );
 
-  // Discard or dismissed → stop
-  if (action === 'Discard' || action === undefined) {
-    output.appendLine(`[INFO] Server ${serverUrl} not added - user discarded the failed connection.`);
+  // Skip or dismissed → stop; the registered server stays, model-less.
+  if (action === 'Skip Model' || action === undefined) {
+    output.appendLine(`[INFO] Model add skipped for ${serverUrl} - server entry kept, no model saved.`);
     return true;
   }
 
@@ -709,37 +714,31 @@ async function handleServerFailure(
     return true;
   }
 
-  // Keep Anyway — save a minimal stub so the user can fix it later
+  // Add Stub Model — save a minimal stub so the user can fix it later
   const modelId = await vscode.window.showInputBox({
-    title: 'Keep Anyway - Model ID',
+    title: 'Add Stub Model - Model ID',
     prompt: 'Enter a model identifier for this server. You can auto-configure or edit it later.',
     placeHolder: 'e.g. my-model or the model name from the server',
     ignoreFocusOut: true,
     validateInput: (v) => (v.trim() ? undefined : 'Model ID is required'),
   });
   if (!modelId) {
-    output.appendLine(`[INFO] Keep-Anyway cancelled for ${serverUrl} - no model id entered.`);
+    output.appendLine(`[INFO] Stub model cancelled for ${serverUrl} - no model id entered; the server stays registered.`);
     return true; // cancelled → stop
   }
 
-  // URL + auth live on the registry entry; the stub model references it by id.
-  // The stub saves unconditionally — no abandon-rollback — but a blocked
-  // settings write still rolls back an entry this call created.
-  let serverId: string;
-  let created: boolean;
-  try {
-    ({ id: serverId, created } = await ensureServerEntry({ serverUrl, requestHeaders }));
-  } catch (err) {
-    reportEntryWriteFailure(err, serverUrl, output);
-    return true; // always stops the wizard, like every other path in here
-  }
+  // The entry was registered by the flow's server step and lives in the
+  // registry — the stub just references it by id. No ensureServerEntry here:
+  // re-matching the entry's own URL + auth could land on a twin, and there is
+  // nothing to create. The stub saves unconditionally — no abandon-rollback,
+  // and a blocked settings write keeps the entry too (step 1's kept artifact).
   const finalConfig: IdentifiedModelConfig = {
     id: buildModelId(serverId, modelId),
     vllmModelId: modelId,
     server: serverId,
   };
 
-  if (!(await persistAddedModelOrRollback(finalConfig, modelId, created ? serverId : undefined, onSaved, output))) {
+  if (!(await persistAddedModelOrRollback(finalConfig, modelId, undefined, onSaved, output))) {
     return true;
   }
   output.appendLine(`[INFO] Saved stub config for "${modelId}" on ${serverUrl} - server was unreachable.`);
@@ -750,13 +749,18 @@ async function handleServerFailure(
 }
 
 /**
- * Register a server in the registry WITHOUT adding a model. The Add-model
- * flows roll back a registry entry whose model was never saved, so without
- * this command a zero-model entry could not be created on purpose at all.
- * The entry IS the artifact here — it is what the user asked for, so it is
- * written once, directly, with no confirm/rollback dance.
+ * Register a server in the registry WITHOUT adding a model. The entry IS the
+ * artifact here — it is what the user asked for, so it is written once,
+ * directly, with no confirm/rollback dance. The optional 'Add a Model'
+ * follow-up hands off to {@link addModelToServer} — the same step-2 function
+ * the 'Add or Reconfigure Server/Model' wizard runs — so the two commands are
+ * one composed flow rather than two wizards re-asking for URL and auth.
  */
-export function registerAddServerCommand(output: vscode.OutputChannel): vscode.Disposable {
+export function registerAddServerCommand(
+  context: vscode.ExtensionContext,
+  provider: ClearCacheProvider,
+  output: vscode.OutputChannel
+): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.addServer', async () => {
     const urlInput = await vscode.window.showInputBox({
       title: 'Add Server (1/2)',
@@ -779,27 +783,9 @@ export function registerAddServerCommand(output: vscode.OutputChannel): vscode.D
       return;
     }
 
-    const requestHeaders = await promptForServerAuth({
-      apiKeyTitle: 'Add Server (2/2)',
-      apiKeyPrompt: '(optional) vLLM API key, sent as an Authorization header. Leave empty if the server has none.',
-      apiKeyPlaceholder: 'abc123... or leave empty',
-      headersTitle: 'Add Server (2/2)',
-      headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty for none.',
-      headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
-    });
-    if (requestHeaders === undefined) {
-      output.appendLine('[INFO] Add server cancelled - auth prompt abandoned.');
-      return;
-    }
-
-    let id: string;
-    let created: boolean;
-    try {
-      ({ id, created } = await ensureServerEntry({ serverUrl, requestHeaders }));
-    } catch (err) {
-      reportEntryWriteFailure(err, serverUrl, output);
-      return;
-    }
+    const entry = await promptAuthAndRegisterServer(output, serverUrl, 'Add Server (without model)');
+    if (!entry) return;
+    const { id, created } = entry;
     if (!created) {
       void vscode.window.showInformationMessage(
         `Server ${serverUrl} is already registered as "${id}".`
@@ -812,7 +798,7 @@ export function registerAddServerCommand(output: vscode.OutputChannel): vscode.D
       'Add a Model'
     );
     if (pick === 'Add a Model') {
-      await vscode.commands.executeCommand('vllm-copilot.addServerModel');
+      await addModelToServer(context, provider, output, id, id);
     }
   });
 }
@@ -837,9 +823,53 @@ export function validateServerUrlInput(value: string): string | undefined {
 }
 
 /**
- * Guided command: add a server (URL + optional headers), discover its models,
- * auto-configure the chosen one, and save it as a per-model entry. This is the
- * end-to-end flow for onboarding a second server without hand-editing settings.json.
+ * STEP ONE of both add-server commands: collect auth for a known URL and
+ * persist the registry entry — the 'Add Server (without model)' core. The
+ * write happens once, directly, with no confirm/rollback dance (the entry IS
+ * the artifact); cancellation aborts BEFORE any write, and a blocked settings
+ * write is reported honestly. Returns the entry id + whether this call created
+ * it, or `undefined` when the caller must stop (auth abandoned / write failed).
+ */
+async function promptAuthAndRegisterServer(
+  output: vscode.OutputChannel,
+  serverUrl: string,
+  flowTitle: string,
+): Promise<{ id: string; created: boolean } | undefined> {
+  const requestHeaders = await promptForServerAuth({
+    apiKeyTitle: `${flowTitle} - API Key`,
+    apiKeyPrompt: '(optional) vLLM API key, sent as "Authorization: Bearer <key>". Leave empty if the server has none.',
+    apiKeyPlaceholder: 'abc123... or leave empty',
+    headersTitle: `${flowTitle} - Custom Headers`,
+    headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty for none.',
+    headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
+  });
+  if (requestHeaders === undefined) {
+    output.appendLine(`[INFO] ${flowTitle} cancelled - auth prompt abandoned.`);
+    return undefined;
+  }
+  try {
+    return await ensureServerEntry({ serverUrl, requestHeaders });
+  } catch (err) {
+    reportEntryWriteFailure(err, serverUrl, output);
+    return undefined;
+  }
+}
+
+/**
+ * Guided command, composed of the product's two building blocks:
+ *
+ *   1. ADD SERVER (no model) — URL + auth are collected and the registry entry
+ *      is persisted IMMEDIATELY, by the same `ensureServerEntry` core the
+ *      'Add Server (no model)' command uses. From this point the entry is a
+ *      kept artifact: every later abandonment (Esc at the model picker,
+ *      dismissed confirm, unreachable server, failed discovery) leaves the
+ *      server registered, to be configured later via Auto-Configure.
+ *   2. ADD MODEL ON THAT SERVER — {@link addModelToServer} probes the entry,
+ *      picks a model and runs the shared auto-configure/confirm tail (the same
+ *      pieces the auto-configure command reuses).
+ *
+ * The OpenRouter branch is exempt: its server is a fixed managed remote that
+ * only exists together with a catalog-picked model.
  */
 export function registerAddServerModelCommand(
   context: vscode.ExtensionContext,
@@ -851,7 +881,7 @@ export function registerAddServerModelCommand(
     //    OpenRouter is detected by its host; pasting a full model-page URL only
     //    pre-fills the model picker.
     const urlInput = await vscode.window.showInputBox({
-      title: 'Add or Reconfigure Server/Model (1/4)',
+      title: 'Add or Reconfigure Server/Model (1/2)',
       prompt: 'Enter a server URL (vLLM, LM Studio, llama.cpp, Ollama), or an openrouter.ai URL - a model-page URL pre-fills the model picker',
       placeHolder: 'https://host:8000  ·  https://openrouter.ai  ·  https://openrouter.ai/author/model',
       ignoreFocusOut: true,
@@ -895,126 +925,180 @@ export function registerAddServerModelCommand(
       );
       if (pick === 'Update Auth') {
         // Delegate to update auth command
-        return vscode.commands.executeCommand('vllm-copilot.updateServerAuth', serverUrl);
-      }
-      if (pick !== 'Add Different Model') {
-        output.appendLine(`[INFO] Add Server cancelled - server ${serverUrl} already configured.`);
-        return; // cancelled
-      }
-    }
-
-    // 2. API key + custom headers (optional). Cancellation aborts the flow.
-    const requestHeaders = await promptForServerAuth({
-      apiKeyTitle: 'Add or Reconfigure Server/Model (2/4)',
-      apiKeyPrompt: '(optional) vLLM API key. Sent as "Authorization: Bearer <key>". Leave empty if not present.',
-      apiKeyPlaceholder: 'abc123... or leave empty',
-      headersTitle: 'Add or Reconfigure Server/Model (3/4)',
-      headersPrompt: '(optional) Additional request headers (e.g. for proxy). JSON format or "Name": "Value". Leave empty for none.',
-      headersPlaceholder: '{"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}  or  "X-API-Key": "abc123"',
-    });
-    if (requestHeaders === undefined) {
-      output.appendLine('[INFO] Add Server cancelled - no API key/headers entered.');
-      return;
-    }
-    const hasHeaders = Object.keys(requestHeaders).length > 0;
-
-    // 4. Discover models on that server, using its headers
-    let models: VllmModel[] = [];
-    try {
-      const url = buildEndpoint(serverUrl, 'v1/models');
-      const resp = await fetchWithTimeout(url, { timeoutMs: 10000, requestHeaders });
-      if (!resp.ok) {
-        const detail = resp.status === 401 || resp.status === 403
-          ? `Authentication failed (status ${resp.status})`
-          : `Server returned status ${resp.status}`;
-        await handleServerFailure(serverUrl, requestHeaders, detail, output, () => provider.clearCache());
+        await vscode.commands.executeCommand('vllm-copilot.updateServerAuth', serverUrl);
         return;
       }
-      const data = await resp.json() as { data?: VllmModel[] };
-      models = data.data || [];
-    } catch (err) {
-      output.appendLine(`[ERROR] Add server: cannot connect to ${serverUrl}: ${describeError(err)}`);
-      await handleServerFailure(serverUrl, requestHeaders, describeError(err), output, () => provider.clearCache());
-      return;
+      if (pick === 'Add Different Model') {
+        // Step 2 directly on the entry the existing models live on — its URL
+        // and credentials are already stored, so there is nothing to re-enter.
+        // (Re-prompting auth here used to derive a credential-twin entry
+        // whenever the user left the key blank.)
+        await addModelToServer(context, provider, output, existingServerModels[0].server);
+        return;
+      }
+      output.appendLine(`[INFO] Add Server cancelled - server ${serverUrl} already configured.`);
+      return; // cancelled
     }
 
-    if (models.length === 0) {
-      output.appendLine(`[WARN] No models found on ${serverUrl}.`);
-      vscode.window.showInformationMessage(`No models found on ${serverUrl}.`);
-      return;
-    }
-
-    // Quick-pick the models the server reported: id as label, ctx as
-    // description, root (when present) as detail so an alias served under
-    // `--served-model-name` shows the checkpoint it points at.
-    const modelItems: vscode.QuickPickItem[] = models.map(m => ({
-      label: m.id,
-      description: m.max_model_len ? `${m.max_model_len.toLocaleString('en-US')} ctx` : '',
-      detail: m.root ? `root: ${m.root}` : '',
-    }));
-    const modelPick = await vscode.window.showQuickPick(modelItems, {
-      ignoreFocusOut: true,
-      title: 'Add or Reconfigure Server/Model (4/4)',
-      placeHolder: `Select a model on ${serverUrl}`,
-    });
-    const modelId = modelPick?.label;
-    if (!modelId) {
-      output.appendLine(`[INFO] Add Server cancelled - no model selected on ${serverUrl}.`);
-      return;
-    }
-
-    // Detect the backend type by probing its documented signatures. Add Server
-    // ONLY — never at runtime (runtime uses the persisted serverType switch).
-    let detectedServerType: ServerType;
-    try {
-      detectedServerType = await detectServerType(serverUrl, hasHeaders ? requestHeaders : {}, modelId);
-      output.appendLine(`[INFO] Server type detected: ${detectedServerType}`);
-    } catch (err) {
-      output.appendLine(`[ERROR] Unsupported server: ${describeError(err)}`);
-      output.show(true);
-      vscode.window.showErrorMessage(
-        `Unsupported server at ${serverUrl}: ${describeError(err)}`
+    // 2. STEP ONE — collect auth and register the server BEFORE any model is
+    //    chosen. Same shared core as the 'Add Server (without model)' command
+    //    (ensureServerEntry, no-rollback doctrine): the entry is the artifact
+    //    the user asked for, written once, directly. Escaping step 2 keeps it.
+    const registered = await promptAuthAndRegisterServer(output, serverUrl, 'Add or Reconfigure Server/Model');
+    if (!registered) return;
+    const { id: serverId, created } = registered;
+    if (created) {
+      output.appendLine(`[INFO] Registered server "${serverId}" (${serverUrl}) - no model yet.`);
+      void vscode.window.showInformationMessage(
+        `Server "${serverId}" registered. Pick a model next - cancelling keeps the server.`
       );
-      return;
     }
 
-    // Duplicate gate shared with the OpenRouter flow (see
-    // handleDuplicateModelGate): disambiguation when several configs share one
-    // wire id, then Update Auth / Replace Config. On 'Replace Config' the
-    // returned identity is retained downstream — a fresh composite id or a ref
-    // re-derived from the entered credentials would append a duplicate.
-    const gate = await handleDuplicateModelGate(
-      modelId, serverUrl, requestHeaders, `Add Server (${serverUrl})`, output
-    );
-    if (!gate) return; // cancelled, or Update Auth took over
-    const { replaceExistingId, replaceTargetServer } = gate;
+    // 3. STEP TWO — add and auto-configure a model on that server.
+    await addModelToServer(context, provider, output, serverId, created ? serverId : undefined);
+  });
+}
 
-    const discoveryResult = await resolveModelConfigForAddSafely(
-      output, context, modelId, serverUrl, hasHeaders ? requestHeaders : undefined,
-      models.find((m: any) => m.id === modelId)?.root,
-      undefined,
-      detectedServerType,
-    );
-    if (!discoveryResult) {
-      output.appendLine(`[INFO] Add Server stopped - auto-configure returned no result for "${modelId}".`);
+/**
+ * The 'add a model to a registered server' half of the flows: probe the
+ * entry's `/v1/models`, pick a model, detect the backend type, run the
+ * duplicate gate, auto-configure the pick and confirm-save it — the same
+ * shared tail (`resolveModelConfigForAddSafely` + `confirmAndSaveAddedModel`)
+ * the auto-configure command runs for a server-reported unconfigured model.
+ * Called by the Add/Reconfigure wizard (after it persisted the entry), by its
+ * 'Add Different Model' shortcut, and by the 'Add Server (no model)' command's
+ * 'Add a Model' follow-up.
+ *
+ * The entry is step 1's kept artifact: EVERY abandonment path (unreachable
+ * server, empty model list, Esc at the picker, unsupported backend, dismissed
+ * confirm) leaves the server registered, to be configured later via
+ * Auto-Configure. `flowCreatedServerId` — an entry THIS run created — is
+ * discarded only when the duplicate gate proves it was a mistake: the model
+ * ends up on a pre-existing entry with different credentials for the same
+ * URL, or the gate hands off to Update Auth / is abandoned at that point.
+ */
+async function addModelToServer(
+  context: vscode.ExtensionContext,
+  provider: ClearCacheProvider,
+  output: vscode.OutputChannel,
+  serverId: string,
+  flowCreatedServerId?: string
+): Promise<void> {
+  // Re-read the registry: the entry may have been edited or removed since the
+  // caller registered/selected it (the store's re-read-at-use doctrine).
+  const entry = resolveServer(serverId, readServers());
+  if (!entry) {
+    output.appendLine(`[ERROR] Add model: server entry "${serverId}" is not registered.`);
+    void vscode.window.showErrorMessage(`vLLM-Copilot: server "${serverId}" is no longer registered.`);
+    return;
+  }
+  const onSaved = () => provider.clearCache();
+  const requestHeaders = entry.requestHeaders ?? {};
+
+  // Discover the models this server reports, with the entry's stored auth.
+  let models: VllmModel[] = [];
+  try {
+    const resp = await fetchWithTimeout(buildEndpoint(entry.serverUrl, 'v1/models'), { timeoutMs: 10000, requestHeaders });
+    if (!resp.ok) {
+      const detail = resp.status === 401 || resp.status === 403
+        ? `Authentication failed (status ${resp.status})`
+        : `Server returned status ${resp.status}`;
+      await handleServerFailure(serverId, entry.serverUrl, requestHeaders, detail, output, onSaved);
       return;
     }
+    const data = await resp.json() as { data?: VllmModel[] };
+    models = data.data || [];
+  } catch (err) {
+    output.appendLine(`[ERROR] Cannot connect to ${entry.serverUrl}: ${describeError(err)}`);
+    await handleServerFailure(serverId, entry.serverUrl, requestHeaders, describeError(err), output, onSaved);
+    return;
+  }
 
-    // Attach the server via the registry. A sibling model on the same URL +
-    // auth reuses that server's entry id (connection match in ensureServerEntry)
-    // instead of duplicating the entry; only a genuinely new connection gets a
-    // fresh URL-derived id. `id` is composite ("<model> on <entry-id>") so the
-    // same model on two servers stays distinct; `vllmModelId` remains the raw
-    // wire identity. On 'Replace Config' the model KEEPS the replaced entry and the
-    // re-entered credentials are rotated into it (Update Auth doctrine) — a ref
-    // derived from the new key would append a duplicate instead of replacing.
-    // An entry created here is rolled back if the confirm is abandoned.
-    let serverId: string;
-    let createdServerId: string | undefined;
-    const replaceServerId = replaceExistingId
-      ? await rotateEntryAuth(replaceTargetServer, hasHeaders ? requestHeaders : {}, output)
-      : undefined;
-    if (replaceExistingId && !replaceServerId) {
+  if (models.length === 0) {
+    output.appendLine(`[WARN] No models found on ${entry.serverUrl}.`);
+    vscode.window.showInformationMessage(`No models found on ${entry.serverUrl}. The server stays registered.`);
+    return;
+  }
+
+  // Quick-pick the models the server reported: id as label, ctx as
+  // description, root (when present) as detail so an alias served under
+  // `--served-model-name` shows the checkpoint it points at.
+  const modelItems: vscode.QuickPickItem[] = models.map(m => ({
+    label: m.id,
+    description: m.max_model_len ? `${m.max_model_len.toLocaleString('en-US')} ctx` : '',
+    detail: m.root ? `root: ${m.root}` : '',
+  }));
+  const modelPick = await vscode.window.showQuickPick(modelItems, {
+    ignoreFocusOut: true,
+    title: `Add Model on ${entry.serverUrl}`,
+    placeHolder: `Select a model on ${serverId}`,
+  });
+  const modelId = modelPick?.label;
+  if (!modelId) {
+    // THE point of the two-step flow: the server was persisted in step 1, so
+    // escaping the picker keeps it. A zero-model entry is a legal state (the
+    // 'Add Server (no model)' command creates one on purpose); a model can be
+    // added later from the dashboard or via Auto-Configure.
+    output.appendLine(`[INFO] No model selected - server "${serverId}" stays registered. Add a model later via "Auto-Configure Model".`);
+    return;
+  }
+
+  // Detect the backend type by probing its documented signatures. Add Server
+  // ONLY — never at runtime (runtime uses the persisted serverType switch).
+  let detectedServerType: ServerType;
+  try {
+    detectedServerType = await detectServerType(entry.serverUrl, requestHeaders, modelId);
+    output.appendLine(`[INFO] Server type detected: ${detectedServerType}`);
+  } catch (err) {
+    output.appendLine(`[ERROR] Unsupported server: ${describeError(err)} - server "${serverId}" stays registered without a model.`);
+    output.show(true);
+    vscode.window.showErrorMessage(
+      `Unsupported server at ${entry.serverUrl}: ${describeError(err)}`
+    );
+    return;
+  }
+
+  // Land the detected type on THIS entry. Step 1 registered without probing
+  // (the 'Add Server' doctrine — an entry may legitimately arrive type-less).
+  // Checked on the RAW entry, not `entry`: resolveServer's EffectiveServer
+  // normalizes an unset type to 'vllm', so the effective value is never
+  // undefined and would skip the fill forever. Written by id, not through
+  // ensureServerEntry: a connection match would fill the FIRST twin for this
+  // URL + auth, which need not be this entry.
+  const rawEntry = firstEntryById(readServers()).get(serverId);
+  if (rawEntry?.serverType === undefined) {
+    try {
+      await writeServers(readServers().map(s => (s.id === serverId ? { ...s, serverType: detectedServerType } : s)));
+    } catch (err) {
+      reportEntryWriteFailure(err, entry.serverUrl, output);
+      return;
+    }
+  }
+
+  // Duplicate gate shared with the OpenRouter flow (see
+  // handleDuplicateModelGate): disambiguation when several configs share one
+  // wire id, then Update Auth / Replace Config. On 'Replace Config' the
+  // returned identity is retained downstream — a fresh composite id would
+  // append a duplicate instead of replacing.
+  const gate = await handleDuplicateModelGate(
+    modelId, entry.serverUrl, requestHeaders, `Add Model (${entry.serverUrl})`, output
+  );
+  if (!gate) {
+    // Cancelled at the duplicate dialog, or Update Auth took over: this run's
+    // credential variant of an already-configured URL served no purpose.
+    await discardUnreferencedServerEntry(flowCreatedServerId);
+    return;
+  }
+  const { replaceExistingId, replaceTargetServer } = gate;
+
+  // On 'Replace Config' the model KEEPS the replaced entry and the entry's
+  // credentials stay in charge (Update Auth doctrine owns key rotation from
+  // here on) — a ref pointing elsewhere would append a duplicate instead of
+  // replacing.
+  let targetServerId = serverId;
+  if (replaceExistingId) {
+    const rotated = await rotateEntryAuth(replaceTargetServer, requestHeaders, output);
+    if (!rotated) {
       // Entry vanished mid-flow — same zombie-append trap as the OpenRouter
       // flow: a fresh entry changes the (id, server) match, replaceModelConfig
       // appends, and two models share one config id. Abort honestly.
@@ -1022,33 +1106,39 @@ export function registerAddServerModelCommand(
       void vscode.window.showErrorMessage('vLLM-Copilot: could not replace the existing model: its server entry no longer exists. Nothing was changed; re-run the command to add the model fresh.');
       return;
     }
-    if (replaceServerId) {
-      serverId = replaceServerId;
-    } else {
-      let entry: { id: string; created: boolean };
-      try {
-        entry = await ensureServerEntry({
-          serverUrl,
-          requestHeaders: hasHeaders ? requestHeaders : {},
-          serverType: detectedServerType,
-        });
-      } catch (err) {
-        reportEntryWriteFailure(err, serverUrl, output);
-        return;
-      }
-      serverId = entry.id;
-      if (entry.created) createdServerId = entry.id;
+    targetServerId = rotated;
+    if (targetServerId !== serverId) {
+      // The model lands on the pre-existing entry — this run's credential
+      // twin would sit there unreferenced, holding credentials nobody kept.
+      await discardUnreferencedServerEntry(flowCreatedServerId);
     }
-    const finalConfig: IdentifiedModelConfig = {
-      ...discoveryResult.modelConfig,
-      id: replaceExistingId ?? buildModelId(serverId, modelId),
-      vllmModelId: modelId,
-      server: serverId,
-    };
-    if (discoveryResult.suggestedMaxOutputTokens !== undefined && finalConfig.maxOutputTokens === undefined) {
-      finalConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
-    }
+  }
 
-    await confirmAndSaveAddedModel(finalConfig, modelId, serverUrl, discoveryResult.summary.join('\n'), output, () => provider.clearCache(), discoveryResult.presetFile, createdServerId);
-  });
+  const discoveryResult = await resolveModelConfigForAddSafely(
+    output, context, modelId, entry.serverUrl,
+    Object.keys(requestHeaders).length > 0 ? requestHeaders : undefined,
+    models.find((m: any) => m.id === modelId)?.root,
+    undefined,
+    detectedServerType,
+  );
+  if (!discoveryResult) {
+    output.appendLine(`[INFO] Add model stopped - auto-configure returned no result for "${modelId}". The server stays registered.`);
+    return;
+  }
+
+  // `id` is composite ("<model> on <entry-id>") so the same model on two
+  // servers stays distinct; `vllmModelId` remains the raw wire identity.
+  // NO createdServerId here on purpose: the entry is step 1's kept artifact,
+  // so a dismissed confirm never rolls it back.
+  const finalConfig: IdentifiedModelConfig = {
+    ...discoveryResult.modelConfig,
+    id: replaceExistingId ?? buildModelId(targetServerId, modelId),
+    vllmModelId: modelId,
+    server: targetServerId,
+  };
+  if (discoveryResult.suggestedMaxOutputTokens !== undefined && finalConfig.maxOutputTokens === undefined) {
+    finalConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
+  }
+
+  await confirmAndSaveAddedModel(finalConfig, modelId, entry.serverUrl, discoveryResult.summary.join('\n'), output, onSaved, discoveryResult.presetFile);
 }

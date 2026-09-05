@@ -932,9 +932,47 @@ strengthened, and any ABSORB_SMALL execution must recount sites by hand
 first. Also this round caught the search index hallucinating a ledger
 section that did not exist on disk: rule 9e now covers your own grep tool.
 
+## Round 8: Cluster B semantic pass (request path, 2026-09-05)
+
+Findings re-verified against bytes before acting; all executed items are in
+commit `e19ae55` and later the same day.
+
+- **EXECUTED** - `VllmClient` ctor dropped its never-read `ExtensionContext`
+  (TS6138); dead imports `ModelConfig` (commands.ts), `buildEndpoint` +
+  `ServerEntry` (serverSettingsView.ts) deleted; unreachable outer try/catch
+  around the replacements block in `systemMessagePipeline` removed (its only
+  unguarded statements were pure `path.resolve` calls; every real fallible
+  keeps its own guard).
+- **EXECUTED** - build policy: `tsconfig.json` now enables `noUnusedLocals`,
+  `noUnusedParameters`, `noImplicitOverride`, `noImplicitReturns`,
+  `noFallthroughCasesInSwitch`, `allowUnreachableCode: false` on top of
+  `strict`. The flags immediately found three more real violations, all
+  fixed: unused `context` params on `registerDiagnoseConnectionCommand` and
+  `registerTestAndRefreshModelsCommand` (fake ownership, same family as the
+  VllmClient param) and mixed value/bare returns in the `addServerModel`
+  callback (TS7030; the return values were never consumed - now plain
+  `await` + `return`).
+- **RULING (P2-5, accepted)** - `everStreamed` (CR-38 sticky bit) now also
+  counts `hadReasoning`: a thinking block the user watched is visible output,
+  so the final empty attempt after reasoning-then-empty attempts must not
+  print "the model returned no output" in chat. The retry decision is
+  unaffected - `shouldRetry` reads the fresh per-attempt fields, so a
+  reasoning-only `stop` is still nudged (user ruling: "as long as we still
+  react to that, it is fine"). Pinned by two tripwires in
+  `postStream.test.ts` (suppress-when-sticky, warn-when-retries-off).
+- **NOT enabled** - `noUncheckedIndexedAccess` (82 errors) and
+  `exactOptionalPropertyTypes` (53): both would force ~135 defensive
+  guards/casts, violating the no-unnecessary-guards doctrine. Revisit only
+  on a specific class of bug they would have caught.
+
 ## Open queue (pending user rulings)
 
-No open queue. The three standing items were ruled at fix-pass 6 (2026-09-03):
+No open queue. The Round-8 drift item was ruled same day (2026-09-05): the
+doc was stale, the code is right - the truly-empty case is nudged on
+purpose (transient-hiccup insurance, same budget); `auto-continue.md` now
+says so.
+
+The three older standing items were ruled at fix-pass 6 (2026-09-03):
 
 - **P20-1**: KEEP `autoConfigureOpenRouterModel` as a named function. Its
   @throws contract (`OpenRouterCatalogUnavailable` → caller falls back to the

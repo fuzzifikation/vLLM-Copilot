@@ -72,9 +72,12 @@ export interface StreamOutcome {
   contentBuffer?: string;
   /**
    * Sticky across auto-continue resets: ANY attempt of this request streamed
-   * content or a tool call to the user. Per-attempt fields reset between
-   * retries; this bit survives so post-stream diagnostics can never report
-   * "the model returned no output" over output the user already saw (CR-38).
+   * visible output to the user — content, a tool call, or reasoning they
+   * watched. Per-attempt fields reset between retries; this bit survives so
+   * post-stream diagnostics can never report "the model returned no output"
+   * over output the user already saw (CR-38). It gates only the chat warning;
+   * the retry decision reads the fresh per-attempt fields, so a
+   * reasoning-then-empty turn is still nudged.
    */
   everStreamed?: boolean;
 }

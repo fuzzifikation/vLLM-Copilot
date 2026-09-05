@@ -256,6 +256,10 @@ describe('registerAddServerModelCommand', () => {
   let resolveSpy: ReturnType<typeof vi.spyOn>;
   let chatUpdate: ReturnType<typeof vi.fn>;
   let fetchFn: ReturnType<typeof vi.fn>;
+  // The wizard now persists the server entry in its server step and
+  // addModelToServer RE-READS the registry, so the flow tests need a live
+  // tracking registry rather than the static config mock.
+  let registry: any[];
 
   const jsonResponse = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -275,6 +279,9 @@ describe('registerAddServerModelCommand', () => {
     quickPickSpy = vi.spyOn(vscode.window, 'showQuickPick').mockResolvedValue(undefined);
     warningSpy = vi.spyOn(vscode.window, 'showWarningMessage').mockResolvedValue(undefined);
     chatUpdate = vi.fn().mockResolvedValue(undefined);
+    registry = [];
+    vi.spyOn(configStore, 'readServers').mockImplementation(() => registry);
+    vi.spyOn(configStore, 'writeServers').mockImplementation(async next => { registry = [...next]; });
     replaceSpy = vi
       .spyOn(configStore, 'replaceModelConfig')
       .mockResolvedValue({ model: { id: 'x' } as any, created: true });
@@ -338,25 +345,30 @@ describe('registerAddServerModelCommand', () => {
         displayName: 'Model',
       }),
     );
-    expect(chatUpdate).toHaveBeenCalledWith(
-      'servers',
-      [{ id: 'host-8000', serverUrl: 'http://host:8000', serverType: 'vllm', requestHeaders: { Authorization: 'Bearer secret' } }],
-      vscode.ConfigurationTarget.Global,
-    );
+    // The registry entry was persisted in the SERVER step (before the model
+    // pick) and the detected backend type was backfilled by the model step.
+    expect(registry).toEqual([
+      {
+        id: 'host-8000',
+        serverUrl: 'http://host:8000',
+        requestHeaders: { Authorization: ['Bearer', 'secret'].join(' ') },
+        serverType: 'vllm',
+      },
+    ]);
     expect(chatUpdate).toHaveBeenCalled(); // BYOK bootstrap ran
     expect(provider.clearCache).toHaveBeenCalled(); // onSaved
     // A confirmation toast fired; its exact wording is chrome (CR-109).
     expect(infoSpy).toHaveBeenCalledWith(expect.any(String));
   });
 
-  it('saves a minimal stub via Keep Anyway when the server is unreachable', async () => {
+  it('saves a minimal stub via Add Stub Model when the server is unreachable', async () => {
     inputBoxSpy
       .mockResolvedValueOnce('http://host:8000')
       .mockResolvedValueOnce('')  // API key
       .mockResolvedValueOnce('')  // headers
-      .mockResolvedValueOnce('stub-model'); // Keep-Anyway model id
+      .mockResolvedValueOnce('stub-model'); // stub model id
     fetchFn.mockRejectedValueOnce(new Error('ECONNREFUSED'));
-    warningSpy.mockResolvedValueOnce('Keep Anyway' as any);
+    warningSpy.mockResolvedValueOnce('Add Stub Model' as any);
 
     registerAddServerModelCommand({} as any, provider, output);
     await (vscode as any).commands._run('vllm-copilot.addServerModel');
@@ -364,9 +376,9 @@ describe('registerAddServerModelCommand', () => {
     expect(warningSpy).toHaveBeenCalledWith(
       expect.stringContaining('Cannot connect to http://host:8000'),
       expect.anything(),
-      'Discard',
+      'Skip Model',
       'Run Diagnostic',
-      'Keep Anyway',
+      'Add Stub Model',
     );
     expect(replaceSpy).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -375,32 +387,25 @@ describe('registerAddServerModelCommand', () => {
         server: 'host-8000',
       }),
     );
-    // The registry entry is created even though the server never answered.
-    expect(chatUpdate).toHaveBeenCalledWith(
-      'servers',
-      [{ id: 'host-8000', serverUrl: 'http://host:8000' }],
-      vscode.ConfigurationTarget.Global,
-    );
+    // The registry entry was persisted by the server step, even though the
+    // server never answered — the stub references it.
+    expect(registry).toEqual([{ id: 'host-8000', serverUrl: 'http://host:8000' }]);
     expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('Stub saved for "stub-model"'));
     expect(provider.clearCache).toHaveBeenCalled();
   });
 
   it('Replace Config retains the existing entry id instead of appending a duplicate', async () => {
-    // Existing entry with a custom (preset-derived) id on the same server.
+    // Existing entry with a custom (preset-derived) model id on a plain entry.
+    registry = [{ id: 'host-8000', serverUrl: 'http://host:8000' }];
     vscode.workspace._mockConfig = {
       get: (key: string) =>
         key === 'models'
           ? [{ id: 'custom-preset-id', vllmModelId: 'model', server: 'host-8000', displayName: 'OldName' }]
-          : key === 'servers'
-            ? [{ id: 'host-8000', serverUrl: 'http://host:8000' }]
-            : undefined,
+          : undefined,
       update: chatUpdate,
       inspect: () => ({ defaultValue: 'none' }),
     };
-    inputBoxSpy
-      .mockResolvedValueOnce('http://host:8000') // server URL
-      .mockResolvedValueOnce('')                 // API key
-      .mockResolvedValueOnce('');                // headers
+    inputBoxSpy.mockResolvedValueOnce('http://host:8000'); // server URL only — 'Add Different Model' skips the auth prompt
     quickPickSpy.mockResolvedValueOnce({ label: 'model' } as any);
     infoSpy
       .mockResolvedValueOnce('Add Different Model' as any) // server already configured
@@ -425,6 +430,7 @@ describe('registerAddServerModelCommand', () => {
   it('disambiguates via picker when multiple configs share the chosen model', async () => {
     // Two entries on the same server expose the same wire id but keep distinct
     // extension ids (a preset-derived entry + a discovered composite entry).
+    registry = [{ id: 'host-8000', serverUrl: 'http://host:8000' }];
     vscode.workspace._mockConfig = {
       get: (key: string) =>
         key === 'models'
@@ -432,16 +438,11 @@ describe('registerAddServerModelCommand', () => {
               { id: 'custom-preset-glm', vllmModelId: 'model', server: 'host-8000', displayName: 'GLM (Preset)' },
               { id: 'model on host:8000', vllmModelId: 'model', server: 'host-8000' },
             ]
-          : key === 'servers'
-            ? [{ id: 'host-8000', serverUrl: 'http://host:8000' }]
-            : undefined,
+          : undefined,
       update: chatUpdate,
       inspect: () => ({ defaultValue: 'none' }),
     };
-    inputBoxSpy
-      .mockResolvedValueOnce('http://host:8000') // server URL
-      .mockResolvedValueOnce('')                 // API key
-      .mockResolvedValueOnce('');                // headers
+    inputBoxSpy.mockResolvedValueOnce('http://host:8000'); // URL only — shortcut skips auth
     // Model picker, then the disambiguator: the user selects the SECOND entry
     // (the composite) rather than the preset that .find() would take first.
     // The mock must resolve one of the REAL item references: VS Code returns
@@ -476,16 +477,16 @@ describe('registerAddServerModelCommand', () => {
     expect(provider.clearCache).toHaveBeenCalled();
   });
 
-  it('Replace Config with rotated credentials keeps the model on its entry and updates that entry', async () => {
-    // Regression: the replace path derived the `server` ref from the ENTERED
-    // auth. A different key meant a new entry, `replaceModelConfig` matched no
-    // (id, server) pair and APPENDED a second model with the same id. Now the
-    // model keeps its entry and the entered key rotates INTO that entry.
-    let registry: any[] = [
-      { id: 'host-8000', serverUrl: 'http://host:8000', requestHeaders: { Authorization: 'Bearer old' } },
+  it('Replace Config keeps the model on its entry, credentials untouched', async () => {
+    // Regression (kept from the pre-two-step flow): the replace path must
+    // carry the model's EXISTING `server` ref — a ref pointing at another
+    // entry matches no (id, server) pair, so replaceModelConfig would APPEND
+    // a second model with the same id. The two-step flow no longer re-prompts
+    // auth on 'Add Different Model' — credentials live on the entry, and key
+    // rotation is the Update Auth command's job.
+    registry = [
+      { id: 'host-8000', serverUrl: 'http://host:8000', requestHeaders: { Authorization: ['Bearer', 'old'].join(' ') } },
     ];
-    vi.spyOn(configStore, 'readServers').mockImplementation(() => registry);
-    vi.spyOn(configStore, 'writeServers').mockImplementation(async next => { registry = next; });
     vscode.workspace._mockConfig = {
       get: (key: string) =>
         key === 'models'
@@ -494,10 +495,7 @@ describe('registerAddServerModelCommand', () => {
       update: chatUpdate,
       inspect: () => ({ defaultValue: 'none' }),
     };
-    inputBoxSpy
-      .mockResolvedValueOnce('http://host:8000') // server URL
-      .mockResolvedValueOnce('newsecret')        // rotated API key
-      .mockResolvedValueOnce('');                // headers
+    inputBoxSpy.mockResolvedValueOnce('http://host:8000'); // URL only — shortcut skips auth
     quickPickSpy.mockResolvedValueOnce({ label: 'model' } as any);
     infoSpy
       .mockResolvedValueOnce('Add Different Model' as any) // server already configured
@@ -511,41 +509,61 @@ describe('registerAddServerModelCommand', () => {
     expect(replaceSpy).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'custom-preset-id', vllmModelId: 'model', server: 'host-8000' }),
     );
-    // One entry total (no credential-derived twin), with the new key rotated in.
+    // One entry total (no credential-derived twin), stored key unchanged.
     expect(registry).toHaveLength(1);
     // (string built at runtime: the editor's secret-masker mangles literals here)
-    expect(JSON.stringify(registry[0])).toContain(['Bearer', 'newsecret'].join(' '));
+    expect(JSON.stringify(registry[0])).toContain(['Bearer', 'old'].join(' '));
   });
 
-  it('dismissed confirm discards the registry entry created for the unsaved model', async () => {
-    // The entry holds live credentials; if the model is never saved, an
-    // unreferenced entry must not stay behind in settings.
-    let registry: any[] = [];
-    vi.spyOn(configStore, 'readServers').mockImplementation(() => registry);
-    vi.spyOn(configStore, 'writeServers').mockImplementation(async next => { registry = next; });
+  it('dismissed confirm KEEPS the registered server (server is step 1, the model is step 2)', async () => {
+    // The two-step doctrine: the entry is persisted before the model is
+    // chosen and is a kept artifact. Dismissing the model confirm leaves the
+    // server registered — zero-model entries are legal and removable via
+    // Remove Server.
     inputBoxSpy
       .mockResolvedValueOnce('http://host:8000') // server URL
       .mockResolvedValueOnce('secret')           // API key
       .mockResolvedValueOnce('');                // headers
     quickPickSpy.mockResolvedValueOnce({ label: 'model' } as any);
-    infoSpy.mockResolvedValueOnce(undefined); // final confirm dismissed
+    infoSpy.mockResolvedValue(undefined); // registration toast + final confirm → dismissed
 
     registerAddServerModelCommand({} as any, provider, output);
     await (vscode as any).commands._run('vllm-copilot.addServerModel');
 
     expect(replaceSpy).not.toHaveBeenCalled();
-    expect(registry).toHaveLength(0); // created during the flow, rolled back after
+    expect(registry).toHaveLength(1);
+    expect(registry[0]).toMatchObject({ id: 'host-8000', serverUrl: 'http://host:8000' });
   });
 
-  it('abandoned confirm keeps an entry the flow only REUSED', async () => {
-    // Rollback applies to entries this flow created, never to pre-existing ones.
-    let registry: any[] = [
+  it('escaping the model picker keeps the registered server', async () => {
+    // The user-reported regression this flow exists to fix: Esc at the model
+    // picker used to abandon EVERYTHING, though the server was fully known.
+    // Now the server survives; a model can be added later via Auto-Configure.
+    inputBoxSpy
+      .mockResolvedValueOnce('http://host:8000') // server URL
+      .mockResolvedValueOnce('')                 // API key
+      .mockResolvedValueOnce('');                // headers
+    // quickPickSpy default resolves undefined → picker escaped.
+
+    registerAddServerModelCommand({} as any, provider, output);
+    await (vscode as any).commands._run('vllm-copilot.addServerModel');
+
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(resolveSpy).not.toHaveBeenCalled(); // never reached auto-configure
+    expect(registry).toEqual([{ id: 'host-8000', serverUrl: 'http://host:8000' }]);
+    expect(output.appendLine).toHaveBeenCalledWith(
+      expect.stringContaining('stays registered'),
+    );
+  });
+
+  it('a pre-existing entry the flow REUSED is likewise kept on abandoned confirm', async () => {
+    // Same kept-server outcome for the reuse branch: ensureServerEntry
+    // connection-matched the stored entry instead of creating one.
+    registry = [
       { id: 'host-8000', serverUrl: 'http://host:8000', requestHeaders: { Authorization: ['Bearer', 'secret'].join(' ') } },
     ];
-    vi.spyOn(configStore, 'readServers').mockImplementation(() => registry);
-    vi.spyOn(configStore, 'writeServers').mockImplementation(async next => { registry = next; });
     inputBoxSpy
-      .mockResolvedValueOnce('http://host:8000') // same URL + auth → fingerprint match
+      .mockResolvedValueOnce('http://host:8000') // same URL + auth → connection match
       .mockResolvedValueOnce('secret')
       .mockResolvedValueOnce('');
     quickPickSpy.mockResolvedValueOnce({ label: 'model' } as any);
@@ -556,6 +574,7 @@ describe('registerAddServerModelCommand', () => {
 
     expect(replaceSpy).not.toHaveBeenCalled();
     expect(registry).toHaveLength(1);
+    expect(registry[0]).toMatchObject({ id: 'host-8000' });
   });
 });
 
@@ -565,6 +584,7 @@ describe('registerAddServerCommand', () => {
   let infoSpy: ReturnType<typeof vi.spyOn>;
   let writeServersSpy: ReturnType<typeof vi.spyOn>;
   let registry: unknown[];
+  const register = () => registerAddServerCommand({} as any, { clearCache: vi.fn() } as any, output);
 
   beforeEach(() => {
     (vscode as any).commands._registrations = [];
@@ -593,7 +613,7 @@ describe('registerAddServerCommand', () => {
       .mockResolvedValueOnce('key42')           // API key
       .mockResolvedValueOnce('');               // custom headers
 
-    registerAddServerCommand(output);
+    register();
     await (vscode as any).commands._run('vllm-copilot.addServer');
 
     expect(registry).toEqual([
@@ -618,7 +638,7 @@ describe('registerAddServerCommand', () => {
       .mockResolvedValueOnce('key42')
       .mockResolvedValueOnce('');
 
-    registerAddServerCommand(output);
+    register();
     await (vscode as any).commands._run('vllm-copilot.addServer');
 
     expect(writeServersSpy).not.toHaveBeenCalled();
@@ -628,7 +648,7 @@ describe('registerAddServerCommand', () => {
   it('writes nothing when the auth prompt is abandoned', async () => {
     inputBoxSpy.mockResolvedValueOnce('http://new:9000'); // URL, then Esc on the key
 
-    registerAddServerCommand(output);
+    register();
     await (vscode as any).commands._run('vllm-copilot.addServer');
 
     expect(writeServersSpy).not.toHaveBeenCalled();

@@ -34,7 +34,6 @@ const SERVER_CONFIG = {
 
 const d = ENABLED ? describe : describe.skip;
 
-function makeContext(): any { return { secrets: { get: async () => undefined } }; }
 function makeOutput(): any { return { appendLine: (line: string) => process.env.VLLM_TRACE && console.log(line) }; }
 
 function stubConfig() {
@@ -51,7 +50,7 @@ d('vLLM integration', () => {
 
   beforeAll(async () => {
     stubConfig();
-    client = new VllmClient(makeContext(), makeOutput());
+    client = new VllmClient(makeOutput());
     // Fetch model list directly (listModels() was removed as dead production code).
     const resp = await fetch(`${SERVER_URL}/v1/models`, { headers: REQUEST_HEADERS });
     const data = (await resp.json()) as { data?: Array<{ id: string }> };
