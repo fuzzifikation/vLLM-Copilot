@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.36.2
+
+The Move menus should only offer moves that can actually happen. This way a user with only one server sees no meaningless move options.
+
+### Fixed
+
+- **Move ↑ / Move ↓ only appear when they can do something.** The first server's menu no longer offers Move Up, the last one's no longer offers Move Down, and a lone server offers neither.
+
 ## v1.36.1
 
 The server registry landed in 1.36.0, and the first thing it owed users was control over how their servers are presented.

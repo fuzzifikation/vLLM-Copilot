@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM integration for GitHub Copilot and the VS Code Agents window on professional (and self-hosted) servers (supports full featureset of vLLM and Copilot). No subscription, no telemetry. No work content to any third party. Live observability: queue status, KV-cache, throughput, and more, in a full dashboard UI. Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
-  "version": "1.36.1",
+  "version": "1.36.2",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -280,34 +280,32 @@
       "view/item/context": [
         {
           "command": "vllm-copilot.openDeepDive",
-          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline)",
+          "when": "view == vllm-copilot.dashboard && viewItem =~ /^server(Online|Offline)(Middle|First|Last|Ends)$/",
           "group": "1_deepDive@1"
         },
         {
           "command": "vllm-copilot.updateServerAuth",
-          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive || viewItem == serverOnlineRelay || viewItem == serverOfflineRelay)",
+          "when": "view == vllm-copilot.dashboard && viewItem =~ /^server(Online|Offline)(NoDive|Relay)?(Middle|First|Last|Ends)$/",
           "group": "2_server@1"
         },
         {
           "command": "vllm-copilot.renameServer",
-          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive || viewItem == serverOnlineRelay || viewItem == serverOfflineRelay)",
+          "when": "view == vllm-copilot.dashboard && viewItem =~ /^server(Online|Offline)(NoDive|Relay)?(Middle|First|Last|Ends)$/",
           "group": "2_server@2"
         },
         {
           "command": "vllm-copilot.removeServer",
-          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive || viewItem == serverOnlineRelay || viewItem == serverOfflineRelay)",
+          "when": "view == vllm-copilot.dashboard && viewItem =~ /^server(Online|Offline)(NoDive|Relay)?(Middle|First|Last|Ends)$/",
           "group": "2_server@3"
         },
         {
           "command": "vllm-copilot.moveServerUp",
-          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive || viewItem == serverOnlineRelay || viewItem == serverOfflineRelay)",
-
+          "when": "view == vllm-copilot.dashboard && viewItem =~ /^server(Online|Offline)(NoDive|Relay)?(Middle|Last)$/",
           "group": "3_move@1"
         },
         {
           "command": "vllm-copilot.moveServerDown",
-          "when": "view == vllm-copilot.dashboard && (viewItem == serverOnline || viewItem == serverOffline || viewItem == serverOnlineNoDive || viewItem == serverOfflineNoDive || viewItem == serverOnlineRelay || viewItem == serverOfflineRelay)",
-
+          "when": "view == vllm-copilot.dashboard && viewItem =~ /^server(Online|Offline)(NoDive|Relay)?(Middle|First)$/",
           "group": "3_move@2"
         },
         {

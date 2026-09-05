@@ -104,6 +104,15 @@ function isoDate(value?: string | null): string | undefined {
   return d.toISOString().slice(0, 10);
 }
 
+/** Where a server row sits in the list, relative to its siblings. Encoded
+ *  into the context value so `when` clauses can hide Move Up on the first
+ *  row and Move Down on the last — a lone server gets neither. */
+type ServerRowPosition = 'middle' | 'first' | 'last' | 'ends';
+
+const POSITION_SUFFIX: Record<ServerRowPosition, string> = {
+  middle: 'Middle', first: 'First', last: 'Last', ends: 'Ends',
+};
+
 /** A server node in the tree (collapsible, shows metrics as children) */
 class ServerTreeItem extends vscode.TreeItem {
   /**
@@ -111,6 +120,8 @@ class ServerTreeItem extends vscode.TreeItem {
    *   tree id, the engine key, and the Deep-Dive panel key are all this value.
    * @param displayLabel - Optional disambiguated label (e.g. `s:8000 (identity 2)`) when
    *   several entries point at one URL; defaults to `shortUrl(serverUrl)`.
+   * @param position - Row position in the server list, appended to the
+   *   context value for the Move Up/Down menu `when` clauses.
    */
   constructor(
     public readonly serverUrl: string,
@@ -118,6 +129,7 @@ class ServerTreeItem extends vscode.TreeItem {
     public readonly metrics: ServerMetrics,
     public readonly serverType?: ServerType,
     displayLabel?: string,
+    position: ServerRowPosition = 'middle',
   ) {
     const displayName = displayLabel ?? shortUrl(serverUrl);
     // CR-25: the pre-first-poll placeholder means "no data yet", NOT offline.
@@ -166,9 +178,11 @@ class ServerTreeItem extends vscode.TreeItem {
     // there (a relay has no vLLM engine metrics to show). Rename is NOT part
     // of the exclusion — every backend is renamable, because the label names
     // the entry, and one relay URL can host several entries.
-    this.contextValue = isVllm ? state
-      : isOpenRouterRelay ? `${state}Relay`
-      : `${state}NoDive`;
+    // A position suffix (Middle/First/Last/Ends) is always appended: the Move
+    // Up/Down `when` clauses regex-match it to hide the impossible direction
+    // (First hides Move Up, Last hides Move Down, Ends hides both).
+    const kindSuffix = isVllm ? '' : isOpenRouterRelay ? 'Relay' : 'NoDive';
+    this.contextValue = `${state}${kindSuffix}${POSITION_SUFFIX[position]}`;
   }
 }
 
@@ -620,7 +634,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       const urlCount = new Map<string, number>();
       for (const sub of this.subscriptions) urlCount.set(sub.url, (urlCount.get(sub.url) ?? 0) + 1);
       const urlSeen = new Map<string, number>();
-      const servers = this.subscriptions.map(sub => {
+      const lastIdx = this.subscriptions.length - 1;
+      const servers = this.subscriptions.map((sub, i) => {
         const n = (urlSeen.get(sub.url) ?? 0) + 1;
         urlSeen.set(sub.url, n);
         const shared = (urlCount.get(sub.url) ?? 1) > 1;
@@ -629,7 +644,11 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         // suffix, and passing undefined here would make ServerTreeItem fall
         // back to shortUrl — silently dropping a configured display name.
         const label = shared ? `${base} (identity ${n})` : base;
-        return new ServerTreeItem(sub.url, sub.serverId, sub.metrics, sub.serverType, label);
+        // subscription order IS registry order IS display order, so index
+        // arithmetic here is the true row position for the Move menus.
+        const position: ServerRowPosition = lastIdx === 0 ? 'ends'
+          : i === 0 ? 'first' : i === lastIdx ? 'last' : 'middle';
+        return new ServerTreeItem(sub.url, sub.serverId, sub.metrics, sub.serverType, label, position);
       });
       // Action rows (absorbed from AddServerTreeItem/TestRefreshTreeItem —
       // one construction site each).
