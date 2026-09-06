@@ -1,6 +1,6 @@
 # Auto-Continue
 
-Auto-continue recovers from **empty or truncated model responses** automatically. When a model thinks but produces no answer - or stops mid-sentence on a trailing colon - the extension retries the request up to `autoContinueRetries` times using assistant prefill / vLLM continuation, so you get a real response instead of a blank one. Shipped and on by default (`autoContinueRetries` defaults to `1`).
+Auto-continue retries **empty or truncated model responses**. When a model thinks but produces no answer - or stops mid-sentence on a trailing colon - the extension retries the request up to `autoContinueRetries` times using assistant prefill / vLLM continuation. A retry is not guaranteed to produce a complete or correct answer. Shipped and on by default (`autoContinueRetries` defaults to `1`).
 
 ---
 
@@ -11,7 +11,7 @@ Some models - most notably Qwen-family reasoning models - occasionally return an
 1. **Thinking → stop:** the model produces reasoning tokens, then `finish_reason: stop` with zero text content. It thought, but never answered.
 2. **Tool result → thinking → stop:** after Copilot executes tool calls and sends results back in a new turn, the model again produces only reasoning and no text response.
 
-Without auto-continue these would surface as a ⚠️ "model produced only reasoning tokens" warning (or a silent `\n` to dodge VS Code's "no response returned" popup). With it, the extension retries transparently and you get your answer.
+Without auto-continue these would surface as a ⚠️ "model produced only reasoning tokens" warning (or a silent `\n` to dodge VS Code's "no response returned" popup). With it, the extension retries transparently; if a retry produces content, that is what you see.
 
 A third "empty" case - the model produces nothing at all (no reasoning, no content, no tool calls) - usually indicates a server/configuration problem rather than an incomplete response. Auto-continue still retries it (same trigger, same budget) as cheap insurance against a transient hiccup; if it stays empty, the budget runs out and the ⚠️ diagnostic reports it as "empty response after N attempt(s)".
 

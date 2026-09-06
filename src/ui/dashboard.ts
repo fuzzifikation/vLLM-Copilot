@@ -156,11 +156,12 @@ class ServerTreeItem extends vscode.TreeItem {
     // configured model's — wrong scope to present as server-wide. Suppress both
     // until the model-collection restructure (Phase 2) lands. Also: a relay has
     // no running/waiting-request gauges, so "idle" would be a fabricated stat —
-    // show NO description behind an online OpenRouter server.
+    // an online relay shows its available funds instead (the money behind THIS
+    // entry's credential; several OR entries can carry separate auths/funds).
     const isOpenRouterRelay = serverType === 'openrouter';
     // No "degraded" label — every backend is a first-class dashboard citizen.
     this.description = metrics.online
-      ? (isOpenRouterRelay ? undefined : summary)
+      ? (isOpenRouterRelay ? openRouterFundsLabel(metrics.account, metrics.credits) : summary)
       : loading ? 'Loading' : 'Offline';
     const modelsLine = isOpenRouterRelay ? '' : `\n*${metrics.models.join(', ') || 'no models'}*`;
     const contextLine = isOpenRouterRelay || metrics.maxModelLen == null
@@ -234,6 +235,26 @@ class ModelsTreeItem extends vscode.TreeItem {
   }
 }
 
+/** One-line funds summary for an OpenRouter relay, shared by the server row
+ *  and the Account node (each registry entry's own credential, each its own
+ *  probe). Prefers the real budget (credits loaded − used) and falls back to
+ *  the per-key remaining / free-tier / monthly usage. Undefined when the
+ *  account probes returned nothing (still offline-less, just silent). */
+function openRouterFundsLabel(account: OpenRouterAccount | undefined, credits: OpenRouterCredits | undefined): string | undefined {
+  const budgetRemaining = credits?.total_credits != null && credits?.total_usage != null
+    ? Math.max(0, credits.total_credits - credits.total_usage)
+    : undefined;
+  return budgetRemaining != null
+    ? `${formatCost(budgetRemaining, 'USD')} available`
+    : account?.limit_remaining != null
+      ? `${formatCost(account.limit_remaining, 'USD')} remaining`
+      : account?.is_free_tier
+        ? 'free tier'
+        : account?.usage_monthly != null
+          ? `usage ${formatCost(account.usage_monthly, 'USD')}/mo`
+          : undefined;
+}
+
 /** OpenRouter relay: collapsible "Account" node — credits/limits from /api/v1/key. */
 class OpenRouterAccountTreeItem extends vscode.TreeItem {
   constructor(
@@ -246,21 +267,7 @@ class OpenRouterAccountTreeItem extends vscode.TreeItem {
     super('Account', vscode.TreeItemCollapsibleState.Collapsed);
     this.iconPath = new vscode.ThemeIcon('account');
     this.id = `openRouterAccount:${serverId}`;
-    const remaining = account.limit_remaining;
-    // Prefer the real budget (credits loaded − used) for the one-liner; fall back
-    // to the per-key remaining / free-tier / monthly usage when that's absent.
-    const budgetRemaining = credits?.total_credits != null && credits?.total_usage != null
-      ? Math.max(0, credits.total_credits - credits.total_usage)
-      : undefined;
-    this.description = budgetRemaining != null
-      ? `${formatCost(budgetRemaining, 'USD')} available`
-      : remaining != null
-        ? `${formatCost(remaining, 'USD')} remaining`
-        : account.is_free_tier
-          ? 'free tier'
-          : account.usage_monthly != null
-            ? `usage ${formatCost(account.usage_monthly, 'USD')}/mo`
-            : undefined;
+    this.description = openRouterFundsLabel(account, credits);
     this.tooltip = new vscode.MarkdownString('OpenRouter account/key health. Reflects the credential this server was configured with.');
   }
 }

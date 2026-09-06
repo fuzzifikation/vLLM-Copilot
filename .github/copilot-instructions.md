@@ -17,6 +17,7 @@ These apply to any codebase.
 - **Revert or overwrite files without checking contents first.**
 - **HARD RULE, THE BIG ONE: DO NOT PUSH unless the user explicitly asks for a push in that moment.** Not "commit and push" for a trivia file, not "ok", not a previous session's approval, not your own judgment that the unit is ready. Committing locally to save work: always fine, as many commits as you like. A push needs the user's live words ("push it", "commit and push" for a COHERENT UNIT). One push per coherent unit: collapse your micro-commits silently (soft reset, recommit, bland message) before pushing - a push of a test-mock tweak or a two-line wording edit is unacceptable (owner rage 2026-09-04 after 19 pushes since 1.35.3).
 - **Change Version** without asking. Never change version. Version change and number must be allowed by the user.
+- **Version numbers say NOTHING about releases.** A `-rcN` version in `package.json` means: internal work on a new version, NOT shipped, NOT published, history still editable (untagged rc = draft, squashing it is hygiene). Even a plain version number is not a release until the owner ships it, with live words, in that moment. Never conclude from any version that it "was released", never propose publish/announce/celebrate actions because a version exists. (Owner introduced rc numbering precisely because AIs kept assuming a declared version was a published one, 2026-09-04.)
 
 ### Communication
 - **Be brief.** Skip fluff, include details only when it matters for decisions or debugging.

@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.36.3
+
+### Added
+
+- **A disclaimer.** The goal: nobody installs this under a false impression. [DISCLAIMER.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/DISCLAIMER.md) states in one place that the extension provides no security or safety guardrails, filters nothing (prompts, output, tool calls, agent actions), guarantees no absence of bugs, and does not stop, sandbox or review what a model does with your tools, files and commands. The MIT license is unchanged; this is what it means in practice. The README carries it up top, and the manual links it. The docs around auto-continue now match that tone: a retry is a retry, and it is not guaranteed to give you a complete or correct answer.
+- **OpenRouter funds on the server line.** The goal: see what you have left to spend without unfolding anything. An online OpenRouter server now shows its available funds directly in the Dashboard server row, read from the credential that entry is configured with, so several OpenRouter servers with different keys show their own balances. Unfolding the server still gives the full account breakdown.
+
 ## v1.36.2
 
 The Move menus should only offer moves that can actually happen. This way a user with only one server sees no meaningless move options.

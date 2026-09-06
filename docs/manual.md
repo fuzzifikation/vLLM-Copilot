@@ -23,6 +23,7 @@ The detailed guide to vLLM-Copilot. The [README](../README.md) is the quick pitc
 
 ## Getting started
 
+- **Disclaimer** - this extension does not protect against misuse, does not provide safety or security guardrails, and does not guarantee the absence of bugs. Language models may misuse it. Full text: [DISCLAIMER.md](../DISCLAIMER.md).
 - **Quick Start** - install, add a server/model, first chat: see the [README Quick Start](../README.md#quick-start).
 - **Requirements** - GitHub Copilot Chat (no subscription needed) plus either a running model server or an OpenRouter API key: see [Quick Start](../README.md#quick-start).
 - **Remote setups (SSH/WSL/Containers)** - the extension runs on the remote host (`extensionKind: workspace`). Install it while connected to the remote window; a local-first install won't be picked up by the remote automatically. See the note in [Quick Start](../README.md#quick-start).
@@ -217,7 +218,7 @@ The extension merges `.github/copilot-instructions.md`, `AGENTS.md`, and `CLAUDE
 
 ## Reliability & tooling
 
-- **Auto-continue on empty responses.** Some models (notably Qwen) occasionally return zero tokens or truncated output. The extension retries with an assistant prefill so you never see a blank or cut-off response. Configurable per model (`autoContinueRetries`, default 1). Details: [auto-continue.md](auto-continue.md).
+- **Auto-continue on empty responses.** Some models (notably Qwen) occasionally return zero tokens or truncated output. The extension can retry with an assistant prefill (`autoContinueRetries`, default 1). A retry is not guaranteed to produce a complete or correct answer. Details: [auto-continue.md](auto-continue.md).
 - **Tool call & truncated response recovery.** When vLLM truncates a tool call mid-JSON (`finish_reason: 'length'`), the extension uses `jsonrepair` + `best-effort-json-parser` (the same libraries Copilot's BYOK uses) to recover partial content instead of dropping it to empty `{}`.
 - **Connection diagnostics.** **Test & Refresh Models** verifies servers, lists models, corrects ID mismatches, and checks VS Code network gating. **Diagnose Connection** is a deep report comparing SChannel vs. OpenSSL, DNS/TCP reachability, cert chain inspection, proxy detection, and a VS Code settings dump, with a one-line classification of the failure.
 - **One-click migration.** Upgrading from an older version auto-migrates legacy global server/sampling settings into per-model entries on first launch. One-time, idempotent, no data loss.

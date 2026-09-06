@@ -7,17 +7,18 @@
 # vLLM-Copilot
 [![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot) [![vLLM](https://img.shields.io/badge/vLLM-Primary-01C286)](https://github.com/vllm-project/vllm) [![OpenRouter Supported](https://img.shields.io/badge/OpenRouter-Supported-00B3A6?logo=openrouter&logoColor=white)](https://openrouter.ai) [![Agents Window](https://img.shields.io/badge/VS_Code-Agents_Window_Ready-007ACC?logo=visualstudiocode&logoColor=white)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md) [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
 
-**Your vLLM-served models inside GitHub Copilot and the VS Code Agents window. Built for teams and production.**
+**Your vLLM-served models inside GitHub Copilot and the VS Code Agents window.**
 GitHub Copilot provides the familiar chat, tools, and model picker; you provide the model. Requests to your models (prompts, code, context) are never sent to Copilot!
-**Multi-server, multi-user.** Full vLLM request control, live observability, strict data residency. Also works with OpenRouter (400+ cloud models, no local infrastructure, many free options), llama.cpp, LM Studio, and Ollama.
+**Multi-server, multi-user.** Full vLLM request control, live observability. Also works with OpenRouter (400+ cloud models, no local infrastructure, many free options), llama.cpp, LM Studio, and Ollama.
 </div>
 
+> **Disclaimer.** This extension does not protect against misuse, does not provide security or safety guardrails, and does not guarantee the absence of bugs. Language models may produce harmful or incorrect output and may misuse this extension (tools, file edits, commands). You own the consequences. Source is public: [github.com/fuzzifikation/vLLM-Copilot](https://github.com/fuzzifikation/vLLM-Copilot). Full text: [DISCLAIMER.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/DISCLAIMER.md).
 
-For teams running AI on their own vLLM servers for many users, this gives you the professional Copilot integration: 
+For teams running AI on their own vLLM servers for many users, this gives you the Copilot integration: 
 
 - **Data handling**: **No subscription. No affiliation. No central service. No telemetry.** Prompts, code, and company data go only to each model's configured inference server. They are never sent to GitHub Copilot or GitHub. Other extension traffic (model metadata from HuggingFace, curated presets from GitHub) carries no work content.
 - **[Works in the VS Code Agents window](#agents-window-screenshot)**: your vLLM models in the new "Open in Agents" agent cockpit, with autonomous sessions, worktree isolation, all of it. Auto-enabled since v1.35.0, nothing to configure, just restart VS Code. See [Agents window guide](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md).
-- **Production vLLM observability**: a live dashboard of server availability, queue status, KV-cache usage, TTFT, throughput, per-request token details, and a cumulative token & cost tracker. Your admins and users will know what is going on!
+- **vLLM observability**: a live dashboard of server availability, queue status, KV-cache usage, TTFT, throughput, per-request token details, and a cumulative token & cost tracker. Your admins and users will know what is going on!
 - **Multi-server, multi-user by design**: each server and model carries its own endpoint, auth, sampling, and token budget. Different teams, environments, or credentials stay isolated and independently managed. But all models are available in the model picker of familiar Copilot!
 - **Full request control**: model modes give you any vLLM parameter, such as thinking effort, sampling, and structured output. A dedicated **Output Length** dropdown caps response length without a settings edit. Switch both per model from the Copilot picker.
 - **Your model, your rules (uncensoring)**: personality presets strip Copilot's hidden Microsoft safety and identity rules from every request - like serving an abliterated model, but at request time. You own the policy. See [Personalities & System Prompts](#personalities--system-prompts).
@@ -54,6 +55,7 @@ If you want to support this work: [![Sponsor via PayPal](https://img.shields.io/
 
 ## Contents
 
+- [Disclaimer](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/DISCLAIMER.md)
 - [Quick Start](#quick-start)
 - [What makes this different from BYOK?](#what-makes-this-different-from-byok)
 - [Enterprise & team deployment](#enterprise--team-deployment)
@@ -143,14 +145,14 @@ coding, and creative work, including their sampling and vLLM-specific request se
 
 ## Enterprise & team deployment
 
-vLLM-Copilot gives companies (and individuals) controlled access to GitHub Copilot through their own inference infrastructure. Operations get live serving metrics, per-model usage and cost tracking. Broken model output is repaired automatically before it reaches your team.
+vLLM-Copilot gives companies (and individuals) access to GitHub Copilot through their own inference infrastructure. Operations get live serving metrics, per-model usage and cost tracking.
 
 **No subscription. No third party receives work content beyond the configured inference server. No affiliation. No central service. No telemetry.** GitHub Copilot supplies the familiar chat, tools, model picker, and other interaction features. Prompts, code, and company data go only to the configured inference server, never to GitHub Copilot or GitHub. Other extension traffic carries no work content; it is limited to model metadata, configuration, metrics, and service status.
 
 - **Multi-server at scale**: add any number of vLLM servers and use their models interchangeably. Each server and model keeps its own endpoint, auth, sampling, and token budget, giving you isolation across teams, environments, or credentials.
 - **Per-server credentials**: auth lives on server entries in the `vllm-copilot.servers` registry (`requestHeaders`), which models reference by `server` id - different scopes and keys are managed independently per server rather than sharing one global key.
 - **Cost tracking per model**: cumulative token and USD spend (Today / Overall), with OpenRouter models preferring their **actual reported cost** (`usage.cost`).
-- **Reliability for daily use**: models misbehave, and this extension repairs it (see [Robustness](#robustness) below), alongside bounded `Retry-After` handling, TLS/proxy/cert diagnostics, and chat session cleanup.
+- **Retries and diagnostics**: bounded `Retry-After` handling, TLS/proxy/cert diagnostics, chat session cleanup, and the recovery attempts in [Robustness](#robustness).
 
 ### Server Dashboard
 Open it with the **V** icon in the activity bar (left sidebar).
@@ -181,9 +183,9 @@ The live observability that makes it worthwhile for teams. A native sidebar (no 
 
 ### Robustness
 
-Models misbehave. Instead of letting a bad response reach your team, the extension repairs the stream so they see working output. This is the difference between a demo and a daily driver.
+Models misbehave. The extension includes a few recovery attempts for empty or truncated streams. They are best-effort. They can fail, they can retry the wrong thing, and they are not a safety net.
 
-- **Auto-continue on empty or truncated responses.** Some models (notably Qwen) occasionally return zero tokens or stop mid-sentence. The extension retries with an assistant prefill, so you never see a blank or cut-off answer. Configurable per model (`autoContinueRetries`, default 1).
+- **Auto-continue on empty or truncated responses.** Some models (notably Qwen) occasionally return zero tokens or stop mid-sentence. The extension can retry with an assistant prefill (`autoContinueRetries`, default 1). A retry is not guaranteed to produce a complete or correct answer.
 - **Tool-call repair.** When a model truncates a tool call mid-JSON (`finish_reason: 'length'`), the extension recovers the partial call with `jsonrepair` + `best-effort-json-parser`. These are the same libraries Copilot's BYOK uses, so the call is not dropped to empty `{}`.
 - **Bounded retries.** Transient server errors are retried once, honoring `Retry-After` (capped at 10 s), and never after partial output has already been streamed.
 - **Connection diagnostics.** Corporate proxy? TLS-inspecting gateway? Missing intermediate certs? **Test & Refresh Models** verifies servers are reachable, lists loaded models, and corrects ID mismatches. **Diagnose Connection** runs a deep report comparing SChannel vs. OpenSSL, DNS/TCP reachability, cert-chain inspection, proxy detection, and a settings dump, with a one-line failure classification.
@@ -275,7 +277,7 @@ This uses the System-Instructions-Replacement of above with pre-made instruction
 Bundled presets are extension-owned and re-synced on every apply; custom behavior belongs in your own replacement file (below) or a user-created personality.
 
 > ### 🔓 Uncensored
-> Every personality except **Default** strips Microsoft's hidden safety and identity rules (the hidden System-Prompt like "Follow Microsoft content policies…", etc) before your model sees them. Same philosophy as abliterated and uncensored models. **You** own the policy. No open model neutered by a corporate ruleset in a box you control. This means: You are in charge but also fully responsible.
+> Every personality except **Default** strips Microsoft's hidden safety and identity rules (the hidden System-Prompt like "Follow Microsoft content policies…", etc) before your model sees them. Same philosophy as abliterated and uncensored models. **You** own the policy. No open model neutered by a corporate ruleset in a box you control. You are in charge and fully responsible. See [DISCLAIMER.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/DISCLAIMER.md).
 
 
 
@@ -374,6 +376,8 @@ Your vLLM servers are not limited to VS Code: the [GitHub Copilot CLI](https://g
 ---
 
 ## License
+
+See also [DISCLAIMER.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/DISCLAIMER.md). The MIT grant below is unchanged.
 
 MIT License
 
