@@ -175,8 +175,11 @@ Each replacement is applied to the result of the previous one. This allows:
 interface ModelConfig {
   // ...
   /**
-   * Path to a JSON file containing find/replace pairs for system message text.
-   * Each pair: { "ruleName": "...", "find": "...", "replace": "..." }
+   * Path to a personality replacements file for system message text.
+   * Format: { "meta": { name, description }, "rules": [...] } (legacy raw
+   * arrays of rules still load). Each rule: { "ruleName": "...", "find": "...",
+   * "replace": "..." }; an { "include": "<path>" } entry
+   * splices another file's rules in at its position.
    * Applied to every system message before sending to vLLM.
    * Empty replace string removes the matched text.
    * Recommended: .vllm/prompt-replacements.json
@@ -263,7 +266,7 @@ The extension recommends a `.vllm/` directory at the workspace root for project-
 
 ```
 .vllm/
-├── prompt-replacements.json     # Find/replace pairs for system messages
+├── prompt-replacements.json     # { meta, rules } personality replacements file
 └── system-messages.json        # Captured system messages (original + after replacement)
 ```
 
@@ -304,11 +307,11 @@ Watched files (OpenAI-family agent prompt + shared base components, matching wha
 - `src/promptReplacer.ts` - load + apply replacements, exact substring match, `ApplyResult` with `matchedRuleNames`
 - `src/config.ts` - `systemMessageReplacementsFile` on `ModelConfig`
 - `package.json` - schema for `systemMessageReplacementsFile`
-- `prompt-replacements/prompt-replacements-common.json` - **shared rules**: 6 personality-neutral removals for classic chat (SafetyRules/Legacy/Gpt5 variants + three Copilot-identity-rule variants) plus **5 CLI-runtime rules** (see next bullet). Appended automatically after the personality's own rules for every active personality (any `systemMessageReplacementsFile`, including custom files); never listed in the picker, never copied to global storage, extension-owned.
-- `prompt-replacements/*.json`: personality presets (Raw (Model Natural), Supportive Mentor, Critical Senior Dev, Sarcastic Robot, Spartan) - **voice only** (identity swap, core principles, tail reinforcement). The removal rules they used to duplicate now live once, in the common file.
+- `prompt-replacements/prompt-replacements-common.json` - **shared rules**: 6 personality-neutral removals for classic chat (SafetyRules/Legacy/Gpt5 variants + three Copilot-identity-rule variants) plus **5 CLI-runtime rules** (see next bullet). Pulled into each personality by a trailing include entry naming this adjacent file by bare filename (`prompt-replacements-common.json`, resolved next to the including file); a user file in any other folder includes the same content through an absolute path or a copy of this file beside it. Never listed in the picker; seeded into the global `personalities/` folder at activation like the presets (extension-owned basename, user edits clobbered). Custom user files decide for themselves: keep the include line or delete it.
+- `prompt-replacements/*.json`: personality presets (Raw (Model Natural), Supportive Mentor, Critical Senior Dev, Sarcastic Robot, Spartan) - **voice only** (identity swap, core principles, tail reinforcement) + the trailing common include. The removal rules they used to duplicate now live once, in the common file.
 - **CLI-runtime (Agents window) support.** The Agents-window prompt is different text from classic chat, and its source is not public (the CLI ships as a compiled binary). Rules targeting it are tagged `"scope": "cli"` (dev/canary metadata; the runtime loader ignores it). Common ships 5 (code-change rules rewrite, `prohibited_actions` → user-owned `security_protocol`, co-author-trailer removal, `gh` shell fix, identity re-registration strip); each voice persona ships 3 (CLI identity, `<style>`-anchored guidelines, tail reinforcement). Raw ships 2 removals (CLI identity opener, tone line) and injects nothing - with the re-registration sentence taken by common, Raw's Agents-window prompt carries no assistant identity at all, matching its classic behavior (it also deletes the classic opener line). CLI finds never appear in classic chat and vice versa (both directions verified).
 - **CLI prompt drift** has two cheap detectors instead of runtime machinery: a static all-fire test (`test/cliPromptRules.test.ts`, every `scope: "cli"` rule must match `scripts/cli-prompt-reference.txt` exactly once, runs on every `npm test`) and a live auditor (`npm run check:cli-rules` against a fresh `systemMessageCapture` - reports dead anchors; `--persona <file>` makes non-firing a hard error). Regenerate the reference after re-capturing: `node scripts/extract-cli-reference.mjs <capture>` (it strips everything but the anchored regions and verifies capture entries agree).
-- **Merge order is load-bearing: persona first, then common.** Persona replace-rules anchor on text that the common remove-rules delete (the short/impersonal line also lives inside the safety blocks); reversing the order silently kills those replacements. Pinned by the chain test in `test/promptReplacer.test.ts`.
+- **Merge order is load-bearing: persona first, then common.** Persona replace-rules anchor on text that the common remove-rules delete (the short/impersonal line also lives inside the safety blocks); reversing the order silently kills those replacements. The order is now DATA: the include entry sits at the end of each preset's `rules` and the resolver splices includes at their position. Pinned by the chain test in `test/promptReplacer.test.ts`, which loads a preset through the real resolver.
 - `src/provider/systemMessagePipeline.ts` - `SystemMessagePipeline.processSystemMessages()` unified pipeline (capture + replace in one pass)
 - `src/provider/messageConverter.ts` - simplified, no replacement logic (pure conversion only)
 - Replacements are applied to a **clone** of the system messages - VS Code's original messages are never mutated

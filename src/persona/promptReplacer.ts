@@ -2,7 +2,11 @@
  * Load and apply find/replace rules to system message text.
  *
  * Design:
- * - JSON array of { "ruleName": "...", "find": "...", "replace": "..." } objects
+ * - File format: { "meta": { name, description }, "rules": [...] } (legacy raw
+ *   arrays of rules still load). A position in "rules" may instead hold
+ *   { "include": "<path>" }, which splices that file's rules in at its
+ *   position — see resolveRules.
+ * - Rules are { "ruleName": "...", "find": "...", "replace": "..." } objects
  * - Exact substring match (no regex)
  * - Applied sequentially in array order
  * - Empty "replace" removes the matched text
@@ -15,29 +19,21 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { fileURLToPath } from 'url';
 
 // ── Shared (common) replacements ─────────────────────────────────────
 
 /**
  * File name of the personality-neutral replacement rules that ship with the
- * extension. Applied automatically after the selected personality's rules for
- * every model that has a personality (Default = none selected = untouched).
- * Not a personality itself: excluded from discovery and never copied to global
- * storage — it is extension-owned infrastructure that updates with the VSIX.
+ * extension. Personalities pull it in with an include entry: a plain
+ * `"prompt-replacements-common.json"` works for files that live next to it
+ * (the seeded presets do exactly that), any absolute path reaches it from
+ * elsewhere — `include` only ever means a path, no symbolic tokens. In user
+ * files that include line is theirs to keep, move, or delete. Not a selectable
+ * personality itself: discovery skips this file name. Seeded into the
+ * global `personalities/` folder at activation — bundled basenames are
+ * extension-owned and update with the VSIX (personalityStore.ts).
  */
 export const COMMON_REPLACEMENTS_FILENAME = 'prompt-replacements-common.json';
-
-/**
- * Absolute path to the bundled common replacements file, resolved relative to
- * this module: `out/persona/` in the shipped extension and `src/persona/`
- * under tests — both two levels below the root that contains
- * `prompt-replacements/`.
- */
-export function getBundledCommonReplacementsPath(): string {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(here, '..', '..', 'prompt-replacements', COMMON_REPLACEMENTS_FILENAME);
-}
 
 // ── Module-level cache ───────────────────────────────────────────────
 // Keyed by resolved absolute path, revalidated by mtime+size so edits to global
@@ -47,16 +43,19 @@ export function getBundledCommonReplacementsPath(): string {
 // full read+parse on every unchanged file.
 const personalityCache = new Map<string, {
   meta: PersonalityMeta | null;
-  rules: PromptReplacement[];
+  rules: StoredRule[];
   mtimeMs: number;
   size: number;
 }>();
 
 /**
  * Internal: read, parse, and cache a personality file.
- * Returns both meta (null for legacy/array format files) and rules.
+ * Returns both meta (null for legacy/array format files) and the raw rule
+ * entries (includes NOT yet resolved — resolution is per-load so the cache
+ * never freezes the state of an included file whose mtime differs from the
+ * including file's).
  */
-async function readPersonalityFile(absPath: string): Promise<{ meta: PersonalityMeta | null; rules: PromptReplacement[] }> {
+async function readPersonalityFile(absPath: string): Promise<{ meta: PersonalityMeta | null; rules: StoredRule[] }> {
   let stat;
   try {
     stat = await fs.stat(absPath);
@@ -74,7 +73,7 @@ async function readPersonalityFile(absPath: string): Promise<{ meta: Personality
   const content = await fs.readFile(absPath, 'utf-8');
   const trimmed = content.trim();
 
-  const result: { meta: PersonalityMeta | null; rules: PromptReplacement[] } = {
+  const result: { meta: PersonalityMeta | null; rules: StoredRule[] } = {
     meta: null,
     rules: [],
   };
@@ -147,19 +146,34 @@ export interface PersonalityMeta {
 }
 
 /**
+ * Category of an include warning, so callers can judge severity instead of
+ * parsing prose:
+ * - `include-failed`: the target is missing, unreadable, or malformed -
+ *   rules that should be there are NOT (a degradation).
+ * - `include-dedup`: the file was already loaded in this chain (cycle or
+ *   diamond) - by design, nothing is lost, the rules are already present
+ *   at their first position.
+ */
+export type IncludeWarnKind = 'include-failed' | 'include-dedup';
+
+/**
  * Load prompt replacements from a JSON file.
  * Supports both legacy (raw array) and new ({ meta, rules }) formats.
  * Returns an empty array if the file doesn't exist or is empty.
+ *
+ * `onWarn` reports include problems with their {@link IncludeWarnKind}; see
+ * {@link resolveRules} for what each kind means.
  *
  * Delegates to {@link readPersonalityFile} for I/O and parsing, so
  * calling this after {@link loadPersonalityMeta} on the same file does
  * NOT re-read the file (module-level cache hit).
  */
-export async function loadPromptReplacements(filePath: string): Promise<PromptReplacement[]> {
+export async function loadPromptReplacements(
+  filePath: string,
+  onWarn?: (message: string, kind: IncludeWarnKind) => void,
+): Promise<PromptReplacement[]> {
   try {
-    const absPath = path.resolve(filePath);
-    const { rules } = await readPersonalityFile(absPath);
-    return rules;
+    return await resolveRules(path.resolve(filePath), new Set(), onWarn);
   } catch (err) {
     if (err instanceof Error && 'code' in err && (err as any).code === 'ENOENT') {
       // File not found — caller (systemMessagePipeline.ts) is responsible for logging if needed.
@@ -169,12 +183,77 @@ export async function loadPromptReplacements(filePath: string): Promise<PromptRe
   }
 }
 
-/** Parse an array of raw replacement objects into PromptReplacement[]. */
-function parseRules(parsed: unknown[]): PromptReplacement[] {
-  const replacements: PromptReplacement[] = [];
+/**
+ * Resolve one file's rule entries, splicing each `include` target's resolved
+ * rules in at the entry's POSITION — order is the contract (persona rules
+ * before boilerplate removals lives in the file now, not in code).
+ *
+ * The `visited` set marks every file already loaded in this chain: a repeated
+ * include resolves once, at its first position; later occurrences are skipped
+ * with an `include-dedup` warning. Include failures (`include-failed`) never
+ * discard the including file's own rules — a missing, unreadable, or malformed
+ * target degrades to skip-with-warning, the same independent-degradation
+ * doctrine the request pipeline applied to the persona/common split before
+ * includes existed.
+ */
+async function resolveRules(
+  absPath: string,
+  visited: Set<string>,
+  onWarn?: (message: string, kind: IncludeWarnKind) => void,
+): Promise<PromptReplacement[]> {
+  if (visited.has(absPath)) {
+    onWarn?.(`Include skipped (already loaded in this chain): ${absPath}`, 'include-dedup');
+    return [];
+  }
+  visited.add(absPath);
+
+  const { rules: stored } = await readPersonalityFile(absPath);
+  const out: PromptReplacement[] = [];
+  for (const entry of stored) {
+    if (!('include' in entry)) {
+      out.push(entry);
+      continue;
+    }
+    // An include is only ever a path: absolute as written, bare/relative
+    // against the INCLUDING file's directory (like tsconfig extends, so a
+    // folder of personality files stays self-contained).
+    const target = path.isAbsolute(entry.include)
+      ? path.resolve(entry.include)
+      : path.resolve(path.dirname(absPath), entry.include);
+    try {
+      out.push(...(await resolveRules(target, visited, onWarn)));
+    } catch (err) {
+      onWarn?.(
+        `Include "${entry.include}" failed (${target}): ${err instanceof Error ? err.message : String(err)}` +
+        ' - continuing without it.',
+        'include-failed',
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * A rule entry exactly as stored in the file: either a find/replace rule or an
+ * `include` reference to another replacements file. Includes are position-
+ * preserving until {@link resolveRules} splices them.
+ */
+type StoredRule = PromptReplacement | { include: string };
+
+/** Parse an array of raw replacement objects into StoredRule[] (includes kept as markers). */
+function parseRules(parsed: unknown[]): StoredRule[] {
+  const replacements: StoredRule[] = [];
   for (const entry of parsed) {
-    if (typeof entry === 'object' && entry !== null && 'find' in entry && 'replace' in entry) {
-      const item = entry as Record<string, unknown>;
+    if (typeof entry !== 'object' || entry === null) {
+      throw new Error(`Each replacement entry must be an object with "find"/"replace" or "include": ${JSON.stringify(entry).slice(0, 100)}`);
+    }
+    const item = entry as Record<string, unknown>;
+    if ('include' in item) {
+      if (typeof item.include !== 'string' || !item.include.trim()) {
+        throw new Error(`An include entry must have "include" as a non-empty string: ${JSON.stringify(entry).slice(0, 100)}`);
+      }
+      replacements.push({ include: item.include });
+    } else if ('find' in item && 'replace' in item) {
       if (typeof item.find === 'string' && typeof item.replace === 'string') {
         replacements.push({
           find: item.find,
@@ -184,8 +263,8 @@ function parseRules(parsed: unknown[]): PromptReplacement[] {
       } else {
         throw new Error(`Each replacement entry must have "find" and "replace" as strings: ${JSON.stringify(entry).slice(0, 100)}`);
       }
-    } else if (typeof entry === 'object' && entry !== null) {
-      throw new Error(`Each replacement entry must have "find" and "replace" properties: ${JSON.stringify(entry).slice(0, 100)}`);
+    } else {
+      throw new Error(`Each replacement entry must have "find" and "replace" properties, or "include": ${JSON.stringify(entry).slice(0, 100)}`);
     }
   }
   return replacements;

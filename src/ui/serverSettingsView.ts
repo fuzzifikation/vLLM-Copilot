@@ -4,8 +4,9 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'fs/promises';
 import * as path from 'path';
-import { getConfig, findModelConfigIndex, toPublicModelConfig, normalizeServerUrl, sanitizeRequestHeaders, resolveConfigId, resolveVllmModelId, KNOWN_SERVER_TYPES, type ModelConfig, type ServerType } from '../state/config.js';
+import { getConfig, findModelConfigIndex, toPublicModelConfig, normalizeServerUrl, sanitizeRequestHeaders, resolveConfigId, resolveVllmModelId, resolveWorkspaceRelativePath, KNOWN_SERVER_TYPES, type ModelConfig, type ServerType } from '../state/config.js';
 import { patchModelConfig, readModels, readServers, writeServers, type ModelIdentity } from '../state/configStore.js';
 import { firstEntryById } from '../state/serverRegistry.js';
 import { listServerModels } from '../backends/runtimeLimits.js';
@@ -13,10 +14,11 @@ import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from 
 
 import {
   discoverPersonalities,
-  ensureGlobalPersonality,
   resolveActivePersonality,
   getGlobalPersonalitiesDir,
+  getBundledPersonalitiesDir,
 } from '../persona/personalityStore.js';
+import { loadPersonalityMeta, loadPromptReplacements, COMMON_REPLACEMENTS_FILENAME } from '../persona/promptReplacer.js';
 
 // Ordered by frequency of use: common sampling → length → penalties → output control → niche.
 const KNOWN_PARAMS: Record<string, { label: string; type: 'number' | 'string' | 'json'; options?: string[] }> = {
@@ -116,9 +118,95 @@ interface ApplyPersonalityMessage {
   server: string;
   /** Extension `id` of the target model config (or the server model id when unconfigured). */
   id?: string;
-  /** Source personality to apply. Omit (or set `clear`) to remove the personality. */
+  /** Personality file to attach (global folder path, or the user's own file). Omit (or set `clear`) to remove it. */
   sourcePath?: string;
   clear?: boolean;
+}
+
+interface NewPersonalityMessage {
+  type: 'newPersonality';
+}
+
+/**
+ * Seed content for "+ New": a live COPY of the bundled Raw (Model Natural)
+ * preset — real, working rules, not toy examples — plus the `_howTo`
+ * explainer (JSON has no comments, so underscore keys are how the file talks;
+ * the loader ignores them) and a placeholder meta.
+ *
+ * Copied from the shipped preset at click time, so the rules can never drift
+ * from it, and the whole file is meant to be handed to an AI assistant
+ * ("turn this into a pirate personality") — the copy shows exactly what a
+ * working replacements file looks like against Copilot's real boilerplate.
+ * Two deliberate deviations from the preset:
+ * - meta becomes a placeholder; a copy keeping "Raw (Model Natural)" would
+ *   collide with the bundled preset in every picker.
+ * - the include is rewritten to an ABSOLUTE path at the shared folder's
+ *   seeded copy of the common file. Unlike a preset, this file has no fixed
+ *   home — the user decides where to save it, so the preset's bare filename
+ *   would only resolve by luck; the absolute path resolves from anywhere on
+ *   this machine (machine-specific by nature, and the explainer says so by
+ *   printing the folder it points into).
+ *
+ * `personalitiesDir` is printed in the explainer because the shared drop-in
+ * folder is machine-specific — pointing at it honestly means printing its
+ * live path (forward slashes: readable, and no JSON backslash escaping to
+ * mangle).
+ *
+ * Exported solely so a test can JSON.parse it — a template that stops being
+ * valid JSON would otherwise ship silently to every user who clicks the
+ * button (a trailing-comma regression nearly shipped, 2026-09-07).
+ */
+export async function personalityTemplate(rawPresetPath: string, personalitiesDir: string): Promise<string> {
+  const dir = personalitiesDir.split(path.sep).join('/');
+  const commonAbs = `${dir}/${COMMON_REPLACEMENTS_FILENAME}`;
+  const raw = JSON.parse(await fs.readFile(rawPresetPath, 'utf-8')) as { rules?: unknown[] };
+  // The preset's include names the common file by bare filename, which only
+  // works next to it. This file has no fixed home, so pin the shared copy's
+  // absolute path instead; every other rule is copied untouched.
+  const rules = (raw.rules ?? []).map(rule =>
+    rule !== null && typeof rule === 'object'
+      && (rule as { include?: unknown }).include === COMMON_REPLACEMENTS_FILENAME
+      ? { include: commonAbs }
+      : rule,
+  );
+  return JSON.stringify({
+    _howTo: [
+      "This file is a copy of the extension's 'Raw (Model Natural)' preset: its rules really strip Copilot's boilerplate. Edit them, delete them, add your own - or hand the whole file to an AI assistant and describe the personality you want.",
+      "Each rule: find = exact text from Copilot's system prompt, replace = what takes its place (empty string deletes). Rules run in order.",
+      "The include entry at the end is a path to another replacements file whose rules get spliced in at that position. Yours points by absolute path at prompt-replacements-common.json - the shared boilerplate removals - inside the extension's personality folder named below, so it resolves no matter where you save this file. Delete the include line to run with only your own rules, or point it at any replacements file you like.",
+      "To get the exact text to match: enable vllm-copilot.systemMessageCapture in settings, chat once, open .vllm/system-messages.json, copy from receivedContent.",
+      "This editor is unsaved - save it wherever you like, then attach it to a model in Model Settings with 'Load'. Edits apply on the next request.",
+      `The extension's own personality files - the shipped presets and prompt-replacements-common.json - live in this folder: ${dir}. Save this file into it, under a name of your own, and the personality is offered in EVERY model's dropdown when it next refreshes. Filenames the extension ships are re-copied from the extension at every start, so never save under one of those.`,
+    ],
+    meta: { name: 'My Personality', description: 'Say what this personality does.' },
+    rules,
+  }, null, 2) + '\n';
+}
+
+/**
+ * How an attached user file is stored in `systemMessageReplacementsFile`:
+ * workspace-relative (forward slashes, portable across machines and git
+ * checkouts) when it lives under the first workspace folder, absolute as
+ * picked otherwise. `resolveWorkspaceRelativePath` re-applies the same rule
+ * in reverse at request time.
+ */
+function personalityStoragePath(picked: string): string {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (root) {
+    const rel = path.relative(root, picked);
+    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+      return rel.split(path.sep).join('/');
+    }
+  }
+  return picked;
+}
+
+interface PickPersonalityFileMessage {
+  type: 'pickPersonalityFile';
+  /** Registry entry id the target model lives on. */
+  server: string;
+  /** Extension `id` of the target model config. */
+  id?: string;
 }
 
 interface SetServerTypeMessage {
@@ -141,7 +229,7 @@ interface WebviewAction {
   id?: string;
 }
 
-type FromWebviewMessage = ReadyMessage | SaveMessage | ApplyPersonalityMessage | SetServerTypeMessage | SetSystemMessageCaptureMessage | WebviewAction;
+type FromWebviewMessage = ReadyMessage | SaveMessage | ApplyPersonalityMessage | NewPersonalityMessage | PickPersonalityFileMessage | SetServerTypeMessage | SetSystemMessageCaptureMessage | WebviewAction;
 
 export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
@@ -194,6 +282,10 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
             await this.saveModelConfig(msg.config);
           } else if (msg.type === 'applyPersonality') {
             await this.applyPersonality(msg);
+          } else if (msg.type === 'newPersonality') {
+            await this.newPersonalityFile();
+          } else if (msg.type === 'pickPersonalityFile') {
+            await this.pickPersonalityFile(msg);
           } else if (msg.type === 'setServerType') {
             await this.setServerType(msg);
           } else if (msg.type === 'setSystemMessageCapture') {
@@ -334,34 +426,39 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     const firstServer = servers[0];
     const firstModel = resolveConfigId(firstServer?.models[0]) ?? '';
 
-    // Personality list + the active personality per configured model (keyed by the
-    // extension `id` — never the vLLM wire id, since several presets may share one).
-    // A custom replacements file that isn't a known personality falls back to its raw path.
-    // `targetPath` is where applying this personality will materialize it in global
-    // storage (deterministic per basename) — the webview uses it so a "Save All
-    // Changes" right after changing the dropdown writes the same value.
-    const globalDir = getGlobalPersonalitiesDir(this.context);
-    const personalities = (await discoverPersonalities(this.context)).map(p => ({
+    // Personality list: the global personality folder (bundled presets seeded
+    // at activation + anything the user drops in there). Applying is a bare
+    // path write, so the entry's own path is what gets stored — no target/copy
+    // distinction survives the seeding model. Name collisions are logged, not
+    // toasted: this method re-runs on every settings change, a toast would be
+    // a mosquito farm; the quick-pick command warns interactively.
+    const personalities = (await discoverPersonalities(this.context, (m) => this.outputChannel.appendLine(`[WARN] ${m}`))).map(p => ({
       name: p.name,
       description: p.description,
       sourcePath: p.sourcePath,
-      source: p.source,
-      targetPath: path.join(globalDir, path.basename(p.sourcePath)),
     }));
     // Global Diagnostics toggle surfaced in the webview so recording can be
     // triggered without hand-editing settings.json.
     const systemMessageCapture = vscode.workspace
       .getConfiguration('vllm-copilot')
       .get<boolean>('systemMessageCapture', false);
+    // Active personality per configured model (keyed by the extension `id` —
+    // never the vLLM wire id, since several presets may share one). A custom
+    // replacements file that isn't a listed personality gets its own `meta.name`
+    // as the label (honest dropdown), falling back to the raw stored path.
     const activePersonalities: Record<string, string | null> = {};
     for (const sv of servers) {
       for (const m of sv.models) {
         const key = resolveConfigId(m) ?? '';
         if (!key) continue;
         const file = (m.systemMessageReplacementsFile || '').trim();
-        activePersonalities[key] = file
-          ? (await resolveActivePersonality(this.context, file, personalities))?.name ?? file
-          : null;
+        let label: string | null = null;
+        if (file) {
+          label = (await resolveActivePersonality(this.context, file, personalities))?.name
+            ?? (await loadPersonalityMeta(resolveWorkspaceRelativePath(file)))?.name
+            ?? file;
+        }
+        activePersonalities[key] = label;
       }
     }
 
@@ -418,7 +515,9 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
 
   /**
    * Apply (or clear) a personality for the selected model, immediately.
-   * Applying materializes the personality as a user-owned copy in global storage.
+   * Applying is a bare path write: preset paths point into the global
+   * personality folder (seeded at activation), "user file" options carry the
+   * user's own path. The file already exists where it says — no materialization.
    */
   private async applyPersonality(msg: ApplyPersonalityMessage): Promise<void> {
     const targetId = msg.id || '';
@@ -429,27 +528,87 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     if (idx < 0) return;
     const model = models[idx];
 
-    let replacementsFile = '';
-    if (!msg.clear && msg.sourcePath) {
-      try {
-        replacementsFile = await ensureGlobalPersonality(this.context, msg.sourcePath);
-      } catch (err) {
-        this.outputChannel.appendLine(
-          `[ERROR] Failed to apply personality: ${err instanceof Error ? err.message : String(err)}`
-        );
-        this.outputChannel.show(true);
-        vscode.window.showErrorMessage(
-          `Failed to apply personality: ${err instanceof Error ? err.message : String(err)}`
-        );
-        return;
-      }
-    }
+    const replacementsFile = !msg.clear && msg.sourcePath ? msg.sourcePath : '';
 
     await this.saveModelConfig({
       ...model,
       vllmModelId: model.vllmModelId || targetId,
       id: model.id || targetId,
       systemMessageReplacementsFile: replacementsFile,
+    });
+  }
+
+  /**
+   * Open the personality template in an UNTITLED editor — nothing touches
+   * disk. The seed is a live copy of the Raw preset (see
+   * {@link personalityTemplate}); the user saves it wherever they want
+   * ("boss of the folders": attach-per-model from anywhere, or into the
+   * shared personalities folder printed in the template) and attaches it
+   * with {@link pickPersonalityFile}.
+   */
+  private async newPersonalityFile(): Promise<void> {
+    const template = await personalityTemplate(
+      path.join(getBundledPersonalitiesDir(this.context), 'prompt-replacements-raw.json'),
+      getGlobalPersonalitiesDir(this.context),
+    );
+    const doc = await vscode.workspace.openTextDocument({ language: 'json', content: template });
+    await vscode.window.showTextDocument(doc, { preview: false });
+    void vscode.window.showInformationMessage(
+      'Personality template opened in a new editor - nothing is saved yet. Save it wherever you like, then attach it with "Load".',
+    );
+  }
+
+  /**
+   * Attach the user's own replacements file. Validated through the REAL loader
+   * so a malformed file or a broken include is rejected at pick time with the
+   * actual reason, never silently ignored at request time. Only
+   * `include-failed` warnings are fatal: an include the loader DEDUPLICATES
+   * (cycle or diamond) is by-design resolution, not degradation - the file
+   * produces exactly these rules at request time too, so rejecting it would
+   * call a legal file broken. Stored workspace-relative when it lives under
+   * the first workspace folder (portable, git-versionable), absolute otherwise.
+   */
+  private async pickPersonalityFile(msg: PickPersonalityFileMessage): Promise<void> {
+    const targetId = msg.id || '';
+    if (!targetId || !msg.server) return;
+
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: false,
+      filters: { 'Personality JSON': ['json'] },
+      title: 'Attach a personality replacements file',
+    });
+    if (!picked || picked.length === 0) return;
+    const file = picked[0].fsPath;
+
+    const degradations: string[] = [];
+    try {
+      await loadPromptReplacements(file, (w, kind) => {
+        if (kind === 'include-failed') degradations.push(w);
+      });
+    } catch (err) {
+      void vscode.window.showErrorMessage(
+        `Not a usable personality file: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return;
+    }
+    if (degradations.length > 0) {
+      // A file the loader had to degrade over is not attached — at pick time
+      // the user can still fix it; at request time it would only half-apply.
+      void vscode.window.showErrorMessage(`Not a usable personality file: ${degradations[0]}`);
+      return;
+    }
+
+    const models = readModels();
+    const idx = findModelConfigIndex(models, targetId, msg.server);
+    if (idx < 0) return;
+    const model = models[idx];
+    await this.saveModelConfig({
+      ...model,
+      vllmModelId: model.vllmModelId || targetId,
+      id: model.id || targetId,
+      systemMessageReplacementsFile: personalityStoragePath(file),
     });
   }
 

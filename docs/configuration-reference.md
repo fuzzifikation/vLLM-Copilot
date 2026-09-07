@@ -383,29 +383,30 @@ Each server entry carries its own `requestHeaders`; they are never shared. The s
 
 ## System Message Replacements
 
-After capturing system messages (see [Custom System Prompt](./custom-system-prompt.md)), create a JSON file of find/replace rules. Each rule is an exact substring match applied sequentially - empty `replace` removes the matched text:
+After capturing system messages (see [Custom System Prompt](./custom-system-prompt.md)), create a JSON file of find/replace rules. Each rule is an exact substring match applied sequentially - empty `replace` removes the matched text. `include` entries splice another file's rules in at their position:
 
 ```json
-[
-  {
-    "ruleName": "Remove SafetyRules block",
-    "find": "Follow Microsoft content policies.\nAvoid content that violates copyrights.\nIf you are asked to generate content that is harmful, hateful, racist, sexist, lewd, or violent, only respond with \"Sorry, I can't assist with that.\"\nKeep your answers short and impersonal.",
-    "replace": ""
-  },
-  {
-    "ruleName": "Shorten identity rule",
-    "find": "When asked for your name, you must respond with \"GitHub Copilot\". When asked about the model you are using, you must state that you are using",
-    "replace": "Your name is Copilot. You use"
-  }
-]
+{
+  "meta": { "name": "My Personality", "description": "What it does." },
+  "rules": [
+    {
+      "ruleName": "Shorten identity rule",
+      "find": "When asked for your name, you must respond with \"GitHub Copilot\". When asked about the model you are using, you must state that you are using",
+      "replace": "Your name is Copilot. You use"
+    },
+    { "include": "prompt-replacements-common.json" }
+  ]
+}
 ```
 
-Then set `systemMessageReplacementsFile` on the model entry to point to this file. Relative paths are resolved against the **workspace root** at request time, so `.vllm/prompt-replacements.json` refers to the workspace's `.vllm/` folder. Absolute paths work too (and are what the personality picker stores).
+An `include` is only ever a path: absolute, or relative to the **including file's folder** - a bare filename therefore resolves next to the file. That is what the shipped presets use (`{ "include": "prompt-replacements-common.json" }`): the shared boilerplate removals file is seeded right beside them, which keeps personality files - presets and yours - portable byte for byte across machines as long as they sit next to a copy of the shared file. A repeated include (cycle or diamond) resolves once, at its first position; a missing or broken include is skipped with a warning in the Output channel and never discards your own rules. A bare JSON array of rules (no `meta`) still works as the legacy format.
+
+Then set `systemMessageReplacementsFile` on the model entry to point to this file. Relative paths are resolved against the **workspace root** at request time, so `.vllm/prompt-replacements.json` refers to the workspace's `.vllm/` folder. Absolute paths work too.
 
 **How it works:**
 - Exact substring match (no regex)
 - Applied to **every** system message (not just the first) - chat, progress, title generation, etc.
-- Applied in array order, sequentially
+- Applied in array order, sequentially (includes already spliced in at their positions)
 - Matched `ruleName`s are logged in the capture file so you can verify
 
 **Getting the exact text to match:** enable `systemMessageCapture`, chat once, then open `.vllm/system-messages.json`. Copy the text from `receivedContent`, escape newlines as `\n` in JSON.
@@ -416,7 +417,7 @@ Then set `systemMessageReplacementsFile` on the model entry to point to this fil
 
 The extension ships with five pre-built personality presets. Pick one, point your model at it:
 
-Each preset file contains only its **voice** (identity, behavioral principles, tone reinforcement). The personality-neutral part - stripping Copilot's safety boilerplate and "your name is GitHub Copilot" identity rules - lives in one shared file, `prompt-replacements/prompt-replacements-common.json`, which is applied automatically **after** the chosen personality's rules whenever any personality is active (including your own custom replacement files). **Default (no personality)** applies nothing: the vanilla prompt stays untouched. The shared file is extension-owned infrastructure: it never appears in the picker and is never copied to global storage.
+Each preset file contains its **voice** (identity, behavioral principles, tone reinforcement) plus one last entry, `{ "include": "prompt-replacements-common.json" }`, which splices in the personality-neutral boilerplate removals (safety rules, "your name is GitHub Copilot" identity) from the file sitting right next to it, **after** the voice rules. That include is just a rule position: in your own file you can keep it, move it, or delete the line to run with only your own rules. **Default (no personality)** applies nothing: the vanilla prompt stays untouched.
 
 Personalities apply in the **Agents window** too: the shared file and preset files carry additional rules scoped to the Agents-window (Copilot CLI runtime) prompt, replacing its `prohibited_actions` block with the user-owned security protocol and applying the persona's voice there as well. See [Agents window](./agents-window.md#personalities-work-there-too).
 
@@ -426,8 +427,22 @@ Personalities apply in the **Agents window** too: the shared file and preset fil
 | **Critical Senior Dev** | `prompt-replacements/prompt-replacements-critical-senior.json` | Sharp collaborator who challenges assumptions and surfaces trade-offs. Helps push the project forward. |
 | **Sarcastic Robot** | `prompt-replacements/prompt-replacements-sarcastic-robot.json` | Brilliant, condescending, politically incorrect. Finds human code amusingly primitive - but fixes it anyway. |
 | **Spartan** | `prompt-replacements/prompt-replacements-spartan.json` | Absolute minimalism. Zero fluff. Short answers. Code first, words only when necessary. |
+| **Raw (Model Natural)** | `prompt-replacements/prompt-replacements-raw.json` | Strips the boilerplate, injects nothing. The model behaves as trained. |
 
-**Usage:** In the **vLLM Model Settings** sidebar, pick a model and choose a personality from the dropdown in the model's **General** section. Or use `Ctrl+Shift+P` → **Set Model Personality**. Picking a personality copies it into the extension's **global storage** (`personalities/`) so it follows you across workspaces and survives extension upgrades. **Default (no personality)** clears the replacement and restores Copilot's original system prompt.
+### Where personalities live
+
+Every selectable personality lives in one folder: `<globalStorage>/personalities/` (e.g. `%APPDATA%/Code/User/globalStorage/System-Sciences.vllm-copilot/personalities/` on Windows). At every activation the extension copies the shipped presets and the shared common file in there, **overwriting its own filenames unconditionally** - your files (your own filenames) are never touched. Drop a valid personality file into that folder and it appears in the dropdowns when they next refresh (opening Model Settings or **Set Model Personality** is enough). Give each file a unique `meta.name`: the pickers show personalities by that name, so if two files claim the same name (a copied preset keeps it) both appear with identical labels and the extension warns you to rename one.
+
+### Bring your own personality
+
+In **Model Settings**, the Personality card has two buttons:
+
+- **+ New** opens a personality template in an unsaved editor - nothing is written anywhere. Save it wherever you want: your own folder, `.vllm/`, a git repo. The file explains its own format, and its rules end with an include pointing at the shared removals file **by absolute path** into the extension's personality folder - it resolves wherever you save the file - which you can keep or delete.
+- **Load** attaches any replacements JSON to the model. The file is validated at pick time (parse + includes resolved, real reason shown on failure), then stored: **workspace-relative** when it lives inside your open workspace, absolute otherwise. Any edit you save to that file applies on the next request - no re-attach, no reload.
+
+An attached user file shows in the dropdown as a first-class option (`<name> (user file)`, taken from its `meta.name`), so the form never claims "Default" while your own file is active.
+
+**Usage:** In the **vLLM Model Settings** sidebar, pick a model and choose a personality from the dropdown in the model's **General** section. Or use `Ctrl+Shift+P` → **Set Model Personality**. Applying a preset stores its global-folder path; **Default (no personality)** clears the replacement and restores Copilot's original system prompt.
 
 Or set the path manually on the model entry:
 
@@ -437,15 +452,15 @@ Or set the path manually on the model entry:
     {
       "id": "my-model",
       "server": "localhost-8000",
-      "systemMessageReplacementsFile": "C:/.../globalStorage/vllm-copilot/personalities/prompt-replacements-supportive-mentor.json"
+      "systemMessageReplacementsFile": ".vllm/my-personality.json"
     }
   ]
 }
 ```
 
-Relative paths resolve against the **workspace root**; absolute paths (like the global storage path the picker writes) work from any workspace.
+Relative paths resolve against the **workspace root**; absolute paths (like the global folder paths the picker writes) work from any workspace.
 
-**Want to customize a preset?** Bundled presets are **extension-owned and re-synced on every apply** - editing the global copy of a bundled preset gets clobbered the next time you re-apply it. Put custom behavior in your own replacement file via `systemMessageReplacementsFile` (relative `.vllm/` paths still work) or a user-created personality in global storage. Custom files also receive the shared boilerplate removals appended after their own rules; those rules only delete Microsoft boilerplate and never inject text. See [System Message Replacements](#system-message-replacements).
+**Want to customize a preset?** Bundled basenames are **extension-owned**: the shipped file is copied over the global copy at every activation, so edits to a preset's global file are gone at the next start. To customize, copy a preset to a file with your own name (the dropdown will list it as yours) or use the template, then edit freely - your filenames are yours forever. See [System Message Replacements](#system-message-replacements).
 
 ---
 

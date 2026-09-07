@@ -610,31 +610,35 @@ best-effort. P16-3 is documentation, not structure.
 
 **Intent**: Rewrite parts of the system prompt Copilot injects, so the model
 adopts a voice or strips boilerplate, without touching the rest of the
-harness. Per-model file selection, global personality library, exact-
-substring rules chained in load-bearing order.
+harness. Per-model file selection, one global personality folder (seeded from
+the bundle at activation, user files discovered by the same scan), exact-
+substring rules chained in load-bearing order. Rule order is DATA: preset
+files end with `{ "include": "prompt-replacements-common.json" }` and the
+resolver splices includes at their position (2026-09-07 include redesign -
+the pipeline's manual persona+common append and `ensureGlobalPersonality`
+copy-on-apply are gone).
 
 ```mermaid
 flowchart TD
-    CMD[commands/personality + serverSettingsView] --> DISC[personalityStore discoverPersonalities]
-    CMD --> ENS[ensureGlobalPersonality twin-probe fs.access]
-    ACT[activation] --> SYNC[syncBundledPersonalities probe via readFile]
-    PIPE[systemMessagePipeline processSystemMessages] --> RES[resolveWorkspaceRelativePath]
-    PIPE --> LOAD[promptReplacer loadPromptReplacements cache mtime+size]
-    PIPE --> COMMON[getBundledCommonReplacementsPath module-relative]
+    CMD[commands/personality + serverSettingsView] --> DISC[personalityStore discoverPersonalities global folder only]
+    ACT[activation] --> SYNC[syncBundledPersonalities seed-all bundled basenames]
+    PIPE[systemMessagePipeline processSystemMessages] --> LOAD[promptReplacer loadPromptReplacements]
+    LOAD --> RES[resolveRules splice include at position visited set]
+    RES --> READ[readPersonalityFile cache mtime+size]
+    RES --> TOK[token vllm-copilot-colon-common to module-relative bundled file]
     PIPE --> APPLY[applyPromptReplacements split/join literal]
 ```
 
 ### Findings
 
-| ID | Finding | Severity |
-|----|---------|----------|
-| P17-1 | **Half survives.** The four bundled-path resolution sites are confirmed (`personalityStore.ts` x3 + `promptReplacer.ts` x1), but the twin-predicate sub-claim is REFUTED in bytes: the two ensure/sync probes use different primitives (`fs.access` vs readFile-as-probe), not copy-paste. Remaining amputation: a 3-line bundled-dir getter inside `personalityStore.ts` over its three joins; the module-relative twin in `promptReplacer` must stay separate (vscode-free + test-safe). Recommendation: close as file hygiene. | low |
+(none live)
 
 ### Minimal graph
 
-Delta vs minimum is one getter inside one file. Chain order (persona rules
-before common rules) sits at ONE site with a load-bearing comment - that is
-correct, not duplication.
+One folder, one loader, order in the files. Chain order (persona rules
+before common removals) is the include entry's POSITION in each preset,
+pinned by the real-file chain test - that is data, not code, correct by
+construction.
 
 ## Path 18: Copilot session janitor
 

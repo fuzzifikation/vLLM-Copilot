@@ -5,11 +5,12 @@
  * independently testable.
  */
 
+import * as path from 'path';
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider/provider.js';
 import { getConfig, findModelConfigIndex, resolveConfigId, resolveServerConfig } from '../state/config.js';
 import { patchModelConfig, readModels } from '../state/configStore.js';
-import { discoverPersonalities, ensureGlobalPersonality, resolveActivePersonality } from '../persona/personalityStore.js';
+import { discoverPersonalities, resolveActivePersonality } from '../persona/personalityStore.js';
 import { describeError } from '../provider/messageConverter.js';
 
 /**
@@ -71,8 +72,19 @@ export function registerSetModelPersonalityCommand(
         return;
       }
 
-      // Step 2: discover and pick the personality (bundled + global)
-      const presets = await discoverPersonalities(context);
+      // Step 2: discover and pick the personality (the global folder).
+      // A name collision (a copied preset keeps its meta.name) makes the
+      // entries indistinguishable by label — this surface is user-initiated,
+      // so the warning goes to the user, not just the log.
+      const collisions: string[] = [];
+      const presets = await discoverPersonalities(context, (m) => collisions.push(m));
+      if (collisions.length > 0) {
+        for (const m of collisions) outputChannel.appendLine(`[WARN] ${m}`);
+        void vscode.window.showWarningMessage(collisions[0]);
+      }
+      const dupeNames = new Set(
+        presets.map((p) => p.name).filter((n, i, arr) => arr.indexOf(n) !== i),
+      );
 
       // Resolve which option is currently active from the model's replacements file.
       // A custom file that isn't a known personality still counts as "not default".
@@ -101,9 +113,18 @@ export function registerSetModelPersonalityCommand(
       if (presets.length > 0) {
         pickItems.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
         for (const p of presets) {
-          const isCurrent = !isDefaultActive && active?.name === p.name;
+          // Current is the stored PATH, never the display name: two files can
+          // share a meta.name (a copied preset keeps its name), and matching
+          // by name would checkmark every twin at once (same doctrine the
+          // Model Settings dropdown follows).
+          const isCurrent = !!active && !isDefaultActive
+            && path.resolve(active.sourcePath) === path.resolve(p.sourcePath);
+          // Twins are told apart by the file they live in.
+          const description = dupeNames.has(p.name)
+            ? `${p.description ? `${p.description} · ` : ''}${path.basename(p.sourcePath)}`
+            : p.description;
           pickItems.push({
-            ...markCurrent(p.name, p.description, isCurrent),
+            ...markCurrent(p.name, description, isCurrent),
             sourcePath: p.sourcePath,
           });
         }
@@ -133,13 +154,11 @@ export function registerSetModelPersonalityCommand(
       }
 
       try {
-        // Applying materializes the personality in global storage. Bundled
-        // presets are extension-owned and re-synced from the shipped file on
-        // every apply (see ensureGlobalPersonality); user-created personalities
-        // are stored once and never clobbered.
-        const replacementsFile = clear
-          ? ''
-          : await ensureGlobalPersonality(context, sourcePath!);
+        // The personality folder is seeded into global storage at activation
+        // (syncBundledPersonalities), so every discovered path is already the
+        // final, user-owned-where-user-owned location: applying is a bare path
+        // write, no copy, no materialization step.
+        const replacementsFile = clear ? '' : sourcePath!;
         // Re-read at write time and patch ONLY this command's field (the CR-13
         // staleness doctrine, same fix as the Add flows): the entry was
         // snapshotted before two quickpicks and an awaited file copy, so the

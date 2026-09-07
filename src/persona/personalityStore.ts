@@ -1,19 +1,31 @@
 /**
- * Global personality store.
+ * The personality store: ONE folder, in global storage.
  *
- * Personalities live in one of two places:
- * - **bundled** — extension install dir `prompt-replacements/*.json` (immutable, shipped with the VSIX)
- * - **global**  — `context.globalStorageUri/personalities/*.json` (user-owned, follows the user across workspaces)
+ * `context.globalStorageUri/personalities/*.json` is the single home for every
+ * personality — the shipped presets, the shared common file, and anything the
+ * user drops in there (the dropdown finds those automatically).
  *
- * This module owns discovery (merging the two sources, deduped by name) and the
- * copy-to-global operation that the Set Personality command and the Server Settings
- * webview use. Every applied personality ends up as a user-owned file in global
- * storage, so it survives extension upgrades and workspace switches, and is
- * editable later.
+ * At activation, {@link syncBundledPersonalities} seeds/refreshes the folder
+ * from the extension's `prompt-replacements/` dir: bundled basenames are
+ * extension-owned and are overwritten mercilessly (that is the 1.35.2
+ * stale-copy policy carried to its conclusion), everything else is user-owned
+ * and never touched. Because seeding runs before any view can open, the
+ * folder always exists with current content, so applying a personality is
+ * just "store the path" — no copy-on-apply, no collision detection, no
+ * bundled/global twin to dedup.
  *
- * Note: legacy workspace copies (`.vllm/prompt-replacements-*.json`) are deliberately
- * NOT discovered as personalities. They still function as custom replacement files at
- * request time (see systemMessagePipeline.ts), but the picker only knows bundled and global ones.
+ * Seeding keeps a live copy of the common file right next to the presets —
+ * that is the file their `include` names — and everything an `include`
+ * resolves at runtime lives in this folder: the version-stamped install path
+ * is only ever READ (the source this seeding copies from, plus the "+ New
+ * file" template's live read of the Raw preset), never referenced by a stored
+ * path or an include.
+ *
+ * Note: workspace copies (`.vllm/prompt-replacements-*.json`) are deliberately
+ * NOT discovered as picker personalities. They remain fully functional custom
+ * replacement files at request time (attached via Model Settings "Use file from
+ * disk", see systemMessagePipeline.ts) — the picker lists the global folder
+ * plus the model's own attached file, nothing else.
  */
 
 import * as fs from 'fs/promises';
@@ -22,14 +34,11 @@ import * as vscode from 'vscode';
 import { loadPersonalityMeta, clearPersonalityCache, COMMON_REPLACEMENTS_FILENAME } from './promptReplacer.js';
 import { resolveWorkspaceRelativePath } from '../state/config.js';
 
-export type PersonalitySource = 'bundled' | 'global';
-
 export interface PersonalityEntry {
   name: string;
   description: string;
-  /** absolute path to the personality file. */
+  /** absolute path to the personality file (inside the global folder). */
   sourcePath: string;
-  source: PersonalitySource;
 }
 
 /** Subdirectory of global storage that holds user personalities. */
@@ -56,45 +65,34 @@ export function getGlobalPersonalitiesDir(context: vscode.ExtensionContext): str
 }
 
 /** The extension-shipped personality JSONs (authoritative bundled presets).
- * ONE join (audit P17-1) — discovery, copy-in, and upgrade re-sync all read
- * through here so a packaging path change is a one-line edit. */
-function getBundledPersonalitiesDir(context: vscode.ExtensionContext): string {
+ * ONE join (audit P17-1) — seeding and the "+ New" template's live Raw read
+ * both point through here, so a packaging path change is a one-line edit.
+ * Nothing stored or included ever references this (version-stamped) path:
+ * discovery and request-time reads go to the seeded global folder alone. */
+export function getBundledPersonalitiesDir(context: vscode.ExtensionContext): string {
   return path.join(context.extensionUri.fsPath, 'prompt-replacements');
 }
 
 /**
- * Discover all personalities from the two sources, deduped by name.
+ * Discover all personalities: the global folder, and nothing else. Seeding
+ * (activation) guarantees the bundled presets live there; user-dropped files
+ * are picked up by the same scan.
  *
- * Precedence on name collision: **global > bundled**. A user-owned copy (global)
- * wins over the shipped preset — it is the one that is actually referenced by a
- * stored `systemMessageReplacementsFile`, so showing the bundled twin would
- * offer a phantom second entry that resolves to the same file.
+ * Duplicate `meta.name`s are not possible inside one file but trivially
+ * created by copying one (a copied preset keeps its name). Pickers LABEL
+ * entries by name, so twins are indistinguishable in every list; `onWarn`
+ * gets one message per duplicated name so each surface can tell the user
+ * where they can still fix it. Both entries stay listed regardless — hiding
+ * a user's file is not dedup, it is disappearance.
  */
 export async function discoverPersonalities(
-  context: vscode.ExtensionContext
+  context: vscode.ExtensionContext,
+  onWarn?: (message: string) => void
 ): Promise<PersonalityEntry[]> {
-  const sources: Array<{ dir: string; source: PersonalitySource }> = [
-    { dir: getBundledPersonalitiesDir(context), source: 'bundled' },
-    { dir: getGlobalPersonalitiesDir(context), source: 'global' },
-  ];
-
-  const entries: PersonalityEntry[] = [];
-  for (const { dir, source } of sources) {
-    entries.push(...(await scanPersonalityDir(dir, source)));
-  }
-
-  // Dedupe by name, highest-priority source wins.
-  const order: Record<PersonalitySource, number> = { global: 0, bundled: 1 };
-  const seen = new Map<string, PersonalityEntry>();
-  for (const e of entries) {
-    const prev = seen.get(e.name);
-    if (!prev || order[e.source] < order[prev.source]) {
-      seen.set(e.name, e);
-    }
-  }
+  const entries = await scanPersonalityDir(getGlobalPersonalitiesDir(context));
   // Curated display order: bundled presets follow BUNDLED_PRESET_ORDER (rank 0..n),
   // anything else (user-created or unknown) sorts after, alphabetically.
-  return [...seen.values()].sort((a, b) => {
+  const sorted = entries.sort((a, b) => {
     const ai = BUNDLED_PRESET_ORDER.indexOf(a.name);
     const bi = BUNDLED_PRESET_ORDER.indexOf(b.name);
     const ar = ai === -1 ? BUNDLED_PRESET_ORDER.length : ai;
@@ -103,29 +101,45 @@ export async function discoverPersonalities(
     // Deterministic ordering — fixed locale so the sort never varies by machine.
     return a.name.localeCompare(b.name, 'en');
   });
+
+  // One warning per duplicated name, naming the colliding files.
+  const filesByName = new Map<string, string[]>();
+  for (const e of sorted) {
+    const list = filesByName.get(e.name);
+    if (list) list.push(path.basename(e.sourcePath));
+    else filesByName.set(e.name, [path.basename(e.sourcePath)]);
+  }
+  for (const [name, files] of filesByName) {
+    if (files.length > 1) {
+      onWarn?.(
+        `Personality name collision: ${files.join(', ')} all claim the name "${name}". ` +
+        'They appear identically in the personality pickers. Give each file a unique meta.name.',
+      );
+    }
+  }
+  return sorted;
 }
 
 /** Scan a directory for valid personality files (`{ meta: { name, description } }` format). */
-async function scanPersonalityDir(dir: string, source: PersonalitySource): Promise<PersonalityEntry[]> {
+async function scanPersonalityDir(dir: string): Promise<PersonalityEntry[]> {
   const results: PersonalityEntry[] = [];
   let names: string[];
   try {
     names = await fs.readdir(dir);
   } catch {
-    return results; // dir missing (e.g. no global personalities yet) — not an error
+    return results; // dir missing (e.g. activation seeding not run yet) — not an error
   }
 
   for (const name of names) {
     if (!name.endsWith('.json')) continue;
-    // The shared rules file is extension infrastructure applied on top of every
-    // personality — it is never a selectable personality itself (both the
-    // bundled and any stray global copy are skipped here).
+    // The shared rules file is extension infrastructure included by the
+    // personalities that want it — it is never a selectable personality itself.
     if (name === COMMON_REPLACEMENTS_FILENAME) continue;
 
     const filePath = path.join(dir, name);
     const meta = await loadPersonalityMeta(filePath); // null on unreadable/legacy files
     if (meta) {
-      results.push({ name: meta.name, description: meta.description, sourcePath: filePath, source });
+      results.push({ name: meta.name, description: meta.description, sourcePath: filePath });
     }
   }
   return results;
@@ -153,87 +167,9 @@ export async function resolveActivePersonality(
 }
 
 /**
- * Ensure a personality file exists in global storage, returning its absolute path.
- *
- * **Extension-defined (bundled) presets are authoritative.** If the requested
- * source corresponds to a bundled preset (matching basename in the extension's
- * `prompt-replacements/` dir), the bundled file is the source of truth and is
- * ALWAYS copied over the global copy — the extension owns those personalities,
- * so user edits to a bundled preset's global copy are deliberately clobbered on
- * re-apply. This also heals stale global copies left by older extension versions
- * (e.g. a pre-de-Bender Sarcastic Robot) even when discovery resolved the source
- * to the global file (dedup: global wins).
- *
- * **User-created personalities** (no bundled twin, stored directly in global
- * storage) keep the legacy contract: created on first apply, never clobbered
- * afterwards, collision-checked by name.
- *
- * Safe to call with a path already inside global storage. Clears the promptReplacer
- * cache when a copy is written.
- */
-export async function ensureGlobalPersonality(
-  context: vscode.ExtensionContext,
-  sourcePath: string
-): Promise<string> {
-  const dir = getGlobalPersonalitiesDir(context);
-  const dest = path.join(dir, path.basename(sourcePath));
-  await fs.mkdir(dir, { recursive: true });
-
-  // Bundled presets always win — resolve the authoritative content from the
-  // extension dir and overwrite the global copy unconditionally.
-  const bundledSource = path.join(getBundledPersonalitiesDir(context), path.basename(sourcePath));
-  let isBundled = false;
-  try {
-    await fs.access(bundledSource);
-    isBundled = true;
-  } catch {
-    isBundled = false;
-  }
-
-  if (isBundled) {
-    const content = await fs.readFile(bundledSource, 'utf-8');
-    await writePersonalityAtomically(dest, content);
-    return dest;
-  }
-
-  // User-created personality: no bundled twin, so the file the user points at is
-  // the source of truth.
-  if (dest === path.resolve(sourcePath)) return dest; // already in global storage
-
-  let destExists = true;
-  try {
-    await fs.access(dest);
-  } catch {
-    destExists = false;
-  }
-
-  if (!destExists) {
-    const content = await fs.readFile(sourcePath, 'utf-8');
-    await writePersonalityAtomically(dest, content);
-    return dest;
-  }
-
-  // The destination already exists. If it's a DIFFERENT personality that happens
-  // to share the basename, that's a collision — surface it instead of silently
-  // binding this personality to the wrong file. If it's the same personality
-  // (possibly user-edited), keep the existing global copy (edits are never
-  // clobbered).
-  const sourceMeta = await loadPersonalityMeta(sourcePath);
-  const destMeta = await loadPersonalityMeta(dest);
-  if (sourceMeta?.name && (!destMeta || destMeta.name !== sourceMeta.name)) {
-    throw new Error(
-      `Personality "${sourceMeta.name}" collides with an existing global file "${dest}"` +
-      (destMeta?.name ? ` (personality "${destMeta.name}")` : ` (not a recognized personality)`) +
-      `. Rename or remove that file first.`
-    );
-  }
-  return dest;
-}
-
-/**
  * Write a personality file atomically (temp + rename) so a crash mid-write can't
- * leave a truncated JSON file that would then be treated as the user's copy.
- * Clears the promptReplacer cache so the new content is re-read on next load.
+ * leave a truncated JSON file. Clears the promptReplacer cache so the new
+ * content is re-read on next load.
  */
 async function writePersonalityAtomically(dest: string, content: string): Promise<void> {
   const tmpPath = `${dest}.tmp`;
@@ -243,45 +179,43 @@ async function writePersonalityAtomically(dest: string, content: string): Promis
 }
 
 /**
- * Re-sync stale global copies of **bundled** presets with the files shipped in
- * this extension version, at activation.
+ * Seed and refresh the global personality folder from the shipped
+ * `prompt-replacements/` dir, at activation. Creates files that are missing,
+ * overwrites every bundled basename whose content differs (including the
+ * common file — bundled basenames are extension-owned, user edits to them are
+ * deliberately clobbered), and never touches user-created files (their own
+ * filenames have no bundled twin).
  *
- * Why this exists: applying a personality copies the bundled file into global
- * storage and stores that absolute path in `systemMessageReplacementsFile`.
- * The copy was only ever refreshed when the user re-applied the personality
- * (`ensureGlobalPersonality`), so after an extension upgrade that changed a
- * bundled preset, existing models kept applying the *old* rules forever —
- * silently, with no way for the user to notice short of re-selecting.
+ * Why at activation, not at apply: applying a personality is a bare path
+ * write now, which requires the folder to already hold current bundled files.
+ * (Before this, copies happened at apply and were only refreshed at the next
+ * re-apply — the 1.35.2 bug where upgraded presets never reached existing
+ * models. Seeding at activation makes staleness structurally impossible.)
  *
- * Policy (matches {@link ensureGlobalPersonality}): bundled presets are
- * extension-owned. A global file whose basename has a bundled twin is our
- * file, and the shipped content is authoritative. User-created personalities
- * (no bundled twin, their own filenames) are never touched, nor are workspace
- * `.vllm/` custom replacement files.
- *
- * Idempotent: files already identical are skipped, no cache clear, no write.
- * Returns the basenames that were refreshed so the caller can log.
+ * Idempotent: files already identical are skipped, no write, no cache clear.
+ * Returns the basenames that were written so the caller can log.
  */
 export async function syncBundledPersonalities(
   context: vscode.ExtensionContext
 ): Promise<{ updated: string[] }> {
   const dir = getGlobalPersonalitiesDir(context);
   const bundledDir = getBundledPersonalitiesDir(context);
+  await fs.mkdir(dir, { recursive: true });
 
   let names: string[];
   try {
-    names = await fs.readdir(dir);
+    names = await fs.readdir(bundledDir);
   } catch {
-    return { updated: [] }; // no global personalities yet
+    return { updated: [] }; // no bundled dir (broken VSIX) — nothing to seed
   }
 
   const updated: string[] = [];
   for (const name of names) {
     if (!name.endsWith('.json')) continue;
-    if (name === COMMON_REPLACEMENTS_FILENAME) continue;
 
-    // Only files with a bundled twin are extension-owned; anything else is
-    // a user-created personality and stays exactly as the user left it.
+    // Iterate the BUNDLED dir: only files with a bundled twin are
+    // extension-owned; anything else sitting in global storage is a
+    // user-created personality and stays exactly as the user left it.
     let bundledContent: string;
     try {
       bundledContent = await fs.readFile(path.join(bundledDir, name), 'utf-8');
@@ -290,11 +224,11 @@ export async function syncBundledPersonalities(
     }
 
     const dest = path.join(dir, name);
-    let current: string;
+    let current: string | null = null;
     try {
       current = await fs.readFile(dest, 'utf-8');
     } catch {
-      continue;
+      // Missing global copy — seed it.
     }
     if (current === bundledContent) continue;
 

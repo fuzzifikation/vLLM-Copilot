@@ -334,6 +334,7 @@ export const window: {
   showInformationMessage(message: string, ...items: (string | Record<string, unknown>)[]): Promise<string | undefined>;
   showWarningMessage(message: string, ...items: (string | Record<string, unknown>)[]): Promise<string | undefined>;
   showErrorMessage(message: string, ...items: (string | Record<string, unknown>)[]): Promise<string | undefined>;
+  showOpenDialog(options?: unknown): Promise<Uri[] | undefined>;
   showInputBox(options?: InputBoxOptions, token?: CancellationToken): Promise<string | undefined>;
   showQuickPick<T extends QuickPickItem>(
     items: readonly T[] | Thenable<readonly T[]>,
@@ -354,6 +355,9 @@ export const window: {
   showInformationMessage: () => Promise.resolve(undefined),
   showWarningMessage: () => Promise.resolve(undefined),
   showErrorMessage: () => Promise.resolve(undefined),
+  // Default: user cancels the dialog (no selection). Tests that need a pick
+  // spy on this and resolve their own Uri[].
+  showOpenDialog: () => Promise.resolve(undefined),
   showInputBox: () => Promise.resolve(undefined),
   showQuickPick: ((..._args: unknown[]) => Promise.resolve(undefined)) as any,
   createQuickPick: <T extends QuickPickItem>() => {

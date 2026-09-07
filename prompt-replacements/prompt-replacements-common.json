@@ -1,7 +1,7 @@
 {
   "meta": {
     "name": "Shared Boilerplate Removal",
-    "description": "Personality-neutral rules that strip Microsoft identity and safety boilerplate. Applied automatically to every model that has a personality set (any personality except Default). Not selectable as a personality."
+    "description": "Personality-neutral rules that strip Microsoft identity and safety boilerplate. Pulled in by the personality presets through an include entry at the end of their rules; not selectable as a personality."
   },
   "rules": [
     {

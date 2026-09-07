@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.36.4
+
+The Dashboard should stop lying about dead servers, and personality files can be user-generated.
+
+### Added
+
+- **Bring your own personality.** The goal: your own system-prompt replacements should work as a real personality, bound to no folder of ours. Two new buttons on the Personality card in Model Settings: **+ New** opens a ready-made, self-explaining personality template in an unsaved editor (save it wherever you like, your own folder, `.vllm/`, your repo), and **Load** attaches any replacements JSON to the model, validated at pick time, and every edit you save applies on the next request, no re-attach. Replacement files can now pull in other files: an `{ "include": ... }` entry splices another file's rules in at its position, and an include is only ever a path - the presets end with `{ "include": "prompt-replacements-common.json" }`, the shared boilerplate removals seeded right next to them - and in your own file that line is yours to keep, move, or delete. The dropdown reads the global `personalities/` folder, which the extension seeds from its shipped presets at every start and otherwise never touches, so any personality file you put in that folder appears too. An attached user file shows in the dropdown as what it is instead of the form claiming Default.
+
+### Fixed
+
+- **Offline servers go red again.** Since 1.36.0 a server that cannot be reached spun "Loading" forever instead of showing the red **Offline** dot: the failed probe result was built from the same placeholder as the pre-first-poll state, so the dashboard never believed the verdict. A dead server now turns red within one poll (5 s at worst) and, unfolded, names the reason: **Cannot connect**, or the health-check status it actually got.
+
 ## v1.36.3
 
 ### Added

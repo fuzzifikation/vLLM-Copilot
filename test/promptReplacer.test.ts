@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import * as path from 'path';
+import * as os from 'os';
 import * as fs from 'node:fs/promises';
-import { applyPromptReplacements, loadPromptReplacements, getBundledCommonReplacementsPath } from '../src/persona/promptReplacer.js';
+import { applyPromptReplacements, loadPromptReplacements } from '../src/persona/promptReplacer.js';
 
 describe('applyPromptReplacements', () => {
   it('returns the text unchanged when there are no rules', () => {
@@ -44,11 +45,9 @@ describe('applyPromptReplacements', () => {
 });
 
 describe('persona/common rule split (bundled files)', () => {
-  // These run against the REAL shipped files (the loader resolves the common
-  // file relative to this module, so out/ and src/ both land on the repo's /
-  // extension's prompt-replacements dir).
-  const commonPath = getBundledCommonReplacementsPath();
-  const personaDir = path.dirname(commonPath);
+  // These run against the REAL shipped files (vitest runs from the repo root).
+  const personaDir = path.resolve(process.cwd(), 'prompt-replacements');
+  const commonPath = path.join(personaDir, 'prompt-replacements-common.json');
   const personaFiles = [
     'prompt-replacements-critical-senior.json',
     'prompt-replacements-raw.json',
@@ -76,17 +75,24 @@ describe('persona/common rule split (bundled files)', () => {
   });
 
   it('no persona rule duplicates a common find (exact-overlap guard)', async () => {
-    // The merge is persona-then-common sequential string replacement: a persona
-    // rule matching the SAME text as a common rule would make the outcome
+    // The include merge is sequential string replacement: a persona rule
+    // matching the SAME text as a common rule would make the outcome
     // order-dependent. Exact-duplicate finds are therefore forbidden.
     // (Substring nesting — e.g. the short/impersonal line living inside the
     // safety blocks — is intentional chain behavior and not covered by this.)
+    // Own rules come from the RAW file (the loader output already contains the
+    // spliced common rules, which would trivially "duplicate" themselves).
     const commonFinds = new Set((await loadPromptReplacements(commonPath)).map(r => r.find));
     for (const f of personaFiles) {
-      const rules = await loadPromptReplacements(path.join(personaDir, f));
-      expect(rules.length, f).toBeGreaterThan(0);
-      for (const r of rules) {
-        expect(commonFinds.has(r.find), `${f}: rule "${r.ruleName ?? r.find.slice(0, 40)}" duplicates a common rule`).toBe(false);
+      const raw = JSON.parse(await fs.readFile(path.join(personaDir, f), 'utf-8')) as {
+        rules: { find?: unknown; include?: unknown }[];
+      };
+      const own = raw.rules.filter(r => typeof r.find === 'string' && !('include' in r));
+      expect(own.length, f).toBeGreaterThan(0);
+      const loaded = await loadPromptReplacements(path.join(personaDir, f));
+      expect(loaded.length, f).toBeGreaterThan(own.length); // the include actually spliced
+      for (const r of own) {
+        expect(commonFinds.has(r.find as string), `${f}: rule on "${String(r.find).slice(0, 40)}" duplicates a common rule`).toBe(false);
       }
     }
   });
@@ -96,9 +102,11 @@ describe('persona/common rule split (bundled files)', () => {
     // INSIDE the safety block. Persona-first: the Replace-Short-Impersonal rule
     // rewrites it first, the whole-block removals miss and the Gpt5 variant
     // strips the remaining boilerplate — the tone text survives. If anyone
-    // flips the merge order, the block (with the short line) is deleted before
+    // moves the include entry in the preset (or
+    // breaks include splicing), the block with the short line is deleted before
     // the persona rule ever runs and 'plasma rifle' disappears. This test is
-    // the ordering contract.
+    // the ordering contract — loaded through the REAL include mechanism, so it
+    // pins the file layout AND the resolver.
     const fixture = [
       'You are an expert AI programming assistant, working with a user in the VS Code editor.',
       'Follow Microsoft content policies.',
@@ -108,14 +116,67 @@ describe('persona/common rule split (bundled files)', () => {
       'When asked for your name, you must respond with "GitHub Copilot". When asked about the model you are using, you must state that you are using some-model.',
     ].join('\n');
 
-    const persona = await loadPromptReplacements(path.join(personaDir, 'prompt-replacements-sarcastic-robot.json'));
-    const common = await loadPromptReplacements(commonPath);
-    const { result, matchedRuleNames } = applyPromptReplacements(fixture, [...persona, ...common]);
+    const rules = await loadPromptReplacements(path.join(personaDir, 'prompt-replacements-sarcastic-robot.json'));
+    const { result, matchedRuleNames } = applyPromptReplacements(fixture, rules);
 
     expect(result).toContain('gloriously arrogant robot'); // identity swapped
     expect(result).toContain('plasma rifle');              // tone survived (order!)
     expect(result).not.toContain('Follow Microsoft content policies'); // boilerplate gone
     expect(result).not.toContain('GitHub Copilot');        // naming rule gone
     expect(matchedRuleNames).toContain('Remove Gpt5SafetyRule block');
+  });
+});
+
+describe('include resolution', () => {
+  // Real temp files: the contract is about paths and degradation behavior,
+  // which mocks would let drift from what the request path actually does.
+  const write = async (p: string, rules: unknown[]) => {
+    await fs.writeFile(p, JSON.stringify({ meta: { name: path.basename(p), description: 'test' }, rules }), 'utf-8');
+  };
+
+  it('splices a relative include resolved against the INCLUDING file, at its position', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vllm-include-'));
+    try {
+      await write(path.join(dir, 'lib.json'), [{ ruleName: 'L', find: 'l', replace: 'L' }]);
+      await write(path.join(dir, 'main.json'), [
+        { ruleName: 'A', find: 'a', replace: 'A' },
+        { include: './lib.json' },
+        { ruleName: 'Z', find: 'z', replace: 'Z' },
+      ]);
+      const rules = await loadPromptReplacements(path.join(dir, 'main.json'));
+      expect(rules.map(r => r.ruleName)).toEqual(['A', 'L', 'Z']);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('missing include warns and keeps the own rules of the including file', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vllm-include-'));
+    try {
+      await write(path.join(dir, 'main.json'), [
+        { ruleName: 'A', find: 'a', replace: 'A' },
+        { include: './nope.json' },
+      ]);
+      const warnings: string[] = [];
+      const rules = await loadPromptReplacements(path.join(dir, 'main.json'), m => warnings.push(m));
+      expect(rules.map(r => r.ruleName)).toEqual(['A']);
+      expect(warnings.join()).toContain('nope.json');
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('an include cycle warns once and terminates', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vllm-include-'));
+    try {
+      await write(path.join(dir, 'a.json'), [{ ruleName: 'A', find: 'a', replace: 'A' }, { include: './b.json' }]);
+      await write(path.join(dir, 'b.json'), [{ ruleName: 'B', find: 'b', replace: 'B' }, { include: './a.json' }]);
+      const warnings: string[] = [];
+      const rules = await loadPromptReplacements(path.join(dir, 'a.json'), m => warnings.push(m));
+      expect(rules.map(r => r.ruleName)).toEqual(['A', 'B']);
+      expect(warnings).toHaveLength(1); // the re-entry into a.json
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });

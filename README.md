@@ -22,6 +22,7 @@ For teams running AI on their own vLLM servers for many users, this gives you th
 - **Multi-server, multi-user by design**: each server and model carries its own endpoint, auth, sampling, and token budget. Different teams, environments, or credentials stay isolated and independently managed. But all models are available in the model picker of familiar Copilot!
 - **Full request control**: model modes give you any vLLM parameter, such as thinking effort, sampling, and structured output. A dedicated **Output Length** dropdown caps response length without a settings edit. Switch both per model from the Copilot picker.
 - **Your model, your rules (uncensoring)**: personality presets strip Copilot's hidden Microsoft safety and identity rules from every request - like serving an abliterated model, but at request time. You own the policy. See [Personalities & System Prompts](#personalities--system-prompts).
+- **Bring your own personality**: write your own find/replace personality file (a template is one click away in Model Settings), keep it wherever you want, even in your repo, attach it with "Load", and every edit applies on the next request.
 - **OpenRouter**: add any of **~415 cloud models** in a few clicks. Useful for teams without GPU capacity. Real context window, capabilities, pricing, and **actual spend** (`usage.cost`) show on the dashboard. See [Using OpenRouter](#using-openrouter).
 - **Other backends supported**: llama.cpp, LM Studio, and Ollama alongside vLLM, each with core features like chat, streaming, tools, personalities, and usage tracking.
 
@@ -253,7 +254,7 @@ A visual editor for per-model configuration, no `settings.json` required:
 1. Set `vllm-copilot.systemMessageCapture: true`
 2. Unique system messages are written to `.vllm/system-messages.json`
 3. Write a JSON file of find/replace rules
-4. Point `systemMessageReplacementsFile` at it on the model entry
+4. Point `systemMessageReplacementsFile` at it on the model entry (or Model Settings → **Load**)
 
 Replacements are exact substring matches, applied sequentially to every system message before it reaches vLLM.
 
@@ -274,7 +275,7 @@ This uses the System-Instructions-Replacement of above with pre-made instruction
 | **Sarcastic Robot** | Brilliant, condescending, politically incorrect. Fixes your code anyway. |
 | **Spartan** | Minimalist replies: short, little to read, to the point. Saves tokens. |
 
-Bundled presets are extension-owned and re-synced on every apply; custom behavior belongs in your own replacement file (below) or a user-created personality.
+Each preset ends with `{ "include": "prompt-replacements-common.json" }` - the shared boilerplate removals file (safety rules, "your name is GitHub Copilot" identity) sitting right next to it: the voices live once per preset, the removals once in that file. An include is always a path, and a bare filename resolves next to the file - so personality files stay portable byte for byte across machines as long as they sit next to a copy of the shared file, and saving into the `personalities/` folder guarantees exactly that. In your own personality file that include is just a line: keep it, move it, or delete it to run with only your rules.
 
 > ### 🔓 Uncensored
 > Every personality except **Default** strips Microsoft's hidden safety and identity rules (the hidden System-Prompt like "Follow Microsoft content policies…", etc) before your model sees them. Same philosophy as abliterated and uncensored models. **You** own the policy. No open model neutered by a corporate ruleset in a box you control. You are in charge and fully responsible. See [DISCLAIMER.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/DISCLAIMER.md).

@@ -1,5 +1,7 @@
+import * as fs from 'fs/promises';
+import * as path from 'path';
 import * as vscode from 'vscode';
-import { ServerSettingsViewProvider, resolveDetectedServerType } from '../src/ui/serverSettingsView.js';
+import { personalityTemplate, ServerSettingsViewProvider, resolveDetectedServerType } from '../src/ui/serverSettingsView.js';
 import { ModelConfig } from '../src/state/config.js';
 import { resetOpenRouterCaches } from '../src/backends/openRouter.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -417,7 +419,7 @@ describe('ServerSettingsViewProvider', () => {
         update: vi.fn().mockResolvedValue(undefined),
       };
 
-      // clear: true avoids ensureGlobalPersonality (no fs access).
+      // clear: true is a bare path write (no fs access — applying never copies).
       await (provider as any).applyPersonality({
         type: 'applyPersonality',
         server: 'test',
@@ -563,5 +565,31 @@ describe('resolveDetectedServerType', () => {
 
   it('does not treat a zero max_model_len as a vLLM signal', () => {
     expect(resolveDetectedServerType([{ owned_by: 'llamacpp', max_model_len: 0 }], [])).toBe('llamacpp');
+  });
+});
+
+describe('personalityTemplate (+ New seed content)', () => {
+  // Real breakage caught: the template is generated JSON (a copy of the Raw
+  // preset) shipped to every user who clicks the button. Pinning: valid JSON,
+  // the real rules are copied untouched, the shared include is rewritten to
+  // an ABSOLUTE path into the seeded folder (a new file has no fixed home,
+  // so a bare name would resolve only by luck), meta is the placeholder, and
+  // the drop-in folder is printed.
+  const dir = 'C:/Users/tester/AppData/Roaming/Code/User/globalStorage/System-Sciences.vllm-copilot/personalities';
+  const rawPath = path.join(process.cwd(), 'prompt-replacements', 'prompt-replacements-raw.json');
+
+  it('copies the Raw preset rules, rewrites the shared include to the folder\'s absolute path, placeholder meta', async () => {
+    const raw = JSON.parse(await fs.readFile(rawPath, 'utf-8')) as { rules: unknown[] };
+    const parsed = JSON.parse(await personalityTemplate(rawPath, dir)) as {
+      _howTo: string[];
+      meta: { name: string; description: string };
+      rules: unknown[];
+    };
+
+    expect(parsed.rules).toHaveLength(raw.rules.length);
+    expect(parsed.rules.slice(0, -1)).toEqual(raw.rules.slice(0, -1)); // real rules, untouched
+    expect(parsed.rules.at(-1)).toEqual({ include: `${dir}/prompt-replacements-common.json` }); // absolute: resolves wherever the file is saved
+    expect(parsed.meta).toEqual({ name: 'My Personality', description: 'Say what this personality does.' });
+    expect(parsed._howTo.join('\n')).toContain(dir);
   });
 });

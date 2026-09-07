@@ -191,13 +191,13 @@ Full design (data model, persistence, retention, summation semantics): **[Token 
 
 ### Personality presets
 
-Personalities replace Copilot's ~21KB system-prompt boilerplate with something useful, per model, no JSON editing. Pick one from Model Settings or via **Set Model Personality**; **Default (no personality)** restores the original prompt. The choice is copied to the extension's global storage, so it follows you across workspaces and survives upgrades.
+Personalities replace Copilot's ~21KB system-prompt boilerplate with something useful, per model, no JSON editing. Pick one from Model Settings or via **Set Model Personality**; **Default (no personality)** restores the original prompt. All selectable personalities live in one folder - the extension's global `personalities/` directory - which the extension seeds with the shipped presets at every start. Drop your own personality file into that folder and the dropdown lists it when it next refreshes (opening Model Settings or the **Set Model Personality** picker is enough). Keep `meta.name` unique across the folder: the pickers display that name, so two files sharing it appear identical and the extension warns you about the collision.
 
 The bundled presets are: **Raw (Model Natural)** (strips the boilerplate, no persona), **Supportive Mentor**, **Critical Senior Dev**, **Sarcastic Robot**, and **Spartan** (minimalist, saves tokens). Each is described in the [README](../README.md#personalities--system-prompts).
 
-Personality files carry only the voice; the boilerplate stripping (safety rules, "your name is GitHub Copilot") lives in one shared file that is appended automatically for every active personality - personality files or your own replacement file alike. **Default** stays completely untouched. When a personality is set, one repair fixes all personalities.
+Personality files carry the voice; the boilerplate stripping (safety rules, "your name is GitHub Copilot") lives in one shared file that each personality pulls in through an `{ "include": "prompt-replacements-common.json" }` entry at the end of its rules - that file sits right next to the presets. An include is always a path: a file saved into the `personalities/` folder can use that same bare filename (the shared file lives there too), anywhere else give it an absolute path or keep a copy of the shared file next to yours. **Default** stays completely untouched. When a personality is set, one repair fixes all personalities.
 
-Bundled presets are extension-owned and re-synced on every apply, so edits to a bundled preset get clobbered. Custom behavior belongs in your own replacement file or a user-created personality. Details: **[Custom System Prompt / Personality Presets](custom-system-prompt.md)**.
+**Bring your own:** **+ New** opens a personality template in an unsaved editor - save it wherever you want (your folder, `.vllm/`, a repo). Save it into the shared personalities folder instead - its exact path is printed in the template - and it joins every model's dropdown. **Load** attaches any replacements JSON to the model; edits you save to that file apply on the next request, no re-attach. Keep or delete the `include` line in your file to decide whether the shared boilerplate removals run for you. Bundled filenames are extension-owned and re-copied at every start, so customize by making your own file, not by editing a preset. Details: **[Custom System Prompt / Personality Presets](custom-system-prompt.md)**.
 
 ### Hidden system instructions (capture & replace)
 
@@ -205,8 +205,8 @@ Copilot injects hidden instructions into every request (~21KB of safety rules an
 
 1. Set `vllm-copilot.systemMessageCapture: true`.
 2. Unique system messages are written to `.vllm/system-messages.json`.
-3. Write a JSON file of find/replace rules (`{ ruleName, find, replace }`).
-4. Point `systemMessageReplacementsFile` at it on the model entry.
+3. Write a JSON file of find/replace rules (`{ ruleName, find, replace }`, optionally with `{ "include": ... }` entries).
+4. Point `systemMessageReplacementsFile` at it on the model entry - or use **Load** in Model Settings.
 
 Replacements are exact substring matches, applied sequentially to every system message before it reaches vLLM. Matched rules are logged in the capture file. The prompt-building architecture behind this: [copilot-integration.md](copilot-integration.md).
 

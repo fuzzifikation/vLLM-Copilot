@@ -6,7 +6,6 @@ import { messageToText } from './messageConverter.js';
 import {
   loadPromptReplacements,
   applyPromptReplacements,
-  getBundledCommonReplacementsPath,
   type PromptReplacement,
 } from '../persona/promptReplacer.js';
 
@@ -122,32 +121,21 @@ export class SystemMessagePipeline {
           this.output.appendLine(`[WARN] Replacements file not found: ${replacementsFile}`);
         }
         if (fileExists) {
-          // Shared boilerplate removals append to EVERY active personality (Default —
-          // no replacements file — never reaches this code path, so the vanilla prompt
-          // stays untouched). Order is load-bearing: persona rules run FIRST, because
-          // persona replace-rules anchor on text that the shared remove-rules delete
-          // (e.g. the short/impersonal line also lives inside the safety blocks).
-          // The two loads are INDEPENDENT try/catches on purpose: the common file is
-          // shared infrastructure, and one corrupt prompt-replacements-common.json
-          // (bad VSIX, hand edit, disk rot) must degrade to persona-only rules — not
-          // throw away the persona rules that parsed fine and silently revert every
-          // model to the vanilla prompt.
-          let personaRules: PromptReplacement[] = [];
+          // One load, includes already spliced at their positions: rule order
+          // (persona first, then the shared-removals include) is data inside
+          // the file, not code. The loader degrades a broken,
+          // missing, or cyclic include to skip-with-warning — one bad reference
+          // never discards the file's own rules, and Default (no file) still
+          // gets zero replacements, so the vanilla prompt stays untouched.
           try {
-            personaRules = await loadPromptReplacements(replacementsFile);
+            replacements = await loadPromptReplacements(replacementsFile, (msg) =>
+              this.output.appendLine(`[WARN] ${msg}`));
           } catch (err) {
             this.output.appendLine(`[WARN] Personality replacements failed to load, continuing without it: ${err instanceof Error ? err.message : String(err)}`);
           }
-          let commonRules: PromptReplacement[] = [];
-          try {
-            commonRules = await loadPromptReplacements(getBundledCommonReplacementsPath());
-          } catch (err) {
-            this.output.appendLine(`[WARN] Shared common-replacements failed to load, continuing persona-only: ${err instanceof Error ? err.message : String(err)}`);
-          }
-          replacements = [...personaRules, ...commonRules];
           if (replacements.length > 0) {
             this.output.appendLine(
-              `[INFO] Loaded ${personaRules.length} personality + ${commonRules.length} shared replacement rule(s) from ${replacementsFile}`
+              `[INFO] Loaded ${replacements.length} replacement rule(s) from ${replacementsFile}`
             );
           }
         }

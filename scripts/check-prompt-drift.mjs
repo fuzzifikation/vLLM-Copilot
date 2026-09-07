@@ -78,7 +78,7 @@ const BASELINE = {
   'safetyRules.tsx': '7ecef64b69f9b3d69b90ca09a6b6ea186af08e88',
   'copilotIdentity.tsx': '5a25066c49f5878ea09ea8e22cadeb7a3d038edc',
   'agentPrompt.tsx': 'ef7f92fedb3844189167ba31413f04be8c5c632e',
-  'defaultAgentInstructions.tsx': '782f35c152f37d83f52c44b223f99c4f93309d67',
+  'defaultAgentInstructions.tsx': '90918df3b64d77ea798b57f975b5d35b2f7a9361',
   'openai/defaultOpenAIPrompt.tsx': '4fbcbe0d95691a8d0ee9c96673bfeae87981f703',
   'promptVariablesService.ts': 'c2b23c9fb3c3b193a8179b04de3f34d20dbfd46a',
 };

@@ -185,16 +185,16 @@ export async function activate(context: vscode.ExtensionContext) {
     const fullConfig = await getConfig();
     outputChannel.appendLine(`[INFO] vLLM-Copilot activated (${fullConfig.models.length} model(s) configured)`);
 
-    // Heal stale global copies of bundled presets. Personalities are copied to
-    // global storage when applied and referenced by absolute path from there;
-    // without this sync, models kept the rules from whenever the personality
-    // was last re-applied, so preset updates (e.g. Agents-window rules) never
-    // reached existing users until manual re-selection.
+    // Seed and refresh the global personality folder from the shipped bundle.
+    // Bundled filenames are extension-owned, so this fires whenever they are
+    // missing or differ from the current install (fresh profile, extension
+    // update) — without it, the folder could not be the single source the
+    // pickers and stored paths point at.
     try {
       const { updated } = await syncBundledPersonalities(context);
       if (updated.length > 0) {
         outputChannel.appendLine(
-          `[INFO] Refreshed ${updated.length} out-of-date personality preset(s) in global storage: ${updated.join(', ')}`
+          `[INFO] Seeded or refreshed ${updated.length} personality file(s) in global storage: ${updated.join(', ')}`
         );
       }
     } catch (err) {

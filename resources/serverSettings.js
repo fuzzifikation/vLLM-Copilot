@@ -98,8 +98,8 @@
       const keepDraft = dirty && !pendingSave;
       pendingSave = false;
       if (keepDraft) {
-        // Merge the new baseline + active-personality label without rebuilding the
-        // form, so the rest of the draft (unsaved edits) is not discarded.
+        // Merge the new baseline without rebuilding the form, so the rest of
+        // the draft (unsaved edits) is not discarded.
         // Refresh the model baseline itself too: save() spreads S.mc as the
         // payload base, so a stale entry here would write back fields the form
         // never renders (cost, family, preset metadata) from a pre-refresh
@@ -110,10 +110,6 @@
           const freshMc = sv.models.find(m => (m.id || m.vllmModelId) === S.selModel);
           if (freshMc) S.mc = freshMc;
         }
-        const activeName = S.activePersonalities[S.selModel];
-        const pSel = document.getElementById('personalitySel');
-        const hint = pSel && !pSel.disabled ? document.querySelector('.personality-card .field-hint') : null;
-        if (hint) hint.textContent = activeName ? 'Active: ' + activeName : 'Copilot\'s original system prompt';
       } else {
         try { render(); } catch(err) {
           document.getElementById('root').innerHTML = '<p style="color:var(--vscode-errorForeground)">Render error: ' + E(err.message) + '</p>';
@@ -436,12 +432,11 @@
       // Personality picker lives in General, alongside the model's identity fields —
       // the Auto-Configure/Remove buttons above address the model, not the personality.
       const isConfigured = configKeys.has(S.selModel);
-      const activeName = S.activePersonalities[S.selModel] || '';
       // Personality dropdown (global) + raw replacements-file path + the system
       // prompt recording toggle — one section for everything that shapes the
       // system prompt a model receives.
       h += sec('Personality and System Prompt',
-        personalityCard(isConfigured, activeName) +
+        personalityCard(isConfigured) +
         '<div class="field"><label>systemMessageReplacementsFile</label>' +
         '<input type="text" data-f="systemMessageReplacementsFile" value="' + E(String(m.systemMessageReplacementsFile || '')) + '">' +
         '<div class="field-hint">Path to JSON find/replace rules file (relative paths resolve against the workspace root)</div></div>' +
@@ -518,26 +513,43 @@
     const pSel = document.getElementById('personalitySel');
     if (pSel) {
       const activeName = S.activePersonalities[S.selModel] || '';
-      for (let i = 0; i < pSel.options.length; i++) {
-        if (pSel.options[i].dataset.name === activeName) { pSel.selectedIndex = i; break; }
+      // Identity is the stored path, not the display name: option values ARE the
+      // stored paths, and two files can share a meta.name (a copy of a preset
+      // keeps its name). Matching by name would select the bundled preset while
+      // the model points at the user's copy.
+      const rawFile = ((S.mc && S.mc.systemMessageReplacementsFile) || '').trim();
+      pSel.value = rawFile;
+      const found = pSel.value === rawFile;
+      // Honesty: the model references a user file that is not in the list —
+      // show it as a first-class option instead of falsely claiming Default.
+      if (!found && rawFile && activeName) {
+        const opt = document.createElement('option');
+        opt.value = rawFile;
+        opt.dataset.desc = 'User file - edits apply on the next request. Managed outside the dropdown.';
+        opt.textContent = activeName + ' (user file)';
+        opt.selected = true;
+        pSel.appendChild(opt);
       }
       updatePersonalityDesc(pSel);
       pSel.onchange = () => {
         updatePersonalityDesc(pSel);
         const opt = pSel.options[pSel.selectedIndex];
-        const targetPath = opt.value; // '' for Default
-        const sourcePath = opt.dataset.src || '';
+        const stored = opt.value; // '' for Default — value IS the stored path now (global folder file or user file)
         // Sync the raw systemMessageReplacementsFile input so a quick "Save All
         // Changes" writes the new value instead of the stale one.
         const pathInput = document.querySelector('[data-f="systemMessageReplacementsFile"]');
-        if (pathInput) pathInput.value = targetPath;
+        if (pathInput) pathInput.value = stored;
         // The host answers with a full re-render; the data handler preserves the
         // draft (merges state) whenever the form is dirty, so no flag is needed here.
-        vscode.postMessage(targetPath === ''
+        vscode.postMessage(stored === ''
           ? { type: 'applyPersonality', server: selServerId(), id: S.selModel, clear: true }
-          : { type: 'applyPersonality', server: selServerId(), id: S.selModel, sourcePath: sourcePath });
+          : { type: 'applyPersonality', server: selServerId(), id: S.selModel, sourcePath: stored });
       };
     }
+    const newPersBtn = document.getElementById('newPersBtn');
+    if (newPersBtn) newPersBtn.onclick = () => vscode.postMessage({ type: 'newPersonality' });
+    const pickPersBtn = document.getElementById('pickPersBtn');
+    if (pickPersBtn) pickPersBtn.onclick = () => vscode.postMessage({ type: 'pickPersonalityFile', server: selServerId(), id: S.selModel });
     const captureCb = document.getElementById('captureCb');
     if (captureCb) captureCb.onchange = () => {
       vscode.postMessage({ type: 'setSystemMessageCapture', enabled: captureCb.checked });
@@ -591,24 +603,36 @@
     }
   }
 
-  function personalityCard(isConfigured, activeName) {
+  function personalityCard(isConfigured) {
     let h = '<div class="personality-card">';
-    h += '<label>Personality (global)</label>';
+    h += '<label>Personality</label>';
     h += '<select id="personalitySel"' + (isConfigured ? '' : ' disabled') + '>';
-    h += '<option value="" data-name="">Default (no personality)</option>';
+    h += '<option value="">Default (no personality)</option>';
     S.personalities.forEach(p => {
-      // value = the global target path (what gets stored); data-src = source to copy from.
+      // value = the file that gets stored (global personality folder); a user
+      // file attached via "Load" appears here only as the
+      // honesty option built at wire time from the model's own path.
       // data-desc feeds the live description line under the dropdown; title keeps the
       // hover tooltip for parity with the Set Personality command.
-      h += '<option value="' + E(p.targetPath) + '" data-name="' + E(p.name) + '" data-src="' + E(p.sourcePath) + '" data-desc="' + E(p.description || '') + '" title="' + E(p.description || '') + '">' + E(p.name) + '</option>';
+      h += '<option value="' + E(p.sourcePath) + '" data-desc="' + E(p.description || '') + '" title="' + E(p.description || '') + '">' + E(p.name) + '</option>';
     });
     h += '</select>';
     // Live description of the selected personality — so users know what they're
     // getting into before they commit. Updated on change and on render.
     h += '<div id="personalityDesc" class="personality-desc"></div>';
-    h += '<div class="field-hint">' + (isConfigured
-      ? (activeName ? 'Active: ' + E(activeName) : 'Copilot\'s original system prompt')
-      : 'Configure this model first to set a personality.') + '</div>';
+    // Bring-your-own-personality actions, worded after the card's subject
+    // (personalities, not files - the tooltips carry the file detail).
+    // "+ New" opens the template in an unsaved editor (needs no model);
+    // "Load" needs a configured model to write the path onto, so it follows
+    // the select's disabled state. No "Active:" echo below: the select above
+    // already shows what is active.
+    h += '<div class="personality-actions" style="display:flex;gap:8px;margin-top:6px">';
+    h += '<button class="secondary" id="newPersBtn" title="Open a personality template in a new editor - save it wherever you like">+ New</button>';
+    h += '<button class="secondary" id="pickPersBtn" title="Attach a personality replacements file to this model"' + (isConfigured ? '' : ' disabled') + '>Load</button>';
+    h += '</div>';
+    if (!isConfigured) {
+      h += '<div class="field-hint">Configure this model first to set a personality.</div>';
+    }
     h += '</div>';
     return h;
   }

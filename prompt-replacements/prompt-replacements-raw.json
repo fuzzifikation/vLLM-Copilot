@@ -30,6 +30,9 @@
       "scope": "cli",
       "find": "You are an AI assistant using Copilot CLI runtime in VS Code. You help users with software engineering tasks.",
       "replace": ""
+    },
+    {
+      "include": "prompt-replacements-common.json"
     }
   ]
 }

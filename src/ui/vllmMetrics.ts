@@ -991,9 +991,13 @@ async function fetchAllEndpoints(
   const aggregated = parser.aggregate();
   const allModels = [...new Set([...modelNames, ...aggregated.models])];
 
+  // The offline result is a REAL verdict, not the pre-first-poll sentinel: it
+  // must clear `loading`, or the dashboard renders a dead server as an eternal
+  // "Loading" spinner and the red "Offline" never appears (CR-25 fixed the
+  // placeholder, this path inherited the sentinel by reuse).
   const serverMetrics: ServerMetrics = online
     ? { online: true, version, ...aggregated, models: allModels, maxModelLen, account, credits }
-    : emptyMetrics(errorStr ?? 'Unknown error');
+    : { ...emptyMetrics(errorStr ?? 'Unknown error'), loading: false };
 
   // ── Build ServerRawData (raw, for deep-dive) ──
   const raw: ServerRawData = {
