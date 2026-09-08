@@ -376,6 +376,22 @@ export function resolveWorkspaceRelativePath(value: string): string {
 }
 
 /**
+ * Compare two file paths the way the file system sees them.
+ *
+ * Exact string equality is the WRONG comparison on Windows: the stored
+ * `systemMessageReplacementsFile` and a freshly built personality path can name
+ * the same file while differing in drive-letter or folder casing (VS Code has
+ * changed how it reports `globalStorageUri` casing across updates, and Settings
+ * Sync carries a path written on one machine to another). Both sides are
+ * resolved first; the comparison is case-insensitive on Windows, exact elsewhere.
+ */
+export function pathsEquivalent(a: string, b: string): boolean {
+  const ra = path.resolve(a);
+  const rb = path.resolve(b);
+  return process.platform === 'win32' ? ra.toLowerCase() === rb.toLowerCase() : ra === rb;
+}
+
+/**
  * Resolve the extension-side identity of a model config: its unique `id`, falling
  * back to the vLLM wire id for legacy hand-written entries that predate the id
  * scheme. This is the key used for personalities, the webview, and config

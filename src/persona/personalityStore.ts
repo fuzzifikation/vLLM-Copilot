@@ -32,7 +32,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { loadPersonalityMeta, clearPersonalityCache, COMMON_REPLACEMENTS_FILENAME } from './promptReplacer.js';
-import { resolveWorkspaceRelativePath } from '../state/config.js';
+import { resolveWorkspaceRelativePath, pathsEquivalent } from '../state/config.js';
 
 export interface PersonalityEntry {
   name: string;
@@ -148,6 +148,10 @@ async function scanPersonalityDir(dir: string): Promise<PersonalityEntry[]> {
 /**
  * Resolve which personality a model's `systemMessageReplacementsFile` refers to.
  * Relative paths are resolved against the workspace root (matches provider.ts).
+ * Matching is file-system-equivalent (case-insensitive on Windows), never exact
+ * string equality — a stored path whose casing drifted from the live
+ * `globalStorageUri` casing still names the same preset (regression: 1.36.4
+ * path-equality matching made such presets show as "(user file)").
  * Returns null for empty/clear values and for files that aren't a known personality
  * (e.g. a custom `.vllm/` replacement file — those are not personalities).
  *
@@ -163,7 +167,7 @@ export async function resolveActivePersonality(
   if (!value) return null;
   const abs = resolveWorkspaceRelativePath(value);
   const all = known ?? (await discoverPersonalities(context));
-  return all.find(e => path.resolve(e.sourcePath) === abs) ?? null;
+  return all.find(e => pathsEquivalent(e.sourcePath, abs)) ?? null;
 }
 
 /**

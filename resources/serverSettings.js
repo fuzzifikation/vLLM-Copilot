@@ -519,7 +519,19 @@
       // the model points at the user's copy.
       const rawFile = ((S.mc && S.mc.systemMessageReplacementsFile) || '').trim();
       pSel.value = rawFile;
-      const found = pSel.value === rawFile;
+      let found = pSel.value === rawFile;
+      // Stored paths name the file, not its exact spelling: Windows is
+      // case-insensitive and drive-letter casing drifts (VS Code updates,
+      // Settings Sync). Before calling an unlisted path a user file, match the
+      // options the way the file system would — same path, any casing.
+      if (!found && rawFile && /^[a-zA-Z]:/.test(rawFile)) {
+        const normP = p => String(p).split('/').join('\\').toLowerCase();
+        const want = normP(rawFile);
+        for (let i = 0; i < pSel.options.length; i++) {
+          const o = pSel.options[i];
+          if (o.value && normP(o.value) === want) { pSel.value = o.value; found = true; break; }
+        }
+      }
       // Honesty: the model references a user file that is not in the list —
       // show it as a first-class option instead of falsely claiming Default.
       if (!found && rawFile && activeName) {

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.36.6
+
+### Fixed
+
+- **Your personality stays recognized after an update.** The goal: the Model Settings dropdown always tells you the truth about which personality a model uses. Since 1.36.4 some models showed their applied preset as "(user file)" after updating, even though the personality itself still worked. That mislabel is gone: your presets are recognized again, and "(user file)" now appears only for files you attached yourself.
+
 ## v1.36.5
 
 ### UI/UX Improvements
