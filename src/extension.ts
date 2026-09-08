@@ -26,6 +26,7 @@ import {
   registerMoveServerStepCommands,
   registerRemoveServerCommand,
   registerRemoveModelCommand,
+  registerOpenDashboardWebCommand,
   registerResetUsageCommand,
   registerConfigureCostCommand,
 } from './commands/commands.js';
@@ -276,6 +277,7 @@ export async function activate(context: vscode.ExtensionContext) {
       registerMoveServerStepCommands(context, activeProvider, outputChannel),
       registerRemoveServerCommand(context, activeProvider, outputChannel),
       registerRemoveModelCommand(context, activeProvider, outputChannel),
+      registerOpenDashboardWebCommand(),
       registerResetUsageCommand(outputChannel),
       registerConfigureCostCommand(context, outputChannel),
       registerOpenDeepDiveCommand(context, outputChannel),

@@ -21,7 +21,7 @@ No open findings. Everything below this section is standing rulings (rejections 
 Standing decisions, not history. Re-verified by hostile re-read before landing here.
 
 - **`.github/workflows/preset-index.yml` "contradicts" the gen-preset-index header.** The file does not exist; the reviewer read an open editor tab. Both phantom-file findings this project has produced were caught by touching actual bytes. `Test-Path` before believing any claim about file existence, including a subagent's.
-- **`addServerFlow.ts` `@internal Exported for the auto-configure flow` on `confirmAndSaveAddedModel`.** `autoConfigureFlow.ts` genuinely imports it. Honest marker; a sweep-and-destroy on these comments would have broken a truth.
+- **`@internal` markers on shared add-flow helpers (`confirmAndSaveAddedModel`, `ensureServerEntry`).** Their declared consumers genuinely import them; a sweep-and-destroy on these comments would have broken a truth. (Markers since re-scoped when the add-flow core moved to its own module - the ruling is about not blind-sweeping honest markers.)
 - **`sessionManager.ts` `vsCodeRoot()` fallback is dead.** Production-unreachable, confirmed, but self-labelled "Defensive fallback for direct module use before extension activation". Same class as the `serverAuth.ts` narrowing guards, kept deliberately.
 - **Test comments citing round-1 tracker IDs (`CR-7`, `finding 1`).** Those point at history this file no longer carries. Citation rot is the accepted price of the live-issues-only rule; the asserted behaviors were spot-checked against current `src` and match.
 - **`configSchemaTool.ts` GUIDE's vLLM param-mapping claims "may be outdated".** External vendor behavior, ungroundable from inside this repo, no evidence of drift.
@@ -41,7 +41,6 @@ Backlog note (not a finding): `test/webviewContract.test.ts` honestly scopes its
 ## Deferred architecture
 
 - Group provider discovery metadata fetches per server instead of per model.
-- Move the OpenRouter onboarding flow out of the oversized generic Add Server module (behavior-preserving).
 - `requestBuilder` runs `resolveServerType` + `resolveServerConfig` (two resolver passes for one entry); mergeable into one resolved object. Waived as structural taste unless a third caller appears ("could be one helper" is not "should be one helper").
 - Backend descriptor table, migration rails, typed error taxonomy: see the build triggers in `feature-ideas.md`. None of the triggers has fired.
 - General UI or module rewrites around Model Settings / OpenRouter onboarding. Prefer targeted behavior fixes.

@@ -105,7 +105,7 @@ No workspace files are created; the schema is served from the extension itself.
 <table>
 <tr><td>
 
-- In **Step 3**, enter `https://openrouter.ai` as the server URL, or paste the full web path to the model, e.g. `https://openrouter.ai/poolside/laguna-s-2.1:free` (this pre-fills the model picker). Then enter your OpenRouter API key from [openrouter.ai/keys](https://openrouter.ai/keys) when prompted.
+- In **Step 3**, enter `https://openrouter.ai` as the server URL, or paste the full web path to the model, e.g. `https://openrouter.ai/poolside/laguna-s-2.1:free` (this goes straight to that model, skipping the picker). Then enter your OpenRouter API key from [openrouter.ai/keys](https://openrouter.ai/keys) when prompted.
 </td></tr>
 </table>
 

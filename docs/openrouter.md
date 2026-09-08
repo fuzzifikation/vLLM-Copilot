@@ -10,7 +10,7 @@ OpenRouter is a **managed remote**. There is no server to run and nothing to ins
 |---|---|
 | `https://openrouter.ai` | The website URL (what you see in your browser tab). Works as-is. |
 | `https://openrouter.ai/api` | The API base, also fine. |
-| A model page like `https://openrouter.ai/nvidia/nemotron-3.5-lightning:free` | Works, and pre-fills the model picker with that model. |
+| A model page like `https://openrouter.ai/nvidia/nemotron-3.5-lightning:free` | Works, and goes straight to that model (the model picker is skipped, the confirm dialog is your review point). |
 
 If you have OpenRouter open in a browser tab, copy the URL from the address bar. The web URL works as-is.
 

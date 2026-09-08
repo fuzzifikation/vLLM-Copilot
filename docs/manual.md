@@ -166,7 +166,7 @@ Right after an update or after giving a model its first menu, VS Code's settings
 
 ### Server Dashboard
 
-A native Tree View sidebar (no webviews, no extra ports) with live metrics per configured server: queue status (running/waiting/idle), expandable metrics (context window, vLLM version, KV cache usage and hit rate, TTFT, output and prefill speed), MTP/speculative decoding stats, and Last Request Details (token counts, TTFT, queue time, generation time, throughput - updated immediately after every prompt, not on the poll interval). Open it with the **V** icon in the activity bar (left sidebar). Command alternative: **View → vLLM-Copilot → Dashboard**.
+A native Tree View sidebar (no webviews, no extra ports) with live metrics per configured server: queue status (running/waiting/idle), expandable metrics (context window, vLLM version, KV cache usage and hit rate, TTFT, output and prefill speed), speculative decoding stats (acceptance, draft depth, per-position acceptance curve), and Last Request Details (token counts, TTFT, queue time, generation time, throughput - updated immediately after every prompt, not on the poll interval). Open it with the **V** icon in the activity bar (left sidebar). Command alternative: **View → vLLM-Copilot → Dashboard**.
 
 ### Server Deep-Dive
 
@@ -248,6 +248,7 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 | **Update Auth** | Rotate API key or change auth headers for a server (right-click on server node). |
 | **Rename** | Set a display label for the right-clicked server entry; empty clears it and shows the URL (right-click on server node). |
 | **vLLM Deep-Dive** | Open the per-server metrics webview (right-click a vLLM server node). |
+| **Open** | Open the web page behind an OpenRouter row in the browser: server row → openrouter.ai, model row → that model's page, **Account** row → your profile settings (right-click; model and Account rows also carry the button inline). |
 | **Remove Model** | Remove a single configured model (button in Model Settings). |
 | **Delete** | Remove the right-clicked server entry only (with confirm). Refuses while any model still references it; other registry entries on the same URL are untouched. |
 | **Move ↑ / Move ↓** | Reorder server rows from the server's right-click menu, or drag one server row onto another (it lands there; dropping below the list moves it to the bottom). The order lives in the `vllm-copilot.servers` array itself - the Dashboard and Model Settings follow it. |

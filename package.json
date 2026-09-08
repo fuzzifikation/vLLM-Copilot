@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM integration for GitHub Copilot and the VS Code Agents window on self-hosted and remote servers (supports full featureset of vLLM and Copilot). No subscription, no telemetry. No work content to any third party. Live observability: queue status, KV-cache, throughput, and more, in a full dashboard UI. Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
-  "version": "1.36.4",
+  "version": "1.36.5",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -224,6 +224,12 @@
         "category": "vLLM-Copilot"
       },
       {
+        "command": "vllm-copilot.openDashboardWeb",
+        "title": "Open",
+        "category": "vLLM-Copilot",
+        "icon": "$(external-link)"
+      },
+      {
         "command": "vllm-copilot.setPollInterval",
         "title": "Set Poll Interval"
       },
@@ -275,6 +281,10 @@
         {
           "command": "vllm-copilot.removeModel",
           "when": "false"
+        },
+        {
+          "command": "vllm-copilot.openDashboardWeb",
+          "when": "false"
         }
       ],
       "view/item/context": [
@@ -282,6 +292,31 @@
           "command": "vllm-copilot.openDeepDive",
           "when": "view == vllm-copilot.dashboard && viewItem =~ /^server(Online|Offline)(Middle|First|Last|Ends)$/",
           "group": "1_deepDive@1"
+        },
+        {
+          "command": "vllm-copilot.openDashboardWeb",
+          "when": "view == vllm-copilot.dashboard && viewItem =~ /^server(Online|Offline)Relay(Middle|First|Last|Ends)$/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "vllm-copilot.openDashboardWeb",
+          "when": "view == vllm-copilot.dashboard && viewItem == openRouterModel",
+          "group": "1_open@1"
+        },
+        {
+          "command": "vllm-copilot.openDashboardWeb",
+          "when": "view == vllm-copilot.dashboard && viewItem == openRouterModel",
+          "group": "inline"
+        },
+        {
+          "command": "vllm-copilot.openDashboardWeb",
+          "when": "view == vllm-copilot.dashboard && viewItem == openRouterAccount",
+          "group": "1_open@1"
+        },
+        {
+          "command": "vllm-copilot.openDashboardWeb",
+          "when": "view == vllm-copilot.dashboard && viewItem == openRouterAccount",
+          "group": "inline"
         },
         {
           "command": "vllm-copilot.updateServerAuth",

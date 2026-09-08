@@ -4,7 +4,7 @@ import { resolveConfigId, resolveVllmModelId, buildModelId, findModelConfigIndex
 import { replaceModelConfig, readModels, readServers, type IdentifiedModelConfig } from '../state/configStore.js';
 import { resolveServer } from '../state/serverRegistry.js';
 import { resolveModelConfigForAddSafely } from './hfDiscovery.js';
-import { confirmAndSaveAddedModel, type ClearCacheProvider } from './addServerFlow.js';
+import { confirmAndSaveAddedModel, type ClearCacheProvider } from './addServerCore.js';
 
 /**
  * Standalone command: re-run auto-configuration (HuggingFace + vLLM server discovery)

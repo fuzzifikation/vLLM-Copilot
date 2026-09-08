@@ -121,7 +121,8 @@ The **vLLM Dashboard** sidebar shows live metrics for each configured vLLM serve
 | **Speed** | Prometheus `request_generation_tokens` ÷ `request_decode_time_seconds`, and `request_prompt_tokens` ÷ `request_prefill_time_seconds` | `Output` = Σ generation tokens / Σ decode time (tok/s, output-only - excludes prefill). `Prefill` = Σ prompt tokens / Σ prefill time (tok/s, includes cache-served tokens). Falls back to TPOT inversion when the pooled metric is absent |
 | **Running** | Prometheus `num_requests_running` | Active requests being processed |
 | **Waiting** | Prometheus `num_requests_waiting` | Requests queued, waiting for GPU |
-| **MTP** | Prometheus `spec_decode_*` | Speculative decoding: acceptance %, draft depth, total proposals (only when active) |
+| **Spec Decode** | Prometheus `spec_decode_*` | Speculative decoding (any method - MTP, EAGLE, ngram, ...): acceptance %, mean draft depth, total drafts (only when active). Expands to **Draft positions** when the server reports per-position counters |
+| **Draft positions** (child of Spec Decode) | Prometheus `spec_decode_num_accepted_tokens_per_pos_total` | Per-position acceptance: P(draft token at depth p survives verification), shallowest first |
 | **Preemptions** | Prometheus `num_preemptions_total` | Only shown when > 0 |
 | **Evictions** | Prometheus `request_eviction_total` | Only shown when > 0 |
 

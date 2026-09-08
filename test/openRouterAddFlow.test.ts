@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { runOpenRouterAddFlow } from '../src/commands/addServerFlow.js';
+import { runOpenRouterAddFlow } from '../src/commands/openRouterAddFlow.js';
 import * as configStore from '../src/state/configStore.js';
 import { resetOpenRouterCaches } from '../src/backends/openRouter.js';
 

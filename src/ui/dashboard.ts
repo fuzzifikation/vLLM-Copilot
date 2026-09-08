@@ -115,6 +115,8 @@ const POSITION_SUFFIX: Record<ServerRowPosition, string> = {
 
 /** A server node in the tree (collapsible, shows metrics as children) */
 class ServerTreeItem extends vscode.TreeItem {
+  /** Browsable web page for the relay's 'Open' menu (undefined on non-relay rows). */
+  readonly webUrl?: string;
   /**
    * @param serverId - Registry entry id. The entry IS the server identity: the
    *   tree id, the engine key, and the Deep-Dive panel key are all this value.
@@ -184,6 +186,9 @@ class ServerTreeItem extends vscode.TreeItem {
     // (First hides Move Up, Last hides Move Down, Ends hides both).
     const kindSuffix = isVllm ? '' : isOpenRouterRelay ? 'Relay' : 'NoDive';
     this.contextValue = `${state}${kindSuffix}${POSITION_SUFFIX[position]}`;
+    // The relay's browsable page is the site root - the stored serverUrl is
+    // the API base, not a web page. The 'Open' menu item opens this.
+    if (isOpenRouterRelay) this.webUrl = 'https://openrouter.ai';
   }
 }
 
@@ -257,6 +262,8 @@ function openRouterFundsLabel(account: OpenRouterAccount | undefined, credits: O
 
 /** OpenRouter relay: collapsible "Account" node — credits/limits from /api/v1/key. */
 class OpenRouterAccountTreeItem extends vscode.TreeItem {
+  /** The 'Open' menu target: the user's OpenRouter profile settings. */
+  readonly webUrl = 'https://openrouter.ai/settings/profile';
   constructor(
     public readonly account: OpenRouterAccount,
     /** Total-budget info from /api/v1/credits (may be undefined on a failed probe). */
@@ -269,6 +276,7 @@ class OpenRouterAccountTreeItem extends vscode.TreeItem {
     this.id = `openRouterAccount:${serverId}`;
     this.description = openRouterFundsLabel(account, credits);
     this.tooltip = new vscode.MarkdownString('OpenRouter account/key health. Reflects the credential this server was configured with.');
+    this.contextValue = 'openRouterAccount';
   }
 }
 
@@ -288,6 +296,9 @@ interface OutputClampCause {
 
 /** OpenRouter relay: one configured model with its own model-level rows. */
 class OpenRouterModelTreeItem extends vscode.TreeItem {
+  /** The 'Open' menu target: the model's page on openrouter.ai (the wire id
+   *  is already a URL path segment, `:free` variants included). */
+  readonly webUrl: string;
   constructor(
     public readonly serverUrl: string,
     public readonly modelId: string,
@@ -319,6 +330,8 @@ class OpenRouterModelTreeItem extends vscode.TreeItem {
     this.tooltip = clamped && configuredOutput !== undefined && effectiveOutput !== undefined
       ? new vscode.MarkdownString(this.buildClampTooltip(modelLabel, configuredOutput, effectiveOutput, clampCauses))
       : new vscode.MarkdownString(`${modelLabel} - click for model-level detail (provider, pricing, context, capabilities, usage).`);
+    this.contextValue = 'openRouterModel';
+    this.webUrl = `https://openrouter.ai/${modelId}`;
   }
 
   /** Honest tooltip: what binds, and whether that's a silent clamp or a hard failure. */
@@ -339,10 +352,23 @@ class OpenRouterModelTreeItem extends vscode.TreeItem {
   }
 }
 
-/** A metric row (label: value) */
+/** A metric row (label: value). Optional child rows turn it into a
+ *  collapsible group (Spec Decode → Draft positions); a parent that must keep
+ *  its expansion across poll refreshes needs a stable `id`, assigned by the
+ *  caller - the same mechanism that keeps ServerTreeItem open (no id = the
+ *  tree treats it as a new item on every refresh and collapses it). */
 class MetricTreeItem extends vscode.TreeItem {
-  constructor(label: string, value: string, icon?: string, tooltip?: string, iconColor?: vscode.ThemeColor) {
-    super(label, vscode.TreeItemCollapsibleState.None);
+  constructor(
+    label: string,
+    value: string,
+    icon?: string,
+    tooltip?: string,
+    iconColor?: vscode.ThemeColor,
+    readonly childRows: MetricTreeItem[] = [],
+  ) {
+    super(label, childRows.length > 0
+      ? vscode.TreeItemCollapsibleState.Collapsed
+      : vscode.TreeItemCollapsibleState.None);
     this.description = value;
     if (icon) {
       this.iconPath = iconColor
@@ -704,6 +730,10 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       return this.getModelUsageChildren(element);
     }
 
+    if (element instanceof MetricTreeItem) {
+      return element.childRows;
+    }
+
     return [];
   }
 
@@ -791,7 +821,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         prefillSpeed != null ? `Output ${outSpeed} · Prefill ${prefillSpeed}` : `Output ${outSpeed}`,
         'rocket',
         m.avgTputTokPerSec != null
-          ? 'Pooled throughput across requests. Output = Σ generation tokens ÷ Σ decode time (output-only; counts every emitted token, so MTP/spec-decode stays honest). Prefill = Σ prompt tokens ÷ Σ prefill time (includes cache-served tokens).'
+          ? 'Pooled throughput across requests. Output = Σ generation tokens ÷ Σ decode time (output-only; counts every emitted token, so speculative decoding stays honest). Prefill = Σ prompt tokens ÷ Σ prefill time (includes cache-served tokens).'
           : 'Average token generation throughput (inverse of time per output token).',
       ));
     }
@@ -814,7 +844,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       ));
     }
 
-    // Speculative decoding
+    // Speculative decoding. The vLLM counters are method-agnostic (MTP, EAGLE,
+    // Medusa, ngram, ...) - never label the row after one method (2026-09-08:
+    // it used to read "MTP" and claim the two were synonyms).
     {
       const hasSpecMetrics =
         m.specAcceptanceRate != null ||
@@ -825,13 +857,30 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         if (m.specAcceptanceRate != null) parts.push(`${Math.round(m.specAcceptanceRate)}%`);
         else parts.push('-');
         if (m.specDraftDepth != null) parts.push(`depth ${m.specDraftDepth.toFixed(1)}`);
-        if (m.specDraftsTotal != null) parts.push(`${m.specDraftsTotal} drafts`);
-        items.push(new MetricTreeItem(
-          'MTP',
+        if (m.specDraftsTotal != null) parts.push(`${fmtCount(m.specDraftsTotal)} drafts`);
+        // One value per draft position; length == configured depth k. A single
+        // position carries no news (it is just len - 1), so it stays hidden.
+        const posChildren = m.specAcceptPerPos && m.specAcceptPerPos.length > 1
+          ? [new MetricTreeItem(
+              'Draft positions',
+              m.specAcceptPerPos.map(p => `${Math.round(p)}%`).join(' · '),
+              'pulse',
+              'Acceptance per draft position, shallowest first: P(the draft token at this depth survives verification) = accepted here / all drafts. Decays with depth. A steep early drop means the draft length exceeds what the target model keeps.',
+            )]
+          : [];
+        const specItem = new MetricTreeItem(
+          'Spec Decode',
           parts.join('  ·  '),
           'lightbulb',
-          'Multi-Token Prediction (speculative decoding). Acceptance rate = percentage of draft tokens accepted without verification.',
-        ));
+          'Speculative decoding (any method: MTP, EAGLE, Medusa, ngram, ...). % = accepted draft tokens / drafted tokens. depth = mean draft tokens proposed per step. Cumulative since server start.'
+            + (posChildren.length > 0 ? ' Expand for per-position acceptance.' : ''),
+          undefined,
+          posChildren,
+        );
+        // Stable id: without it the poll refresh treats the row as a new item
+        // and the expanded curve collapses every cycle.
+        specItem.id = `specDecode:${serverId ?? ''}`;
+        items.push(specItem);
       }
     }
 

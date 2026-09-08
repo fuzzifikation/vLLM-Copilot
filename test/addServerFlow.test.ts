@@ -3,6 +3,8 @@ import * as vscode from 'vscode';
 import {
   confirmAndSaveAddedModel,
   ensureServerEntry,
+} from '../src/commands/addServerCore.js';
+import {
   registerAddServerModelCommand,
   registerAddServerCommand,
 } from '../src/commands/addServerFlow.js';

@@ -683,6 +683,25 @@ export function registerRemoveModelCommand(
 }
 
 /**
+ * Open a dashboard row's web page in the external browser.
+ *
+ * The row carries its own target (`webUrl`): the OpenRouter relay row opens
+ * the site root, a relay model row opens its model page, the Account row
+ * opens the profile settings. Context menu / inline button only - the URL
+ * exists solely on tree items, so the palette can offer nothing useful.
+ */
+export function registerOpenDashboardWebCommand(): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.openDashboardWeb', (arg?: any) => {
+    const url = typeof arg === 'object' ? arg?.webUrl : undefined;
+    if (typeof url !== 'string' || !url) {
+      vscode.window.showWarningMessage('vLLM-Copilot: this dashboard row has no web page to open.');
+      return;
+    }
+    void vscode.env.openExternal(vscode.Uri.parse(url));
+  });
+}
+
+/**
  * Reset accumulated usage counters.
  *
  * Triggered from the "Token Usage and Cost" node's context menu (arg =

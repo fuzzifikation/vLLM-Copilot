@@ -45,6 +45,10 @@ interface ModelAccumulator {
   specDraftTokens: number[];
   specAcceptedTokens: number[];
   specDrafts: number[];
+  /** Accepted-token counts indexed by draft position (the counter's
+   *  `position` label). vLLM pre-creates one counter per position up to
+   *  `num_speculative_tokens`, so the filled length is the configured depth k. */
+  specAcceptedPerPos: number[];
   ttftSum: number;
   ttftCount: number;
   tpotSum: number;
@@ -70,6 +74,12 @@ export interface ServerMetrics {
   specAcceptanceRate: number | null;
   specDraftsTotal: number | null;
   specDraftDepth: number | null;
+  /** Per-position acceptance in %, index = draft position (shallowest first):
+   *  accepted at p / ALL drafts - the cumulative probability that the draft token
+   *  at depth p survives verification. Null when the server reports no per-position
+   *  counters (spec decode off, or pre-0.10 vLLM). Mean acceptance length is
+   *  derivable by the reader as 1 + (Σ rates)/100 - deliberately not stored. */
+  specAcceptPerPos: number[] | null;
   avgTTFTMs: number | null;
   avgTPOTMs: number | null;
   /** Pooled output throughput (tokens/sec) = Σ generation tokens / Σ decode time. */
@@ -140,6 +150,7 @@ class MetricsParser {
         specDraftTokens: [],
         specAcceptedTokens: [],
         specDrafts: [],
+        specAcceptedPerPos: [],
         ttftSum: 0,
         ttftCount: 0,
         tpotSum: 0,
@@ -196,6 +207,17 @@ class MetricsParser {
       case 'vllm:spec_decode_num_drafts_total':
         acc.specDrafts.push(value);
         break;
+      case 'vllm:spec_decode_num_accepted_tokens_per_pos_total': {
+        // One sample per draft position (position="0" ... "k-1"). Acceptance is
+        // a prefix: position p counts the drafts whose (p+1)-th draft token was
+        // verified. Accumulated BY POSITION across scrapes and model samples,
+        // unlike the sibling push-then-sum counters.
+        const pos = Number.parseInt(labels.position ?? '', 10);
+        if (Number.isInteger(pos) && pos >= 0) {
+          acc.specAcceptedPerPos[pos] = (acc.specAcceptedPerPos[pos] ?? 0) + value;
+        }
+        break;
+      }
     }
 
     if (name === 'vllm:time_to_first_token_seconds_sum') {
@@ -262,6 +284,20 @@ class MetricsParser {
     const totalDrafts = sumAll(a => a.specDrafts);
     const specAcceptanceRate = totalDraft > 0 ? (totalAccepted / totalDraft) * 100 : null;
     const specDraftDepth = totalDrafts > 0 ? totalDraft / totalDrafts : null;
+    // Per-position acceptance divides by ALL drafts (vLLM's convention: a
+    // position past a short draft's length counts as a miss), so the curve is
+    // monotonic and matches the "Per-position acceptance rate" line vLLM logs.
+    const perPosTotals: number[] = [];
+    for (const m of modelNames) {
+      const arr = this.models.get(m)!.specAcceptedPerPos;
+      for (let p = 0; p < arr.length; p++) {
+        perPosTotals[p] = (perPosTotals[p] ?? 0) + (arr[p] ?? 0);
+      }
+    }
+    const specAcceptPerPos =
+      totalDrafts > 0 && perPosTotals.length > 0
+        ? perPosTotals.map(c => (c / totalDrafts) * 100)
+        : null;
 
     let ttftSum = 0, ttftCount = 0;
     let tpotSum = 0, tpotCount = 0;
@@ -283,7 +319,7 @@ class MetricsParser {
     // Pooled output throughput: Σ generation tokens across all finished
     // requests ÷ Σ decode time (first output token → last output token). Unlike
     // TPOT — which records one sample per engine step and undercounts when
-    // MTP/spec-decode emits several tokens per step — the generation-token
+    // Spec decode emits several tokens per step - the generation-token
     // count includes every emitted token, so the rate is honest under
     // speculative decoding. Decode time (not inference time) so long-prompt
     // prefill isn't charged against the output-token numerator.
@@ -306,6 +342,7 @@ class MetricsParser {
       specAcceptanceRate,
       specDraftsTotal: totalDrafts > 0 ? totalDrafts : null,
       specDraftDepth,
+      specAcceptPerPos,
       avgTTFTMs,
       avgTPOTMs,
       avgTputTokPerSec,
@@ -1045,6 +1082,7 @@ export function emptyMetrics(error: string): ServerMetrics {
     online: false, loading: true, error,
     models: [], maxModelLen: null, kvCacheUsagePercent: null, runningRequests: null, waitingRequests: null,
     cacheHitRate: null, specAcceptanceRate: null, specDraftsTotal: null, specDraftDepth: null,
+    specAcceptPerPos: null,
     avgTTFTMs: null, avgTPOTMs: null, avgTputTokPerSec: null, avgPrefillTputTokPerSec: null, preemptions: null, evictions: null,
   };
 }

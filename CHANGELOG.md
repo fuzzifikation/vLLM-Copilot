@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.36.5
+
+### UI/UX Improvements
+
+- **Draft positions under Spec Decode.** The goal: see how deep speculation actually pays off. The **Spec Decode** server row expands to a **Draft positions** row showing how acceptance probability decays across a draft's depth, straight from vLLM's per-position counter. A steep early drop means the draft length runs past what the target model keeps.
+- **OpenRouter rows open their web page.** The goal: jump from the dashboard to whatever that row is on the web. Right-click an OpenRouter server row → **Open** opens openrouter.ai, a model row opens that model's page, the **Account** row opens your OpenRouter profile settings. Model and Account rows carry the button inline too.
+
+### Fixed
+
+- **The MTP row is now Spec Decode.** The metrics behind it are method-agnostic, so an EAGLE, Medusa, or n-gram server was labeled after the wrong method, and the tooltip claimed MTP and speculative decoding were the same thing.
+
 ## v1.36.4
 
 The Dashboard should stop lying about dead servers, and personality files can be user-generated.

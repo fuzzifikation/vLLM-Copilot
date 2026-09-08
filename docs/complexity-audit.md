@@ -77,7 +77,7 @@ path 7's resolution API, so the state layer settles first.
 | 5 | Activation + migrations | A | `extension.ts`, `migrations/registryMigration`, `migrations/serverRegistryMigration`, `migrations/outputLengthMigration`, `commands/byok` |
 | 6 | Model discovery + Copilot model list | C | `provider/discovery`, `provider/modelInfo`, modes, output-length menu, banners |
 | 7 | Server registry + config storage | A | `state/serverRegistry`, `state/configStore`, `state/config`, `state/serverCore` |
-| 8 | Add Server / Add Model flow | D | `commands/addServerFlow`, `commands/presets`, `commands/presetRemote`, `commands/hfDiscovery`, `commands/autoConfigureFlow` |
+| 8 | Add Server / Add Model flow | D | `commands/addServerCore`, `commands/addServerFlow`, `commands/openRouterAddFlow`, `commands/presets`, `commands/presetRemote`, `commands/hfDiscovery`, `commands/autoConfigureFlow` |
 | 9 | Server Settings webview | C | `ui/serverSettingsView`, `resources/serverSettings.js` |
 | 10 | Server management commands | C | `commands/commands`, `commands/serverAuth`, `commands/testAndRefresh` |
 | 11 | Server dashboard | E | `ui/vllmMetrics`, `ui/dashboard` |
