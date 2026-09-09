@@ -44,6 +44,9 @@ extension/
 
 # Dev scripts and tools
 scripts/
+# OR-logo.svg is the build-time source for the U+E002 glyph in vllm-icon.woff2
+# (read by scripts/build-icon-font.py). The runtime only loads the woff2.
+resources/OR-logo.svg
 
 # Repo/build config (not needed at runtime)
 .gitignore
