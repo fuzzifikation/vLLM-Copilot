@@ -173,7 +173,10 @@
   // shown; a provider without cache pricing simply omits it. Exact values ride
   // in the hover title (same pattern as the context/output limits).
   function providerPricingLabel(ep) {
-    const p = (ep && ep.pricing) || {};
+    // worst_case = parser's per-field peak over time-of-day windows (present
+    // exactly when the provider prices by time of day); base rates otherwise.
+    const p0 = (ep && ep.pricing) || {};
+    const p = p0.worst_case || p0;
     const parts = [];
     const inRate = fmtUsd(perM(p.prompt));
     const outRate = fmtUsd(perM(p.completion));
@@ -186,7 +189,8 @@
   // Full-precision per-1M prices for the hover title, e.g. "prompt $1.2052/M,
   // completion $3.1655/M, cache $0.1205/M".
   function providerPricingTitle(ep) {
-    const p = (ep && ep.pricing) || {};
+    const p0 = (ep && ep.pricing) || {};
+    const p = p0.worst_case || p0;
     const parts = [];
     const inRate = perM(p.prompt);
     const outRate = perM(p.completion);
@@ -194,6 +198,7 @@
     if (inRate !== null) parts.push('prompt $' + (Math.round(inRate * 1e6) / 1e6) + '/M');
     if (outRate !== null) parts.push('completion $' + (Math.round(outRate * 1e6) / 1e6) + '/M');
     if (cacheRate !== null) parts.push('cache $' + (Math.round(cacheRate * 1e6) / 1e6) + '/M');
+    if (p0.worst_case) parts.push('time-of-day pricing - shown at the peak window, check OpenRouter for the windows');
     return parts.join(', ');
   }
 
@@ -296,7 +301,10 @@
     S.mc = mc;
     lastRenderConfigured = !!(mc && sv.models.indexOf(mc) >= 0);
 
-    let h = '<div class="selector-row">';
+    // Identity card: server/type/model/(provider)/displayName/actions share
+    // one bordered block so the model actions visibly belong to the selected
+    // model instead of floating between bare fields (users kept missing them).
+    let h = '<div class="identity-card"><div class="selector-row">';
     // Server + Server Type share one row (~70/30): both address the server, and
     // stacked they waste the vertical space of the long form below.
     h += '<div class="selector-pair">';
@@ -405,6 +413,18 @@
       h += '<option value="exacto"' + (mc.routingMode === 'exacto' ? ' selected' : '') + '>Exacto</option>';
       h += '</select>';
       h += '<div class="field-hint" id="routingHint"' + (routingDisabled ? '' : ' hidden') + '>Routing is fixed when a provider is pinned - set Provider to Auto to choose a routing mode.</div>';
+      // Anthropic prompt caching — Claude models never cache implicitly, so
+      // without the directive every turn re-bills the whole prompt. Shown only
+      // for the family the request path actually sends it for (mirrors the
+      // /^~?anthropic\// gate in requestBuilder.ts).
+      if (/^~?anthropic\//.test(wire)) {
+        h += '<label>Prompt cache</label><select data-f="promptCache">';
+        h += '<option value="on"' + (!mc.promptCache || mc.promptCache === 'on' ? ' selected' : '') + '>On (5-min, default)</option>';
+        h += '<option value="1h"' + (mc.promptCache === '1h' ? ' selected' : '') + '>Extended (1-hour)</option>';
+        h += '<option value="off"' + (mc.promptCache === 'off' ? ' selected' : '') + '>Off</option>';
+        h += '</select>';
+        h += '<div class="field-hint">Claude re-sends the whole prompt every turn; caching bills the repeats at ~0.1x after one 1.25x cache write (5-min TTL, refreshed free on every hit). Extended costs 2x per write and only helps when turns are more than 5 minutes apart.</div>';
+      }
     }
     h += '</div>';
 
@@ -415,9 +435,13 @@
         '<div class="field-hint">Name shown in model picker</div></div>';
 
       // Action buttons row — these address the model, not the personality.
+      // Hierarchy is deliberate: Auto-Configure is the recommended action, so
+      // it takes the primary (accent) button style; Remove Model is a ghost
+      // danger button (see button.danger-ghost) — visible without begging for
+      // the misclick a loud destructive button invites.
       h += '<div class="action-btn-row">';
-      h += '<button id="autoConfigureBtn" class="secondary">Auto-Configure</button>';
-      h += '<button id="removeModelBtn" class="secondary" style="color:var(--vscode-errorForeground)">Remove Model</button>';
+      h += '<button id="autoConfigureBtn">Auto-Configure</button>';
+      h += '<button id="removeModelBtn" class="danger-ghost">Remove Model</button>';
       h += '</div>';
     } else {
       // Nothing to edit: this server has no configured model and reported none
@@ -426,22 +450,26 @@
       // so mc stays null and save() writes server-level fields only.
       h += '<p class="empty-state">No model to configure on this server yet. Run "Add or Reconfigure Server/Model", or check the server connection.</p>';
     }
+    h += '</div>'; // .identity-card — closed after the actions row / empty state
 
     if (S.mc) {
       const m = S.mc;
       // Personality picker lives in General, alongside the model's identity fields —
       // the Auto-Configure/Remove buttons above address the model, not the personality.
       const isConfigured = configKeys.has(S.selModel);
-      // Personality dropdown (global) + raw replacements-file path + the system
-      // prompt recording toggle — one section for everything that shapes the
-      // system prompt a model receives.
+      // Two cards, one section: the personality picker (who talks) and the
+      // raw system-prompt controls (what gets injected / recorded). The card
+      // siblings share the identity card's visual language so the section
+      // reads as two blocks instead of one card plus stray fields.
       h += sec('Personality and System Prompt',
         personalityCard(isConfigured) +
+        '<div class="subcard"><label>System prompt</label>' +
         '<div class="field"><label>systemMessageReplacementsFile</label>' +
         '<input type="text" data-f="systemMessageReplacementsFile" value="' + E(String(m.systemMessageReplacementsFile || '')) + '">' +
         '<div class="field-hint">Path to JSON find/replace rules file (relative paths resolve against the workspace root)</div></div>' +
         '<div class="checkbox-row"><input type="checkbox" id="captureCb" ' + (S.systemMessageCapture ? 'checked' : '') + '><label>Record system prompts</label></div>' +
-        '<div class="field-hint">Capture Copilot system prompts to the workspace\'s .vllm/system-messages.json - used to build replacement rules</div>');
+        '<div class="field-hint">Capture Copilot system prompts to the workspace\'s .vllm/system-messages.json - used to build replacement rules</div>' +
+        '</div>');
       h += sec('Token Budget',
         '<div class="field"><label>maxOutputTokens</label>' +
         '<input type="text" data-f="maxOutputTokens" placeholder="65536, 32768, 16384" value="' + E(Array.isArray(m.maxOutputTokens) ? m.maxOutputTokens.join(', ') : String(m.maxOutputTokens ?? '')) + '">' +
@@ -668,7 +696,9 @@
     let h = '<div class="mode-card" data-mn="' + E(name) + '">';
     h += '<div class="mode-header"><span class="mode-title">' + E(name) + '</span><div class="mode-actions">';
     h += '<button class="secondary rename-mode-btn">Rename</button>';
-    h += '<button class="secondary remove-mode-btn">Remove</button>';
+    // Same ghost-danger language as the model Remove: destructive, visible,
+    // not a solid red target. (.mode-actions stretches both to one height.)
+    h += '<button class="danger-ghost remove-mode-btn">Remove</button>';
     h += '</div></div><div class="mode-params">';
     for (const [key, val] of Object.entries(params)) {
       const known = S.knownParams[key];
@@ -762,6 +792,9 @@
     // it explicitly would pollute every Auto-routed OpenRouter config with a
     // meaningless value. Map it to the empty-string CLEAR signal → delete.
     if (u.routingMode === 'standard') u.routingMode = '';
+    // Same omission-over-value rule for prompt cache: "On (5-min)" IS the
+    // default, so it maps to the CLEAR signal instead of polluting configs.
+    if (u.promptCache === 'on') u.promptCache = '';
     const caps = {};
     document.querySelectorAll('[data-k]').forEach(el => {
       if (el.dataset.k === 'caps.toolCalling') caps.toolCalling = el.checked;

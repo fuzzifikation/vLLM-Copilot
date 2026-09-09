@@ -4,7 +4,8 @@ import { SystemMessagePipeline } from './systemMessagePipeline.js';
 import { discoverModels } from './discovery.js';
 import { runChatResponse } from './streamOrchestrator.js';
 import type { ProviderClient } from './contracts.js';
-import { resolveOverrideForModel, resolveModelSettings, readPickerSelection } from '../state/config.js';
+import { resolveOverrideForModel, resolveModelSettings, readPickerSelection, resolveServerConfig, type ModelConfig } from '../state/config.js';
+import type { ServerEntry } from '../state/serverRegistry.js';
 import type { FileLogger } from '../shared/logger.js';
 import { messageToText } from './messageConverter.js';
 
@@ -50,6 +51,19 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
   private static readonly CACHE_TTL_MS = 60_000;
 
   /**
+   * Recovery watchdog (see {@link armRecoveryWatchdog}): delay between background
+   * re-probes while the published picker list is incomplete.
+   */
+  private static readonly RECOVERY_PROBE_MS = 30_000;
+  private recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+  private disposed = false;
+
+  /**
+   * Lines the last PUBLISHED discovery pass logged (see {@link discoveryChannel}).
+   */
+  private lastDiscoveryLines = new Set<string>();
+
+  /**
    * The discovery pass currently running, if any. Concurrent calls JOIN it
    * instead of starting duplicate probe storms. Joining is unconditional: if
    * the running pass was invalidated mid-flight, its result is discarded by
@@ -77,6 +91,8 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.stopRecoveryWatchdog();
     this._onDidChangeLanguageModelChatInformation.dispose();
   }
 
@@ -88,6 +104,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
    */
   clearCache(): void {
     this.modelCacheGeneration++;
+    this.stopRecoveryWatchdog(); // the resolve triggered by the event below runs a fresh pass, which re-arms
     this.cachedModels = null;
     this.modelContextWindows.clear();
     // lastSelectedMode / lastSelectedLength deliberately SURVIVE (CR-45): they
@@ -158,8 +175,9 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     }
 
     // Silent calls serve the cache while it is fresh (inside the TTL); past
-    // it they re-probe so the picker tracks reality in both directions on its
-    // own: a server that went down drops out, one that came back reappears.
+    // it they re-probe, so whenever VS Code asks, the answer tracks reality.
+    // VS Code does not ask on its own though — a server that recovers while
+    // nobody asks is the recovery watchdog's job (armRecoveryWatchdog).
     if (options.silent && this.cachedModels && Date.now() - this.cachedAt < VllmChatModelProvider.CACHE_TTL_MS) {
       return this.cachedModels;
     }
@@ -222,19 +240,24 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
           this.cachedGeneration = generation;
           this.cachedAt = Date.now();
           this.modelContextWindows.clear();
+          this.lastDiscoveryLines = new Set();
+          this.armRecoveryWatchdog(modelOverrides, servers);
         }
         return generation;
       }
 
       // The remote guard + cache stay here (lifecycle/cache owner); the per-model
       // discovery core (context-window fetch, model info, warnings) is a pure
-      // function taking explicit collaborators.
+      // function taking explicit collaborators. Discovery logs through a
+      // deduping view (see {@link discoveryChannel}): the watchdog makes passes
+      // routine while a server is down, and the same warning every 30 s is noise.
       const contextWindows = new Map<string, number>();
+      const loggedLines = new Set<string>();
       const models = await discoverModels(
         modelOverrides,
         servers,
         this.client,
-        this.output,
+        this.discoveryChannel(loggedLines),
         (modelId, contextWindow) => contextWindows.set(modelId, contextWindow),
         this.lastSelectedMode,
         this.lastSelectedLength,
@@ -244,6 +267,8 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         this.cachedGeneration = generation;
         this.cachedAt = Date.now();
         this.modelContextWindows = contextWindows;
+        this.lastDiscoveryLines = loggedLines;
+        this.armRecoveryWatchdog(modelOverrides, servers);
       }
       return generation;
     })().finally(() => {
@@ -253,6 +278,101 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     });
     this.discoveryRun = run;
     return run;
+  }
+
+  /**
+   * A channel view for one discovery pass that suppresses lines identical to
+   * those the previous published pass logged. The recovery watchdog turns
+   * discovery into a routine 30 s event while a server is down; without this,
+   * the same `[WARN] Model "x" unavailable` and the unchanged summary would
+   * refill the channel every cycle (repeated identical warnings are noise,
+   * not clarity - same doctrine as the metrics engine's transition-only
+   * logging). A changed failure reason, a new failure, or the recovery
+   * summary all differ from the previous pass and still log.
+   */
+  private discoveryChannel(collector: Set<string>): vscode.OutputChannel {
+    const previous = this.lastDiscoveryLines;
+    return {
+      name: this.output.name,
+      append: (value: string) => { collector.add(value); this.output.append(value); },
+      appendLine: (value: string) => {
+        // The collector records EVERY line this pass generates, suppressed or
+        // not: it becomes the next pass's comparison set. Adding only the
+        // emitted lines made the next snapshot empty, so a stable outage
+        // re-logged its identical warnings on every second watchdog cycle.
+        collector.add(value);
+        if (previous.has(value)) return;
+        this.output.appendLine(value);
+      },
+      clear: () => this.output.clear(),
+      replace: (value: string) => this.output.replace(value),
+      show: () => this.output.show(),
+      hide: () => this.output.hide(),
+      dispose: () => { /* the real channel belongs to the extension */ },
+    } as unknown as vscode.OutputChannel;
+  }
+
+  /**
+   * Recovery watchdog. VS Code re-queries a provider ONLY when the provider
+   * fires `onDidChangeLanguageModelChatInformation` — its language-models
+   * service has no list poll and opening the picker does not reach us. So
+   * `CACHE_TTL_MS` alone cannot self-heal: it only bounds the staleness of an
+   * answer to a question nobody asks when a server recovers, and models lost
+   * in an outage stayed hidden until a manual Test & Refresh (user report
+   * 2026-09-09). Whenever a published pass lists fewer picker models than are
+   * configured with a resolvable server ref, one background re-probe runs per
+   * `RECOVERY_PROBE_MS` and the change event fires as soon as the published
+   * set differs, so a recovered server reappears on its own. A complete list
+   * disarms the watchdog: zero background traffic while healthy. A genuinely
+   * parked model (server up, model unloaded) keeps the slow probe ticking —
+   * one wave per interval, cheap against a silently stale picker.
+   */
+  private armRecoveryWatchdog(modelOverrides: ModelConfig[], servers: ServerEntry[]): void {
+    this.stopRecoveryWatchdog();
+    if (this.disposed) return;
+    const expected = modelOverrides.filter(m => resolveServerConfig(m, servers)).length;
+    if ((this.cachedModels?.length ?? 0) >= expected) return;
+    this.recoveryTimer = setTimeout(() => void this.recoveryProbe(), VllmChatModelProvider.RECOVERY_PROBE_MS);
+  }
+
+  /**
+   * One watchdog cycle: probe live, fire the change event when the published
+   * set differs from what Copilot was last served. Re-arming needs no code
+   * here: the published pass calls `armRecoveryWatchdog` itself, so an still-
+   * incomplete list re-arms and a complete one disarms. A `clearCache`
+   * mid-probe means VS Code was already notified and a fresh pass is running
+   * or pending — no event to add, and that pass owns the next arm.
+   */
+  private async recoveryProbe(): Promise<void> {
+    this.recoveryTimer = undefined;
+    if (this.disposed) return;
+    const before = new Set((this.cachedModels ?? []).map(m => m.id));
+    const generationBefore = this.modelCacheGeneration;
+    try {
+      await this.runDiscoveryOnce();
+    } catch (err) {
+      // Only a config-read failure can land here (every model probe self-
+      // catches). Nothing was published and no pass re-armed, so reschedule
+      // directly: a watchdog that dies on one rejection recreates the very
+      // silent-staleness bug it exists to fix.
+      this.output.appendLine(`[WARN] Recovery probe failed: ${err instanceof Error ? err.message : String(err)}`);
+      if (!this.disposed && this.recoveryTimer === undefined) {
+        this.recoveryTimer = setTimeout(() => void this.recoveryProbe(), VllmChatModelProvider.RECOVERY_PROBE_MS);
+      }
+      return;
+    }
+    if (this.disposed || generationBefore !== this.modelCacheGeneration) return;
+    const after = this.cachedModels;
+    if (after && (after.length !== before.size || after.some(m => !before.has(m.id)))) {
+      this._onDidChangeLanguageModelChatInformation.fire();
+    }
+  }
+
+  private stopRecoveryWatchdog(): void {
+    if (this.recoveryTimer) {
+      clearTimeout(this.recoveryTimer);
+      this.recoveryTimer = undefined;
+    }
   }
 
   /**

@@ -38,6 +38,11 @@
       "enum": ["standard", "nitro", "exacto"],
       "description": "OpenRouter only. How OpenRouter sorts/chooses providers when routing is Auto. Ignored when a provider is pinned."
     },
+    "promptCache": {
+      "type": "string",
+      "enum": ["on", "1h", "off"],
+      "description": "OpenRouter only, anthropic/* models. Prompt caching directive. Omitted/on (default): repeat turns read at ~0.1x after a 1.25x cache write, 5-min TTL re-armed free on each hit. 1h: 1-hour TTL at 2x write cost, for turns more than 5 minutes apart. off: never send. Ignored for other families (they cache implicitly for free)."
+    },
     "maxOutputTokens": {
       "default": 4096,
       "anyOf": [

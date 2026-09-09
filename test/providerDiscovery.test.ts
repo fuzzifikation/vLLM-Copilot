@@ -439,3 +439,45 @@ describe('gone when down (picker is a live inventory)', () => {
     expect(client.invalidateConfigCache).not.toHaveBeenCalled();
   });
 });
+
+describe('recovery watchdog (models return without Test & Refresh)', () => {
+  it('fires the change event when a background probe finds a recovered server', async () => {
+    // Named breakage (user report 2026-09-09): after an internet outage the
+    // server came back green in the dashboard but the picker stayed empty —
+    // VS Code only re-queries a provider when the provider fires the event,
+    // and nothing fired. The watchdog must re-probe an incomplete list and
+    // announce the recovered set.
+    vi.useFakeTimers();
+    try {
+      let online = false;
+      const client = fakeClient({
+        getConfigCached: vi.fn(async () => configWithModel),
+        getModelContextWindow: vi.fn(async () => {
+          if (!online) throw new Error('connect ECONNREFUSED');
+          return { contextWindow: 8192 };
+        }),
+      });
+      const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+
+      const down = await provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+      expect(down).toHaveLength(0); // live inventory: dead server drops the model
+
+      let fired = 0;
+      provider.onDidChangeLanguageModelChatInformation(() => { fired++; });
+
+      online = true; // the internet came back
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(fired).toBe(1); // Copilot re-resolves and the model reappears
+
+      // Healthy from here: the watchdog disarms, no further background probes.
+      const probes = vi.mocked(client.getModelContextWindow).mock.calls.length;
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fired).toBe(1);
+      expect(vi.mocked(client.getModelContextWindow).mock.calls.length).toBe(probes);
+
+      provider.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

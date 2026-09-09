@@ -1111,21 +1111,27 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
 
     // Pricing (1M) — the pinned provider's reported per-1M rates from
     // `/endpoints`; Auto falls back to the model's configured catalog rates as
-    // an estimate. All values come from the API/config verbatim — never derived.
-    // The row label carries the "(1M)" so the per-price `/1M` suffix is dropped.
+    // an estimate. All values come from the API/config verbatim — never derived
+    // (the parser's `worst_case` fold for time-of-day providers happens at the
+    // parse boundary, not here). The row label carries the "(1M)" so the
+    // per-price `/1M` suffix is dropped.
     let priceParts: string[] | undefined;
     let priceSource = '';
     if (pinned?.pricing) {
-      const inRate = perMillion(pinned.pricing.prompt);
-      const outRate = perMillion(pinned.pricing.completion);
-      const cacheRate = perMillion(pinned.pricing.input_cache_read);
+      const p = pinned.pricing.worst_case ?? pinned.pricing;
+      const inRate = perMillion(p.prompt);
+      const outRate = perMillion(p.completion);
+      const cacheRate = perMillion(p.input_cache_read);
       const parts: string[] = [];
       if (inRate !== undefined) parts.push(`in ${formatUsdRate(inRate)}`);
       if (outRate !== undefined) parts.push(`out ${formatUsdRate(outRate)}`);
       if (cacheRate !== undefined) parts.push(`cached ${formatUsdRate(cacheRate)}`);
       if (parts.length > 0) {
         priceParts = parts;
-        priceSource = `Per-1M rates reported by the pinned provider "${pinned.tag}" (${pinned.providerName}).`;
+        priceSource = `Per-1M rates reported by the pinned provider "${pinned.tag}" (${pinned.providerName}).`
+          + (pinned.pricing.worst_case
+            ? ' \u23f0 Time-of-day pricing: shown at the most expensive window - check the provider page on OpenRouter for the exact windows.'
+            : '');
       }
     }
     if (!priceParts && entry?.cost) {

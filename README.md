@@ -12,7 +12,7 @@ GitHub Copilot provides the familiar chat, tools, and model picker; you provide 
 **Multi-server, multi-user.** Full vLLM request control, live observability. Also works with OpenRouter (400+ cloud models, no local infrastructure, many free options), llama.cpp, LM Studio, and Ollama.
 </div>
 
-> **Disclaimer.** This extension does not protect against misuse, does not provide security or safety guardrails, and does not guarantee the absence of bugs. Language models may produce harmful or incorrect output and may misuse this extension (tools, file edits, commands). You own the consequences. Source is public: [github.com/fuzzifikation/vLLM-Copilot](https://github.com/fuzzifikation/vLLM-Copilot). Full text: [DISCLAIMER.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/DISCLAIMER.md).
+> **Disclaimer.** This extension does not protect against misuse, does not provide security or safety guardrails, and does not guarantee the absence of bugs. Language models may produce harmful or incorrect output and may misuse this extension (tools, file edits, commands). Paid models cost real money and any price this extension shows is a best-guess estimate: the bill is yours. You own the consequences. Source is public: [github.com/fuzzifikation/vLLM-Copilot](https://github.com/fuzzifikation/vLLM-Copilot). Full text: [DISCLAIMER.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/DISCLAIMER.md).
 
 For teams running AI on their own vLLM servers for many users, this gives you the Copilot integration: 
 

@@ -15,6 +15,7 @@ import {
   normalizeOpenRouterFromCatalog,
   fetchOpenRouterCatalog,
   perMillion,
+  worstCasePricing,
   formatUsdRate,
   openRouterCatalogConfigFields,
   openRouterInfoDetailLines,
@@ -44,7 +45,9 @@ interface OpenRouterCatalogEntry {
   id: string;
   name?: string;
   context_length?: number;
-  pricing?: { prompt?: string; completion?: string };
+  /** `overrides` passes through so time-of-day peaks can be folded into the
+   *  price label - dropping it here silently disabled the "(peak)" hint. */
+  pricing?: { prompt?: string; completion?: string; overrides?: unknown };
 }
 
 /**
@@ -83,10 +86,13 @@ async function pickOpenRouterModel(
           const per = perMillion(v);
           return per === undefined ? null : `${formatUsdRate(per)}/1M`;
         };
-        const inStr = fmt(entry.pricing?.prompt);
-        const outStr = fmt(entry.pricing?.completion);
+        // Worst window per field for time-of-day providers (same fold every
+        // other price surface reads - the catalog carries the same overrides).
+        const worst = worstCasePricing(entry.pricing, entry.pricing?.overrides);
+        const inStr = fmt(worst?.prompt ?? entry.pricing?.prompt);
+        const outStr = fmt(worst?.completion ?? entry.pricing?.completion);
         if (!inStr && !outStr) return '';
-        return `in ${inStr ?? '-'} · out ${outStr ?? '-'}`;
+        return `in ${inStr ?? '-'} · out ${outStr ?? '-'}${worst ? ' (peak)' : ''}`;
       })(),
     ].filter(Boolean).join(' · '),
   }));
@@ -224,7 +230,7 @@ export async function runOpenRouterAddFlow(
       name: entry.name,
       context_length: entry.context_length ?? undefined,
       pricing: entry.pricing
-        ? { prompt: entry.pricing.prompt ?? undefined, completion: entry.pricing.completion ?? undefined }
+        ? { prompt: entry.pricing.prompt ?? undefined, completion: entry.pricing.completion ?? undefined, overrides: entry.pricing.overrides }
         : undefined,
     }));
     requestedId = await pickOpenRouterModel(catalog, prefill);

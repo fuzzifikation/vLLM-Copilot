@@ -39,6 +39,7 @@ import { maybeRunServerRegistryMigration } from './migrations/serverRegistryMigr
 import { DashboardTreeProvider, DashboardDndController } from './ui/dashboard.js';
 import { ServerSettingsViewProvider } from './ui/serverSettingsView.js';
 import { registerOpenDeepDiveCommand } from './ui/deepDiveView.js';
+import { registerOpenModelSelectorCommand } from './ui/modelSelectorView.js';
 import { registerConfigSchemaTool } from './shared/configSchemaTool.js';
 
 const VENDOR_ID = 'vllm-copilot';
@@ -281,6 +282,7 @@ export async function activate(context: vscode.ExtensionContext) {
       registerResetUsageCommand(outputChannel),
       registerConfigureCostCommand(context, outputChannel),
       registerOpenDeepDiveCommand(context, outputChannel),
+      registerOpenModelSelectorCommand(context, outputChannel),
       registerSetPollIntervalCommand(),
     );
 

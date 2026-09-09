@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.36.7
+
+The big one: the OpenRouter Model Selector. One screen showing every model OpenRouter serves, per provider, telling you which are good and which are cheap for the way you actually use them. This release also fixes the picker going mute after an outage, keeps each chat on one OpenRouter route, and makes Claude models cache your prompt instead of paying for it again every turn.
+
+### Added
+
+- **OpenRouter Model Selector.** Right-click an OpenRouter server in the Dashboard → **Model Selector**. Every benchmark-scored model is plotted per serving provider: quality on one axis, the cost of a heavy day (100M prompt tokens) on the other. Cost is not the sticker price: it is computed from your own token mix (cache hit share, output share, prompt size, all adjustable), so a provider with cheap cache reads outranks one with a cheap headline price, and long-context price jumps are folded in. Your configured models are marked, and their rows price under their own prompt-cache setting. Models served by several providers collapse into one row (cheapest price, biggest window) and open to show each provider with its latency, throughput and uptime, time-of-day pricing is flagged, and the model you like is added to your config from the same screen.
+- **OpenRouter session affinity.** Every chat now sends its stable Copilot conversation id as OpenRouter's `session_id`, so turns and retries of one chat land on the same route and cache, without merging separate chats.
+- **Anthropic prompt caching on OpenRouter.** Copilot resends your whole conversation every turn, and Claude models on OpenRouter do not cache that unless asked, so every turn paid full input price. Now we ask: `anthropic/*` models send the cache directive by default, the first turn pays a 1.25x cache write and later turns read the prompt at about 0.1x. The per-model **Prompt cache** dropdown in Model Settings switches to the 1-hour TTL (2x write, for turns more than 5 minutes apart) or turns caching off.
+
+### UI/UX Improvements
+
+- **Model Settings as cards.** Identity, personality and system-prompt areas sit in clear cards, and the actions say what they are: **Auto-Configure** is the primary action, **Remove Model** is styled destructive.
+
+### Fixed
+
+- **Models come back on their own after an outage.** Since 1.36.0, models stayed gone from the Copilot picker after an internet outage even though the Dashboard showed the server green again: VS Code only re-asks a provider when the provider announces a change, and nothing announced the recovery, so only **Test & Refresh Models** brought them back. While the picker is missing configured models, the extension now re-probes quietly every 30 seconds and updates the picker the moment they return. Healthy lists cost no background traffic.
+
 ## v1.36.6
 
 ### Fixed

@@ -62,7 +62,7 @@ details[open] > summary::before { content: '\25BC'; }
 .selector-pair .pair-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .selector-pair .pair-col:first-child { flex: 7; }
 .selector-pair .pair-col:last-child { flex: 3; }
-.action-btn-row { display: flex; gap: 6px; margin: 8px 0; }
+.action-btn-row { display: flex; gap: 6px; margin: 10px 0 2px; padding-top: 10px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-input-border)); }
 .modal-overlay {
   display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0,0,0,0.3); z-index: 100; justify-content: center; align-items: flex-start; padding-top: 40px;
@@ -78,8 +78,12 @@ details[open] > summary::before { content: '\25BC'; }
 .selector-row { margin-bottom: 8px; }
 .selector-row label { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.72em; }
 
-/* Personality picker — distinct card, sits right under the model selector */
-.personality-card {
+/* Cards inside sections: the personality picker and the system-prompt
+   controls are sibling cards, so the section reads as labeled blocks.
+   Child combinator on the subcard label: nested field/checkbox labels must
+   keep the normal .field label look, only the card TITLE is uppercased. */
+.personality-card,
+.subcard {
   display: flex; flex-direction: column; gap: 4px;
   background: var(--vscode-editorWidget-background);
   border: 1px solid var(--vscode-widget-border, var(--vscode-input-border));
@@ -87,7 +91,8 @@ details[open] > summary::before { content: '\25BC'; }
   padding: 6px 8px;
   margin-bottom: 8px;
 }
-.personality-card label { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.72em; color: var(--vscode-descriptionForeground); }
+.personality-card label,
+.subcard > label { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.72em; color: var(--vscode-descriptionForeground); }
 .personality-card select:not(:disabled) { border-color: var(--vscode-focusBorder, var(--vscode-input-border)); }
 /* Live description of the selected personality, under the dropdown */
 .personality-desc {
@@ -124,6 +129,28 @@ button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-off
 .dirty-status { font-size: 0.75em; margin-right: auto; color: var(--vscode-descriptionForeground); }
 .dirty-status.dirty { color: var(--vscode-inputValidation-warningForeground, var(--vscode-editorWarning-foreground, #cca700)); }
 #saveBtn:disabled, #revertBtn:disabled { opacity: 0.5; cursor: default; }
+
+/* Identity card — server/type/model/displayName/actions in one bordered
+   block (same visual language as .personality-card). Its job is anchoring:
+   the Auto-Configure / Remove Model row sits inside it, so the actions read
+   as belonging to the selected model instead of floating among bare fields. */
+.identity-card {
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-widget-border, var(--vscode-input-border));
+  border-radius: 3px;
+  padding: 8px 10px 6px;
+  margin-bottom: 10px;
+}
+/* Destructive ghost: outline-only red, filled only on hover. Loud enough to
+   be found, quiet enough not to tempt a misclick the way a solid red would.
+   Hover text uses editor-background because errorForeground is contrast-
+   tuned against exactly that surface in both themes. */
+button.danger-ghost {
+  background: transparent;
+  color: var(--vscode-errorForeground);
+  border: 1px solid var(--vscode-errorForeground);
+}
+button.danger-ghost:hover { background: var(--vscode-errorForeground); color: var(--vscode-editor-background); }
 /* ============================================================
    Choices.js (searchable model picker) - theme to match VS Code.
    This file loads AFTER choices.min.css, so these overrides win.

@@ -7,6 +7,7 @@ import {
   OpenRouterModelNotFoundError,
   OPENROUTER_API_BASE,
   resetOpenRouterCaches,
+  getOpenRouterModelEndpointsCached,
   type OpenRouterModelData,
   type OpenRouterModelInfo,
 } from '../src/backends/openRouter.js';
@@ -552,5 +553,63 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
     await expect(fetchOpenRouterCatalog()).rejects.toThrow();
     spy.mockImplementation(() => Promise.resolve(catalogResponse()));
     await expect(fetchOpenRouterCatalog()).resolves.toHaveLength(5);
+  });
+});
+
+describe('fetchOpenRouterModelEndpoints (pricing whitelist)', () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetOpenRouterCaches();
+  });
+
+  it('carries every consumed pricing field through the parser, including input_cache_write_1h', async () => {
+    // Tripwire (2026-09-09): the parser rebuilds `pricing` from a whitelist,
+    // and a field missing there vanishes SILENTLY for every consumer. When
+    // input_cache_write_1h was dropped, every 1-hour cache policy priced at
+    // the 5-minute rate with no error anywhere. Wire (snake_case) in, parsed
+    // (consumer shape) out — this is the only seam that proves the copy.
+    fetchSpy.mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+      data: {
+        endpoints: [{
+          tag: 'anthropic',
+          provider_name: 'Anthropic',
+          pricing: {
+            prompt: '0.000003',
+            completion: '0.000015',
+            input_cache_read: '0.0000003',
+            input_cache_write: '0.00000375',
+            input_cache_write_1h: '0.000006',
+            web_search: '0.01', // not consumed: must not survive the whitelist
+            overrides: [
+              // Tier whitelist is the same silent-drop seam (round-7 review:
+              // live Claude Sonnet 4/4.5 publish write_1h 12/M above 200k).
+              { min_prompt_tokens: 200000, prompt: '0.000006', input_cache_write: '0.0000075', input_cache_write_1h: '0.000012' },
+            ],
+          },
+        }],
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    const eps = await getOpenRouterModelEndpointsCached('anthropic/claude-tripwire-4.6');
+    expect(eps).toHaveLength(1);
+    expect(eps[0].pricing).toMatchObject({
+      prompt: '0.000003',
+      completion: '0.000015',
+      input_cache_read: '0.0000003',
+      input_cache_write: '0.00000375',
+      input_cache_write_1h: '0.000006',
+    });
+    expect((eps[0].pricing as Record<string, unknown>)?.web_search).toBeUndefined();
+    expect(eps[0].pricing?.overrides?.[0]).toMatchObject({
+      minPromptTokens: 200000,
+      inputCacheWrite: '0.0000075',
+      inputCacheWrite1h: '0.000012',
+    });
+    // No time windows: the worst-case marker stays absent (absence IS the signal).
+    expect(eps[0].pricing?.worst_case).toBeUndefined();
   });
 });

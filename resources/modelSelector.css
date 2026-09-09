@@ -1,0 +1,205 @@
+/* OpenRouter Model Selector — themed with VS Code variables only. */
+
+body {
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  padding: 10px 16px 24px;
+  margin: 0;
+}
+
+header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+h1 { font-size: 1.3em; margin: 0; }
+#stamp { color: var(--vscode-descriptionForeground); font-size: 0.85em; }
+/* Round header buttons at the far right: (!) disclaimer, (?) calculation
+   help. Solid colored discs - a translucent secondary button vanished into
+   most themes (user report 2026-09-09); the filled amber/blue disc reads on
+   any background without relying on platform emoji rendering. */
+.head-right { margin-left: auto; align-self: center; display: flex; gap: 6px; }
+.round-btn {
+  width: 22px; height: 22px; padding: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 0.9em; line-height: 1; flex: none;
+  border: none; cursor: pointer;
+}
+.round-btn.warn { background: #e2a336; color: #1e1e1e; }
+.round-btn.warn:hover { background: #f0b44a; }
+.round-btn.help { background: var(--vscode-textLink-foreground, #4aa3ff); color: #fff; }
+.round-btn.help:hover { filter: brightness(1.2); }
+
+#banner {
+  padding: 8px 10px; margin: 8px 0; border-radius: 4px; font-size: 0.9em;
+  border: 1px solid transparent;
+}
+#banner.error { background: var(--vscode-inputValidation-errorBackground, rgba(200,60,60,.15)); border-color: var(--vscode-inputValidation-errorBorder, #a33); }
+#banner.warn  { background: var(--vscode-inputValidation-warningBackground, rgba(200,160,60,.12)); border-color: var(--vscode-inputValidation-warningBorder, #966b2a); }
+
+#controls {
+  display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end;
+  padding: 10px; margin-bottom: 10px;
+  background: var(--vscode-sideBar-background, rgba(128,128,128,.06));
+  border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.25));
+  border-radius: 6px;
+}
+.ctl { display: flex; flex-direction: column; gap: 2px; min-width: 170px; }
+.ctl label { font-size: 0.8em; color: var(--vscode-descriptionForeground); }
+.ctl label b { color: var(--vscode-foreground); }
+.ctl input[type=range] { width: 190px; }
+
+select, input[type=text] {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, rgba(128,128,128,.35));
+  border-radius: 3px; padding: 3px 6px;
+}
+input[type=text] { min-width: 180px; }
+.chk { font-size: 0.85em; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+
+button {
+  background: var(--vscode-button-secondaryBackground, rgba(128,128,128,.18));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: none; border-radius: 3px; padding: 4px 10px; cursor: pointer;
+  font-size: 0.85em; display: inline-block;
+}
+button:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(128,128,128,.3)); }
+
+#chart-wrap { margin-bottom: 12px; }
+#chart { width: 100%; }
+svg.scatter { width: 100%; height: auto; display: block; }
+.grid { stroke: var(--vscode-widget-border, rgba(128,128,128,.2)); stroke-width: 1; }
+.tick { fill: var(--vscode-descriptionForeground); font-size: 11px; }
+.axis-label { fill: var(--vscode-descriptionForeground); font-size: 12px; }
+
+circle.dot-front { fill: var(--vscode-charts-green, #4caf50); stroke: var(--vscode-editor-background); stroke-width: 1; cursor: pointer; }
+circle.dot-dominated { fill: var(--vscode-textLink-foreground, #4aa3ff); opacity: .35; cursor: pointer; }
+circle.dot-unscored { fill: var(--vscode-descriptionForeground, #999); opacity: .4; cursor: pointer; }
+circle.selected { stroke: var(--vscode-focusBorder, #fff); stroke-width: 2.5; opacity: 1; filter: drop-shadow(0 0 3px var(--vscode-focusBorder, #fff)); }
+/* Dashed halo around the selected pair's dot, drawn above all dots; the
+   ring itself never swallows a click aimed at a neighbor. */
+circle.dot-halo { fill: none; stroke: var(--vscode-focusBorder, #fff); stroke-width: 1.5; stroke-dasharray: 3 2; opacity: .95; pointer-events: none; }
+
+#lower { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px; align-items: start; }
+@media (max-width: 900px) { #lower { grid-template-columns: 1fr; } }
+
+/* Own scroll region: the list scrolls inside this box (thead stays pinned)
+   while the chart above it never moves - the dot-click jump scrolls this
+   container, not the page. */
+#table-wrap { overflow: auto; max-height: 60vh; }
+table { border-collapse: collapse; width: 100%; font-size: 0.82em; }
+th, td { padding: 2px 7px; border-bottom: 1px solid var(--vscode-widget-border, rgba(128,128,128,.15)); white-space: nowrap; }
+th { text-align: right; color: var(--vscode-descriptionForeground); font-weight: 600; position: sticky; top: 0; background: var(--vscode-editor-background); }
+th:nth-child(-n+3), td.mid { text-align: left; }
+td.num, th:not(:nth-child(-n+3)) { text-align: right; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.1)); }
+/* Same effective price as the clicked dot's pair (declared before
+   .selected so the selection keeps its stronger paint). */
+tbody tr.samecost { background: rgba(200,160,60,.12); }
+tbody tr.selected { background: var(--vscode-list-activeSelectionBackground, rgba(128,128,128,.2)); }
+/* Accent bar on the selected row's edge - the same selection cue as the
+   chart halo, readable even where the background tint stays subtle. */
+tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 0 var(--vscode-focusBorder, #fff); }
+tbody tr.front td:first-child { color: var(--vscode-charts-green, #4caf50); }
+/* Collapsible model groups: the .grp row is a model's summary (cheapest
+   price, largest window, its quality), its providers are .child rows. */
+tbody tr.grp td { border-top: 1px solid var(--vscode-widget-border, rgba(128,128,128,.3)); }
+tbody tr.grp .caret { display: inline-block; width: 1.2em; color: var(--vscode-descriptionForeground); }
+tbody tr.child td.modelid { color: var(--vscode-descriptionForeground); }
+tbody tr.child td.prov { padding-left: 18px; }
+.dim { color: var(--vscode-descriptionForeground); }
+
+#detail {
+  border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.25));
+  border-radius: 6px; padding: 10px 12px; position: sticky; top: 8px;
+  background: var(--vscode-sideBar-background, rgba(128,128,128,.05));
+}
+#detail h2 { font-size: 1em; margin: 0 0 2px; word-break: break-all; }
+#detail h3 { font-size: 0.9em; font-weight: 600; margin: 0 0 6px; color: var(--vscode-textLink-foreground, #4aa3ff); }
+.detail-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.badge {
+  font-size: 0.75em; padding: 1px 7px; border-radius: 8px;
+  background: var(--vscode-badge-background, rgba(128,128,128,.25));
+  color: var(--vscode-badge-foreground, var(--vscode-foreground));
+}
+.badge.front { background: var(--vscode-charts-green, #4caf50); color: #fff; }
+table.breakdown { font-size: 0.85em; margin-bottom: 8px; table-layout: fixed; }
+/* Override the global nowrap: a 330px card cannot hold four nowrap columns
+   plus a label, and the table used to spill past the card and the window. */
+table.breakdown th, table.breakdown td { padding: 2px 6px; white-space: normal; overflow-wrap: break-word; }
+table.breakdown th:first-child, table.breakdown td:first-child { width: 34%; text-align: left; }
+/* Vertical separator between the price half (label + published $/1M rate)
+   and the example half (tokens + est. $/day) of the detail card table. */
+table.breakdown th.ex, table.breakdown td.ex { border-left: 1px solid var(--vscode-widget-border, rgba(128,128,128,.4)); }
+/* Results line: heavier rule than any other row edge, bold across the row. */
+tr.total td { border-top: 2px solid var(--vscode-widget-border, rgba(128,128,128,.6)); font-weight: bold; }
+.detail-q { font-size: 0.85em; margin: 6px 0 10px; }
+.detail-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Calculation-explanation modal: full-viewport overlay, opened from the
+   detail card, closed by its button, the backdrop, or Escape. */
+.modal {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, .55);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal[hidden] { display: none; }
+.modal-card {
+  width: min(680px, 92vw); max-height: 84vh; overflow-y: auto;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.4));
+  border-radius: 8px; padding: 14px 20px 18px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .45);
+}
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.modal h2 { font-size: 1.1em; margin: 0 0 6px; }
+.modal h3 { font-size: 0.92em; margin: 12px 0 4px; color: var(--vscode-textLink-foreground, #4aa3ff); }
+.modal p, .modal li { font-size: 0.87em; line-height: 1.55; margin: 4px 0; }
+.modal ul.varlist { margin: 4px 0; padding-left: 20px; }
+.eq {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.92em; padding: 9px 12px; margin: 6px 0;
+  background: var(--vscode-textBlockQuote-background, rgba(128,128,128,.1));
+  border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.25));
+  border-radius: 4px; text-align: center;
+}
+.where { color: var(--vscode-descriptionForeground); }
+/* Disclaimer modal: same card, warning-colored border. */
+.warn-card { border-color: var(--vscode-inputValidation-warningBorder, #966b2a); }
+
+.hint { color: var(--vscode-descriptionForeground); padding: 8px 0; font-size: 0.85em; }
+
+/* Busy overlay: the first fetch (benchmarks + catalog + per-provider lists)
+   can take ~10 s and the tiny stamp text was easy to miss, so the wait gets a
+   centered card over the whole view. The markup shows it from first paint, the
+   'loading' message re-shows it on Refresh, the next 'data' message hides it
+   (success or error banner, both arrive as 'data'). */
+#busy {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .35);
+}
+#busy[hidden] { display: none; }
+.busy-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 18px; border-radius: 8px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.4));
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .45);
+  font-size: 0.95em;
+}
+.spinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--vscode-widget-border, rgba(128,128,128,.4));
+  border-top-color: var(--vscode-progressBar-background, #0e70c0);
+  animation: vllmc-spin 0.9s linear infinite;
+}
+@keyframes vllmc-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+#citation { margin-top: 6px; font-size: 0.75em; color: var(--vscode-descriptionForeground); }
+.disclaimer { margin-top: 16px; font-size: 0.75em; color: var(--vscode-descriptionForeground); }
+/* Configured-model marks: green check = a config on this server (re-use
+   overwrites it), dim diamond = configured on another entry of the same URL. */
+.cfg-mark { color: var(--vscode-charts-green, #4caf50); font-weight: 700; }
+.cfg-mark-other { color: var(--vscode-descriptionForeground); }
+.legend { margin-top: 10px; font-size: 0.78em; color: var(--vscode-descriptionForeground); }

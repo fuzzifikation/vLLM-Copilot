@@ -381,6 +381,138 @@ describe('buildRequest', () => {
     expect(result.mergedOptions.provider).toBeUndefined();
   });
 
+  it('maps Copilot conversation identity to OpenRouter session_id', () => {
+    const result = buildRequest(
+      model,
+      [] as any,
+      opts({ modelOptions: { _conversationId: 'chat-session-123', temperature: 0.5 } }),
+      {
+        models: [{ id: 'm', server: 'or' }],
+        servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(result.mergedOptions.session_id).toBe('chat-session-123');
+    expect(result.mergedOptions._conversationId).toBeUndefined();
+    expect(result.mergedOptions.temperature).toBe(0.5);
+  });
+
+  it('does not send Copilot conversation identity to non-OpenRouter backends', () => {
+    const result = buildRequest(
+      model,
+      [] as any,
+      opts({ modelOptions: { _conversationId: 'chat-session-123' } }),
+      {
+        models: [{ id: 'm', server: 'srv' }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(result.mergedOptions.session_id).toBeUndefined();
+    expect(result.mergedOptions._conversationId).toBeUndefined();
+  });
+
+  it('sends the ephemeral cache directive for anthropic models on OpenRouter (default on)', () => {
+    const result = buildRequest(
+      model,
+      [] as any,
+      opts(),
+      {
+        models: [{ id: 'm', server: 'or', vllmModelId: 'anthropic/claude-sonnet-4.6' }],
+        servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(result.mergedOptions.cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('maps promptCache to the ttl variant, the default, or omission', () => {
+    const cacheFor = (promptCache?: 'on' | '1h' | 'off') => buildRequest(
+      model,
+      [] as any,
+      opts(),
+      {
+        models: [{ id: 'm', server: 'or', vllmModelId: 'anthropic/claude-sonnet-4.6', promptCache }],
+        servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
+        enableFileLogging: false,
+      },
+      output,
+    ).mergedOptions.cache_control;
+    expect(cacheFor('1h')).toEqual({ type: 'ephemeral', ttl: '1h' });
+    expect(cacheFor('on')).toEqual({ type: 'ephemeral' });
+    expect(cacheFor(undefined)).toEqual({ type: 'ephemeral' });
+    expect(cacheFor('off')).toBeUndefined();
+  });
+
+  it('promptCache off strips a cache_control inherited from defaultParams', () => {
+    const result = buildRequest(
+      model,
+      [] as any,
+      opts(),
+      {
+        models: [{
+          id: 'm', server: 'or', vllmModelId: 'anthropic/claude-sonnet-4.6', promptCache: 'off',
+          defaultParams: { cache_control: { type: 'ephemeral' } },
+        }],
+        servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(result.mergedOptions.cache_control).toBeUndefined();
+  });
+
+  it('promptCache is fully inert outside the anthropic family (off does not strip raw params)', () => {
+    // Round-7 review: docs/UI promise non-Anthropic policies are inert in
+    // BOTH directions - a hand-written cache_control on another family is
+    // raw-parameter territory and must survive promptCache: 'off'.
+    const result = buildRequest(
+      model,
+      [] as any,
+      opts(),
+      {
+        models: [{
+          id: 'm', server: 'or', vllmModelId: 'deepseek/deepseek-chat', promptCache: 'off',
+          defaultParams: { cache_control: { type: 'ephemeral' } },
+        }],
+        servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(result.mergedOptions.cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('never sends the cache directive to other families or other backends', () => {
+    const otherFamily = buildRequest(
+      model,
+      [] as any,
+      opts(),
+      {
+        models: [{ id: 'm', server: 'or', vllmModelId: 'deepseek/deepseek-chat' }],
+        servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(otherFamily.mergedOptions.cache_control).toBeUndefined();
+    const vllmAnthropic = buildRequest(
+      model,
+      [] as any,
+      opts(),
+      {
+        models: [{ id: 'm', server: 'srv', vllmModelId: 'anthropic/claude-sonnet-4.6' }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
+        enableFileLogging: false,
+      },
+      output,
+    );
+    expect(vllmAnthropic.mergedOptions.cache_control).toBeUndefined();
+  });
+
   it('appends the routing-mode suffix to the wire id for OpenRouter Auto routing (nitro/exacto)', () => {
     // Routing mode is a per-model OpenRouter setting that sorts providers when
     // routing is Auto. The suffix goes on the WIRE id only — the base id stays

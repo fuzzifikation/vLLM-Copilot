@@ -54,6 +54,13 @@ Dashboard
   → engine: GET /api/v1/models    (relay catalog - per-model context+output)
   → engine: GET /api/v1/models/{id}/endpoints   (per-provider list, cached per session)
   → engine: GET /api/v1/key, /api/v1/credits    (account budget, best-effort)
+
+Model Selector (webview, opened from an OR server row)
+  → GET /api/v1/benchmarks        (quality axis, once per open/refresh, never polled)
+  → GET /api/v1/models            (universe = AA-scored text-output variants)
+  → GET /api/v1/models/{id}/endpoints   (per-provider rates + tiers + perf stats, shared cache)
+  → client-side p_eff per (model, provider), Pareto front, chart + table
+  → "Use this model now" → shared add tail (duplicate gate + confirm) on the opener entry
 ```
 
 ---
@@ -62,15 +69,18 @@ Dashboard
 
 | File | Responsibility |
 |---|---|
-| `src/openRouter.ts` | OpenRouter control plane: input parsing, catalog metadata resolution/normalization, provider endpoints, account/credits probes. The ONLY vendor-specific module. |
-| `src/runtimeLimits.ts` | `resolveRuntimeLimits()` dispatch - the OpenRouter arm calls into `openRouter.ts`; `detectServerType()` recognizes `openrouter.ai` hosts. |
+| `src/backends/openRouter.ts` | OpenRouter control plane: input parsing, catalog metadata resolution/normalization, provider endpoints (incl. perf stats + auth for them), account/credits probes. The ONLY vendor-specific module. |
+| `src/backends/runtimeLimits.ts` | `resolveRuntimeLimits()` dispatch - the OpenRouter arm calls into `openRouter.ts`; `detectServerType()` recognizes `openrouter.ai` hosts. |
 | `src/provider/requestBuilder.ts` | Applies the pinned `provider: { only: [tag] }` and the routing-mode suffix (`:nitro`/`:exacto`) to the wire id at request time. |
-| `src/vllmMetrics.ts` | Metrics engine - resolves per-model context + output ceiling from the relay catalog, caches per-provider `/endpoints` lists and per-model context/output per session. |
-| `src/dashboard.ts` | Relay tree: Account node + one node per model; per-provider limits, pricing, cost, and the symmetric Attention icon. |
-| `src/serverSettingsView.ts` | Fetches per-model provider lists (lazily, on open) and posts them to the Model Settings webview. |
+| `src/ui/vllmMetrics.ts` | Metrics engine - resolves per-model context + output ceiling from the relay catalog, caches per-provider `/endpoints` lists and per-model context/output per session. |
+| `src/ui/dashboard.ts` | Relay tree: Account node + one node per model; per-provider limits, pricing, cost, the symmetric Attention icon, and the Model Selector entry point on OpenRouter rows. |
+| `src/ui/serverSettingsView.ts` | Fetches per-model provider lists (lazily, on open) and posts them to the Model Settings webview. |
+| `src/ui/modelSelectorView.ts` | Model Selector extension side: benchmarks/catalog/endpoints fan-out, benchmark join on `canonical_slug`, per-provider rate + tier conversion, configured-model marks, "Use this model now" (Auto/Exact routing → shared add tail on the opener entry). |
+| `resources/modelSelector.js` / `.css` | Model Selector webview side: client-side cost re-derivation, Pareto scan, chart + 13-column table (multi-provider models collapse to one summary row, providers as children), keyboard row selection, calculation + disclaimer modals. |
 | `resources/serverSettings.js` | Provider dropdown - shows each provider's context window, output cap, and per-1M pricing. |
-| `src/messageConverter.ts` | Error formatting - the single path that surfaces all OpenRouter failures (code + formatted message). |
-| `src/usageStore.ts` | Token/cost tracker - prefers actual `usage.cost` for OpenRouter; `usedByok` is OpenRouter's upstream-key BYOK, distinct from VS Code's `isBYOK`. |
+| `src/provider/messageConverter.ts` | Error formatting - the single path that surfaces all OpenRouter failures (code + formatted message). |
+| `src/usage/usageStore.ts` | Token/cost tracker - prefers actual `usage.cost` for OpenRouter; `usedByok` is OpenRouter's upstream-key BYOK, distinct from VS Code's `isBYOK`. |
+| `scripts/openrouter-cost.mjs` | Catalog-level cost-ranking preview (calibration tool for the selector's usage profile; no provider fan-out - see its header for the honest scope). |
 
 ---
 
@@ -82,9 +92,10 @@ The source of truth is OpenRouter's current OpenAPI spec (`https://openrouter.ai
 |---|---|---|---|
 | `POST /api/v1/chat/completions` | key | Shared chat data plane; final `usage` chunk carries actual cost/tokens | ✔ shipped |
 | `GET /api/v1/models` | none | **Authoritative metadata source** - the full model CATALOG. Every variant is its own entry keyed by exact `id`. | ✔ shipped (resolution source) |
-| `GET /api/v1/models/{id}/endpoints` | none | Per-provider list (context, output cap, pricing, status, uptime) for one model | ✔ shipped (Provider dropdown + dashboard) |
+| `GET /api/v1/models/{id}/endpoints` | none (we send the key) | Per-provider list (context, output cap, pricing, status, uptime) for one model. The API returned `latency_last_30m`/`throughput_last_30m` (p50 TTFT ms / tok/s) only to authenticated requests, so the shared fetch sends the first OR entry's key - any valid key sees the same global stats. | ✔ shipped (Provider dropdown + dashboard + Model Selector) |
 | `GET /api/v1/key` | key | Account health - credits, limits, usage, free-tier | ✔ shipped (relay Account node) |
 | `GET /api/v1/credits` | key | Account budget - total credits vs total usage | ✔ shipped (relay Account node) |
+| `GET /api/v1/benchmarks?source=artificial-analysis` | key | Artificial Analysis coding/agentic/intelligence indices, joined on the catalog `canonical_slug` - the Model Selector's quality axis. Rate-limited (30/min, 500/day); fetched once per panel open/refresh, never polled. | ✔ shipped (Model Selector) |
 | `GET /api/v1/model/{author}/{slug}` | none | Single-model lookup - **NOT used** (see [Exact-model endpoint](#the-exact-model-endpoint)) | ✖ rejected |
 | `GET /api/v1/activity` | key (mgmt?) | Per-model daily cost/token aggregates | ⏸ deferred (undocumented + mgmt-key scope) |
 | `GET /api/v1/generation?id=` | key | Full per-request diagnostics (needs `X-Generation-Id`) | ⏸ deferred (follow-up diagnostics) |
@@ -195,6 +206,21 @@ Design constraints:
 
 ---
 
+## Prompt caching (Anthropic models)
+
+The goal: stop re-billing the whole prompt on every turn. Copilot resends the full context each turn (a VS Code Copilot coding session starts at ~30k system+tools tokens and grows), and Claude-family models are the one cacheable family with **no implicit caching upstream** - without an explicit directive every turn pays full input price.
+
+- **The wire rule** (`requestBuilder.ts`): for OpenRouter models whose WIRE id matches `^~?anthropic/`, the request body carries `cache_control: { type: "ephemeral" }` (`ttl: "1h"` variant per setting). `anthropic/*` models are served only by the Anthropic ecosystem (Anthropic, Bedrock, Vertex, Azure, Claude Platform on AWS) - the exact providers OpenRouter documents as honoring the top-level directive.
+- **The economics**: first turn pays a 1.25x cache write, every later turn reads at ~0.1x, and the 5-min TTL re-arms free on each hit - a tight agent loop keeps one cache warm for the whole session. Break-even is 2 turns. The 1-hour TTL costs 2x per write and only pays off when consecutive turns sit more than 5 minutes apart. Minimum cacheable prompt is 1024-4096 tokens depending on model; Copilot prompts always clear it. Worst case is a one-shot turn: +25% on the prompt.
+- **Disjoint buckets (pricing law)**: a token written to the cache pays the creation rate IN PLACE OF the input rate, never on top of it (live Sonnet 4.6: input 3.00, write 3.75 = 1.25x, write_1h 6.00 = 2x - a formula adding write to input bills 6.75 and overstates ~30%; the selector and `scripts/openrouter-cost.mjs` both carried that bug until the 2026-09-09 round-6 review). With cache activity the new-input share IS the cache delta, so it prices at the write rate; with no read share or no published write rate it prices at plain input.
+- **Policy-aware pricing (selector)**: a configured model's non-default `promptCache` prices its rows under its real policy - `off` rows drop the cached share (plain input), `1h` rows pay the published `input_cache_write_1h` rate (falling back to the 5-min rate when a provider publishes none, badged either way). Base AND long-context tiers carry the 1h rate (live Claude Sonnet 4/4.5 double it above 200k: write 7.5 / write_1h 12 per M - round-7 review). When several configs share a wire id, the policy that prices a row is a prioritized ranking, never first-match and never non-default-only: every matching config counts (an omitted `promptCache` standing in as `on`), ranked by who serves the row (exact-provider pin > Auto on this entry > sibling-entry Auto), then explicit choice over omission, then - for a genuine same-rank conflict - the policy that costs MOST under the row's current profile, computed per row (with the cache-heavy default profile `off` exceeds `1h`: it forfeits the cache-read share entirely); a fixed order (`1h` > `on` > `off`) settles only exact cost ties, so the pick never depends on store order. The webview applies the same `^~?anthropic/` family gate as the request path, so an inert policy never bends a price.
+- **The gate is the family prefix, by necessity**: OpenRouter exposes NO machine-readable cache-capability signal - `cache_control` appears in no model's `supported_parameters`, neither in the catalog nor in the union of per-provider endpoint params (live-verified 2026-09-09). The family check is the honest gate, not a guess list of model names.
+- **Why not blanket-send**: every other cacheable family (OpenAI, DeepSeek, Gemini, Grok, Moonshot, Groq, Z.AI) already caches implicitly for free, and Anthropic-style markers get TRANSLATED on OpenAI (GPT-5.6+ bills cache writes at 1.25x even in automatic mode) - sending wide buys nothing and risks explicit-mode write billing.
+- **Setting**: per-model `promptCache` (`on` default = omitted | `1h` | `off`), OpenRouter-only like `provider`/`routingMode`, set via the **Prompt cache** dropdown in Model Settings (rendered only for `anthropic/*` wires, mirroring the request-path gate). `on` maps to omission on save - same default-never-pollutes rule as routing mode. Presets may not set it (user billing decision, `presets.ts` exclusion); Auto-Configure, the Model Selector's same-entry re-configure, AND the sibling-entry duplicate-gate replace all preserve it (with `routingMode`) from the overwritten config. `off` STRIPS any `cache_control` inherited from `defaultParams`/modes within the Claude family; outside the family the whole setting is inert in both directions (a hand-written `cache_control` on another family is raw-parameter territory and survives `off`).
+- **Verification**: savings land in `usage.cost` (authoritative), visible on the dashboard per model; OpenRouter's Logs pages report cache reads/writes per generation.
+
+---
+
 ## Cost tracking
 
 - **Actual spend**: OpenRouter returns `usage.cost` in the final stream chunk - captured, stored, and **preferred** over any token-derived estimate. Never added together with estimates.
@@ -224,7 +250,7 @@ The pre-stream transport retries transient 5xx responses once with a bounded `Re
 - **No** `HTTP-Referer`, `X-OpenRouter-Title`, `X-OpenRouter-Categories` sent automatically (users may add them per-model).
 - **No** forced data-policy filters (ZDR etc.); provider data policy is the user's OpenRouter account.
 - **No** `X-OpenRouter-Metadata` by default.
-- **No** `session_id` sent until VS Code exposes a stable conversation identifier.
+- **Per-chat `session_id`** comes from Copilot's stable conversation identity. Every turn and internal retry in one chat keeps the same OpenRouter routing/cache affinity; separate chats get separate ids. Callers that provide no conversation identity omit the field and use OpenRouter's own message-derived fallback.
 
 ---
 
@@ -245,7 +271,7 @@ The pre-stream transport retries transient 5xx responses once with a bounded `Re
 - **`allow_fallbacks: false` / `provider.order`** - not implemented; do not add without product direction.
 - **`X-Generation-Id` / generation diagnostics** - deferred (the stream path never reads response headers; not worth 4-layer plumbing).
 - **Responses API / Agent SDK** - separate protocols; out of scope. Copilot owns the agent loop.
-- **Not-yet-consumed catalog fields** - model `description` (tooltip), `created` (age), `benchmarks` (Design Arena rank), full `architecture` output modalities, `top_provider.is_moderated`, full `pricing` set (`request`, `image`, `web_search`, `internal_reasoning`, `input_cache_write`, `overrides`). All documented follow-ups for richer model rows.
+- **Not-yet-consumed catalog fields** - model `description` (tooltip), `created` (age), `benchmarks` (Design Arena rank), `top_provider.is_moderated`, and the remaining `pricing` members (`request`, `image`, `web_search`, `internal_reasoning`). All documented follow-ups for richer model rows. (`architecture.output_modalities`, `pricing.input_cache_write` and `pricing.overrides` ARE consumed now - the Model Selector filters on modalities and prices with write + tier overrides.)
 
 ---
 
@@ -282,7 +308,7 @@ The pre-stream transport retries transient 5xx responses once with a bounded `Re
 ### Pricing caveats
 
 - `pricing.prompt` / `completion` are per-token USD strings; `-1` = unknown (dynamic routers) and must not become a rate.
-- `pricing` can carry `overrides` - conditional pricing by prompt-token threshold (long-context surcharge) or time-of-day (peak/off-peak). Today's per-1M estimate is a lower bound; long-context/peak usage can be pricier. A future flag could surface `overrides` presence.
+- `pricing` can carry `overrides` entries of TWO kinds, governed by the OpenAPI `PricingOverride` schema (both kinds live-verified 2026-09-09): "an entry applies only when all of its condition fields match the request; among applicable entries, later entries win per price key; price keys absent from an entry inherit the base price". **Prompt-threshold tiers**: `min_prompt_tokens`, applied when prompt tokens are STRICTLY above it; a model can have several (qwen/qwen3.7-flash: 32k AND 256k). The Model Selector accumulates every applicable tier per key over the time-peak base, array order preserved (it is the precedence), displayed as a peak upper bound with the last applicable threshold badged. Two bugs lived here: reading only `overrides[0]` (understated 1M-context rates 50%) and selecting one tier wholesale with base-filled gaps (a later PARTIAL tier discarded an earlier tier's still-applicable field override) - both fixed 2026-09-09. **Time-of-day windows**: `utc_start`/`utc_end` are spec-documented HHMM numbers bounding the half-open [start, end), wrapping past midnight, optionally scoped by `utc_days` weekdays (unmodeled - we never read the clock). An early minutes-of-day guess (1440 cap) silently dropped the live Tencent windows (0/1600) - fixed the same day. `tencent/hy3` @ Tencent runs peak 0-1600 / off-peak 1600-0 at -37.5%. A planning view must not bake in a clock: the parser precomputes `worst_case` (highest rate per field over base + windows, via `worstCasePricing()`), and EVERY price surface displays that peak - Model Selector (clock mark on the price + detail-card badge), dashboard Pricing row, provider dropdown, Add Model labels, and the per-1M rates persisted into the model config. Off-peak savings stay the user's move: each hint says to look up the exact windows on the provider's OpenRouter page. The CATALOG payload carries the same `overrides` as `/endpoints` (live-verified 2026-09-09) - time windows are not endpoint-only.
 
 ### Rate limits
 

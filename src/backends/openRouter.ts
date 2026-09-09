@@ -32,8 +32,9 @@
  * - Reasoning is toggled via `reasoning: { enabled, effort }` (Chat Completions).
  */
 
-import { buildEndpoint } from '../state/config.js';
+import { buildEndpoint, isOpenRouterUrl, sanitizeRequestHeaders } from '../state/config.js';
 import type { ModelConfig } from '../state/config.js';
+import { readServers } from '../state/configStore.js';
 import { buildRequestHeaders, fetchWithRetry } from '../shared/fetchRetry.js';
 import type { RuntimeModelLimits } from '../types.js';
 
@@ -221,11 +222,17 @@ export interface OpenRouterModelData {
   expiration_date?: string | null;
   architecture?: {
     input_modalities?: string[];
+    /** Consumed only by the Model Selector's text-model filter. */
+    output_modalities?: string[];
   };
   pricing?: {
     prompt?: string | null;
     completion?: string | null;
     input_cache_read?: string | null;
+    /** Raw override array (tiers AND time-of-day windows) - the catalog
+     *  payload carries the SAME overrides as `/endpoints` (live-verified
+     *  2026-09-09), consumed only through worstCasePricing(). */
+    overrides?: unknown;
   };
   top_provider?: {
     context_length?: number | null;
@@ -449,10 +456,14 @@ function normalizeOpenRouterModel(
     if (Object.keys(filtered).length > 0) defaultParams = filtered;
   }
 
-  // ── Estimated rates (catalog pricing is an ESTIMATE; usage.cost is authoritative) ──
-  const input = perMillion(data.pricing?.prompt);
-  const output = perMillion(data.pricing?.completion);
-  const cachedInput = perMillion(data.pricing?.input_cache_read);
+  // ── Estimated rates (catalog pricing is an ESTIMATE; usage.cost is
+  // authoritative). Time-of-day windows are folded to the WORST window before
+  // the rates persist into the model config: a saved estimate must never be a
+  // clock-dependent underestimate (external review 2026-09-09). ──
+  const costPricing = worstCasePricing(data.pricing, data.pricing?.overrides) ?? data.pricing;
+  const input = perMillion(costPricing?.prompt);
+  const output = perMillion(costPricing?.completion);
+  const cachedInput = perMillion(costPricing?.input_cache_read);
   const cost = input !== undefined || output !== undefined || cachedInput !== undefined
     ? { input, output, cachedInput, currency: 'USD' as const }
     : undefined;
@@ -632,7 +643,38 @@ export interface OpenRouterModelEndpoint {
   /** Reported quantization ("fp8", "fp4", "unknown", …) — informational. */
   quantization?: string;
   /** Per-provider per-token pricing (estimate; actual cost is usage.cost). */
-  pricing?: { prompt?: string; completion?: string; input_cache_read?: string };
+  pricing?: {
+    prompt?: string;
+    completion?: string;
+    input_cache_read?: string;
+    /** Cache-write rate when published (Anthropic-style, often 1.25x input). */
+    input_cache_write?: string;
+    /**
+     * 1-hour-TTL cache-write rate (live Sonnet 4.6: input 3.00, write 3.75,
+     * write_1h 6.00 - creation bills IN PLACE of input, disjoint buckets).
+     * Only consumed where a 1-hour policy is in play (the selector prices a
+     * config whose promptCache is '1h' at this rate); everything else keeps
+     * using the 5-min write rate.
+     */
+    input_cache_write_1h?: string;
+    /** Long-context tiers: rates above a per-request prompt threshold. */
+    overrides?: OpenRouterPricingTier[];
+    /**
+     * Time-of-day override windows (spec-documented HHMM codes; live
+     * `tencent/hy3`: 0-1600 peak / 1600-0 off-peak at -37.5%). Kept SEPARATE
+     * from `overrides` because they are a different condition (when, not how
+     * big) — consumers must never treat them as prompt-threshold tiers, and
+     * nothing may interpret the bounds (no clock, no weekday logic).
+     */
+    time_windows?: OpenRouterTimePricingWindow[];
+    /**
+     * Per-field WORST (highest) rate among the base and every time-of-day
+     * window, present exactly when `time_windows` is. Precomputed here so
+     * every price surface (selector, dashboard, dropdowns, saved config
+     * rates) shows the same clock-free peak without re-implementing the fold.
+     */
+    worst_case?: WorstCasePricing;
+  };
   /**
    * Provider-reported completion cap for this model (null when unset).
    * Display-only — never persists into `maxOutputTokens`, never clamps.
@@ -650,6 +692,46 @@ export interface OpenRouterModelEndpoint {
   status?: number;
   /** Reported uptime over the last day, as a percentage 0-100 (e.g. 99.97). */
   uptimeLast1d?: number;
+  /**
+   * p50 time-to-first-token in ms over the last 30 min (OpenRouter reports a
+   * percentile object; only p50 is consumed). Undefined when unauthenticated
+   * (OpenRouter returns null for these stats without a key - live-verified
+   * 2026-09-09) or without recent traffic. The ms unit is the OpenAPI
+   * `PercentileStats` description; no authenticated non-null sample was
+   * available at implementation time to confirm it.
+   */
+  latencyP50Ms?: number;
+  /** p50 output throughput (tok/s) over the last 30 min; same auth caveat. */
+  throughputP50TokPerSec?: number;
+}
+
+/** Extract the p50 from an OpenRouter percentile-stats field
+ *  (`{ p50, p75, p90, p99 }` per the OpenAPI `PercentileStats` schema; a bare
+ *  number is accepted defensively). Undefined for null/missing/garbage. */
+function p50FromStats(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (value && typeof value === 'object') {
+    const p50 = (value as Record<string, unknown>).p50;
+    if (typeof p50 === 'number' && Number.isFinite(p50)) return p50;
+  }
+  return undefined;
+}
+
+/**
+ * Headers for the provider-list fetch: the first configured OpenRouter
+ * registry entry's auth, when one exists. The endpoint list itself is public,
+ * but OpenRouter only reports `latency_last_30m`/`throughput_last_30m` to
+ * authenticated requests (OpenAPI: "returns null for unauthenticated
+ * requests"), and any valid OR key sees the same global stats. Every consumer
+ * of the shared provider-list cache therefore fetches through this one rule —
+ * a per-caller split would let an unauthenticated fetch poison the cache and
+ * blank the stats columns for the others.
+ */
+function openRouterStatsHeaders(): Record<string, string> {
+  const entry = readServers().find(
+    (s) => s.serverType === 'openrouter' || isOpenRouterUrl(s.serverUrl),
+  );
+  return sanitizeRequestHeaders(entry?.requestHeaders ?? {});
 }
 
 /**
@@ -657,11 +739,13 @@ export interface OpenRouterModelEndpoint {
  * `GET /api/v1/models/{id}/endpoints` — the authoritative, per-model provider
  * list. The requested id is used VERBATIM (variants like `:free` are their own
  * entries and resolve to only their own providers), so there is no slug
- * derivation and no guessing. Public and unauthenticated.
+ * derivation and no guessing.
  *
  * Returns the endpoints with `tag`/`provider_name` (plus optional quantization,
- * pricing, caps, status) preserved as reported. Throws on HTTP/network failure
- * and on malformed payloads.
+ * pricing, caps, status, and 30-min perf stats) preserved as reported. The list
+ * itself is public; the request carries the first configured OR entry's auth
+ * (see {@link openRouterStatsHeaders}) so the latency/throughput stats are
+ * populated. Throws on HTTP/network failure and on malformed payloads.
  */
 async function fetchOpenRouterModelEndpoints(
   requestedId: string,
@@ -679,7 +763,7 @@ async function fetchOpenRouterModelEndpoints(
     const response = await fetchWithRetry(
       url,
       { method: 'GET', signal: AbortSignal.timeout(timeoutMs) },
-      {},
+      openRouterStatsHeaders(),
     );
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} ${response.statusText} from ${url}`);
@@ -701,11 +785,22 @@ async function fetchOpenRouterModelEndpoints(
       const providerName = typeof entry.provider_name === 'string' ? entry.provider_name : tag;
       if (!tag) continue; // a provider without a routing slug can never be selected
       const pricingRaw = entry.pricing;
-      const pricing = pricingRaw && typeof pricingRaw === 'object'
+      const priced = pricingRaw && typeof pricingRaw === 'object'
+        ? (pricingRaw as Record<string, unknown>)
+        : undefined;
+      const priceOverrides = priced ? parseEndpointPricingOverrides(priced.overrides) : {};
+      const pricing = priced
         ? {
-            prompt: typeof (pricingRaw as Record<string, unknown>).prompt === 'string' ? (pricingRaw as Record<string, unknown>).prompt as string : undefined,
-            completion: typeof (pricingRaw as Record<string, unknown>).completion === 'string' ? (pricingRaw as Record<string, unknown>).completion as string : undefined,
-            input_cache_read: typeof (pricingRaw as Record<string, unknown>).input_cache_read === 'string' ? (pricingRaw as Record<string, unknown>).input_cache_read as string : undefined,
+            prompt: typeof priced.prompt === 'string' ? priced.prompt as string : undefined,
+            completion: typeof priced.completion === 'string' ? priced.completion as string : undefined,
+            input_cache_read: typeof priced.input_cache_read === 'string' ? priced.input_cache_read as string : undefined,
+            input_cache_write: typeof priced.input_cache_write === 'string' ? priced.input_cache_write as string : undefined,
+            input_cache_write_1h: typeof priced.input_cache_write_1h === 'string' ? priced.input_cache_write_1h as string : undefined,
+            overrides: priceOverrides.tiers,
+            time_windows: priceOverrides.timeWindows,
+            worst_case: priceOverrides.timeWindows
+              ? worstCasePricing(priced as PricingFields, priced.overrides)
+              : undefined,
           }
         : undefined;
       endpoints.push({
@@ -717,6 +812,8 @@ async function fetchOpenRouterModelEndpoints(
         contextLength: typeof entry.context_length === 'number' ? entry.context_length : undefined,
         status: typeof entry.status === 'number' ? entry.status : undefined,
         uptimeLast1d: typeof entry.uptime_last_1d === 'number' ? entry.uptime_last_1d : undefined,
+        latencyP50Ms: p50FromStats(entry.latency_last_30m),
+        throughputP50TokPerSec: p50FromStats(entry.throughput_last_30m),
       });
     }
     return endpoints;
@@ -1003,4 +1100,252 @@ export function fetchOpenRouterCredits(
   requestHeaders: Record<string, string> = {},
 ): Promise<OpenRouterCredits | undefined> {
   return fetchOpenRouterAccountData<OpenRouterCredits>('v1/credits', requestHeaders);
+}
+
+/**
+ * One model's Artificial Analysis indices from `GET /api/v1/benchmarks` — the
+ * quality axis of the Model Selector. `slug` is the stable OpenRouter
+ * permaslug: a DATED canonical slug (`z-ai/glm-5.3-20260816`) equal to the
+ * catalog's `canonical_slug`. Join on THAT field: matching the plain catalog
+ * `id` instead matches only never-renamed models and silently drops every
+ * recent release (live-verified 2026-09-08: 37 vs 180 rows).
+ * An index is `undefined` when the source reports none for that axis.
+ */
+export interface OpenRouterBenchmarkRow {
+  slug: string;
+  coding?: number;
+  agentic?: number;
+  intelligence?: number;
+}
+
+/** Benchmarks payload: the AA rows plus the freshness stamp and the attribution
+ *  string the endpoint REQUIRES when the scores are republished (the Model
+ *  Selector renders `citation` verbatim in its footer). */
+export interface OpenRouterBenchmarks {
+  rows: OpenRouterBenchmarkRow[];
+  citation?: string;
+  asOf?: string;
+}
+
+/** One-shot user-initiated fetch (panel open/refresh), so a plain fetch + a
+ *  generous timeout beats both the account probes' silent-degrade and
+ *  `fetchWithRetry`'s backoff: errors must reach the panel as text. */
+const BENCHMARKS_TIMEOUT_MS = 15_000;
+
+/**
+ * Fetch the Artificial Analysis benchmark indices. Authenticated with the
+ * caller's OpenRouter entry headers (any valid key works; the endpoint is
+ * rate-limited to 30/min and 500/day per account — the caller fetches once
+ * per panel open and on explicit refresh, never on a timer). THROWS with an
+ * actionable message on HTTP failure (401/429 get explicit hints) or a
+ * malformed payload. The Model Selector shows the error instead of a chart:
+ * the benchmark rows define its model universe, so there is no degraded mode.
+ */
+export async function fetchOpenRouterBenchmarks(
+  requestHeaders: Record<string, string> = {},
+): Promise<OpenRouterBenchmarks> {
+  const url = buildEndpoint(OPENROUTER_API_BASE, 'v1/benchmarks?source=artificial-analysis');
+  const headers = buildRequestHeaders(undefined, requestHeaders);
+  const response = await fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(BENCHMARKS_TIMEOUT_MS) });
+  if (!response.ok) {
+    const hint = response.status === 401
+      ? ' - the OpenRouter key was rejected by the benchmarks endpoint'
+      : response.status === 429
+        ? ' - rate limited (30/min, 500/day per account), try again later'
+        : '';
+    throw new Error(`OpenRouter benchmarks lookup failed: HTTP ${response.status} ${response.statusText}${hint}`);
+  }
+  const payload = await response.json() as { data?: unknown; meta?: Record<string, unknown> };
+  if (!Array.isArray(payload.data)) {
+    throw new Error('OpenRouter benchmarks lookup failed: expected { data: [...] }, got a malformed payload.');
+  }
+  const finite = (v: unknown): number | undefined =>
+    typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+  const rows: OpenRouterBenchmarkRow[] = [];
+  for (const item of payload.data as Array<Record<string, unknown>>) {
+    if (!item || item.source !== 'artificial-analysis' || typeof item.model_permaslug !== 'string') continue;
+    rows.push({
+      slug: item.model_permaslug,
+      coding: finite(item.coding_index),
+      agentic: finite(item.agentic_index),
+      intelligence: finite(item.intelligence_index),
+    });
+  }
+  const meta = payload.meta ?? {};
+  return {
+    rows,
+    citation: typeof meta.citation === 'string' ? meta.citation : undefined,
+    asOf: typeof meta.as_of === 'string' ? meta.as_of : undefined,
+  };
+}
+
+/**
+ * A pricing override entry on an endpoint's `pricing.overrides`. With
+ * `min_prompt_tokens`: rates that apply when one request's prompt tokens are
+ * STRICTLY above that threshold (OpenAPI spec). All applicable entries
+ * contribute PER PRICE KEY - later array entries win, keys an entry omits
+ * inherit the base price - so consumers must accumulate them, never select
+ * one wholesale. Entries WITHOUT the threshold are time-of-day windows
+ * instead — routed to OpenRouterTimePricingWindow by
+ * parseEndpointPricingOverrides.
+ */
+export interface OpenRouterPricingTier {
+  minPromptTokens: number;
+  prompt?: string;
+  completion?: string;
+  inputCacheRead?: string;
+  inputCacheWrite?: string;
+  /**
+   * Tier-scoped 1-hour write rate (live Claude Sonnet 4/4.5: above 200k the
+   * tier publishes write 7.5 AND write_1h 12.0 per M, doubling the base 6.0 -
+   * external review 2026-09-09 round 7. Dropping it priced long-context 1h
+   * policies at half the real creation cost.)
+   */
+  inputCacheWrite1h?: string;
+}
+
+/**
+ * A time-of-day price window on an endpoint's `pricing.overrides` entry.
+ * The OpenAPI spec documents `utc_start`/`utc_end` as HHMM clock numbers
+ * (100 = 01:00) bounding a HALF-OPEN window [utc_start, utc_end) that may
+ * wrap past midnight, optionally scoped to `utc_days` weekdays (we ignore
+ * that condition — nothing interprets the bounds, see below). The live
+ * Tencent pair 0/1600 is exactly 00:00-16:00 UTC peak vs off-peak. The
+ * whole extension reads the precomputed `worst_case` from
+ * {@link worstCasePricing} below, so clock and weekday logic stay irrelevant.
+ */
+export interface OpenRouterTimePricingWindow {
+  utcStart: number;
+  utcEnd: number;
+  prompt?: string;
+  completion?: string;
+  inputCacheRead?: string;
+  inputCacheWrite?: string;
+  /** Window-scoped 1-hour write rate (carried for the worst-case fold; no
+   *  live window publishes one today — absent is the normal shape). */
+  inputCacheWrite1h?: string;
+}
+
+/** Split `pricing.overrides` into prompt-threshold tiers and time-of-day
+ *  windows, dropping entries with neither a usable threshold nor a UTC pair. */
+function parseEndpointPricingOverrides(raw: unknown): {
+  tiers?: OpenRouterPricingTier[];
+  timeWindows?: OpenRouterTimePricingWindow[];
+} {
+  if (!Array.isArray(raw) || raw.length === 0) return {};
+  const tiers: OpenRouterPricingTier[] = [];
+  const timeWindows: OpenRouterTimePricingWindow[] = [];
+  const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+  // Spec: HHMM clock numbers, 0 (00:00) legal and 2400 the shape's ceiling,
+  // so the isPositive() gate for thresholds must NOT be reused here. The
+  // bounds are never interpreted (worst-window fold), so a misread unit can
+  // only mis-shape an entry, never mis-price one.
+  const timeCode = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 2400 ? v : undefined);
+  for (const t of raw) {
+    if (!t || typeof t !== 'object') continue;
+    const rec = t as Record<string, unknown>;
+    if (isPositive(rec.min_prompt_tokens)) {
+      tiers.push({
+        minPromptTokens: rec.min_prompt_tokens as number,
+        prompt: str(rec.prompt),
+        completion: str(rec.completion),
+        inputCacheRead: str(rec.input_cache_read),
+        inputCacheWrite: str(rec.input_cache_write),
+        inputCacheWrite1h: str(rec.input_cache_write_1h),
+      });
+      continue;
+    }
+    const utcStart = timeCode(rec.utc_start);
+    const utcEnd = timeCode(rec.utc_end);
+    if (utcStart !== undefined && utcEnd !== undefined) {
+      timeWindows.push({
+        utcStart,
+        utcEnd,
+        prompt: str(rec.prompt),
+        completion: str(rec.completion),
+        inputCacheRead: str(rec.input_cache_read),
+        inputCacheWrite: str(rec.input_cache_write),
+        inputCacheWrite1h: str(rec.input_cache_write_1h),
+      });
+    }
+  }
+  return {
+    tiers: tiers.length > 0 ? tiers : undefined,
+    timeWindows: timeWindows.length > 0 ? timeWindows : undefined,
+  };
+}
+
+/** The per-token USD string fields a pricing record may carry (wire names). */
+interface PricingFields {
+  prompt?: string | null;
+  completion?: string | null;
+  input_cache_read?: string | null;
+  input_cache_write?: string | null;
+  input_cache_write_1h?: string | null;
+}
+
+/** Worst-case view of a pricing record: same wire field names, each field the
+ *  highest rate that field can reach on the clock. */
+export interface WorstCasePricing {
+  prompt?: string;
+  completion?: string;
+  input_cache_read?: string;
+  input_cache_write?: string;
+  input_cache_write_1h?: string;
+}
+
+/**
+ * Per-field WORST (highest) rate among the base rates and every time-of-day
+ * override window. Returns UNDEFINED when there are no time-of-day windows
+ * (the base already is the worst case) — that absence/presence is itself the
+ * signal consumers use to badge the price as time-of-day dependent.
+ *
+ * WHY peak and never "now": every consumer of this is a planning surface
+ * (saved config rates persist for days; the selector compares providers), and
+ * an estimate that changes with the wall clock — or, worse, silently sits at
+ * the off-peak value — is the exact failure an external review caught on the
+ * Model Selector (2026-09-09, tencent/hy3 -37.5% off-peak). The bounds are
+ * never interpreted (spec: HHMM, half-open, optional weekday scope - all
+ * unmodeled by design), so no clock logic can corrupt the result. "-1"
+ * (unknown/dynamic price) never WINS a max, but an
+ * unparseable base value survives verbatim when no window beats it: the
+ * result is a drop-in replacement for the pricing record, so consumers keep
+ * their existing "-1" handling.
+ */
+export function worstCasePricing(
+  base: PricingFields | undefined,
+  overridesRaw: unknown,
+): WorstCasePricing | undefined {
+  if (!base) return undefined;
+  const { timeWindows } = parseEndpointPricingOverrides(overridesRaw);
+  if (!timeWindows) return undefined;
+  const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+  // "-1" and friends are not rates: only finite non-negative numbers compete.
+  const num = (v: string | undefined): number | undefined => {
+    if (v === undefined) return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
+  };
+  const fields: { wire: keyof PricingFields & keyof WorstCasePricing; win: keyof OpenRouterTimePricingWindow }[] = [
+    { wire: 'prompt', win: 'prompt' },
+    { wire: 'completion', win: 'completion' },
+    { wire: 'input_cache_read', win: 'inputCacheRead' },
+    { wire: 'input_cache_write', win: 'inputCacheWrite' },
+    { wire: 'input_cache_write_1h', win: 'inputCacheWrite1h' },
+  ];
+  const out: WorstCasePricing = {};
+  for (const { wire, win } of fields) {
+    let bestStr = str(base[wire]);
+    let best = num(bestStr);
+    for (const w of timeWindows) {
+      const cand = str(w[win]);
+      const n = num(cand);
+      if (n !== undefined && (best === undefined || n > best)) {
+        best = n;
+        bestStr = cand;
+      }
+    }
+    if (bestStr !== undefined) out[wire] = bestStr;
+  }
+  return out;
 }

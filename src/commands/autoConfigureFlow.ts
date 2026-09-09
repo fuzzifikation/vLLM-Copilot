@@ -166,6 +166,7 @@ export function registerAutoConfigureModelCommand(
         cost: preserveFrom.cost ?? discoveryResult.modelConfig.cost,
         provider: preserveFrom.provider ?? discoveryResult.modelConfig.provider,
         routingMode: preserveFrom.routingMode ?? discoveryResult.modelConfig.routingMode,
+        promptCache: preserveFrom.promptCache ?? discoveryResult.modelConfig.promptCache,
         displayName: preserveFrom.displayName ?? discoveryResult.modelConfig.displayName,
       };
       if (discoveryResult.suggestedMaxOutputTokens !== undefined && merged.maxOutputTokens === undefined) {

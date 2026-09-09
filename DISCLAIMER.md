@@ -14,6 +14,10 @@ It cannot guarantee the absence of bugs. Bugs can cause data loss, security prob
 
 Language models produce incorrect, unsafe, biased, or malicious output. They can also misuse this extension: they may drive Copilot tools, edit or delete files, run commands, exfiltrate context to the inference server you configured, and act inside the VS Code Agents window or Copilot CLI with whatever permissions that environment has. This extension does not stop them, sandbox them, or review their actions.
 
+## Costs
+
+Models that run on paid infrastructure cost real money, and that money is your bill. Prices this extension shows anywhere - settings dialogs, dashboards, the OpenRouter Model Selector - are best-guess estimates computed from provider-published rate cards at fetch time. Providers reprice, add surcharges, and change routing without notice, and a bug in this extension can make any displayed estimate wrong. The extension is not responsible for price accuracy and is not liable for over-charging, whatever caused it. The provider's and your own usage pages are the only source of truth; checking prices before you spend and reviewing usage after is on you.
+
 ## Your responsibility
 
 You choose the servers, keys, models, personalities, parameters, and backends. You review output before you trust it. You own access control, secrets, compliance, production change control, and whatever a model does with tools in your workspace. You are in charge, and you are fully responsible.

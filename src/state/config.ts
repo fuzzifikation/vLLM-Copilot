@@ -91,6 +91,18 @@ export interface ModelConfig {
    */
   routingMode?: 'standard' | 'nitro' | 'exacto';
   /**
+   * OpenRouter-only: Anthropic prompt caching for `anthropic/*` models — the
+   * request path ignores the field for every other family (they cache
+   * implicitly without any directive, and marker translation on OpenAI
+   * GPT-5.6+ risks explicit-mode write billing). Claude models never cache
+   * implicitly, so without the directive every turn re-bills the whole prompt.
+   * Omitted/`'on'` = send `cache_control: { type: 'ephemeral' }` (5-min TTL,
+   * re-armed free on every cache hit; first turn pays a 1.25x write, later
+   * turns read at ~0.1x). `'1h'` = 1-hour TTL at a 2x write — only pays off
+   * when consecutive turns sit more than 5 minutes apart. `'off'` = never send.
+   */
+  promptCache?: 'on' | '1h' | 'off';
+  /**
    * Model-scope request parameters (raw vLLM request-body keys, snake_case).
    * Applied on top of the built-in `DEFAULT_REQUEST_PARAMS` and overridden by the
    * selected `modelModes` entry. Same shape as a `modelModes` value.
@@ -703,6 +715,15 @@ export function validateConfig(config: VllmConfig): string[] {
       );
     }
 
+    // promptCache must be one of the supported modes when present — anything
+    // else would silently behave like the default while looking configured.
+    if (model.promptCache !== undefined && !['on', '1h', 'off'].includes(model.promptCache)) {
+      warnings.push(
+        `Model "${display}": promptCache "${model.promptCache}" is not a supported value ` +
+        `(expected "on", "1h", or "off").`
+      );
+    }
+
     // maxOutputTokens: scalar budget OR an ordered vector (the picker's Output
     // length menu, head = default). Keep the vector contract honest — positive
     // integers, strictly descending, ≤ 8 menu entries.
@@ -863,6 +884,7 @@ const CLEARABLE_ON_EMPTY: readonly (keyof ModelConfig)[] = [
   'systemMessageReplacementsFile',
   'provider',
   'routingMode',
+  'promptCache',
   // The output-length migration emits `''` when every mode only carried
   // `max_tokens` (stripModeMaxTokens) — without this entry the string would
   // persist where the schema and every consumer demand an object or absence.

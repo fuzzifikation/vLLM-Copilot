@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM integration for GitHub Copilot and the VS Code Agents window on self-hosted and remote servers (supports full featureset of vLLM and Copilot). No subscription, no telemetry. No work content to any third party. Live observability: queue status, KV-cache, throughput, and more, in a full dashboard UI. Connect to multiple servers and models each with its own parameters and modes; all in the Copilot model picker. Supports vLLM fully and OpenRouter (400+ cloud models) with cost control. Additionally llama.cpp, LM Studio, and Ollama.",
-  "version": "1.36.6",
+  "version": "1.36.7",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -224,8 +224,13 @@
         "category": "vLLM-Copilot"
       },
       {
+        "command": "vllm-copilot.openModelSelector",
+        "title": "Model Selector",
+        "category": "vLLM-Copilot"
+      },
+      {
         "command": "vllm-copilot.openDashboardWeb",
-        "title": "Open",
+        "title": "Open Webpage",
         "category": "vLLM-Copilot",
         "icon": "$(external-link)"
       },
@@ -285,6 +290,10 @@
         {
           "command": "vllm-copilot.openDashboardWeb",
           "when": "false"
+        },
+        {
+          "command": "vllm-copilot.openModelSelector",
+          "when": "false"
         }
       ],
       "view/item/context": [
@@ -297,6 +306,11 @@
           "command": "vllm-copilot.openDashboardWeb",
           "when": "view == vllm-copilot.dashboard && viewItem =~ /^server(Online|Offline)Relay(Middle|First|Last|Ends)$/",
           "group": "1_open@1"
+        },
+        {
+          "command": "vllm-copilot.openModelSelector",
+          "when": "view == vllm-copilot.dashboard && viewItem =~ /^server(Online|Offline)Relay(Middle|First|Last|Ends)$/",
+          "group": "1_open@2"
         },
         {
           "command": "vllm-copilot.openDashboardWeb",
@@ -434,6 +448,15 @@
                     "exacto"
                   ],
                   "markdownDescription": "⚡ **OpenRouter only**: how OpenRouter sorts/chooses among eligible providers when routing is **Auto** (no `provider` pinned). `standard` (default) = price-weighted load balancing; `nitro` = throughput-first + priority tier; `exacto` = quality/tool-calling-first. Ignored when a provider is pinned. Set via the **Routing** dropdown in Model Settings."
+                },
+                "promptCache": {
+                  "type": "string",
+                  "enum": [
+                    "on",
+                    "1h",
+                    "off"
+                  ],
+                  "markdownDescription": "⚡ **OpenRouter only, `anthropic/*` models**: prompt caching. Claude models never cache implicitly, so without this every turn re-bills the whole prompt. `on` (default, = omitted) sends the ephemeral directive: repeat turns read at ~0.1x after a 1.25x cache write, and the 5-min TTL re-arms free on every hit. `1h` uses a 1-hour TTL at 2x write cost, only worth it when turns sit more than 5 minutes apart. `off` never sends. Ignored for non-Anthropic families (they cache implicitly for free). Set via the **Prompt cache** dropdown in Model Settings."
                 },
                 "id": {
                   "type": "string",

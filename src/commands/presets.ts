@@ -10,7 +10,8 @@ import { jsonrepair } from 'jsonrepair';
  * (the registry ref) or `provider` — those belong to the user's own
  * settings, and merging them in would let a preset repoint or rename a
  * model. Also excludes runtime-behaviour knobs (timeouts, auto-continue,
- * prompt replacements) and `cost`, which are user decisions, not model facts.
+ * prompt replacements), billing choices (`promptCache`) and `cost`, which are
+ * user decisions, not model facts.
  */
 export type PresetConfig = Omit<
   ModelConfig,
@@ -18,6 +19,7 @@ export type PresetConfig = Omit<
   | 'server'
   | 'provider'
   | 'routingMode'
+  | 'promptCache'
   | 'systemMessageReplacementsFile'
   | 'streamInactivityTimeout'
   | 'initialResponseTimeoutMs'

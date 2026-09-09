@@ -664,8 +664,9 @@ export class ServerMetricsEngine {
       }
 
       // OpenRouter relay: per-model provider pricing from
-      // `GET /api/v1/models/{id}/endpoints` (public + unauthenticated — the same
-      // call Model Settings uses for the provider dropdown). Provider lists come
+      // `GET /api/v1/models/{id}/endpoints` (the same
+      // call Model Settings uses for the provider dropdown; the cache sends it
+      // with the OR entry's auth so perf stats come populated). Provider lists come
       // from the SHARED per-session cache (`getOpenRouterModelEndpointsCached`)
       // so the dashboard and Model Settings can never drift, and the cache owns
       // the display bound (2s abort on the real fetch — nothing runs orphaned),

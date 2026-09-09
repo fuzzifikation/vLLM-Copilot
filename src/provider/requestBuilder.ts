@@ -98,12 +98,16 @@ export function buildRequest(
     ? override.modelModes[selectedMode]
     : undefined;
 
+  const runtimeOptions = { ...options.modelOptions };
+  const conversationId = runtimeOptions._conversationId;
+  delete runtimeOptions._conversationId;
+
   const mergedOptions: Record<string, unknown> = {
     // Layered params: defaults ← Copilot modelOptions ← defaultParams ← mode.
     // No max_tokens is seeded into this layering (audit P1-2): the output
     // budget is re-asserted after the spread, so nothing layered before it —
     // Copilot's UI value included — can reach the wire unclamped.
-    ...resolveRequestParams(override, selectedMode, { ...options.modelOptions }),
+    ...resolveRequestParams(override, selectedMode, runtimeOptions),
     // NOTE: tools/tool_choice come last so Copilot's tool definitions always win.
     tools,
     // Enforce tool_choice when Copilot requires the model to call a tool.
@@ -130,6 +134,13 @@ export function buildRequest(
   // Backend type for this model's entry, resolved ONCE — every consumer below
   // (provider pinning, routing mode, transport config) asks the same question.
   const serverType = resolveServerType(override, servers);
+
+  // Copilot carries its stable per-chat identity as private model metadata.
+  // OpenRouter uses session_id for sticky provider routing and cache affinity;
+  // never forward the private `_conversationId` key or send it to other backends.
+  if (serverType === 'openrouter' && typeof conversationId === 'string' && conversationId.trim()) {
+    mergedOptions.session_id = conversationId.slice(0, 256);
+  }
 
   // OpenRouter provider pinning: when the model is OpenRouter and the user has
   // selected a provider (the exact `tag` from the endpoints API), force routing
@@ -164,6 +175,34 @@ export function buildRequest(
   if (isOpenRouter && !providerTag && routingMode && routingMode !== 'standard') {
     vllmModelId = `${wireModelId}:${routingMode}`;
     output.appendLine(`[INFO] Model "${model.id}" → OpenRouter routing mode "${routingMode}" (wire id ${vllmModelId})`);
+  }
+
+  // Anthropic prompt caching (OpenRouter): Claude-family models have no
+  // implicit caching upstream — without an explicit directive EVERY turn
+  // re-bills the whole prompt, and Copilot re-sends the full context each
+  // turn. The top-level ephemeral directive makes each repeat a ~0.1x cache
+  // read (first turn pays a 1.25x write; the 5-min TTL re-arms free on every
+  // hit, so a tight agent loop keeps one warm cache for the whole session).
+  // Gated to `anthropic/*`: OpenRouter exposes no machine-readable
+  // cache-capability signal (absent from catalog AND endpoint
+  // `supported_parameters`, verified 2026-09-09), so the family prefix is the
+  // honest gate — every other cacheable family already caches implicitly for
+  // free, and marker translation on OpenAI GPT-5.6+ risks explicit-mode
+  // write billing. `promptCache: '1h'` pays the 2x write for a 1-hour TTL
+  // (gaps > 5 min between turns); 'off' disables. Omitted/'on' = 5-min.
+  const promptCache = override?.promptCache;
+  if (isOpenRouter && /^~?anthropic\//.test(wireModelId)) {
+    if (promptCache === 'off') {
+      // "off" means off WITHIN this family: a cache_control inherited from
+      // defaultParams, a model mode, or Copilot's runtime options must not
+      // survive the switch. Outside the family promptCache is inert in both
+      // directions (as the docs promise) - a hand-written cache_control on
+      // another family is raw-parameter territory and stays untouched.
+      delete mergedOptions.cache_control;
+    } else {
+      mergedOptions.cache_control =
+        promptCache === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
+    }
   }
 
   // Resolve per-model server config (URL + isolated request headers + transport
