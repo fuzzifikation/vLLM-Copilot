@@ -373,7 +373,12 @@ export function buildModelInfo(
       toolCalling: override?.capabilities?.toolCalling ?? true,
       imageInput: override?.capabilities?.imageInput ?? false,
     },
-    statusIcon: new vscode.ThemeIcon('vllm-copilot-model'),
+    // OpenRouter models advertise the OpenRouter brand glyph (U+E002 in our
+    // icon font, sourced unmodified from openrouter.ai/brand); everything
+    // else keeps the project V.
+    statusIcon: new vscode.ThemeIcon(
+      serverType === 'openrouter' ? 'vllm-copilot-openrouter' : 'vllm-copilot-model',
+    ),
     isBYOK: true,
   };
 

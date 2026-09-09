@@ -61,7 +61,7 @@ describe('buildModelInfo picker id derivation', () => {
     expect(info.id).toBe('cfg-x');
   });
 
-  it.each(['vllm', 'lmstudio', 'llamacpp', 'ollama', 'openrouter'] as const)('uses the vLLM icon for %s models', (serverType) => {
+  it.each(['vllm', 'lmstudio', 'llamacpp', 'ollama'] as const)('uses the vLLM icon for %s models', (serverType) => {
     const info = buildModelInfo(
       { id: 'X', max_model_len: 1000 },
       { id: 'cfg-x', vllmModelId: 'X', server: 'a' },
@@ -69,6 +69,16 @@ describe('buildModelInfo picker id derivation', () => {
       serverType,
     );
     expect((info as unknown as { statusIcon?: { id: string } }).statusIcon?.id).toBe('vllm-copilot-model');
+  });
+
+  it('uses the OpenRouter glyph for openrouter models', () => {
+    const info = buildModelInfo(
+      { id: 'X', max_model_len: 1000 },
+      { id: 'cfg-x', vllmModelId: 'X', server: 'a' },
+      { maxOutputTokens: 512 },
+      'openrouter',
+    );
+    expect((info as unknown as { statusIcon?: { id: string } }).statusIcon?.id).toBe('vllm-copilot-openrouter');
   });
 
 });

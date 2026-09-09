@@ -101,6 +101,13 @@
           "fontPath": "./resources/vllm-icon.woff2",
           "fontCharacter": "\\E001"
         }
+      },
+      "vllm-copilot-openrouter": {
+        "description": "OpenRouter model icon shown in the model picker.",
+        "default": {
+          "fontPath": "./resources/vllm-icon.woff2",
+          "fontCharacter": "\\E002"
+        }
       }
     },
     "languageModelTools": [

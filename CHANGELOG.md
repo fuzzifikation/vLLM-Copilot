@@ -4,11 +4,15 @@
 
 The big one: the OpenRouter Model Selector. One screen showing every model OpenRouter serves, per provider, telling you which are good and which are cheap for the way you actually use them. This release also fixes the picker going mute after an outage, keeps each chat on one OpenRouter route, and makes Claude models cache your prompt instead of paying for it again every turn.
 
+Try it: Right-click onto an openrouter server in the server dashboard and select "Model Selector". Enjoy!
+(as always: no liability for any pricing mistakes or bugs - you are in charge)
+
 ### Added
 
 - **OpenRouter Model Selector.** Right-click an OpenRouter server in the Dashboard → **Model Selector**. Every benchmark-scored model is plotted per serving provider: quality on one axis, the cost of a heavy day (100M prompt tokens) on the other. Cost is not the sticker price: it is computed from your own token mix (cache hit share, output share, prompt size, all adjustable), so a provider with cheap cache reads outranks one with a cheap headline price, and long-context price jumps are folded in. Your configured models are marked, and their rows price under their own prompt-cache setting. Models served by several providers collapse into one row (cheapest price, biggest window) and open to show each provider with its latency, throughput and uptime, time-of-day pricing is flagged, and the model you like is added to your config from the same screen.
 - **OpenRouter session affinity.** Every chat now sends its stable Copilot conversation id as OpenRouter's `session_id`, so turns and retries of one chat land on the same route and cache, without merging separate chats.
 - **Anthropic prompt caching on OpenRouter.** Copilot resends your whole conversation every turn, and Claude models on OpenRouter do not cache that unless asked, so every turn paid full input price. Now we ask: `anthropic/*` models send the cache directive by default, the first turn pays a 1.25x cache write and later turns read the prompt at about 0.1x. The per-model **Prompt cache** dropdown in Model Settings switches to the 1-hour TTL (2x write, for turns more than 5 minutes apart) or turns caching off.
+- **OpenRouter models get their own picker icon.** Models served by an OpenRouter server now show the OpenRouter glyph in the Copilot model picker instead of the project V, so you can see at a glance which models route through OpenRouter.
 
 ### UI/UX Improvements
 

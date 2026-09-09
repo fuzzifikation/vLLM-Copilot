@@ -104,6 +104,23 @@ licenseCheckerInit(
 			}
 		}
 
+		// Trademarks: brand marks embedded as icon glyphs. Not code and not
+		// licenses, but the notice must survive regeneration, so it lives here.
+		lines.push('--------------------------------------------------');
+		lines.push('Trademarks');
+		lines.push('');
+		lines.push(
+			'OpenRouter is a trademark of OpenRouter, Inc. The OpenRouter glyph from'
+		);
+		lines.push(
+			'openrouter.ai/brand is embedded in resources/vllm-icon.woff2 solely to'
+		);
+		lines.push(
+			'identify models routed through OpenRouter. No endorsement or affiliation'
+		);
+		lines.push('is implied.');
+		lines.push('');
+
 		fs.writeFileSync(outFile, lines.join('\n'));
 		console.log(`Wrote ${outFile} (${entries.length} packages + ${vendored.length} vendored)`);
 	}
