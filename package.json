@@ -659,7 +659,7 @@
   "devDependencies": {
     "@babel/parser": "^7.29.7",
     "@types/jsdom": "^30.0.0",
-    "@types/node": "^26.1.1",
+    "@types/node": "^24.13.4",
     "@types/vscode": "^1.128.0",
     "choices.js": "^11.2.4",
     "dependency-cruiser": "^18.2.0",
