@@ -340,7 +340,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webviewView.webview.cspSource}; script-src ${webviewView.webview.cspSource};">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webviewView.webview.cspSource}; script-src ${webviewView.webview.cspSource};">
   <link href="${choicesCssUri}" rel="stylesheet">
   <link href="${styleUri}" rel="stylesheet">
 </head>

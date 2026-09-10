@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.36.9-rc0
+
+Housekeeping: the Webviews render the way they were designed, and startup stops crying wolf.
+
+### Fixed
+
+- **Webview styles are no longer silently blocked.** The Model Settings, Deep-Dive and Model Selector Webviews emit some styles inline, and their Content-Security-Policy did not allow inline styles - Chromium dropped them, so parts of those screens (for example the personality action buttons' layout row) lost their intended look. The policy now permits inline styling and everything renders as designed.
+- **Startup no longer logs a bogus API-proposal error.** Every window logged `CANNOT USE these API proposals 'chatProvider, languageModelThinkingPart'`. The `chatProvider` proposal has since graduated to the stable API and the thinking-part class was never gated at runtime either, so the declaration granted nothing - its only measurable effect was that error. It is gone, and behavior is unchanged.
+
+### Known Issue
+
+- **Extension icons blank in Remote-SSH windows (VS Code bug, not ours).** On VS Code 1.136/1.137, icons of extensions installed on the remote host - the vLLM sidebar icon and the model-picker glyphs included - fail to load over Remote-SSH (`net::ERR_FAILED` on the icon files in the developer console). Local and WSL windows are unaffected. This is a VS Code regression that hits every remote extension, tracked as [microsoft/vscode#334144](https://github.com/microsoft/vscode/issues/334144); the fix is merged and ships in VS Code 1.138. Until then there is nothing this extension can do - the icon files are served correctly, VS Code refuses to fetch them.
+
 ## v1.36.8
 
 Small one: OpenRouter models wear their own face in the Copilot model picker.

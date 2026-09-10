@@ -40,10 +40,17 @@ export async function consumeStream(
   const reportedToolCallIds = new Set<string>();
 
   // Look up LanguageModelThinkingPart once before the loop, not on every chunk.
-  // It is proposal-gated (`enabledApiProposals: ["languageModelThinkingPart"]`),
-  // so it is absent from stable @types/vscode and must be reached via `any`.
-  // If/when the proposal graduates, replace `(vscode as any)` with `vscode`.
-  const ThinkingPart = (vscode as any).LanguageModelThinkingPart;
+  // It is proposal-only in TYPES (absent from stable @types/vscode), so it is
+  // reached via `any`. VS Code 1.137 exposes the class ungated at runtime; the
+  // undefined-guard covers builds/forks that strip it, where reasoning would
+  // otherwise throw on the first token — degrade to plain text instead.
+  // When the proposal graduates, replace `(vscode as any)` with `vscode`.
+  const ThinkingPart = (vscode as any).LanguageModelThinkingPart as
+    | (new (value: string) => vscode.LanguageModelResponsePart)
+    | undefined;
+  if (!ThinkingPart) {
+    output.appendLine('[WARN] LanguageModelThinkingPart unavailable in this VS Code build - reasoning content will be shown as plain text');
+  }
 
   // Defer usage reporting to end of stream. Some vLLM servers (e.g. with
   // --enable-force-include-usage) send usage on every chunk, not just the final
@@ -64,7 +71,9 @@ export async function consumeStream(
     if (event.reasoning_content) {
       if (outcome.firstTokenTime === undefined) outcome.firstTokenTime = Date.now() - startTime;
       outcome.hadReasoning = true;
-      progress.report(new ThinkingPart(event.reasoning_content));
+      progress.report(ThinkingPart
+        ? new ThinkingPart(event.reasoning_content)
+        : new vscode.LanguageModelTextPart(event.reasoning_content));
     }
 
     // Handle text content
