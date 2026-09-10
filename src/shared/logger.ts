@@ -51,7 +51,7 @@ export class FileLogger implements vscode.Disposable {
     const configLimit = vscode.workspace.getConfiguration('vllm-copilot').get<number>('logBodyLimit');
     this.logBodyLimit = typeof configLimit === 'number' ? configLimit : 4000;
 
-    const logDir = this.context.globalStorageUri?.fsPath || this.context.extensionPath;
+    const logDir = this.context.globalStorageUri.fsPath;
     // Use a full timestamp (with millis) so long-running sessions don't keep appending
     // to a stale day file, and parallel tests don't collide on the same path.
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 23);
@@ -95,8 +95,7 @@ export class FileLogger implements vscode.Disposable {
    * chronological. Runs synchronously because `init()` is synchronous.
    */
   private pruneOldLogFiles(): void {
-    const logDir = this.context.globalStorageUri?.fsPath;
-    if (!logDir) return;
+    const logDir = this.context.globalStorageUri.fsPath;
     try {
       const entries = fs.readdirSync(logDir)
         .filter(e => /^vllm-copilot-.*\.log$/.test(e))
@@ -219,8 +218,7 @@ export class FileLogger implements vscode.Disposable {
    * Returns the number of files deleted.
    */
   async clearLogFiles(): Promise<number> {
-    const logDir = this.context.globalStorageUri?.fsPath;
-    if (!logDir) return 0;
+    const logDir = this.context.globalStorageUri.fsPath;
 
     const activePath = this.logFilePath;
     let deleted = 0;

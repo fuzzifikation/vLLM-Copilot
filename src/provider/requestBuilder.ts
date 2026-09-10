@@ -83,8 +83,8 @@ export function buildRequest(
   // Resolve the effective request params via the layering chain (highest wins):
   //   DEFAULT_REQUEST_PARAMS ← (max_tokens + Copilot modelOptions) ← model defaultParams ← selected mode.
   // max_tokens = output budget only; vLLM enforces prompt+output <= max_model_len server-side.
-  const modelOverrides = config.models || [];
-  const servers = config.servers || [];
+  const modelOverrides = config.models;
+  const servers = config.servers;
   const override = resolveOverrideForModel(modelOverrides, model.id);
 
   // Mode + output-length pick, read through the same shared reader the provider
@@ -127,7 +127,6 @@ export function buildRequest(
     override,
     selectedMode,
     model.maxOutputTokens,
-    (model.maxInputTokens || 0) + (model.maxOutputTokens || 0),
     pickerTokens,
   );
 

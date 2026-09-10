@@ -145,9 +145,14 @@ export async function replaceModelConfig(entry: IdentifiedModelConfig): Promise<
       clean.systemMessageReplacementsFile !== undefined
         ? clean.systemMessageReplacementsFile
         : prev.systemMessageReplacementsFile;
+    // Same preserve contract as the replacements path: the portable personality
+    // NAME is user-chosen and invisible to a discovery-built replacement —
+    // dropping it here would silently strip the model's personality.
+    const personality = clean.personality !== undefined ? clean.personality : prev.personality;
     const merged: ModelConfig = {
       ...clean,
       systemMessageReplacementsFile: replacementsFile,
+      personality,
     };
     const next = existing.slice();
     next[useIdx] = normalizeModelEntry(merged);
@@ -213,11 +218,6 @@ export async function patchModelConfig(
 ): Promise<SaveModelResult> {
   const configId = assertValidIdentity(identity.id, identity.server);
   const clean = stripUndefined(updates as Record<string, unknown>);
-  // Runtime backstop for the Omit type boundary: identity is immutable, so even
-  // a caller that smuggles id/server into updates must not move them. The
-  // matcher already keyed on identity; the merge must not then overwrite it.
-  delete clean.id;
-  delete clean.server;
 
   const existing = readModels();
   const useIdx = findModelConfigIndex(existing, configId, identity.server);

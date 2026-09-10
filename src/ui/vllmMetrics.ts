@@ -415,6 +415,15 @@ export class ServerMetricsEngine {
   private resolvedOutputByModel = new Map<string, number | null | undefined>();
   /** Earliest ms timestamp at which a transient context-resolve failure may retry, per model. */
   private contextRetryAtByModel = new Map<string, number>();
+  /**
+   * modelId → configured `contextWindow` fallback (vLLM only). Applied at tick
+   * time to rows that THEMSELVES lack a positive max_model_len: a
+   * server-reported window always wins, and a fallback never resurrects a row
+   * absent from /v1/models — the exact resolver contract, kept display-only.
+   * Read live on every refresh, NOT through the resolved-limits cache, so a
+   * settings edit takes effect on the next tick without invalidation.
+   */
+  private contextWindowFallbacks: Record<string, number> = {};
   /** Array of callbacks so subscribers don't need to coordinate. */
   private callbacks: Array<(aggregated: ServerMetrics, raw: ServerRawData) => void> = [];
 
@@ -538,6 +547,11 @@ export class ServerMetricsEngine {
     }
   }
 
+  /** Replace the configured context-window fallbacks (called by getMetricsEngine). */
+  setContextWindowFallbacks(fallbacks: Record<string, number>): void {
+    this.contextWindowFallbacks = { ...fallbacks };
+  }
+
   dispose(): void {
     this._disposed = true;
     this.callbacks = [];
@@ -618,24 +632,13 @@ export class ServerMetricsEngine {
                 ? normalizeOpenRouterFromCatalog(openRouterCatalog, modelId).runtimeLimits
                 : await resolveRuntimeLimits(this.serverType, this.serverUrl, this.requestHeaders, modelId);
               resolved = limits.contextWindow;
-              // Cache the output ceiling with the same discipline as context:
-              // `undefined` = not attempted (skip); a number = the effective
-              // ceiling; a resolver that returns no ceiling leaves output absent.
-              // The resolver already guarantees a positive finite value or
-              // undefined, so the guard mirrors the context path below.
-              if (limits.maxOutputTokens !== undefined && limits.maxOutputTokens > 0) {
-                this.resolvedOutputByModel.set(modelId, limits.maxOutputTokens);
-              } else {
-                this.resolvedOutputByModel.set(modelId, null);
-              }
-              // Defend the cache against a resolver that returns a non-number
-              // without throwing: storing `undefined` would look like "not
-              // attempted" and re-fire every tick, skipping the backoff.
-              if (typeof resolved === 'number' && resolved > 0) {
-                this.resolvedContextByModel.set(modelId, resolved);
-              } else {
-                this.resolvedContextByModel.set(modelId, null);
-              }
+              // The resolver's contract IS the guarantee: contextWindow is a
+              // positive number (every backend arm checks it) and the output
+              // ceiling is finite or absent. Cache both directly — `null` in
+              // the output map means "resolver reports no ceiling", `undefined`
+              // stays "not attempted".
+              this.resolvedContextByModel.set(modelId, resolved);
+              this.resolvedOutputByModel.set(modelId, limits.maxOutputTokens ?? null);
             } catch (err) {
               if (err instanceof OpenRouterModelNotFoundError) {
                 // Absent from THIS catalog snapshot. The catalog is already
@@ -657,10 +660,24 @@ export class ServerMetricsEngine {
           contextByModel[modelId] = resolved;
           if (aggregated.maxModelLen === null) aggregated.maxModelLen = resolved;
           const resolvedOutput = this.resolvedOutputByModel.get(modelId);
-          if (typeof resolvedOutput === 'number' && resolvedOutput > 0) outputByModel[modelId] = resolvedOutput;
+          if (typeof resolvedOutput === 'number') outputByModel[modelId] = resolvedOutput;
         }
         if (Object.keys(contextByModel).length > 0) aggregated.contextByModel = contextByModel;
         if (Object.keys(outputByModel).length > 0) aggregated.outputByModel = outputByModel;
+      } else if (Object.keys(this.contextWindowFallbacks).length > 0) {
+        // vLLM: the server's rows own the context windows. The hidden fallback
+        // surfaces ONLY on a row that itself lacks a positive max_model_len
+        // (metadata-stripping gateway) — same contract as the runtime resolver.
+        // Offline / no rows ⇒ nothing matched ⇒ no fallback, never a ghost.
+        const contextByModel: Record<string, number> = {};
+        for (const [modelId, fallback] of Object.entries(this.contextWindowFallbacks)) {
+          const row = raw.models.find((m) => m.id === modelId || m.root === modelId);
+          if (row && !(typeof row.max_model_len === 'number' && row.max_model_len > 0)) {
+            contextByModel[modelId] = fallback;
+            if (aggregated.maxModelLen === null) aggregated.maxModelLen = fallback;
+          }
+        }
+        if (Object.keys(contextByModel).length > 0) aggregated.contextByModel = contextByModel;
       }
 
       // OpenRouter relay: per-model provider pricing from
@@ -811,6 +828,7 @@ export function getMetricsEngine(
   serverType: ServerType = 'vllm',
   modelIds?: string[],
   output?: vscode.OutputChannel,
+  contextWindowFallbacks?: Record<string, number>,
 ): ServerMetricsEngine {
   const canonical = normalizeServerUrl(serverUrl);
   const headers = sanitizeRequestHeaders(requestHeaders ?? {});
@@ -834,6 +852,12 @@ export function getMetricsEngine(
   // the set (leave as-is), an explicit [] = clear.
   if (modelIds !== undefined) {
     engine.setModelIds(modelIds);
+  }
+  // Same semantics for the configured context-window fallbacks: `undefined` =
+  // caller doesn't manage them, an explicit {} clears (a deleted settings
+  // field must stop showing on the next tick).
+  if (contextWindowFallbacks !== undefined) {
+    engine.setContextWindowFallbacks(contextWindowFallbacks);
   }
   return engine;
 }
@@ -991,9 +1015,15 @@ async function fetchAllEndpoints(
   // `null` = the request never got an answer (unreachable / timed out), which is
   // a different reason than "answered, but with an error status".
   const probeOk = probeRes?.ok === true;
+  // A proxy that forwards only `/v1/*` answers 404 on `/health` — that is an
+  // ANSWER, and a 200 `/v1/models` behind it proves the box is alive and
+  // serving. Painting that Offline made metadata-stripping gateways look dead
+  // while chat worked fine. Any other `/health` status stays a real verdict
+  // (503 = vLLM itself says it is sick; 401 = the proxy is guarding it).
+  const relayOnline = isVllm && healthRes?.status === 404 && v1ModelsRes?.ok === true;
   // A reachable OpenRouter relay that returns a malformed catalog is NOT a
   // healthy server — report it as an error instead of an online empty catalog.
-  const online = isVllm ? probeOk : (probeOk && !malformedOpenRouterCatalog);
+  const online = isVllm ? (probeOk || relayOnline) : (probeOk && !malformedOpenRouterCatalog);
   const errorStr = online
     ? undefined
     : malformedOpenRouterCatalog

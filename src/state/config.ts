@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { resolveOutputBudgetScalar } from '../shared/tokenBudget.js';
+import { resolveOutputBudgetScalar, isValidContextWindow } from '../shared/tokenBudget.js';
 import { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders, isOpenRouterUrl, isUsableServerUrl, KNOWN_SERVER_TYPES, type ServerType } from './serverCore.js';
 import { entryMatchesConnection, resolveServer } from './serverRegistry.js';
 
@@ -32,6 +32,11 @@ export interface ModelConfig {
   displayName?: string;
   /** Model family (e.g. "qwen3_5", "deepseek_v4"). Auto-detected from HuggingFace config.model_type. */
   family?: string;
+  /**
+   * Hidden fallback used only when the matching `/v1/models` entry exists but
+   * omits a positive `max_model_len`. A server-reported window always wins.
+   */
+  contextWindow?: number;
   maxInputTokens?: number;
   /**
    * Output budget — TWO shapes, one field:
@@ -128,11 +133,23 @@ export interface ModelConfig {
    * Each pair: { "find": "exact substring", "replace": "replacement text" }
    * Applied to every system message before sending to vLLM.
    * Empty replace string removes the matched text.
-   * The personality picker stores an absolute path into global storage
-   * (`personalities/`); relative paths (e.g. `.vllm/prompt-replacements.json`)
-   * are resolved against the workspace root and remain valid for custom files.
+   * User-defined files only: a path is meaningful solely on the machine that
+   * wrote it (a Windows globalStorage path is dead weight on Linux — see
+   * `personality`). Relative paths (e.g. `.vllm/prompt-replacements.json`)
+   * are resolved against the workspace root.
    */
   systemMessageReplacementsFile?: string;
+  /**
+   * Name of a SHIPPED personality preset (e.g. "Sarcastic Robot") — the
+   * portable reference. Every install seeds its own global personalities
+   * folder at activation, so the name resolves to THIS machine's copy on
+   * Windows, Linux and Mac alike, local or remote. Bundled presets are stored
+   * by name for exactly this reason; a path would break the moment the user
+   * opens the same workspace from another OS. `systemMessageReplacementsFile`
+   * stays the reference for user-defined files. If both are set, the name
+   * wins. Resolution lives in personalityStore.resolveModelReplacements.
+   */
+  personality?: string;
   /**
    * Optional per-model cost rates for the dashboard usage tracker.
    * All rates are per 1,000,000 tokens and interpreted IN `currency` units.
@@ -160,8 +177,6 @@ export interface VllmConfig {
   models: ModelConfig[];
   /** The server registry. Models reference entries here by `server` id. */
   servers: import('./serverRegistry.js').ServerEntry[];
-  /** Extension-wide diagnostic toggle — the only global user setting. */
-  enableFileLogging: boolean;
 }
 
 /**
@@ -312,16 +327,18 @@ export function resolveMaxTokensForRequest(
   override: ModelConfig | undefined,
   selectedMode: string | undefined,
   modelMaxOutputTokens: number,
-  modelContextWindow: number,
   pickerTokens?: number,
 ): number {
   const normalizedPicker = normalizePickerTokens(pickerTokens);
-  const requested = Math.min(
+  // Single clamp: the advertised budget. deriveTokenBudget floors maxInputTokens
+  // at 1, so advertised <= window - 1 holds for EVERY advertised object its
+  // producers build — re-clamping against a window recomputed from the same
+  // advertised value could only fire on an object that cannot exist. The >= 1
+  // floors for picker/mode/defaultParams live in normalizePickerTokens.
+  return Math.min(
     normalizedPicker ?? resolveConfiguredMaxTokens(override, selectedMode) ?? modelMaxOutputTokens,
     modelMaxOutputTokens,
   );
-  const window = modelContextWindow > 0 ? modelContextWindow : modelMaxOutputTokens;
-  return Math.min(requested, Math.max(1, window - 1));
 }
 
 /** Resolve typed per-model token/transport settings against the built-in defaults. */
@@ -373,8 +390,8 @@ export function resolveServerType(
  * Resolve a (possibly relative) file path against the first workspace folder.
  *
  * Single shared implementation for `systemMessageReplacementsFile` resolution
- * (used by {@link provider} `loadReplacements` and
- * `personalityStore.resolveActivePersonality`). `path.resolve` handles every
+ * (used by `personalityStore.resolveModelReplacements`, the one resolver behind
+ * the request pipeline and Model Settings). `path.resolve` handles every
  * case in one call:
  * - absolute path → returned normalized
  * - relative path + open workspace → joined against the first workspace root
@@ -547,10 +564,12 @@ export function mergeAuthHeaders(
 /**
  * Read configuration from VS Code settings.
  *
- * Only genuine globals are the `models` array, the `servers` registry, and the
- * `enableFileLogging` diagnostic toggle. All server, auth, generation, token, and
- * transport settings live on models and their registry entries, resolved at
- * request time via `resolveServerConfig` / `resolveRequestParams` / `resolveModelSettings`.
+ * Only genuine globals are the `models` array and the `servers` registry. All
+ * server, auth, generation, token, and transport settings live on models and
+ * their registry entries, resolved at request time via `resolveServerConfig` /
+ * `resolveRequestParams` / `resolveModelSettings`. (The `enableFileLogging`
+ * setting is read directly by the logger wiring in extension.ts — it never
+ * travels through this type.)
  */
 export async function getConfig(): Promise<VllmConfig> {
   const section = vscode.workspace.getConfiguration('vllm-copilot');
@@ -568,7 +587,6 @@ export async function getConfig(): Promise<VllmConfig> {
     servers: Array.isArray(rawServers)
       ? rawServers.filter((e): e is import('./serverRegistry.js').ServerEntry => !!e && typeof e === 'object')
       : [],
-    enableFileLogging: section.get<boolean>('enableFileLogging') ?? false,
   };
 }
 
@@ -758,6 +776,11 @@ export function validateConfig(config: VllmConfig): string[] {
         (!Number.isFinite(model.autoContinueRetries) || model.autoContinueRetries < 0 || !Number.isInteger(model.autoContinueRetries))) {
       warnings.push(`Model "${display}": autoContinueRetries is ${model.autoContinueRetries}; should be a finite integer >= 0.`);
     }
+    // Same guard the runtime resolver applies — a hand-edited `2.5` or `1e30`
+    // must be audible at load, not detonate later as "model will not be served".
+    if (model.contextWindow !== undefined && !isValidContextWindow(model.contextWindow)) {
+      warnings.push(`Model "${display}": contextWindow is ${model.contextWindow}; must be a whole number of tokens above 50,000 (the fallback only applies where the server omits max_model_len, and below 50k Copilot has no usable headroom).`);
+    }
 
     // Validate request params at model scope and each mode scope.
     warnings.push(...validateRequestParams(model.defaultParams, `Model "${display}" defaultParams`));
@@ -882,6 +905,7 @@ const CLEARABLE_ON_EMPTY: readonly (keyof ModelConfig)[] = [
   'defaultMode',
   'defaultParams',
   'systemMessageReplacementsFile',
+  'personality',
   'provider',
   'routingMode',
   'promptCache',

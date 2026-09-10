@@ -2,7 +2,12 @@
 
 ## v1.36.9-rc0
 
-Housekeeping: the Webviews render the way they were designed, and startup stops crying wolf.
+Support for servers behind metadata-stripping gateways, personalities stored by name, webview styling fixed, bogus startup error removed.
+
+### Added
+
+- **Servers behind metadata-stripping gateways are supported.** Such a gateway serves models through `/v1/models` but drops vLLM metadata - no `max_model_len`, no `/version`, sometimes no `/metrics`. These servers were previously rejected as "Unsupported server". They are now detected as OpenAI-compatible, and when a served model reports no context window you are asked for it once and it is stored on the model entry as `contextWindow`. A server-reported window always wins; if the gateway starts reporting later, the stored value is ignored. **Test & Refresh** offers the same repair (**Set Context Window**) for already-configured models, and the Dashboard shows the stored window wherever the server reports none. A vLLM-type server answering 404 on `/health` while `/v1/models` works is shown online, and its Backend label reads **OpenAI-compatible** until `/version` answers. The prompts state: vLLM always reports `max_model_len`; a stripped one is a server-side defect to fix at the server, and the number you enter is a workaround.
+- **Personalities are stored by name.** A shipped personality is written as a portable `personality` name (e.g. `"Sarcastic Robot"`) on the model entry instead of an absolute path into the extension's install folder. Configs survive extension updates and machine syncs. Existing path references to shipped presets migrate to names at startup; custom files keep working via `systemMessageReplacementsFile`.
 
 ### Fixed
 

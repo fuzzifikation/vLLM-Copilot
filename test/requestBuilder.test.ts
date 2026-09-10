@@ -25,7 +25,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', server: 'srv' }],
         servers: [{ id: 'srv', serverUrl: 'http://localhost:8000/' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -57,7 +56,6 @@ describe('buildRequest', () => {
           maxOutputTokens: 50, streamInactivityTimeout: 99, initialResponseTimeoutMs: 42,
         }],
         servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -81,7 +79,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', server: 'srv' }],
         servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -101,7 +98,6 @@ describe('buildRequest', () => {
           modelModes: { deep: { max_tokens: 250, temperature: 0.1 } },
         }],
         servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -122,7 +118,6 @@ describe('buildRequest', () => {
           modelModes: { deep: { max_tokens: 99999 } },
         }],
         servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -141,7 +136,6 @@ describe('buildRequest', () => {
           modelModes: { deep: { max_tokens: 200 } },
         }],
         servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -162,7 +156,6 @@ describe('buildRequest', () => {
         modelModes: { deep: { max_tokens: 3000 } },
       }],
       servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-      enableFileLogging: false,
     } as any;
 
     it('the pick outranks mode AND defaultParams max_tokens', () => {
@@ -234,27 +227,6 @@ describe('buildRequest', () => {
     });
   });
 
-  it('clamps to the context window as a defense when the advertised budget is incoherent', () => {
-    // A 0 input allowance makes window = advertised, so window-1 must cap it.
-    // Only reachable with an incoherent model object — deriveTokenBudget never
-    // produces this — kept as defense-in-depth.
-    const advModel = (mo: number, mi: number) => ({ id: 'm', maxOutputTokens: mo, maxInputTokens: mi }) as any;
-    const result = buildRequest(
-      advModel(100, 0), [] as any,
-      opts({ modelConfiguration: { reasoningEffort: 'deep' } }),
-      {
-        models: [{
-          id: 'm', server: 'srv',
-          modelModes: { deep: { max_tokens: 99999 } },
-        }],
-        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-        enableFileLogging: false,
-      },
-      output,
-    );
-    expect(result.mergedOptions.max_tokens).toBe(99);
-  });
-
   it('ignores Copilot modelOptions.max_tokens even when a mode is selected', () => {
     const result = buildRequest(
       model,
@@ -266,7 +238,6 @@ describe('buildRequest', () => {
           modelModes: { deep: { temperature: 0.1 } },
         }],
         servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -287,7 +258,6 @@ describe('buildRequest', () => {
           modelModes: { deep: { temperature: 0.1 } },
         }],
         servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -308,7 +278,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', server: 'srv' }],
         servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -324,7 +293,6 @@ describe('buildRequest', () => {
     const result = buildRequest(model, [] as any, opts(), {
       models: [{ id: 'm', server: 'srv' }],
       servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-      enableFileLogging: false,
     }, output);
     expect(result.mergedOptions.tools).toBeUndefined();
     expect(result.mergedOptions.tool_choice).toBeUndefined();
@@ -340,7 +308,6 @@ describe('buildRequest', () => {
           id: 'm', vllmModelId: 'wire-model', server: 'or', provider: 'gmicloud/fp8',
         }],
         servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -358,7 +325,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', server: 'or' }],
         servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -374,7 +340,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', server: 'srv', provider: 'together' }],
         servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -389,7 +354,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', server: 'or' }],
         servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -406,7 +370,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', server: 'srv' }],
         servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -422,7 +385,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', server: 'or', vllmModelId: 'anthropic/claude-sonnet-4.6' }],
         servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -437,7 +399,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', server: 'or', vllmModelId: 'anthropic/claude-sonnet-4.6', promptCache }],
         servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
-        enableFileLogging: false,
       },
       output,
     ).mergedOptions.cache_control;
@@ -458,7 +419,6 @@ describe('buildRequest', () => {
           defaultParams: { cache_control: { type: 'ephemeral' } },
         }],
         servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -479,7 +439,6 @@ describe('buildRequest', () => {
           defaultParams: { cache_control: { type: 'ephemeral' } },
         }],
         servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -494,7 +453,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', server: 'or', vllmModelId: 'deepseek/deepseek-chat' }],
         servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -506,7 +464,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', server: 'srv', vllmModelId: 'anthropic/claude-sonnet-4.6' }],
         servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -524,7 +481,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', server: 'or', routingMode: 'nitro' }],
         servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -544,7 +500,6 @@ describe('buildRequest', () => {
           id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', server: 'or', provider: 'deepseek', routingMode: 'exacto',
         }],
         servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -563,7 +518,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', server: 'or', routingMode: 'standard' }],
         servers: [{ id: 'or', serverUrl: 'https://openrouter.ai/api', serverType: 'openrouter' }],
-        enableFileLogging: false,
       },
       output,
     );
@@ -578,7 +532,6 @@ describe('buildRequest', () => {
       {
         models: [{ id: 'm', vllmModelId: 'deepseek/deepseek-v4-pro-0813', server: 'srv', routingMode: 'nitro' }],
         servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
-        enableFileLogging: false,
       },
       output,
     );

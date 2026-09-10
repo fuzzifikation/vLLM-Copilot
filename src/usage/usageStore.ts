@@ -499,12 +499,12 @@ export function recordRequest(data: LastRequestData): void {
   if (!days[todayKey]) days[todayKey] = {};
   accumulate(days[todayKey], data.serverUrl, data.modelId, counts);
 
-  // Actual reported cost (OpenRouter usage.cost) accumulates separately from the
-  // derived estimates — never summed together. Only recorded when the server
-  // actually reports it; vLLM/local requests contribute nothing. A negative
-  // value is invalid server data and would silently subtract from totals, so it
-  // is rejected too.
-  if (data.actualCost !== undefined && Number.isFinite(data.actualCost) && data.actualCost >= 0) {
+  // Actual reported cost (OpenRouter usage.cost) accumulates separately from
+  // the derived estimates — never summed together. Absent = nothing to record
+  // (vLLM/local). Validity is NOT re-checked here: sanitizeUsage at the wire
+  // boundary is the single clamp point (finite, >= 0, or undefined) and it
+  // also covers the lastRequest/log paths this accumulation never sees.
+  if (data.actualCost !== undefined) {
     accumulateCost(allTimeCost, data.serverUrl, data.modelId, data.actualCost);
     if (!daysCost[todayKey]) daysCost[todayKey] = {};
     accumulateCost(daysCost[todayKey], data.serverUrl, data.modelId, data.actualCost);

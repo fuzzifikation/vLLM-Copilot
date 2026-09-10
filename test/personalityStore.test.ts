@@ -9,9 +9,13 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as path from 'path';
+import * as vscode from 'vscode';
 import {
   discoverPersonalities,
   syncBundledPersonalities,
+  resolveModelReplacements,
+  migratePersonalityPathRefs,
+  presetBasenameOf,
 } from '../src/persona/personalityStore.js';
 
 const fsMock = vi.hoisted(() => {
@@ -33,6 +37,9 @@ const fsMock = vi.hoisted(() => {
     readFile: vi.fn(async (p: string) => {
       if (!files.has(p)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
       return files.get(p)!;
+    }),
+    access: vi.fn(async (p: string) => {
+      if (!files.has(p)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     }),
     mkdir: vi.fn(async () => {}),
     writeFile: vi.fn(async (p: string, c: string) => { files.set(p, c); }),
@@ -161,5 +168,157 @@ describe('discoverPersonalities (duplicate meta.name)', () => {
     await discoverPersonalities(context, (m) => warnings.push(m));
 
     expect(warnings).toEqual([]);
+  });
+
+  it('flags shipped presets with bundled, user files without', async () => {
+    // The dropdown's name-vs-path storage split hangs off this flag.
+    fsMock.files.set(path.join(BUNDLED, 'prompt-replacements-sarcastic-robot.json'), personality('Sarcastic Robot', 'bundled'));
+    fsMock.dirContents[BUNDLED] = ['prompt-replacements-sarcastic-robot.json'];
+    fsMock.files.set(path.join(globalDir, 'prompt-replacements-sarcastic-robot.json'), personality('Sarcastic Robot', 'bundled'));
+    fsMock.files.set(path.join(globalDir, 'my-thing.json'), personality('My Thing', 'user'));
+    fsMock.dirContents[globalDir] = ['prompt-replacements-sarcastic-robot.json', 'my-thing.json'];
+
+    const entries = await discoverPersonalities(context);
+
+    expect(entries.find(e => e.name === 'Sarcastic Robot')?.bundled).toBe(true);
+    expect(entries.find(e => e.name === 'My Thing')?.bundled).toBe(false);
+  });
+});
+
+// ── resolveModelReplacements (the ONE resolver: dropdown label + request path) ──
+// The cross-OS bug this fixes: a preset stored as a Windows globalStorage path
+// is unreachable on a Linux host — the dropdown degraded to "(user file)" and
+// chat silently ran WITHOUT the personality. FILENAME IS THE IDENTITY (owner
+// ruling): bundled basenames are extension-owned, so a stored path naming a
+// shipped file remaps to this machine's copy instead of dying quietly.
+
+describe('resolveModelReplacements (portable personality resolution)', () => {
+  const context = { extensionUri: { fsPath: EXT }, globalStorageUri: { fsPath: GLOBAL } } as any;
+  const globalDir = path.join(GLOBAL, 'personalities');
+  const robotBundled = path.join(BUNDLED, 'prompt-replacements-sarcastic-robot.json');
+  const robotSeeded = path.join(globalDir, 'prompt-replacements-sarcastic-robot.json');
+
+  beforeEach(() => {
+    fsMock.files.clear();
+    for (const k of Object.keys(fsMock.dirContents)) delete fsMock.dirContents[k];
+    vi.clearAllMocks();
+    fsMock.files.set(robotBundled, personality('Sarcastic Robot', 'bundled'));
+    fsMock.dirContents[BUNDLED] = ['prompt-replacements-sarcastic-robot.json'];
+    fsMock.files.set(robotSeeded, personality('Sarcastic Robot', 'bundled'));
+  });
+
+  it('a name reference resolves to THIS machine\u2019s seeded copy', async () => {
+    const r = await resolveModelReplacements(context, { personality: 'Sarcastic Robot' });
+    expect(r).toEqual({ sourcePath: robotSeeded, personality: 'Sarcastic Robot' });
+  });
+
+  it('an unknown name does not fabricate a source and logs the fallback', async () => {
+    const logs: string[] = [];
+    const r = await resolveModelReplacements(context, { personality: 'Ghost Persona' }, (m) => logs.push(m));
+    expect(r).toBeNull();
+    expect(logs.join('\n')).toContain('does not name a shipped preset');
+  });
+
+  it('a Windows-stored shipped path remaps to the local seeded copy', async () => {
+    // Exactly the reported shape: settings carried the Windows globalStorage
+    // path; on Linux the file is unreachable, the basename names a shipped
+    // preset, so THIS machine's copy answers.
+    const windowsPath = 'c:\\Users\\me\\AppData\\Roaming\\Code\\User\\globalStorage\\System-Sciences.vllm-copilot\\personalities\\prompt-replacements-sarcastic-robot.json';
+    const logs: string[] = [];
+    const r = await resolveModelReplacements(context, { systemMessageReplacementsFile: windowsPath }, (m) => logs.push(m));
+    expect(r).toEqual({ sourcePath: robotSeeded, personality: 'Sarcastic Robot' });
+    expect(logs.join('\n')).toContain('not reachable from this machine');
+  });
+
+  it('an unreachable shipped path OUTSIDE any personalities dir still remaps (filename is identity)', async () => {
+    // Owner ruling: bundled basenames are extension-owned (seeding clobbers a
+    // user edit to one), so a dead path naming a shipped file names the preset
+    // wherever it lived. Only a READABLE file elsewhere stays the user's own.
+    const elsewhere = path.join(ROOT, 'backup', 'old-stuff', 'prompt-replacements-sarcastic-robot.json');
+    const r = await resolveModelReplacements(context, { systemMessageReplacementsFile: elsewhere });
+    expect(r).toEqual({ sourcePath: robotSeeded, personality: 'Sarcastic Robot' });
+  });
+
+  it('a readable shipped path inside the local folder reports its name (heal signal), no remap', async () => {
+    const r = await resolveModelReplacements(context, { systemMessageReplacementsFile: robotSeeded });
+    expect(r).toEqual({ sourcePath: robotSeeded, personality: 'Sarcastic Robot' });
+  });
+
+  it('a readable user file outside the folder stays a plain path - never hijacked by basename', async () => {
+    const mine = path.join(ROOT, 'workspace', '.vllm', 'prompt-replacements-sarcastic-robot.json');
+    fsMock.files.set(mine, personality('My Fork', 'custom'));
+    const r = await resolveModelReplacements(context, { systemMessageReplacementsFile: mine });
+    expect(r).toEqual({ sourcePath: mine });
+  });
+
+  it('an unreachable user file (not a shipped basename) resolves to nothing', async () => {
+    const r = await resolveModelReplacements(context, { systemMessageReplacementsFile: path.join(ROOT, 'gone', 'my-personality.json') });
+    expect(r).toBeNull();
+  });
+
+  it('presetBasenameOf splits on BOTH separators regardless of platform', () => {
+    expect(presetBasenameOf('c:\\x\\prompt-replacements-raw.json')).toBe('prompt-replacements-raw.json');
+    expect(presetBasenameOf('/x/prompt-replacements-raw.json')).toBe('prompt-replacements-raw.json');
+    expect(presetBasenameOf('prompt-replacements-raw.json')).toBe('prompt-replacements-raw.json');
+  });
+});
+
+// migratePersonalityPathRefs runs ONCE at activation (never from a view refresh
+// — that turned every render into a settings write plus a re-entrant config
+// refresh). It rewrites a machine-bound shipped-preset PATH into the portable
+// NAME, and leaves user files alone.
+describe('migratePersonalityPathRefs (activation, path -> portable name)', () => {
+  const context = { extensionUri: { fsPath: EXT }, globalStorageUri: { fsPath: GLOBAL } } as any;
+  const globalDir = path.join(GLOBAL, 'personalities');
+  const robotBundled = path.join(BUNDLED, 'prompt-replacements-sarcastic-robot.json');
+  const foreignRobot = 'c:\\Users\\me\\globalStorage\\System-Sciences.vllm-copilot\\personalities\\prompt-replacements-sarcastic-robot.json';
+
+  let models: unknown[] = [];
+  let written: unknown = null;
+
+  beforeEach(() => {
+    fsMock.files.clear();
+    for (const k of Object.keys(fsMock.dirContents)) delete fsMock.dirContents[k];
+    vi.clearAllMocks();
+    fsMock.files.set(robotBundled, personality('Sarcastic Robot', 'bundled'));
+    fsMock.dirContents[BUNDLED] = ['prompt-replacements-sarcastic-robot.json'];
+    // Remapping answers from the SEEDED copy — activation guarantees it exists.
+    fsMock.files.set(path.join(globalDir, 'prompt-replacements-sarcastic-robot.json'), personality('Sarcastic Robot', 'bundled'));
+    models = [];
+    written = null;
+    (vscode.workspace as any)._mockConfig = {
+      get: (key: string) => (key === 'models' ? models : []),
+      update: vi.fn(async (_key: string, value: unknown) => { written = value; }),
+      inspect: () => ({}),
+    };
+  });
+
+  it('rewrites a shipped preset stored as a path, and clears the path', async () => {
+    models = [{ id: 'm', server: 's', vllmModelId: 'v', systemMessageReplacementsFile: foreignRobot }];
+
+    expect(await migratePersonalityPathRefs(context)).toBe(1);
+    expect(written).toEqual([{ id: 'm', server: 's', vllmModelId: 'v', personality: 'Sarcastic Robot' }]);
+  });
+
+  it('leaves a user file alone, even an unreachable one whose name is not shipped', async () => {
+    models = [{ id: 'm', server: 's', systemMessageReplacementsFile: path.join(ROOT, 'gone', 'my-fork.json') }];
+
+    expect(await migratePersonalityPathRefs(context)).toBe(0);
+    expect(written).toBeNull();
+  });
+
+  it('is a silent no-op when every entry already stores a name (self-terminating)', async () => {
+    models = [{ id: 'm', server: 's', personality: 'Sarcastic Robot' }, { id: 'n', server: 's' }];
+
+    expect(await migratePersonalityPathRefs(context)).toBe(0);
+    expect(written).toBeNull();
+  });
+
+  it('a readable path inside the local folder migrates too (older builds stored it)', async () => {
+    fsMock.files.set(path.join(globalDir, 'prompt-replacements-sarcastic-robot.json'), personality('Sarcastic Robot', 'bundled'));
+    models = [{ id: 'm', server: 's', systemMessageReplacementsFile: path.join(globalDir, 'prompt-replacements-sarcastic-robot.json') }];
+
+    expect(await migratePersonalityPathRefs(context)).toBe(1);
+    expect((written as Array<{ personality?: string }>)[0].personality).toBe('Sarcastic Robot');
   });
 });

@@ -113,16 +113,17 @@ export async function runChatResponse(
     // Load config + run the system-message pipeline INSIDE the try so a rejected
     // config read routes through handleResponseError below instead of escaping
     // runChatResponse unhandled (skipping the [ERROR] log and the user-facing
-    // error part). The pipeline is self-catching — it logs [WARN] and returns the
-    // original messages, so getConfigCached is the added rejection surface here;
-    // stream/loop failures were already routed through handleResponseError.
+    // error part). The pipeline guards every fallible step internally (its own
+    // load failures degrade to no-replacements); this try is the backstop for
+    // the config read and anything unforeseen. stream/loop failures were
+    // already routed through handleResponseError.
     const config: VllmConfig = await client.getConfigCached();
 
     // System message pipeline: apply replacements, capture to disk, return processed messages.
     // Replacements are applied to a clone — VS Code's original messages are never mutated.
     const processedMessages = await systemMessages.processSystemMessages(model, messages, config);
 
-    const streamOverride = resolveOverrideForModel(config.models || [], model.id);
+    const streamOverride = resolveOverrideForModel(config.models, model.id);
     const maxRetries = resolveModelSettings(streamOverride).autoContinueRetries;
 
     const { vllmModelId, wireModelId, openaiMessages, mergedOptions, serverConfig } =

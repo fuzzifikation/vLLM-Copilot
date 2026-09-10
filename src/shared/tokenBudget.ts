@@ -21,6 +21,21 @@ export interface ModelOverride {
 export type OutputBudgetValue = number | number[];
 
 /**
+ * The one accepted shape of a configured context window (the hidden
+ * `contextWindow` fallback): a WHOLE NUMBER ABOVE 50,000 tokens. No upper
+ * bound — an absurdly large value is the user's problem, and clamping it here
+ * would reject honest answers while pretending to protect something. The floor
+ * is policy, not paranoia: below ~50k, Copilot has no usable headroom
+ * (prompt + output), so "fixing" a gateway with 8192 just relocates the
+ * failure. Shared by the runtime resolver, the settings validator and both UI
+ * input prompts — no surface may accept a value another surface rejects
+ * (`000`, `2.5`, `40000` are not context windows).
+ */
+export function isValidContextWindow(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 50000;
+}
+
+/**
  * Sanitize a vector-form output budget into Output length menu options:
  * integers > 0 only, de-duplicated (declared order preserved — the first entry
  * is the default), capped at 8 entries. Returns undefined for the scalar form
@@ -62,27 +77,24 @@ export interface TokenBudget {
  * per-model settings/overrides.
  *
  * Rules:
- *   - `maxModelLen` comes from the server `max_model_len` (fetched during discovery).
- *     If missing, throws — the server is authoritative and there is no fallback.
+ *   - `maxModelLen` is the server-resolved context window, required: every
+ *     caller obtains it from `resolveRuntimeLimits`, which THROWS when the
+ *     backend reports no window — the server is authoritative and there is no
+ *     fallback here either (the pre-resolver missing-window throw is gone).
  *   - `maxOutputTokens` priority: per-model override > the resolved `configMaxOutputTokens`.
  *     The override may be a scalar or a vector — the vector's head is the desired budget.
  *   - A server-reported output ceiling (`reportedMaxOutputTokens`) clamps the output
- *     budget when present (used by backends that report an explicit completion limit).
+ *     budget when present (used by backends that report an explicit completion
+ *     limit). Callers normalize it to a finite value or undefined — the type
+ *     is the contract, no NaN defense below.
  *   - `maxInputTokens` computed as `maxModelLen - maxOutputTokens` (unless overridden).
  */
 export function deriveTokenBudget(
-  serverMaxModelLen: number | undefined,
+  serverMaxModelLen: number,
   configMaxOutputTokens: number,
   override?: ModelOverride,
-  modelId?: string,
   reportedMaxOutputTokens?: number
 ): TokenBudget {
-  if (!serverMaxModelLen || serverMaxModelLen < 0) {
-    throw new Error(
-      `Server did not report max_model_len for model ${modelId ?? 'unknown'} (got ${serverMaxModelLen}). ` +
-      `Ensure the vLLM server is accessible and returns model metadata.`
-    );
-  }
   const maxModelLen = serverMaxModelLen;
   // Clamp a 0/negative maxOutputTokens override to at least 1 — a 0 would pass
   // straight through as `max_tokens: 0`, which vLLM rejects. A deliberate
@@ -101,11 +113,7 @@ export function deriveTokenBudget(
   // Clamp to the server-reported output ceiling when present (e.g. OpenRouter's
   // per-request completion limit). A 0/negative ceiling degrades to a minimal
   // 1-token output instead of being ignored — same floor as the overrides above.
-  // A NaN ceiling is garbage, not a bound: NaN would propagate through
-  // Math.min/Math.max and poison the whole budget, so it is ignored. Callers are
-  // expected to normalize malformed values to undefined (per the plan), but the
-  // shared function defends itself.
-  if (reportedMaxOutputTokens !== undefined && !Number.isNaN(reportedMaxOutputTokens)) {
+  if (reportedMaxOutputTokens !== undefined) {
     maxOutputTokens = Math.min(maxOutputTokens, Math.max(1, reportedMaxOutputTokens));
   }
   // Clamp maxInputTokens so input + output never exceeds maxModelLen.

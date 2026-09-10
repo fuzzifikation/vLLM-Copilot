@@ -83,6 +83,44 @@ describe('resolveRuntimeLimits — per-backend limits and retry', () => {
       .rejects.toThrow(/vLLM model "test-model"/);
   });
 
+  it('vllm: falls back to the configured contextWindow when the server reports none (gateway shape)', async () => {
+    // Metadata-stripping gateway: the entry exists, max_model_len does not.
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(alwaysReturn(200, {
+      data: [{ id: 'dsv4flash', object: 'model', owned_by: 'gateway' }],
+    }) as any);
+    const ctx = await resolveRuntimeLimits('vllm', 'http://test', {}, 'dsv4flash', 262144);
+    expect(ctx.contextWindow).toBe(262144);
+  });
+
+  it('vllm: a server-reported max_model_len outranks the configured contextWindow', async () => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(alwaysReturn(200, {
+      data: [{ id: 'm1', object: 'model', owned_by: 'test', max_model_len: 4096 }],
+    }) as any);
+    const ctx = await resolveRuntimeLimits('vllm', 'http://test', {}, 'm1', 999999);
+    expect(ctx.contextWindow).toBe(4096);
+  });
+
+  it('vllm: configured contextWindow never resurrects a model absent from /v1/models', async () => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(alwaysReturn(200, { data: [] }) as any);
+    await expect(resolveRuntimeLimits('vllm', 'http://test', {}, 'missing', 262144))
+      .rejects.toThrow(/is not served/);
+  });
+
+  it('vllm: rejects an invalid configured contextWindow instead of fabricating a limit', async () => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(alwaysReturn(200, {
+      data: [{ id: 'm1', object: 'model', owned_by: 'gateway' }],
+    }) as any);
+    await expect(resolveRuntimeLimits('vllm', 'http://test', {}, 'm1', 262144.5))
+      .rejects.toThrow(/positive max_model_len/);
+    // Same guard as the UI prompts and validateConfig: below ~50k Copilot has
+    // no usable headroom, so a sub-50k fallback is refused, not half-served.
+    await expect(resolveRuntimeLimits('vllm', 'http://test', {}, 'm1', 40000))
+      .rejects.toThrow(/positive max_model_len/);
+    // NO upper bound (owner ruling): a giant entry is the user's business.
+    const huge = await resolveRuntimeLimits('vllm', 'http://test', {}, 'm1', 1e30);
+    expect(huge.contextWindow).toBe(1e30);
+  });
+
   it('openrouter: resolves limits from the model catalog by EXACT id via the module', async () => {
     const calls: Array<string> = [];
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((url: any) => {
@@ -284,8 +322,23 @@ describe('detectServerType', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
       () => Promise.resolve(jsonResponse({ data: [{ id: 'm', object: 'model', owned_by: 'mystery' }] }))
     );
-    await expect(detectServerType('https://openrouter.example.com', {}, 'm')).rejects.toThrow(/Unsupported server/);
+    expect(await detectServerType('https://openrouter.example.com', {}, 'm')).toBe('vllm');
     expect(fetchSpy).toHaveBeenCalled(); // fell through to the probe path
+  });
+
+  it('classifies the stripped-gateway shape (listed, no max_model_len, no other signature) as vllm', async () => {
+    // Metadata-stripping proxy: synthesized /v1/models entries without max_model_len,
+    // every native backend endpoint 404s. Classification is safe — the resolver
+    // still refuses to serve without a real or manually configured contextWindow.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((url: any) => {
+      if (String(url).includes('/v1/models')) {
+        return Promise.resolve(jsonResponse({ data: [{ id: 'm', object: 'model', owned_by: 'gateway' }] }));
+      }
+      return Promise.resolve(new Response('route not found', { status: 404 }));
+    });
+    expect(await detectServerType('http://gateway', {}, 'm')).toBe('vllm');
+    const urls = fetchSpy.mock.calls.map((c: any) => String(c[0]));
+    expect(urls).toEqual(['http://gateway/v1/models', 'http://gateway/api/v1/models', 'http://gateway/api/ps']);
   });
 
   it('classifies llama.cpp from owned_by "llamacpp"', async () => {
@@ -365,8 +418,10 @@ describe('detectServerType', () => {
   });
 
   it('throws "unsupported server" naming every expected signature when nothing matches', async () => {
+    // The target model appears in NO listing — the generic gateway fallback
+    // needs the model itself, not just an OpenAI-shaped endpoint.
     vi.spyOn(globalThis, 'fetch').mockImplementation(
-      () => Promise.resolve(jsonResponse({ data: [{ id: 'm', object: 'model', owned_by: 'mystery' }] }))
+      () => Promise.resolve(jsonResponse({ data: [{ id: 'other-model', object: 'model', owned_by: 'mystery' }] }))
     );
     await expect(detectServerType('http://test', {}, 'm')).rejects.toThrow(/Unsupported server/);
     await expect(detectServerType('http://test', {}, 'm')).rejects.toThrow(/vLLM/);
@@ -422,11 +477,11 @@ describe('resolveRuntimeLimits memo (P6-2)', () => {
       first = false;
       return Promise.resolve(res);
     });
-    await expect(resolveRuntimeLimits('vllm', 'http://test', {}, 'm1')).rejects.toThrow(/no runtime context window/);
+    await expect(resolveRuntimeLimits('vllm', 'http://test', {}, 'm1')).rejects.toThrow(/is not served/);
     // The failed LOOKUP is not cached, but the list fetch it made SUCCEEDED and
     // is memoized for the TTL: the immediate retry sees the same empty answer
     // WITHOUT re-probing. This is the accepted 5 s staleness window.
-    await expect(resolveRuntimeLimits('vllm', 'http://test', {}, 'm1')).rejects.toThrow(/no runtime context window/);
+    await expect(resolveRuntimeLimits('vllm', 'http://test', {}, 'm1')).rejects.toThrow(/is not served/);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     // A settings edit / Test & Refresh drops both layers: live re-probe finds it.
     clearRuntimeLimitsCache();

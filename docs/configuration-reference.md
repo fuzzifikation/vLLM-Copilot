@@ -63,6 +63,8 @@ The context window comes from the **backend's own documented endpoint** (never g
 | `ollama` | `GET /api/ps` | matching `models[].context_length` (model must be loaded) |
 | `openrouter` | `GET https://openrouter.ai/api/v1/models` (the **catalog**) | match the requested id **verbatim** (variants are separate entries); `context_length` → `top_provider.context_length` (smallest positive wins); output ceiling from `top_provider.max_completion_tokens` / `per_request_limits.completion_tokens`, falling back to 10% of the window (capped). The exact-model endpoint is deliberately NOT used - it resolves variants inconsistently. |
 
+One hidden compatibility fallback exists for metadata-stripping gateways: when the requested model has a matching `/v1/models` row but that row omits a positive `max_model_len`, the model's optional **`contextWindow`** field supplies the missing value. A server-reported window always wins. The value must be a whole number **above 50,000** tokens — below that Copilot has no usable headroom, so a sub-50k fallback would only relocate the failure. The field appears only through the Add/Auto-Configure prompt, **Test & Refresh**'s "Set Context Window" action, or direct settings editing.
+
 `maxInputTokens` is computed from that window (window minus the effective output budget, the resolved `max_tokens`) and can only clamp it further. The picker is a live inventory: a model is listed only while its server answers and reports a real context window for it. An unreachable server, or a model the server does not currently serve, drops the model from the picker; it reappears on its own once the server serves it again (silent lookups are cached for about a minute, deliberate refreshes like settings changes, **Test & Refresh Models**, mode or output-length picks, and a request that fails to connect always probe live). Budgets are never fabricated and no health state is persisted across restarts.
 
 ---
@@ -443,9 +445,11 @@ In **Model Settings**, the Personality card has two buttons:
 
 An attached user file shows in the dropdown as a first-class option (`<name> (user file)`, taken from its `meta.name`), so the form never claims "Default" while your own file is active.
 
-**Usage:** In the **vLLM Model Settings** sidebar, pick a model and choose a personality from the dropdown in the model's **General** section. Or use `Ctrl+Shift+P` → **Set Model Personality**. Applying a preset stores its global-folder path; **Default (no personality)** clears the replacement and restores Copilot's original system prompt.
+**Usage:** In the **vLLM Model Settings** sidebar, pick a model and choose a personality from the dropdown in the model's **General** section. Or use `Ctrl+Shift+P` → **Set Model Personality**. Applying a **shipped preset** stores its **name** in the portable `personality` field; **Default (no personality)** clears both fields and restores Copilot's original system prompt.
 
-Or set the path manually on the model entry:
+**Shipped presets are stored by name, not path.** A path is meaningful only on the machine that wrote it - a Windows globalStorage path can't be read on a Linux remote, and the personality would silently stop applying there. A name reference resolves to **this machine's own seeded copy** on every start, so the same settings work on Windows, Linux and Mac, local or remote. Your own files (attached via **Load**) keep using `systemMessageReplacementsFile`, because only you know where they live. Entries saved by older versions still carry a preset path; opening Model Settings migrates them to the name form automatically, and even before that, an unreachable path naming a shipped preset resolves to the local copy with a note in the output channel - your personality was never silently lost, only its label lied.
+
+Or set either form manually on the model entry:
 
 ```json
 {
@@ -453,13 +457,14 @@ Or set the path manually on the model entry:
     {
       "id": "my-model",
       "server": "localhost-8000",
+      "personality": "Sarcastic Robot",
       "systemMessageReplacementsFile": ".vllm/my-personality.json"
     }
   ]
 }
 ```
 
-Relative paths resolve against the **workspace root**; absolute paths (like the global folder paths the picker writes) work from any workspace.
+`personality` (name of a shipped preset) outranks a stale path if both are set. Relative paths resolve against the **workspace root**; absolute paths work from any workspace.
 
 **Want to customize a preset?** Bundled basenames are **extension-owned**: the shipped file is copied over the global copy at every activation, so edits to a preset's global file are gone at the next start. To customize, copy a preset to a file with your own name (the dropdown will list it as yours) or use the template, then edit freely - your filenames are yours forever. See [System Message Replacements](#system-message-replacements).
 

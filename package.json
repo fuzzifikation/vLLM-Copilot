@@ -500,6 +500,11 @@
                   "type": "number",
                   "markdownDescription": "**Computed automatically** from the vLLM server's context window minus the **effective output budget** (the resolved `max_tokens`: a selected `modelModes` entry, else `defaultParams.max_tokens`, else `maxOutputTokens`). You can set a lower value here to reserve extra headroom, but it is clamped so input + output never exceeds the total context window. Most users should leave this unset."
                 },
+                "contextWindow": {
+                  "type": "integer",
+                  "exclusiveMinimum": 50000,
+                  "markdownDescription": "**Hidden compatibility fallback.** Used only when the requested model exists in `/v1/models` but its entry omits a positive `max_model_len`. A server-reported window always wins. Must be a whole number **above 50,000** — below that Copilot has no usable headroom. Set through Add/Auto-Configure, Test & Refresh, or direct settings editing only when required."
+                },
                 "estimateCharsPerToken": {
                   "type": "number",
                   "default": 3.5,
@@ -557,7 +562,12 @@
                 },
                 "systemMessageReplacementsFile": {
                   "type": "string",
-                  "markdownDescription": "⚡ **Advanced**: path to a JSON file with find/replace rules for system messages. Each rule: `{ \"ruleName\": \"...\", \"find\": \"exact substring\", \"replace\": \"replacement text\" }`. Applied to every system message before sending to vLLM. Recommended: `.vllm/prompt-replacements.json`",
+                  "markdownDescription": "⚡ **Advanced**: path to a JSON file with find/replace rules for system messages. Each rule: `{ \"ruleName\": \"...\", \"find\": \"exact substring\", \"replace\": \"replacement text\" }`. Applied to every system message before sending to vLLM. For **user-defined** personality files only - shipped presets are stored in the portable `personality` field instead. Recommended: `.vllm/prompt-replacements.json`",
+                  "default": ""
+                },
+                "personality": {
+                  "type": "string",
+                  "markdownDescription": "Name of a **shipped personality preset** (e.g. `\"Sarcastic Robot\"`). Portable by design: every machine seeds its own copy of the shipped presets into its global personality folder at activation, so the name resolves to the right file on Windows, Linux and Mac - local or remote. Set this by picking a preset in Model Settings; `systemMessageReplacementsFile` stays for your own files. If both are set, the name wins.",
                   "default": ""
                 },
                 "cost": {

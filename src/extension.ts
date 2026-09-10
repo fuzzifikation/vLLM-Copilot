@@ -10,7 +10,7 @@ import {
   ensureAgentHostModelsEnabled,
 } from './commands/byok.js';
 import { setSessionManagerOutput } from './shared/sessionManager.js';
-import { syncBundledPersonalities } from './persona/personalityStore.js';
+import { syncBundledPersonalities, migratePersonalityPathRefs } from './persona/personalityStore.js';
 import { readServers, writeServers } from './state/configStore.js';
 import { dedupeServerIds } from './state/serverRegistry.js';
 import { resetOpenRouterCaches } from './backends/openRouter.js';
@@ -199,9 +199,20 @@ export async function activate(context: vscode.ExtensionContext) {
           `[INFO] Seeded or refreshed ${updated.length} personality file(s) in global storage: ${updated.join(', ')}`
         );
       }
+      // Then heal machine-bound references once, here, where a settings write
+      // costs one config refresh instead of one per view render: a shipped
+      // preset still stored as a PATH (old version, or carried over from
+      // another OS) becomes the portable personality NAME, which every install
+      // resolves to its own seeded copy.
+      const migrated = await migratePersonalityPathRefs(context);
+      if (migrated > 0) {
+        outputChannel.appendLine(
+          `[INFO] Rewrote ${migrated} model(s) from a machine-bound personality path to a portable personality name.`
+        );
+      }
     } catch (err) {
       outputChannel.appendLine(
-        `[WARN] Personality preset sync failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`
+        `[WARN] Personality preset sync/migration failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`
       );
     }
 

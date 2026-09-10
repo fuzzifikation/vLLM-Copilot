@@ -21,9 +21,11 @@ export type PresetConfig = Omit<
   | 'routingMode'
   | 'promptCache'
   | 'systemMessageReplacementsFile'
+  | 'personality'
   | 'streamInactivityTimeout'
   | 'initialResponseTimeoutMs'
   | 'autoContinueRetries'
+  | 'contextWindow'
   | 'cost'
 >;
 

@@ -21,17 +21,16 @@ export function buildRequestHeaders(
 ): Record<string, string> {
   const headers: Record<string, string> = {};
 
-  // Layer 1: the model's own server headers (auth, routing, etc.)
-  for (const [k, v] of Object.entries(requestHeaders ?? {})) {
-    if (typeof v === 'string') headers[k] = v;
-  }
+  // Layer 1: the model's own server headers (auth, routing, etc.). Both
+  // parameters are sanitized String-only Records at every boundary — no
+  // per-value coercion here.
+  for (const [k, v] of Object.entries(requestHeaders)) headers[k] = v;
 
   // Layer 2: caller-specific headers (e.g., Content-Type) always win — and
   // header names are case-INsensitive (CR-22). Without the case-folded delete,
   // a base 'content-type' and a caller 'Content-Type' both survived and fetch
   // comma-joined them into one corrupt value.
   for (const [k, v] of Object.entries(callerHeaders ?? {})) {
-    if (typeof v !== 'string') continue;
     const lower = k.toLowerCase();
     for (const existing of Object.keys(headers)) {
       if (existing !== k && existing.toLowerCase() === lower) delete headers[existing];
@@ -83,28 +82,34 @@ export async function fetchWithRetry(
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
       onRetry?.(lastError!, retryDelayMs);
+      if (callerSignal?.aborted) {
+        throw callerSignal.reason;
+      }
       // Abortable retry delay so cancellation never waits behind backoff.
       // Rejects with the signal's raw reason (not a wrapped Error) — callers
-      // distinguish user-cancel from failures on that value.
-      if (callerSignal?.aborted) {
-        throw callerSignal.reason ?? new Error('Request cancelled by user');
+      // distinguish user-cancel from failures on that value. An aborted
+      // signal ALWAYS carries its reason (spec: abort() defaults it to an
+      // AbortError; abort(x) to x; timeout() to TimeoutError) — no fallback.
+      if (callerSignal) {
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = () => {
+            clearTimeout(timeout);
+            reject(callerSignal.reason);
+          };
+          const timeout = setTimeout(() => {
+            callerSignal.removeEventListener('abort', onAbort);
+            resolve();
+          }, retryDelayMs);
+          callerSignal.addEventListener('abort', onAbort, { once: true });
+        });
+      } else {
+        await new Promise<void>(resolve => setTimeout(resolve, retryDelayMs));
       }
-      await new Promise<void>((resolve, reject) => {
-        const onAbort = () => {
-          clearTimeout(timeout);
-          reject(callerSignal?.reason ?? new Error('Request cancelled by user'));
-        };
-        const timeout = setTimeout(() => {
-          callerSignal?.removeEventListener('abort', onAbort);
-          resolve();
-        }, retryDelayMs);
-        callerSignal?.addEventListener('abort', onAbort, { once: true });
-      });
     }
 
     // If caller already aborted between attempts, stop immediately
     if (callerSignal?.aborted) {
-      throw new Error(callerSignal.reason ?? 'Request cancelled by user');
+      throw callerSignal.reason;
     }
 
     let response: Response;
@@ -117,13 +122,14 @@ export async function fetchWithRetry(
     } catch (err) {
       // Don't retry aborts. A rejected fetch whose signal is aborted is a
       // CANCELLATION (user cancel or a timeout), not a server failure — in
-      // Node/undici this rejects with the signal's reason, which is NOT always an
-      // AbortError (AbortController.abort('msg') rejects with the raw string;
-      // AbortSignal.timeout() rejects with TimeoutError). Retrying would delay a
-      // user cancel by the 1.5s sleep and double every metadata timeout.
-      // The name check is defensive: an AbortError always implies an aborted
-      // signal in practice, but keeping it costs nothing and guards callers that
-      // throw a hand-built AbortError.
+      // Node/undici this rejects with the signal's reason, which is NOT always
+      // an AbortError (AbortController.abort('msg') rejects with the raw
+      // string; AbortSignal.timeout() rejects with TimeoutError). Retrying a
+      // cancel would delay it by the 1.5s sleep and double every metadata
+      // timeout. The name check is NOT redundant: undici can reject with an
+      // AbortError from its OWN internal request aborts (stalled-connection
+      // timeouts) while our signal stays un-aborted — a hanging server must
+      // not be retried (pinned by runtimeLimits' "AbortError without retry").
       if (callerSignal?.aborted || (err instanceof Error && err.name === 'AbortError')) {
         throw err;
       }

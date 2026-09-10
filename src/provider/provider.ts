@@ -87,7 +87,10 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     dependencies?: { client?: ProviderClient }
   ) {
     this.client = dependencies?.client ?? new VllmClient(output, fileLogger);
-    this.systemMessages = new SystemMessagePipeline(output);
+    // The context lets the pipeline resolve portable personality NAME
+    // references (and foreign-machine preset paths) against this machine's
+    // seeded preset copies.
+    this.systemMessages = new SystemMessagePipeline(output, undefined, context);
   }
 
   dispose(): void {
@@ -231,8 +234,8 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     const generation = this.modelCacheGeneration;
     const run = (async (): Promise<number> => {
       const config = await this.client.getConfigCached();
-      const modelOverrides = config.models || [];
-      const servers = config.servers || [];
+      const modelOverrides = config.models;
+      const servers = config.servers;
 
       if (modelOverrides.length === 0) {
         if (generation === this.modelCacheGeneration) {
@@ -452,9 +455,10 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     let charsPerToken = 3.5;
     try {
       const cfg = await this.client.getConfigCached();
-      const override = resolveOverrideForModel(cfg.models || [], model.id);
-      const estimate = resolveModelSettings(override).estimateCharsPerToken;
-      if (estimate > 0) charsPerToken = estimate;
+      const override = resolveOverrideForModel(cfg.models, model.id);
+      // resolveModelSettings floors estimateCharsPerToken above 0 (invalid or
+      // absent values fall back to the default) — no second validity check.
+      charsPerToken = resolveModelSettings(override).estimateCharsPerToken;
     } catch (err) {
       // Fallback to default on config read failure
       this.output.appendLine(`[WARN] Token count config read failed: ${err instanceof Error ? err.message : String(err)}. Using default estimate.`);

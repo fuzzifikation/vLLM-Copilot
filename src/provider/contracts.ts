@@ -36,7 +36,9 @@ export interface ProviderClient {
     serverType: ServerType,
     serverUrl: string,
     requestHeaders?: Record<string, string>,
-    vllmModelId?: string
+    vllmModelId?: string,
+    /** Manual fallback for metadata-stripping gateways (`ModelConfig.contextWindow`). */
+    configuredContextWindow?: number
   ): Promise<RuntimeModelLimits>;
   chatCompletionStream(
     model: string,

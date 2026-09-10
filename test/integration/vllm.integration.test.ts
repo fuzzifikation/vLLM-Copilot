@@ -40,7 +40,6 @@ function stubConfig() {
   vi.spyOn(configModule, 'getConfig').mockResolvedValue({
     models: [],
     servers: [],
-    enableFileLogging: false,
   });
 }
 

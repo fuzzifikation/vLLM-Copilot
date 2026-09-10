@@ -20,6 +20,7 @@ describe('autoConfigureModel (via resolveModelConfigForAddSafely)', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     delete (vscode as any).workspace._mockFsReadDirectory;
     delete (vscode as any).workspace._mockFsReadFile;
     // The server-list memo (runtimeLimits) is keyed WITHOUT the model id and
@@ -130,6 +131,58 @@ describe('autoConfigureModel (via resolveModelConfigForAddSafely)', () => {
     expect(vllmCall).toBeDefined();
     const [, init] = vllmCall as unknown as [string, RequestInit];
     expect((init.headers as Record<string, string>)['X-API-Key']).toBe('secret');
+  });
+
+  /** Gateway shape: the row EXISTS but omits max_model_len. */
+  const stubGatewayModel = (fetchRouter: (url: string) => Response, id: string) =>
+    stubFetch((url: string) => {
+      if (url.endsWith('/v1/models')) {
+        return jsonResponse({ data: [{ id, object: 'model', owned_by: 'gateway' }] });
+      }
+      if (url.includes(`/api/models/${id}`)) {
+        return jsonResponse({
+          id,
+          config: { model_type: 'llama', tokenizer_config: { chat_template: '{{ messages }}' } },
+        });
+      }
+      return fetchRouter(url);
+    });
+
+  it('gateway shape (row without max_model_len): prompts once and persists contextWindow', async () => {
+    stubGatewayModel(() => jsonResponse({}, 404), 'gw-model');
+    seedNoPresets();
+    const inputSpy = vi.spyOn(vscode.window, 'showInputBox').mockResolvedValue('262144');
+
+    const result = await resolveModelConfigForAddSafely(fakeOutput(), extContext, 'gw-model', 'http://host:8000');
+
+    expect(inputSpy).toHaveBeenCalledTimes(1);
+    expect(result!.modelConfig.contextWindow).toBe(262144);
+    expect(result!.summary.join('\n')).toContain('manual fallback, server reports none');
+  });
+
+  it('reuses a stored VALID contextWindow without a prompt, but never an invalid one', async () => {
+    seedNoPresets();
+    stubGatewayModel(() => jsonResponse({}, 404), 'gw-stored');
+    const inputSpy = vi.spyOn(vscode.window, 'showInputBox').mockResolvedValue('65536');
+
+    // A valid stored fallback resolves silently and survives the replace-mode save.
+    const kept = await resolveModelConfigForAddSafely(
+      fakeOutput(), extContext, 'gw-stored', 'http://host-a:8000', undefined, undefined,
+      { id: 'gw-stored', vllmModelId: 'gw-stored', server: 'gw', contextWindow: 131072 },
+    );
+    expect(inputSpy).not.toHaveBeenCalled();
+    expect(kept!.modelConfig.contextWindow).toBe(131072);
+
+    // A hand-edited 2.5 is NOT silently trusted — the resolver's positive-safe-
+    // integer contract gates the reuse path too (finding #2), and the re-entered
+    // value replaces the junk on the saved entry.
+    stubGatewayModel(() => jsonResponse({}, 404), 'gw-junk');
+    const junk = await resolveModelConfigForAddSafely(
+      fakeOutput(), extContext, 'gw-junk', 'http://host-b:8000', undefined, undefined,
+      { id: 'gw-junk', vllmModelId: 'gw-junk', server: 'gw', contextWindow: 2.5 },
+    );
+    expect(inputSpy).toHaveBeenCalledTimes(1);
+    expect(junk!.modelConfig.contextWindow).toBe(65536);
   });
 });
 
