@@ -45,7 +45,7 @@ interface Captured {
 /** Default no-op fake client satisfying {@link ProviderClient}. */
 function fakeClient(overrides: Partial<ProviderClient> = {}): ProviderClient {
   return {
-    getConfigCached: async () => ({ models: [], servers: [], enableFileLogging: false } as VllmConfig),
+    getConfigCached: async () => ({ models: [], servers: [] } as VllmConfig),
     invalidateConfigCache: vi.fn(),
     getModelContextWindow: async () => ({ contextWindow: 0 }),
     chatCompletionStream: async function* () {},
@@ -438,7 +438,7 @@ describe('remote-install guard', () => {
       extension: { extensionKind: vscode.ExtensionKind.Workspace },
     };
     const provider = new VllmChatModelProvider(context as any, makeOutput(), undefined, {
-      client: fakeClient({ getConfigCached: async () => ({ models: [], servers: [], enableFileLogging: false } as VllmConfig) }),
+      client: fakeClient({ getConfigCached: async () => ({ models: [], servers: [] } as VllmConfig) }),
     });
 
     const progress = { report: vi.fn() };
@@ -468,7 +468,7 @@ describe('remote-install guard', () => {
       extension: { extensionKind: vscode.ExtensionKind.UI },
     };
     const provider = new VllmChatModelProvider(context as any, makeOutput(), undefined, {
-      client: fakeClient({ getConfigCached: async () => ({ models: [], servers: [], enableFileLogging: false } as VllmConfig) }),
+      client: fakeClient({ getConfigCached: async () => ({ models: [], servers: [] } as VllmConfig) }),
     });
 
     const progress = { report: vi.fn() };

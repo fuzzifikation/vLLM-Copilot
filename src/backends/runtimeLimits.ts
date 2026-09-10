@@ -1,4 +1,5 @@
 import { buildEndpoint, KNOWN_SERVER_TYPES, type ServerType } from '../state/config.js';
+import { isValidContextWindow } from '../shared/tokenBudget.js';
 import { buildRequestHeaders, fetchWithRetry } from '../shared/fetchRetry.js';
 import { describeError } from '../provider/messageConverter.js';
 import { resolveOpenRouterRuntimeLimits } from './openRouter.js';
@@ -106,21 +107,34 @@ export function clearRuntimeLimitsCache(): void {
   listMemo.clear();
 }
 
+/**
+ * The server listed the requested model but omitted vLLM's max_model_len.
+ * Typed so UI callers can expose the hidden manual fallback only for that
+ * precise metadata gap, never for an absent model or transport failure.
+ */
+export class MissingContextWindowError extends Error {}
+
 export function resolveRuntimeLimits(
   serverType: ServerType,
   serverUrl: string,
   requestHeaders: Record<string, string> = {},
   modelId: string,
+  /**
+   * Hidden fallback (`ModelConfig.contextWindow`) used only when the matching
+   * model entry has no positive max_model_len. A server-reported value always
+   * wins. Part of the memo key so editing it cannot reuse a prior lookup.
+   */
+  configuredContextWindow?: number,
 ): Promise<RuntimeModelLimits> {
   // Lookup-layer key: the server key plus the model id. Two registry entries
   // sharing one URL with different credentials never share a resolution.
-  const key = `${serverKey(serverType, serverUrl, requestHeaders)}|${modelId}`;
+  const key = `${serverKey(serverType, serverUrl, requestHeaders)}|${modelId}|${configuredContextWindow ?? ''}`;
   const hit = limitsMemo.get(key);
   if (hit && (hit.settledAt === undefined || Date.now() - hit.settledAt < LIMITS_MEMO_TTL_MS)) {
     return hit.promise;
   }
   const entry: LimitsMemoEntry = { promise: undefined as unknown as Promise<RuntimeModelLimits> };
-  entry.promise = resolveLimitsUncached(serverType, serverUrl, requestHeaders, modelId).then(
+  entry.promise = resolveLimitsUncached(serverType, serverUrl, requestHeaders, modelId, configuredContextWindow).then(
     (limits) => {
       entry.settledAt = Date.now();
       // Opportunistic sweep: the map is small (servers x models) but entries
@@ -146,6 +160,7 @@ async function resolveLimitsUncached(
   serverUrl: string,
   requestHeaders: Record<string, string>,
   modelId: string,
+  configuredContextWindow?: number,
 ): Promise<RuntimeModelLimits> {
   switch (serverType) {
     case 'vllm': {
@@ -159,12 +174,24 @@ async function resolveLimitsUncached(
       // model "will not be served". LM Studio and Ollama accept their alias in
       // both halves already.
       const model = (data.data || []).find((entry) => entry.id === modelId || entry.root === modelId);
-      const contextWindow = model?.max_model_len;
+      if (!model) {
+        throw new Error(
+          `vLLM model "${modelId}" is not served: GET ${url} returned no matching entry. ` +
+          `Fix the served model id or server config - the model will not be served.`
+        );
+      }
+      const contextWindow = model.max_model_len;
       if (typeof contextWindow === 'number' && contextWindow > 0) return { contextWindow };
-      throw new Error(
-        `vLLM model "${modelId}" has no runtime context window: GET ${url} returned no matching ` +
-        `entry with max_model_len. Fix the served model id or server config. If this entry should ` +
-        `target a third-party backend, set "serverType" ('lmstudio' | 'llamacpp' | 'ollama' | 'openrouter') - ` +
+      if (isValidContextWindow(configuredContextWindow)) {
+        return { contextWindow: configuredContextWindow };
+      }
+      throw new MissingContextWindowError(
+        `vLLM model "${modelId}" has no runtime context window: its entry from GET ${url} has no ` +
+        `positive max_model_len. vLLM ALWAYS reports max_model_len - it is model config, not ` +
+        `optional metadata - so something in front of this server (a gateway, proxy or load ` +
+        `balancer) is stripping it. That is a server-side defect to fix at the server. As a ` +
+        `workaround, set "contextWindow" on the model entry. If this entry should target a ` +
+        `third-party backend, set "serverType" ('lmstudio' | 'llamacpp' | 'ollama' | 'openrouter') - ` +
         `the model will not be served.`
       );
     }
@@ -208,11 +235,10 @@ async function resolveLimitsUncached(
       return resolveOpenRouterRuntimeLimits(modelId);
     default: {
       // Backstop, not a fallback (CR-39): resolveServer normalizes unknown
-      // types to 'vllm' before anything reaches this switch, so arriving here
-      // means a new call path bypassed the choke point. The typed union says
-      // this arm is impossible — the type is a lie about hand-edited JSON, and
-      // falling out silently would resolve `undefined` and let the memo cache
-      // it as a settled SUCCESS.
+      // types to 'vllm', but the typed union is fiction against hand-edited
+      // settings.json - a raw registry entry with a bogus serverType can
+      // arrive here. Refuse loudly: falling out silently would resolve
+      // `undefined` and let the memo cache it as a settled SUCCESS.
       throw new Error(
         `No runtime-limits resolver for serverType "${String(serverType)}" - expected one of ` +
         `${KNOWN_SERVER_TYPES.join(', ')}. Fix the registry entry's "serverType" - the model will not be served.`
@@ -261,6 +287,12 @@ export async function detectServerType(
   } catch (error) {
     if (!isInvalidSignature(error)) throw error;
   }
+
+  // A matching OpenAI-compatible model entry with no native backend signature
+  // is the metadata-stripping gateway shape. Classify it as vLLM only after
+  // LM Studio and Ollama had a chance to claim their documented endpoints;
+  // context resolution remains strict until the manual fallback is supplied.
+  if (model) return 'vllm';
 
   throw new Error(
     `Unsupported server at ${serverUrl}: expected vLLM (/v1/models with max_model_len), ` +

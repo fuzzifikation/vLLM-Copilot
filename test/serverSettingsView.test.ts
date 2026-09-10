@@ -466,6 +466,57 @@ describe('ServerSettingsViewProvider', () => {
       // merge would have resurrected it because the clear passes `''`.
       expect('systemMessageReplacementsFile' in stored[0]).toBe(false);
     });
+
+    it('a shipped preset (name) stores the portable name and clears the machine-bound path', async () => {
+      const existingConfig: ModelConfig[] = [
+        {
+          id: 'glm',
+          vllmModelId: 'glm',
+          server: 'test',
+          // The reported shape: preset applied on WINDOWS, path now dead here.
+          systemMessageReplacementsFile: 'c:\\Users\\me\\personalities\\prompt-replacements-sarcastic-robot.json',
+        },
+      ];
+      vscode.workspace._mockConfig = {
+        get: (key: string) => (key === 'models' ? existingConfig : undefined),
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await (provider as any).applyPersonality({
+        type: 'applyPersonality',
+        server: 'test',
+        id: 'glm',
+        sourcePath: '/any/host/globalStorage/personalities/prompt-replacements-sarcastic-robot.json',
+        name: 'Sarcastic Robot',
+      });
+
+      const stored = vscode.workspace._mockConfig.update.mock.calls[0][1];
+      // Name in, path gone: the entry now resolves on every machine from the
+      // name alone; the option's path was a display detail, never the storage.
+      expect(stored[0].personality).toBe('Sarcastic Robot');
+      expect('systemMessageReplacementsFile' in stored[0]).toBe(false);
+    });
+
+    it('clear removes a stored name reference too, not only the path', async () => {
+      const existingConfig: ModelConfig[] = [
+        { id: 'glm', vllmModelId: 'glm', server: 'test', personality: 'Sarcastic Robot' },
+      ];
+      vscode.workspace._mockConfig = {
+        get: (key: string) => (key === 'models' ? existingConfig : undefined),
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await (provider as any).applyPersonality({
+        type: 'applyPersonality',
+        server: 'test',
+        id: 'glm',
+        clear: true,
+      });
+
+      const stored = vscode.workspace._mockConfig.update.mock.calls[0][1];
+      expect('personality' in stored[0]).toBe(false);
+      expect('systemMessageReplacementsFile' in stored[0]).toBe(false);
+    });
   });
 
   describe('setServerType', () => {

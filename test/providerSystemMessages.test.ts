@@ -40,7 +40,7 @@ describe('system message processing', () => {
     const result = await pipeline.processSystemMessages(
       makeModel('model'),
       [userMsg],
-      { models: [{ id: 'model', server: 'srv' }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }], enableFileLogging: false },
+      { models: [{ id: 'model', server: 'srv' }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }] },
     );
 
     // `toBe` identity, not deep equality: the title promises by-reference
@@ -63,7 +63,7 @@ describe('system message processing', () => {
       const result = await pipeline.processSystemMessages(
         makeModel('model'),
         [msg],
-        { models: [{ id: 'model', server: 'srv', systemMessageReplacementsFile: bad }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }], enableFileLogging: false },
+        { models: [{ id: 'model', server: 'srv', systemMessageReplacementsFile: bad }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }] },
       );
       // Fallback: original messages pass through.
       expect(result).toEqual([msg]);
@@ -86,7 +86,7 @@ describe('system message processing', () => {
     const result = await pipeline.processSystemMessages(
       makeModel('model'),
       [msg],
-      { models: [{ id: 'model', server: 'srv' }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }], enableFileLogging: false },
+      { models: [{ id: 'model', server: 'srv' }], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }] },
     );
 
     expect(result).toEqual([msg]);

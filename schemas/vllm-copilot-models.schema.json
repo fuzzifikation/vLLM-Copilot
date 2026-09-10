@@ -55,6 +55,11 @@
       "type": "number",
       "description": "Auto-computed as the server context window minus the EFFECTIVE output budget (the resolved max_tokens: the Output Length pick when maxOutputTokens is an array > modelModes[selected].max_tokens > defaultParams.max_tokens > maxOutputTokens). Only set to reduce further — never higher."
     },
+    "contextWindow": {
+      "type": "integer",
+      "exclusiveMinimum": 50000,
+      "description": "Hidden compatibility fallback. Used only when the requested model exists in /v1/models but its entry omits a positive max_model_len. A server-reported window always wins. Must be a whole number above 50,000 - below that Copilot has no usable headroom."
+    },
     "estimateCharsPerToken": {
       "type": "number",
       "default": 3.5,
@@ -105,7 +110,11 @@
     },
     "systemMessageReplacementsFile": {
       "type": "string",
-      "description": "Path to a JSON file of { ruleName, find, replace } pairs applied to every system message. Recommended: .vllm/prompt-replacements.json"
+      "description": "Path to a JSON file of { ruleName, find, replace } pairs applied to every system message. For user-defined personality files only - shipped presets use the portable personality field. Recommended: .vllm/prompt-replacements.json"
+    },
+    "personality": {
+      "type": "string",
+      "description": "Name of a shipped personality preset (e.g. \"Sarcastic Robot\"). Portable: every machine seeds its own copy of the shipped presets at activation, so the name resolves on Windows, Linux and Mac alike. If both personality and systemMessageReplacementsFile are set, the name wins."
     },
     "cost": {
       "type": "object",

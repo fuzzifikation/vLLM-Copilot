@@ -8,22 +8,25 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider/provider.js';
-import { getConfig, findModelConfigIndex, resolveConfigId, resolveServerConfig } from '../state/config.js';
+import { getConfig, findModelConfigIndex, pathsEquivalent, resolveConfigId, resolveServerConfig } from '../state/config.js';
 import { patchModelConfig, readModels } from '../state/configStore.js';
-import { discoverPersonalities, resolveActivePersonality } from '../persona/personalityStore.js';
+import { discoverPersonalities, resolveModelReplacements } from '../persona/personalityStore.js';
 import { describeError } from '../provider/messageConverter.js';
 
 /**
  * A personality option in the Set Model Personality quick pick (step 2/2).
- * Hoisted to module scope so the picker builder and the apply path share one type.
+ * Discriminated: the Default entry is `clear: true`, preset entries carry a
+ * `sourcePath`, separators carry only `kind` — "neither clear nor path" is
+ * unrepresentable, so no runtime guard can exist for it either. The apply
+ * path tests `clear === true`, never `'clear' in pick`: a property check
+ * would treat a spread-in `clear: undefined` as a CLEAR signal, silently
+ * wiping the model's personality instead of applying the picked preset.
  */
-interface PersonalityPick {
-  label: string;
-  description?: string;
-  clear?: boolean;
-  sourcePath?: string;
-  kind?: vscode.QuickPickItemKind;
-}
+type PersonalityPick = { label: string; description?: string } & (
+  | { clear: true; kind?: undefined }
+  | { sourcePath: string; name?: string; bundled?: boolean; kind?: undefined; clear?: undefined }
+  | { kind: vscode.QuickPickItemKind.Separator; clear?: undefined; sourcePath?: undefined }
+);
 
 /** Apply a bundled personality preset to a model's system message replacements. */
 export function registerSetModelPersonalityCommand(
@@ -35,8 +38,8 @@ export function registerSetModelPersonalityCommand(
     'vllm-copilot.setModelPersonality',
     async () => {
       const cfg = await getConfig();
-      const models = cfg.models || [];
-      const servers = cfg.servers || [];
+      const models = cfg.models;
+      const servers = cfg.servers;
 
       if (models.length === 0) {
         vscode.window.showInformationMessage(
@@ -86,10 +89,15 @@ export function registerSetModelPersonalityCommand(
         presets.map((p) => p.name).filter((n, i, arr) => arr.indexOf(n) !== i),
       );
 
-      // Resolve which option is currently active from the model's replacements file.
-      // A custom file that isn't a known personality still counts as "not default".
-      const hasReplacements = !!(modelPick.model.systemMessageReplacementsFile || '').trim();
-      const active = await resolveActivePersonality(context, modelPick.model.systemMessageReplacementsFile, presets);
+      // Which option is current comes from THE shared resolver — the same
+      // function the request pipeline and Model Settings run. Detecting it
+      // separately here is what let this picker claim "Default" while chat was
+      // busy applying a personality (a stored path outside the discovered
+      // folder, a preset path carried over from another OS).
+      const nameRef = (modelPick.model.personality || '').trim();
+      const fileRef = (modelPick.model.systemMessageReplacementsFile || '').trim();
+      const hasReplacements = !!nameRef || !!fileRef;
+      const resolved = hasReplacements ? await resolveModelReplacements(context, modelPick.model) : null;
       const isDefaultActive = !hasReplacements;
 
       const markCurrent = (label: string, description: string | undefined, active: boolean): Pick<PersonalityPick, 'label' | 'description'> => ({
@@ -113,12 +121,13 @@ export function registerSetModelPersonalityCommand(
       if (presets.length > 0) {
         pickItems.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
         for (const p of presets) {
-          // Current is the stored PATH, never the display name: two files can
-          // share a meta.name (a copied preset keeps its name), and matching
-          // by name would checkmark every twin at once (same doctrine the
-          // Model Settings dropdown follows).
-          const isCurrent = !!active && !isDefaultActive
-            && path.resolve(active.sourcePath) === path.resolve(p.sourcePath);
+          // When the resolver identified a SHIPPED preset, current is the
+          // BUNDLED entry of that name (twins stay unmarked — the name means
+          // the shipped file). Otherwise current is the resolved PATH, never
+          // the display name: matching by name would checkmark every twin.
+          const isCurrent = !!resolved && !isDefaultActive && (resolved.personality
+            ? p.bundled === true && p.name === resolved.personality
+            : pathsEquivalent(p.sourcePath, resolved.sourcePath));
           // Twins are told apart by the file they live in.
           const description = dupeNames.has(p.name)
             ? `${p.description ? `${p.description} · ` : ''}${path.basename(p.sourcePath)}`
@@ -126,13 +135,22 @@ export function registerSetModelPersonalityCommand(
           pickItems.push({
             ...markCurrent(p.name, description, isCurrent),
             sourcePath: p.sourcePath,
+            name: p.name,
+            bundled: p.bundled,
           });
         }
       }
 
+      // Honest current label: the preset name when the resolver identified one,
+      // else the stored name reference, else the stored path — a custom file
+      // that is not a listed personality still counts as "not default". `||`
+      // throughout, on purpose: an empty name reference is an empty string, not
+      // nullish, and `??` there used to print "Default" over a live file.
+      const activePath = resolved?.sourcePath;
       const currentLabel = !hasReplacements
         ? 'Default (no personality)'
-        : (active?.name ?? modelPick.model.systemMessageReplacementsFile) || 'Default (no personality)';
+        : (activePath ? presets.find(p => pathsEquivalent(p.sourcePath, activePath))?.name : undefined)
+          || resolved?.personality || nameRef || fileRef;
 
       const personalityPick = await vscode.window.showQuickPick(pickItems, {
         ignoreFocusOut: true,
@@ -141,24 +159,11 @@ export function registerSetModelPersonalityCommand(
       });
       if (!personalityPick || personalityPick.kind === vscode.QuickPickItemKind.Separator) return;
 
-      const clear = personalityPick.clear;
-      const sourcePath = personalityPick.sourcePath;
-      if (!clear && !sourcePath) {
-        // Unreachable in practice: every non-separator pick item is either
-        // `clear: true` or carries a `sourcePath`. This guard exists only to
-        // narrow `clear`/`sourcePath` for the code below — a missed preset
-        // would fall through here, so the message stays honest about what it
-        // means rather than blaming missing presets.
-        outputChannel.appendLine('[WARN] No personality action was selected.');
-        return;
-      }
-
       try {
         // The personality folder is seeded into global storage at activation
         // (syncBundledPersonalities), so every discovered path is already the
-        // final, user-owned-where-user-owned location: applying is a bare path
-        // write, no copy, no materialization step.
-        const replacementsFile = clear ? '' : sourcePath!;
+        // final, user-owned-where-user-owned location: applying is a bare
+        // reference write, no copy, no materialization step.
         // Re-read at write time and patch ONLY this command's field (the CR-13
         // staleness doctrine, same fix as the Add flows): the entry was
         // snapshotted before two quickpicks and an awaited file copy, so the
@@ -178,9 +183,19 @@ export function registerSetModelPersonalityCommand(
           return;
         }
         // Empty string is the explicit clear signal (undefined would preserve the previous value).
-        await patchModelConfig({ id: pickId, server: pickServer }, { systemMessageReplacementsFile: replacementsFile });
+        // Shipped presets store the portable NAME and clear the path; user
+        // files store the path and clear any stale name (the name outranks).
+        // The discriminated pick type leaves nothing else to check.
+        const patch = personalityPick.clear === true
+          ? { personality: '', systemMessageReplacementsFile: '' }
+          : personalityPick.bundled && personalityPick.name
+            ? { personality: personalityPick.name, systemMessageReplacementsFile: '' }
+            : { personality: '', systemMessageReplacementsFile: personalityPick.sourcePath };
+        await patchModelConfig({ id: pickId, server: pickServer }, patch);
         outputChannel.appendLine(
-          `[INFO] Personality presets: ${clear ? 'cleared' : `applied ${sourcePath}`} for ${modelPick.label}`
+          `[INFO] Personality presets: ${personalityPick.clear === true
+            ? 'cleared'
+            : `applied ${personalityPick.name || personalityPick.sourcePath}`} for ${modelPick.label}`
         );
       } catch (err) {
         outputChannel.appendLine(`[ERROR] Failed to apply personality: ${describeError(err)}`);
@@ -193,7 +208,7 @@ export function registerSetModelPersonalityCommand(
       // the currently-active one — strip it so the message reads cleanly.
       const plainLabel = personalityPick.label.replace(/^\$\(check\)\s*/, '');
       vscode.window.showInformationMessage(
-        clear
+        personalityPick.clear === true
           ? `Cleared personality for "${modelPick.label}". Using Copilot's original system prompt.`
           : `Applied "${plainLabel}" personality to "${modelPick.label}".`
       );

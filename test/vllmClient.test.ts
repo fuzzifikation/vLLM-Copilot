@@ -155,7 +155,7 @@ describe('chatCompletionStream initial request timeout', () => {
 });
 
 describe('config cache', () => {
-  const config: VllmConfig = { models: [], servers: [], enableFileLogging: false };
+  const config: VllmConfig = { models: [], servers: [] };
 
   afterEach(() => {
     vi.restoreAllMocks();

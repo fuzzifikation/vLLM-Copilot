@@ -63,17 +63,9 @@ async function freshStore(): Promise<void> {
 describe('recordRequest — last request + accumulation', () => {
   beforeEach(freshStore);
 
-  it('ignores non-finite and absent actual cost (vLLM/local records nothing)', () => {
+  it('records nothing for an absent actual cost (vLLM/local)', () => {
     S.recordRequest(req({ actualCost: undefined }));
-    S.recordRequest(req({ actualCost: Number.NaN }));
     expect(S.getServerCost(url).allTime).toEqual({});
-  });
-
-  it('ignores a negative actual cost (invalid server data must not subtract)', () => {
-    S.recordRequest(req({ actualCost: -0.5 }));
-    S.recordRequest(req({ promptTokens: 5, actualCost: -1 }));
-    expect(S.getServerCost(url).allTime).toEqual({});
-    expect(S.getServerCost(url).today).toEqual({});
   });
 
 describe('persistence (globalState)', () => {

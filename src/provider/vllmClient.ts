@@ -45,8 +45,9 @@ export class VllmClient {
     serverUrl: string,
     requestHeaders: Record<string, string> = {},
     vllmModelId: string,
+    configuredContextWindow?: number,
   ): Promise<RuntimeModelLimits> {
-    return resolveRuntimeLimits(serverType, serverUrl, requestHeaders, vllmModelId);
+    return resolveRuntimeLimits(serverType, serverUrl, requestHeaders, vllmModelId, configuredContextWindow);
   }
 
   async *chatCompletionStream(

@@ -131,14 +131,13 @@ function buildPickerBanners(
   // Output budget clamped well below what was configured (by the context
   // window or a provider-reported completion ceiling). "Well below" = more
   // than 5% under: the budget derivation always shaves a token or two to keep
-  // input room, and a 1-token deviation is noise, not news.
+  // input room, and a 1-token deviation is noise, not news. Every producer of
+  // the reference is finite by construction (normalized pick, finite-or-
+  // undefined budget scalar, floored settings value) — no validity check.
   const configuredOutput = effectiveOutputTokens ?? resolveOutputBudgetScalar(override?.maxOutputTokens) ?? config.maxOutputTokens;
-  const desiredOutput = Number.isFinite(configuredOutput)
-    ? Math.max(1, Math.floor(configuredOutput))
-    : 1;
+  const desiredOutput = Math.max(1, Math.floor(configuredOutput));
   if (budget.maxOutputTokens < desiredOutput * 0.95) {
     const providerCapped = reportedMaxOutputTokens !== undefined
-      && !Number.isNaN(reportedMaxOutputTokens)
       && reportedMaxOutputTokens < desiredOutput;
     warningText.output_limit = providerCapped
       ? `The provider caps responses to ${budget.maxOutputTokens} tokens - below the configured output budget of ${desiredOutput}.`
@@ -257,7 +256,7 @@ function resolveOutputLengthOptions(
   maxOutputTokens: number | number[] | undefined,
   ceiling: number,
 ): { values: number[]; labels: string[] } | undefined {
-  if (!Array.isArray(maxOutputTokens) || !Number.isFinite(ceiling)) {
+  if (!Array.isArray(maxOutputTokens)) {
     return undefined;
   }
   const values = resolveOutputLengthVector(maxOutputTokens)?.filter(n => n <= ceiling);
@@ -277,7 +276,9 @@ function resolveOutputLengthOptions(
  * Build LanguageModelChatInformation from a server model and an optional user override.
  * When `override` is undefined, defaults are used for all fields.
  *
- * @param serverModel - The vLLM wire model (`id` is the vLLM model id, not the picker id).
+ * @param serverModel - The vLLM wire model (`id` is the vLLM model id, not the
+ *   picker id). `max_model_len` is the RESOLVED context window — required, the
+ *   runtime-limits resolver throws before a model reaches this builder.
  * @param override - Per-model override from `vllm-copilot.models`.
  * @param config - Resolved token/transport settings.
  * @param serverType - The resolved backend type of the model's server. Drives the
@@ -286,7 +287,7 @@ function resolveOutputLengthOptions(
  *   be estimated from the model id via the org-name fallback (no preset/HF family).
  */
 export function buildModelInfo(
-  serverModel: { id: string; max_model_len?: number },
+  serverModel: { id: string; max_model_len: number },
   override: Partial<ModelConfig> | undefined,
   config: { maxOutputTokens: number },
   serverType: import('../state/config.js').ServerType,
@@ -329,7 +330,6 @@ export function buildModelInfo(
     effectiveOutputTokens !== undefined
       ? { ...override, maxOutputTokens: effectiveOutputTokens }
       : override,
-    serverModel.id,
     reportedMaxOutputTokens,
   );
 

@@ -611,23 +611,10 @@ describe('patchModelConfig (configStore) — patch semantics', () => {
     expect(original).toEqual(snapshot); // array reference and entry both unchanged
   });
 
-  it('3c: ignores id/server smuggled into updates — identity is immutable at runtime', async () => {
-    existingConfig = [
-      makeModelConfig({ id: 'real-id', vllmModelId: 'real-model', displayName: 'Original' }),
-    ];
-
-    // The Omit type boundary forbids this; the runtime must ignore it too.
-    await patchModelConfig(
-      identity({ id: 'real-id' }),
-      { id: 'hijack', server: 'evil-server', displayName: 'Hijacked' } as any,
-    );
-
-    const stored = storedModels();
-    expect(stored).toHaveLength(1);
-    expect(stored[0].id).toBe('real-id');
-    expect(stored[0].server).toBe('test-server');
-    expect(stored[0].displayName).toBe('Hijacked'); // legit update still applied
-  });
+  // (old "3c: ignores id/server smuggled into updates" deleted with its
+  // runtime belt: the Omit type boundary makes it unrepresentable and every
+  // real caller — the webview save is the only host-fed one — destructs
+  // id/server out of the payload before the patch.)
 
   it('rejects a blank/whitespace server ref without writing', async () => {
     await expect(

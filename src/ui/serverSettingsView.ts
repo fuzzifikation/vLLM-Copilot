@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { getConfig, findModelConfigIndex, toPublicModelConfig, normalizeServerUrl, sanitizeRequestHeaders, resolveConfigId, resolveVllmModelId, resolveWorkspaceRelativePath, KNOWN_SERVER_TYPES, type ModelConfig, type ServerType } from '../state/config.js';
+import { getConfig, findModelConfigIndex, toPublicModelConfig, normalizeServerUrl, sanitizeRequestHeaders, resolveConfigId, resolveVllmModelId, KNOWN_SERVER_TYPES, type ModelConfig, type ServerType } from '../state/config.js';
 import { patchModelConfig, readModels, readServers, writeServers, type ModelIdentity } from '../state/configStore.js';
 import { firstEntryById } from '../state/serverRegistry.js';
 import { listServerModels } from '../backends/runtimeLimits.js';
@@ -14,7 +14,7 @@ import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from 
 
 import {
   discoverPersonalities,
-  resolveActivePersonality,
+  resolveModelReplacements,
   getGlobalPersonalitiesDir,
   getBundledPersonalitiesDir,
 } from '../persona/personalityStore.js';
@@ -120,6 +120,10 @@ interface ApplyPersonalityMessage {
   id?: string;
   /** Personality file to attach (global folder path, or the user's own file). Omit (or set `clear`) to remove it. */
   sourcePath?: string;
+  /** meta.name of a SHIPPED preset (option carries data-name). Stored as the
+   *  portable `personality` name reference INSTEAD of a path — a path means
+   *  this machine only; the name resolves to every machine's own seeded copy. */
+  name?: string;
   clear?: boolean;
 }
 
@@ -340,7 +344,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webviewView.webview.cspSource}; script-src ${webviewView.webview.cspSource};">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webviewView.webview.cspSource}; script-src ${webviewView.webview.cspSource};">
   <link href="${choicesCssUri}" rel="stylesheet">
   <link href="${styleUri}" rel="stylesheet">
 </head>
@@ -436,6 +440,8 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       name: p.name,
       description: p.description,
       sourcePath: p.sourcePath,
+      // Shipped presets are applied as NAME references (see ApplyPersonalityMessage.name).
+      bundled: p.bundled,
     }));
     // Global Diagnostics toggle surfaced in the webview so recording can be
     // triggered without hand-editing settings.json.
@@ -451,12 +457,21 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       for (const m of sv.models) {
         const key = resolveConfigId(m) ?? '';
         if (!key) continue;
+        const nameRef = (m.personality || '').trim();
         const file = (m.systemMessageReplacementsFile || '').trim();
         let label: string | null = null;
-        if (file) {
-          label = (await resolveActivePersonality(this.context, file, personalities))?.name
-            ?? (await loadPersonalityMeta(resolveWorkspaceRelativePath(file)))?.name
-            ?? file;
+        if (nameRef || file) {
+          // THE shared resolver (same function the request pipeline runs) — the
+          // dropdown can no longer disagree with what chat actually loads: name
+          // references resolve to THIS machine's seeded copy, and a preset path
+          // stored on another OS resolves instead of degrading to the raw-path
+          // "(user file)" label. This is a READ only: machine-bound path
+          // references become portable names once at activation
+          // (personalityStore.migratePersonalityPathRefs). Writing here turned
+          // every render into a settings change plus a re-entrant config refresh.
+          const resolved = await resolveModelReplacements(this.context, m, (msg) => this.outputChannel.appendLine(`[INFO] ${msg}`));
+          label = (resolved ? (await loadPersonalityMeta(resolved.sourcePath))?.name ?? resolved.sourcePath : null)
+            ?? (nameRef || file || null);
         }
         activePersonalities[key] = label;
       }
@@ -528,13 +543,18 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     if (idx < 0) return;
     const model = models[idx];
 
-    const replacementsFile = !msg.clear && msg.sourcePath ? msg.sourcePath : '';
+    // Shipped presets store the portable NAME and clear the path (a path is
+    // meaningful only on the machine that wrote it); user files store the path
+    // and clear any stale name (which would otherwise outrank the file).
+    const name = !msg.clear ? (msg.name || '').trim() : '';
+    const replacementsFile = !msg.clear && !name && msg.sourcePath ? msg.sourcePath : '';
 
     await this.saveModelConfig({
       ...model,
       vllmModelId: model.vllmModelId || targetId,
       id: model.id || targetId,
       systemMessageReplacementsFile: replacementsFile,
+      personality: name,
     });
   }
 
@@ -609,6 +629,9 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       vllmModelId: model.vllmModelId || targetId,
       id: model.id || targetId,
       systemMessageReplacementsFile: personalityStoragePath(file),
+      // An attached file is the path-form reference — a stale name would
+      // outrank it in resolution and silently keep the old preset active.
+      personality: '',
     });
   }
 

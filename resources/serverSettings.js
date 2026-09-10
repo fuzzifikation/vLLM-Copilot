@@ -541,49 +541,86 @@
     const pSel = document.getElementById('personalitySel');
     if (pSel) {
       const activeName = S.activePersonalities[S.selModel] || '';
-      // Identity is the stored path, not the display name: option values ARE the
-      // stored paths, and two files can share a meta.name (a copy of a preset
-      // keeps its name). Matching by name would select the bundled preset while
-      // the model points at the user's copy.
-      const rawFile = ((S.mc && S.mc.systemMessageReplacementsFile) || '').trim();
-      pSel.value = rawFile;
-      let found = pSel.value === rawFile;
-      // Stored paths name the file, not its exact spelling: Windows is
-      // case-insensitive and drive-letter casing drifts (VS Code updates,
-      // Settings Sync). Before calling an unlisted path a user file, match the
-      // options the way the file system would — same path, any casing.
-      if (!found && rawFile && /^[a-zA-Z]:/.test(rawFile)) {
-        const normP = p => String(p).split('/').join('\\').toLowerCase();
-        const want = normP(rawFile);
+      // A stored NAME reference (shipped preset) selects the bundled option by
+      // its data-name — portable identity: the same settings entry shows the
+      // right preset on Windows, Linux and Mac. Only path-form references match
+      // by option value (stored paths); there, name matching stays forbidden —
+      // two files can share a meta.name and the path names one of them.
+      const nameRef = ((S.mc && S.mc.personality) || '').trim();
+      let found = false;
+      if (nameRef) {
         for (let i = 0; i < pSel.options.length; i++) {
           const o = pSel.options[i];
-          if (o.value && normP(o.value) === want) { pSel.value = o.value; found = true; break; }
+          if (o.dataset.name === nameRef) { pSel.value = o.value; found = true; break; }
+        }
+        if (!found) {
+          // Name references a shipped preset this scan did not list (should not
+          // happen - activation seeds first). Show the name honestly rather than
+          // silently selecting Default. The value can never collide with a real
+          // option: it is neither '' (Default) nor a filesystem path.
+          const opt = document.createElement('option');
+          opt.value = '~name:' + nameRef;
+          opt.dataset.name = nameRef;
+          opt.dataset.desc = 'Shipped preset - resolved to this machine\u2019s copy on every request.';
+          opt.textContent = nameRef;
+          opt.selected = true;
+          pSel.appendChild(opt);
+          found = true;
         }
       }
-      // Honesty: the model references a user file that is not in the list —
-      // show it as a first-class option instead of falsely claiming Default.
-      if (!found && rawFile && activeName) {
-        const opt = document.createElement('option');
-        opt.value = rawFile;
-        opt.dataset.desc = 'User file - edits apply on the next request. Managed outside the dropdown.';
-        opt.textContent = activeName + ' (user file)';
-        opt.selected = true;
-        pSel.appendChild(opt);
+      if (!found) {
+        const rawFile = ((S.mc && S.mc.systemMessageReplacementsFile) || '').trim();
+        pSel.value = rawFile;
+        found = pSel.value === rawFile;
+        // Stored paths name the file, not its exact spelling: Windows is
+        // case-insensitive and drive-letter casing drifts (VS Code updates,
+        // Settings Sync). Before calling an unlisted path a user file, match the
+        // options the way the file system would — same path, any casing.
+        if (!found && rawFile && /^[a-zA-Z]:/.test(rawFile)) {
+          const normP = p => String(p).split('/').join('\\').toLowerCase();
+          const want = normP(rawFile);
+          for (let i = 0; i < pSel.options.length; i++) {
+            const o = pSel.options[i];
+            if (o.value && normP(o.value) === want) { pSel.value = o.value; found = true; break; }
+          }
+        }
+        // Honesty: the model references a user file that is not in the list —
+        // show it as a first-class option instead of falsely claiming Default.
+        if (!found && rawFile && activeName) {
+          const opt = document.createElement('option');
+          opt.value = rawFile;
+          opt.dataset.desc = 'User file - edits apply on the next request. Managed outside the dropdown.';
+          opt.textContent = activeName + ' (user file)';
+          opt.selected = true;
+          pSel.appendChild(opt);
+        }
       }
       updatePersonalityDesc(pSel);
       pSel.onchange = () => {
         updatePersonalityDesc(pSel);
         const opt = pSel.options[pSel.selectedIndex];
         const stored = opt.value; // '' for Default — value IS the stored path now (global folder file or user file)
+        // A data-name option is a SHIPPED preset: the host stores the portable
+        // name reference and clears the path (a path is this-machine-only).
+        const nameOpt = opt.dataset.name || '';
         // Sync the raw systemMessageReplacementsFile input so a quick "Save All
-        // Changes" writes the new value instead of the stale one.
+        // Changes" writes the new value instead of the stale one — and never a
+        // stale path alongside a name reference.
         const pathInput = document.querySelector('[data-f="systemMessageReplacementsFile"]');
-        if (pathInput) pathInput.value = stored;
+        if (pathInput) pathInput.value = nameOpt ? '' : stored;
+        // ...and sync the local model object, which save() clones as the payload
+        // base. personality is NOT a [data-f] field, so without this a Save All
+        // clicked before the host's re-render arrives would write the PREVIOUS
+        // personality back over the one just applied.
+        if (S.mc) {
+          S.mc.personality = nameOpt || '';
+          S.mc.systemMessageReplacementsFile = nameOpt ? '' : stored;
+        }
         // The host answers with a full re-render; the data handler preserves the
         // draft (merges state) whenever the form is dirty, so no flag is needed here.
-        vscode.postMessage(stored === ''
+        vscode.postMessage(stored === '' && !nameOpt
           ? { type: 'applyPersonality', server: selServerId(), id: S.selModel, clear: true }
-          : { type: 'applyPersonality', server: selServerId(), id: S.selModel, sourcePath: stored });
+          : { type: 'applyPersonality', server: selServerId(), id: S.selModel, sourcePath: stored, name: nameOpt || undefined });
       };
     }
     const newPersBtn = document.getElementById('newPersBtn');
@@ -649,12 +686,15 @@
     h += '<select id="personalitySel"' + (isConfigured ? '' : ' disabled') + '>';
     h += '<option value="">Default (no personality)</option>';
     S.personalities.forEach(p => {
-      // value = the file that gets stored (global personality folder); a user
+      // value = the file (global personality folder); a user
       // file attached via "Load" appears here only as the
       // honesty option built at wire time from the model's own path.
+      // data-name marks a SHIPPED preset: applying it stores the portable
+      // personality NAME (every machine resolves its own seeded copy) instead
+      // of this machine's path — the cross-OS carry-over bug.
       // data-desc feeds the live description line under the dropdown; title keeps the
       // hover tooltip for parity with the Set Personality command.
-      h += '<option value="' + E(p.sourcePath) + '" data-desc="' + E(p.description || '') + '" title="' + E(p.description || '') + '">' + E(p.name) + '</option>';
+      h += '<option value="' + E(p.sourcePath) + '"' + (p.bundled ? ' data-name="' + E(p.name) + '"' : '') + ' data-desc="' + E(p.description || '') + '" title="' + E(p.description || '') + '">' + E(p.name) + '</option>';
     });
     h += '</select>';
     // Live description of the selected personality — so users know what they're

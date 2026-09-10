@@ -8,6 +8,7 @@ import {
   applyPromptReplacements,
   type PromptReplacement,
 } from '../persona/promptReplacer.js';
+import { resolveModelReplacements } from '../persona/personalityStore.js';
 
 /**
  * Capture entry for a single system message, written to .vllm/system-messages.json.
@@ -66,6 +67,10 @@ export class SystemMessagePipeline {
   constructor(
     private readonly output: vscode.OutputChannel,
     captureWriter?: CaptureWriter,
+    /** Extension context for portable personality resolution (this machine's
+     *  seeded preset copies). Optional: tests and headless callers keep the
+     *  plain path semantics. */
+    private readonly context?: vscode.ExtensionContext,
   ) {
     // Default writer: capture entries to .vllm/system-messages.json
     // (fire-and-forget, serialized). `captureEntries` already contains every
@@ -101,26 +106,28 @@ export class SystemMessagePipeline {
     originalMessages: readonly vscode.LanguageModelChatRequestMessage[],
     config: VllmConfig
   ): Promise<vscode.LanguageModelChatRequestMessage[]> {
+    // Self-catching by contract (streamOrchestrator relies on it): a failure
+    // here must degrade to the ORIGINAL messages — chat continues without
+    // personality — instead of erroring the whole turn. The rule loaders are
+    // individually guarded; the outer catch covers `getConfiguration` and the
+    // message-iteration surface, pinned by "falls back to the original
+    // messages when the pipeline itself throws".
     try {
-      const override = resolveOverrideForModel(config.models || [], model.id);
+      const override = resolveOverrideForModel(config.models, model.id);
 
       // Load replacement rules for the model's override (relative paths resolve
       // against the workspace root). Load failures are swallowed HERE (warn, no
       // replacements) so the capture path stays alive even when the file is broken.
-      // No outer try/catch: every fallible call below has its own guard, and the
-      // path resolvers are pure `path.resolve` — an outer catch could only fire
-      // on code that cannot throw (verified when the redundant one was removed).
       let replacements: PromptReplacement[] = [];
-      if (override?.systemMessageReplacementsFile) {
-        const replacementsFile = resolveWorkspaceRelativePath(override.systemMessageReplacementsFile);
-        let fileExists = true;
-        try {
-          await fs.access(replacementsFile);
-        } catch {
-          fileExists = false;
-          this.output.appendLine(`[WARN] Replacements file not found: ${replacementsFile}`);
-        }
-        if (fileExists) {
+      if (override && (override.personality || override.systemMessageReplacementsFile)) {
+        // ONE resolver for chat and Model Settings (personalityStore) — a
+        // name reference resolves to this machine's seeded preset, and a path
+        // stored on another OS whose basename names a shipped preset remaps to
+        // the local copy instead of silently running vanilla.
+        const resolved = await resolveModelReplacements(
+          this.context, override, (msg) => this.output.appendLine(`[INFO] ${msg}`),
+        );
+        if (resolved) {
           // One load, includes already spliced at their positions: rule order
           // (persona first, then the shared-removals include) is data inside
           // the file, not code. The loader degrades a broken,
@@ -128,16 +135,20 @@ export class SystemMessagePipeline {
           // never discards the file's own rules, and Default (no file) still
           // gets zero replacements, so the vanilla prompt stays untouched.
           try {
-            replacements = await loadPromptReplacements(replacementsFile, (msg) =>
+            replacements = await loadPromptReplacements(resolved.sourcePath, (msg) =>
               this.output.appendLine(`[WARN] ${msg}`));
           } catch (err) {
             this.output.appendLine(`[WARN] Personality replacements failed to load, continuing without it: ${err instanceof Error ? err.message : String(err)}`);
           }
           if (replacements.length > 0) {
             this.output.appendLine(
-              `[INFO] Loaded ${replacements.length} replacement rule(s) from ${replacementsFile}`
+              `[INFO] Loaded ${replacements.length} replacement rule(s) from ${resolved.sourcePath}`
             );
           }
+        } else if ((override.systemMessageReplacementsFile || '').trim()) {
+          this.output.appendLine(
+            `[WARN] Replacements file not found: ${resolveWorkspaceRelativePath(override.systemMessageReplacementsFile!)}`
+          );
         }
       }
 

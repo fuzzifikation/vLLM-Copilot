@@ -15,6 +15,7 @@ import {
   type UsageCounts, type CostRates, type LastRequestData,
 } from '../usage/usageStore.js';
 import { firstEntryById } from '../state/serverRegistry.js';
+import { isValidContextWindow } from '../shared/tokenBudget.js';
 
 // ─── Tree Items ──────────────────────────────────────────────────────
 
@@ -171,7 +172,10 @@ class ServerTreeItem extends vscode.TreeItem {
       : `\n\n**Context window:** ${fmtCount(metrics.maxModelLen)}`;
     this.tooltip = new vscode.MarkdownString(
       `${serverUrl}${modelsLine}${contextLine}` +
-      (serverType ? `\n**Backend:** ${serverType}` : '')
+      // Evidence-based backend label: a vLLM-type server whose `/version` never
+      // answered is only known to speak the OpenAI shape (the metadata-stripping
+      // gateway / relay case). Claiming "vLLM" there asserts more than we probed.
+      (serverType ? `\n**Backend:** ${serverType === 'vllm' && metrics.online ? (metrics.version ? 'vLLM' : 'OpenAI-compatible') : serverType}` : '')
     );
     // Context value encodes whether deep-dive applies: vLLM-only. Non-vLLM
     // servers expose auth/remove but not the vLLM metrics deep-dive.
@@ -308,7 +312,7 @@ class OpenRouterModelTreeItem extends vscode.TreeItem {
     /** Registry entry id — the model belongs to this entry's models. */
     public readonly serverId: string,
     /** The configured output budget (for the tooltip when clamped). */
-    configuredOutput?: number,
+    configuredOutput: number,
     /** The effective (clamped) output ceiling after ALL binding constraints. */
     effectiveOutput?: number,
     /** The constraint(s) that pushed the effective output below the configured budget. */
@@ -324,10 +328,10 @@ class OpenRouterModelTreeItem extends vscode.TreeItem {
       : new vscode.ThemeIcon('symbol-class');
     this.id = `openRouterModel:${serverId}:${modelId}`;
     // `clamped` requires at least one numeric binding cause, and every cause sets
-    // `effectiveOutput` (catalog → the ceiling; provider → min with it), so both
-    // numbers are always present when clamped. Defensive: if that invariant ever
-    // breaks, fall back to the normal tooltip rather than showing a half-truth.
-    this.tooltip = clamped && configuredOutput !== undefined && effectiveOutput !== undefined
+    // `effectiveOutput` (catalog → the ceiling; provider → min with it), so the
+    // narrowing below is only for the plain `effectiveOutput: number | undefined`
+    // parameter type — configuredOutput is required and always present.
+    this.tooltip = clamped && effectiveOutput !== undefined
       ? new vscode.MarkdownString(this.buildClampTooltip(modelLabel, configuredOutput, effectiveOutput, clampCauses))
       : new vscode.MarkdownString(`${modelLabel} - click for model-level detail (provider, pricing, context, capabilities, usage).`);
     this.contextValue = 'openRouterModel';
@@ -578,7 +582,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       // settings order. No URL/header grouping: an entry IS a server. A model
       // whose `server` ref does not resolve is skipped here; `validateConfig`
       // (activation) and discovery (every refresh) name it.
-      const servers = config.servers || [];
+      const servers = config.servers;
       // First entry wins per id — the shared rule next to the runtime
       // resolver (`resolveServer` uses `servers.find`). A hand-edited registry
       // with duplicate ids is reported by `validateConfig`; the dashboard must
@@ -586,6 +590,10 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       const entriesById = firstEntryById(servers);
       // entry id → accumulated wire ids (models resolving to this entry).
       const modelIdsByEntry = new Map<string, string[]>();
+      // Hidden contextWindow fallbacks (metadata-stripping gateways), keyed by
+      // wire id. The engine applies them ONLY to rows lacking a positive
+      // max_model_len — compliant servers never see these values.
+      const fallbacksByEntry = new Map<string, Record<string, number>>();
       for (const model of config.models) {
         const entry = entriesById.get(model.server);
         if (!entry) continue;
@@ -594,6 +602,22 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         let list = modelIdsByEntry.get(entry.id);
         if (!list) { list = []; modelIdsByEntry.set(entry.id, list); }
         list.push(wireId);
+        if (isValidContextWindow(model.contextWindow)) {
+          const map = fallbacksByEntry.get(entry.id) ?? {};
+          // Several configured presets may share one wire id. First valid
+          // fallback wins (the same first-wins rule the server registry and the
+          // runtime resolver use), and a disagreement is NAMED — array order
+          // must not silently decide which model's number gets displayed.
+          if (map[wireId] === undefined) {
+            map[wireId] = model.contextWindow;
+            fallbacksByEntry.set(entry.id, map);
+          } else if (map[wireId] !== model.contextWindow) {
+            this.outputChannel.appendLine(
+              `[WARN] Models on "${entry.id}" disagree on the contextWindow fallback for "${wireId}" ` +
+              `(${map[wireId]} vs ${model.contextWindow}) - using ${map[wireId]}.`
+            );
+          }
+        }
       }
 
       // One engine, one node, per ENTRY (first-wins per id), in servers[] array
@@ -610,6 +634,9 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
           entry.serverType ?? 'vllm',
           modelIdsByEntry.get(entry.id) ?? [],
           this.outputChannel,
+          // ?? {} (not undefined): a REMOVED contextWindow field must clear the
+          // engine's stale fallback on the next refresh, not linger.
+          fallbacksByEntry.get(entry.id) ?? {},
         );
         const sub = engine.subscribe((aggregated) => {
           // Update cached metrics and schedule a single re-render

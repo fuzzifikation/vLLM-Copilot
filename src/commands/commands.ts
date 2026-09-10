@@ -67,7 +67,7 @@ export function registerDiagnoseConnectionCommand(
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.diagnoseConnection', async () => {
     const config = await getConfig();
-    const models = config.models || [];
+    const models = config.models;
 
     if (models.length === 0) {
       vscode.window.showInformationMessage(
@@ -458,16 +458,13 @@ export function registerMoveServerCommand(
   provider: VllmChatModelProvider,
   outputChannel: vscode.OutputChannel,
 ): vscode.Disposable {
-  return vscode.commands.registerCommand('vllm-copilot.moveServer', async (draggedId?: unknown, targetId?: unknown) => {
-    if (typeof draggedId !== 'string' || !draggedId) {
-      vscode.window.showErrorMessage('Server id not provided.');
-      return;
-    }
-    if (targetId !== undefined && typeof targetId !== 'string') {
-      outputChannel.appendLine(`[ERROR] Move Server: bad target id "${String(targetId)}" - expected a server id or undefined.`);
-      return;
-    }
-
+  return vscode.commands.registerCommand('vllm-copilot.moveServer', async (draggedId: string, targetId?: string) => {
+    // No argument type-guarding: the command is suppressed from the Command
+    // Palette (`commandPalette: when:false`), has no menu, and its only
+    // invoker is the dashboard drop handler, which already requires a
+    // non-empty string id and passes `ServerTreeItem.serverId` (string) as
+    // the target. The source/target EXISTENCE checks below stay - those are
+    // live races (another window edited the registry), not type paranoia.
     // Fresh read at drop time; both ids address the FIRST entry with that id,
     // the same first-entry-wins rule the resolver and the dashboard use.
     const servers = readServers();

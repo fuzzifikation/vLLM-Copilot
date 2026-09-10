@@ -86,8 +86,7 @@ export async function discoverModels(
     if (!serverConfig) {
       const id = resolveConfigId(override) || '(unnamed model)';
       return {
-        model: null,
-        contextWindow: null,
+        ok: false as const,
         error: `[WARN] Model "${id}" references unknown server "${override.server}" and will be skipped. Fix the reference or re-add the server.`,
       };
     }
@@ -111,7 +110,8 @@ export async function discoverModels(
         serverType,
         serverConfig.serverUrl,
         serverConfig.requestHeaders,
-        vllmModelId
+        vllmModelId,
+        override.contextWindow
       );
 
       const serverModel = { id: vllmModelId, max_model_len: limits.contextWindow };
@@ -129,7 +129,6 @@ export async function discoverModels(
         limits.contextWindow,
         settings.maxOutputTokens,
         { ...override, maxOutputTokens: undefined },
-        vllmModelId,
         limits.maxOutputTokens,
       ).maxOutputTokens;
       // The output-length pick IS the advertised output budget: VS Code derives
@@ -148,29 +147,29 @@ export async function discoverModels(
             `[WARN] Model "${modelId}" - family estimated as "${family}" from org-name fallback (no preset/HuggingFace family available). Family is informational only; use a preset or run auto-discovery for authoritative values.`
           );
       }, effectiveOutputTokens, outputMenuCeiling);
-      return { model, contextWindow: limits.contextWindow, error: null };
+      return { ok: true as const, model, contextWindow: limits.contextWindow };
     } catch (err) {
       // Server did not answer (unreachable) or does not currently serve this
       // model (swap, unload): the model drops out of the picker until its
       // server serves it again. The reason is logged verbatim.
-      return { model: null, contextWindow: null, error: `[WARN] Model "${presetId}" unavailable: ${describeError(err)}` };
+      return { ok: false as const, error: `[WARN] Model "${presetId}" unavailable: ${describeError(err)}` };
     }
   });
 
   const results = await Promise.all(tasks);
   const models: vscode.LanguageModelChatInformation[] = [];
 
-  // Every task self-catches and resolves with `{ model, error }` — no task can
-  // reject (a rejection here would be a programming error inside the map
-  // callback, not a model-skipping condition). `Promise.all` is honest: there
-  // is no rejected branch to handle.
-  for (const { model, contextWindow, error } of results) {
-    if (model) {
-      models.push(model);
-      if (contextWindow !== null) onModelDiscovered?.(model.id, contextWindow);
-    }
-    if (error) {
-      output.appendLine(error);
+  // Every task self-catches and resolves with its discriminated `ok` result —
+  // no task can reject (a rejection here would be a programming error inside
+  // the map callback, not a model-skipping condition). `Promise.all` is honest:
+  // there is no rejected branch to handle. An ok result carries its context
+  // window BY CONSTRUCTION — the null-shape cannot exist for a served model.
+  for (const result of results) {
+    if (result.ok) {
+      models.push(result.model);
+      onModelDiscovered?.(result.model.id, result.contextWindow);
+    } else {
+      output.appendLine(result.error);
     }
   }
 

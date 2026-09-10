@@ -8,7 +8,7 @@ import type { ServerEntry } from '../src/state/serverRegistry.js';
 
 describe('resolveMaxTokensForRequest', () => {
   it('falls back to the model ceiling when nothing is configured', () => {
-    expect(resolveMaxTokensForRequest(undefined, undefined, 4096, 32768)).toBe(4096);
+    expect(resolveMaxTokensForRequest(undefined, undefined, 4096)).toBe(4096);
   });
 
   it('honors the selected mode max_tokens over defaultParams (coherent advertised)', () => {
@@ -18,9 +18,9 @@ describe('resolveMaxTokensForRequest', () => {
       modelModes: { Think: { max_tokens: 8000 }, Fast: {} },
     };
     // Advertised = 8000 (metadata re-registered to the mode's budget).
-    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32768)).toBe(8000);
+    expect(resolveMaxTokensForRequest(override, 'Think', 8000)).toBe(8000);
     // A mode without max_tokens falls back to defaultParams (below advertised).
-    expect(resolveMaxTokensForRequest(override, 'Fast', 8000, 32768)).toBe(1000);
+    expect(resolveMaxTokensForRequest(override, 'Fast', 8000)).toBe(1000);
   });
 
   it('clamps a configured max_tokens to the advertised budget (never exceeds it)', () => {
@@ -31,29 +31,19 @@ describe('resolveMaxTokensForRequest', () => {
       id: 'm', server: 'srv',
       modelModes: { Big: { max_tokens: 32000 } },
     };
-    expect(resolveMaxTokensForRequest(override, 'Big', 8000, 32768)).toBe(8000);
-  });
-
-  it('clamps to the context window as defense when the advertised budget is incoherent', () => {
-    const override = {
-      id: 'm', server: 'srv',
-      modelModes: { Big: { max_tokens: 100000 } },
-    };
-    // Advertised (99999) exceeds window-1 — only reachable with an incoherent
-    // model object; deriveTokenBudget never produces this. Window 32768 → 32767.
-    expect(resolveMaxTokensForRequest(override, 'Big', 99999, 32768)).toBe(32767);
+    expect(resolveMaxTokensForRequest(override, 'Big', 8000)).toBe(8000);
   });
 
   it('floors fractional/negative values and ignores non-numeric max_tokens', () => {
     const badMode = { id: 'm', server: 'srv', modelModes: { X: { max_tokens: 'lots' as any } } };
-    expect(resolveMaxTokensForRequest(badMode, 'X', 4096, 32768)).toBe(4096);
+    expect(resolveMaxTokensForRequest(badMode, 'X', 4096)).toBe(4096);
     const frac = { id: 'm', server: 'srv', modelModes: { X: { max_tokens: 12.9 } } };
-    expect(resolveMaxTokensForRequest(frac, 'X', 4096, 32768)).toBe(12);
+    expect(resolveMaxTokensForRequest(frac, 'X', 4096)).toBe(12);
   });
 
   it('never returns a budget below 1', () => {
     const override = { id: 'm', server: 'srv', modelModes: { X: { max_tokens: -5 } } };
-    expect(resolveMaxTokensForRequest(override, 'X', 4096, 32768)).toBe(1);
+    expect(resolveMaxTokensForRequest(override, 'X', 4096)).toBe(1);
   });
 
   it('picker outranks mode and defaultParams max_tokens', () => {
@@ -63,15 +53,15 @@ describe('resolveMaxTokensForRequest', () => {
       modelModes: { Think: { max_tokens: 8000 } },
     };
     // Even though Think wants 8000, the explicit UI pick (4096) wins.
-    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32768, 4096)).toBe(4096);
+    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 4096)).toBe(4096);
     // Picking the full advertised length still works.
-    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32768, 8000)).toBe(8000);
+    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 8000)).toBe(8000);
   });
 
   it('clamps the picker pick to the advertised ceiling too', () => {
     const override = { id: 'm', server: 'srv', modelModes: { Think: { max_tokens: 8000 } } };
     // A stale cached schema offering more than advertised must not exceed it.
-    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32768, 32000)).toBe(8000);
+    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32000)).toBe(8000);
   });
 
   it('ignores a non-finite picker value and falls back to mode/defaultParams', () => {
@@ -80,13 +70,13 @@ describe('resolveMaxTokensForRequest', () => {
       defaultParams: { max_tokens: 1000 },
       modelModes: { Think: { max_tokens: 8000 } },
     };
-    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32768, Number.NaN)).toBe(8000);
+    expect(resolveMaxTokensForRequest(override, 'Think', 8000, Number.NaN)).toBe(8000);
     // undefined picker → legacy resolution unchanged.
-    expect(resolveMaxTokensForRequest(override, 'Think', 8000, 32768, undefined)).toBe(8000);
+    expect(resolveMaxTokensForRequest(override, 'Think', 8000, undefined)).toBe(8000);
   });
 
   it('floors a fractional picker pick', () => {
-    expect(resolveMaxTokensForRequest(undefined, undefined, 8000, 32768, 4096.9)).toBe(4096);
+    expect(resolveMaxTokensForRequest(undefined, undefined, 8000, 4096.9)).toBe(4096);
   });
 });
 
@@ -197,6 +187,33 @@ describe('buildModelId', () => {
   });
 });
 
+// ── validateConfig: hidden contextWindow fallback ─────────────────────────────────
+// The runtime resolver refuses a configured window that is not a whole number
+// above 50,000 (no upper bound — a giant entry is the user's business);
+// validateConfig must apply the SAME guard at load, so a hand-edited 2.5 or
+// 4096 is audible in settings, not a silent later "not served".
+
+describe('validateConfig contextWindow validation', () => {
+  const configWith = (contextWindow?: number) => ({
+    models: [{ id: 'm', server: 's', ...(contextWindow !== undefined ? { contextWindow } : {}) }],
+    servers: [{ id: 's', serverUrl: 'http://h:1' }],
+  });
+  const ctxWarnings = (config: unknown) =>
+    validateConfig(config as never).filter(w => w.includes('contextWindow'));
+
+  it('warns about a hand-edited non-integer, zero, negative or sub-50k contextWindow', () => {
+    for (const bad of [2.5, 0, -1024, 4096, 50000]) {
+      expect(ctxWarnings(configWith(bad)).some(w => w.includes(String(bad)))).toBe(true);
+    }
+  });
+
+  it('stays silent for a valid (however huge) or absent contextWindow', () => {
+    expect(ctxWarnings(configWith(262144))).toEqual([]);
+    expect(ctxWarnings(configWith(1e30))).toEqual([]);
+    expect(ctxWarnings(configWith())).toEqual([]);
+  });
+});
+
 // ── validateConfig: malformed raw settings (CR-88) ────────────────────────────────
 // CR-36 promised "garbage fails as a warning, not a corpse". The readers shred
 // non-object elements before validateConfig can see them, so the warning must
@@ -206,7 +223,7 @@ describe('validateConfig raw-shape warnings (CR-88)', () => {
   afterEach(() => {
     vscode.workspace._mockConfig = {};
   });
-  const cleanConfig = { models: [], servers: [], enableFileLogging: false };
+  const cleanConfig = { models: [], servers: [] };
 
   it('warns when the raw servers section is not an array, even though readers filter it to empty', () => {
     // The exact hand-edited shape CR-36 was about: getConfig hands validateConfig

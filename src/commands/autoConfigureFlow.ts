@@ -148,6 +148,7 @@ export function registerAutoConfigureModelCommand(
         vllmModelId: preserveFrom.vllmModelId,
         server: preserveFrom.server,
         systemMessageReplacementsFile: preserveFrom.systemMessageReplacementsFile,
+        personality: preserveFrom.personality,
         autoContinueRetries: preserveFrom.autoContinueRetries,
         streamInactivityTimeout: preserveFrom.streamInactivityTimeout,
         initialResponseTimeoutMs: preserveFrom.initialResponseTimeoutMs,

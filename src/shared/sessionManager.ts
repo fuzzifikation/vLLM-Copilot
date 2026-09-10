@@ -1,13 +1,16 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as os from 'os';
 import { DatabaseSync } from 'node:sqlite';
 import * as vscode from 'vscode';
 
-let outputChannel: vscode.OutputChannel | undefined;
-let activeVsCodeUserRoot: string | undefined;
-/** Buffer for log messages produced before setSessionManagerOutput() is called. */
-const preInitQueue: Array<{ level: string; msg: string }> = [];
+// Both are set by setSessionManagerOutput() at activation, before a single
+// command is registered — VS Code cannot invoke a command from a provider it
+// has not finished activating, and every activation failure before that call
+// leaves the extension with zero commands. No pre-init buffering, no
+// os.homedir() product-name guessing: an unset root crashes loudly instead of
+// silently reading some OTHER product's state.vscdb.
+let outputChannel: vscode.OutputChannel;
+let activeVsCodeUserRoot: string;
 
 export function setSessionManagerOutput(
   channel: vscode.OutputChannel,
@@ -15,20 +18,10 @@ export function setSessionManagerOutput(
 ): void {
   outputChannel = channel;
   activeVsCodeUserRoot = userDataRootFromGlobalStorage(extensionGlobalStoragePath);
-  // Flush any messages that accumulated before init
-  for (const entry of preInitQueue) {
-    outputChannel.appendLine(`[sessionManager] [${entry.level}] ${entry.msg}`);
-  }
-  preInitQueue.length = 0;
 }
 
 function log(level: 'INFO' | 'WARN' | 'ERROR', msg: string): void {
-  const line = `[sessionManager] [${level}] ${msg}`;
-  if (outputChannel) {
-    outputChannel.appendLine(line);
-  } else {
-    preInitQueue.push({ level, msg });
-  }
+  outputChannel.appendLine(`[sessionManager] [${level}] ${msg}`);
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -54,21 +47,14 @@ const CHAT_KEYS = [
  * `<user-data>/User/globalStorage/<publisher.extension>` → `<user-data>/User`.
  * This follows the running product automatically (Stable, Insiders, VSCodium,
  * portable/custom `--user-data-dir`) instead of guessing its directory name.
+ * Exported for testing; production reads it only through setSessionManagerOutput.
  */
 export function userDataRootFromGlobalStorage(extensionGlobalStoragePath: string): string {
   return path.dirname(path.dirname(path.resolve(extensionGlobalStoragePath)));
 }
 
 function vsCodeRoot(): string {
-  if (activeVsCodeUserRoot) return activeVsCodeUserRoot;
-
-  // Defensive fallback for direct module use before extension activation.
-  const home = os.homedir();
-  const p = os.platform();
-  const productDir = /insiders/i.test(vscode.env.appName) ? 'Code - Insiders' : 'Code';
-  if (p === 'win32') return path.join(home, 'AppData', 'Roaming', productDir, 'User');
-  if (p === 'darwin') return path.join(home, 'Library', 'Application Support', productDir, 'User');
-  return path.join(home, '.config', productDir, 'User');
+  return activeVsCodeUserRoot;
 }
 
 function globalDbPath(): string {

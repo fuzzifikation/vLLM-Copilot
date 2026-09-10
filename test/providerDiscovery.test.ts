@@ -42,7 +42,7 @@ function makeToken(): any {
 
 function fakeClient(overrides: Partial<ProviderClient> = {}): ProviderClient {
   return {
-    getConfigCached: vi.fn(async () => ({ models: [], servers: [], enableFileLogging: false } as VllmConfig)),
+    getConfigCached: vi.fn(async () => ({ models: [], servers: [] } as VllmConfig)),
     invalidateConfigCache: vi.fn(),
     getModelContextWindow: vi.fn(async () => ({ contextWindow: 8192 })),
     chatCompletionStream: async function* () {},
@@ -137,12 +137,10 @@ describe('clearCache (invalidation + change event)', () => {
     });
     const oldConfig = {
       models: [{ id: 'old', server: 'srv', family: 'old-family' }],
-      enableFileLogging: false,
       servers,
     } as VllmConfig;
     const newConfig = {
       models: [{ id: 'new', server: 'srv', family: 'new-family' }],
-      enableFileLogging: false,
       servers,
     } as VllmConfig;
     const client = fakeClient({
@@ -174,7 +172,6 @@ describe('clearCache (invalidation + change event)', () => {
     // generation-increment in trackModeSelection specifically.
     const modelWithModes = {
       models: [{ id: 'm1', server: 'srv', family: 'test-family', modelModes: { Think: { max_tokens: 8000 }, Fast: {} } }],
-      enableFileLogging: false,
       servers,
     } as VllmConfig;
 
@@ -226,7 +223,6 @@ describe('clearCache (invalidation + change event)', () => {
         id: 'm1', server: 'srv', family: 'test-family',
         maxOutputTokens: [4096, 2048],
       }],
-      enableFileLogging: false,
       servers,
     } as VllmConfig;
     const client = fakeClient({
@@ -269,7 +265,6 @@ describe('clearCache (invalidation + change event)', () => {
         maxOutputTokens: [4096, 2048],
         modelModes: { Fast: { max_tokens: 1024 } },
       }],
-      enableFileLogging: false,
       servers,
     } as VllmConfig;
     const client = fakeClient({
@@ -306,7 +301,6 @@ describe('clearCache (invalidation + change event)', () => {
         id: 'm1', server: 'srv', family: 'test-family',
         maxOutputTokens: [4096, 2048],
       }],
-      enableFileLogging: false,
       servers,
     } as VllmConfig;
     const client = fakeClient({

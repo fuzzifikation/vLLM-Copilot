@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.36.9-rc0
+
+Support for servers behind metadata-stripping gateways, personalities stored by name, webview styling fixed, bogus startup error removed.
+
+### Added
+
+- **Servers behind metadata-stripping gateways are supported.** Such a gateway serves models through `/v1/models` but drops vLLM metadata - no `max_model_len`, no `/version`, sometimes no `/metrics`. These servers were previously rejected as "Unsupported server". They are now detected as OpenAI-compatible, and when a served model reports no context window you are asked for it once and it is stored on the model entry as `contextWindow`. A server-reported window always wins; if the gateway starts reporting later, the stored value is ignored. **Test & Refresh** offers the same repair (**Set Context Window**) for already-configured models, and the Dashboard shows the stored window wherever the server reports none. A vLLM-type server answering 404 on `/health` while `/v1/models` works is shown online, and its Backend label reads **OpenAI-compatible** until `/version` answers. The prompts state: vLLM always reports `max_model_len`; a stripped one is a server-side defect to fix at the server, and the number you enter is a workaround.
+- **Personalities are stored by name.** A shipped personality is written as a portable `personality` name (e.g. `"Sarcastic Robot"`) on the model entry instead of an absolute path into the extension's install folder. Configs survive extension updates and machine syncs. Existing path references to shipped presets migrate to names at startup; custom files keep working via `systemMessageReplacementsFile`.
+
+### Fixed
+
+- **Webview styles are no longer silently blocked.** The Model Settings, Deep-Dive and Model Selector Webviews emit some styles inline, and their Content-Security-Policy did not allow inline styles - Chromium dropped them, so parts of those screens (for example the personality action buttons' layout row) lost their intended look. The policy now permits inline styling and everything renders as designed.
+- **Startup no longer logs a bogus API-proposal error.** Every window logged `CANNOT USE these API proposals 'chatProvider, languageModelThinkingPart'`. The `chatProvider` proposal has since graduated to the stable API and the thinking-part class was never gated at runtime either, so the declaration granted nothing - its only measurable effect was that error. It is gone, and behavior is unchanged.
+
+### Known Issue
+
+- **Extension icons blank in Remote-SSH windows (VS Code bug, not ours).** On VS Code 1.136/1.137, icons of extensions installed on the remote host - the vLLM sidebar icon and the model-picker glyphs included - fail to load over Remote-SSH (`net::ERR_FAILED` on the icon files in the developer console). Local and WSL windows are unaffected. This is a VS Code regression that hits every remote extension, tracked as [microsoft/vscode#334144](https://github.com/microsoft/vscode/issues/334144); the fix is merged and ships in VS Code 1.138. Until then there is nothing this extension can do - the icon files are served correctly, VS Code refuses to fetch them.
+
 ## v1.36.8
 
 Small one: OpenRouter models wear their own face in the Copilot model picker.

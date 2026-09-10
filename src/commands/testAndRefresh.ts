@@ -7,10 +7,12 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider/provider.js';
-import { getConfig, buildEndpoint, resolveServerConfig, resolveVllmModelId, resolveServerType } from '../state/config.js';
+import { getConfig, buildEndpoint, findModelConfigIndex, resolveConfigId, resolveServerConfig, resolveVllmModelId, resolveServerType } from '../state/config.js';
 import type { ModelConfig } from '../state/config.js';
+import { patchModelConfig, readModels } from '../state/configStore.js';
 import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
-import { listServerModels, resolveRuntimeLimits, ServerProbeError, type ServerModelEntry } from '../backends/runtimeLimits.js';
+import { listServerModels, MissingContextWindowError, resolveRuntimeLimits, ServerProbeError, type ServerModelEntry } from '../backends/runtimeLimits.js';
+import { isValidContextWindow } from '../shared/tokenBudget.js';
 import { runDiagnostics, formatReport } from '../ui/diagnostics.js';
 import { resetOpenRouterCaches } from '../backends/openRouter.js';
 
@@ -25,7 +27,13 @@ export interface ServerTestResult {
   /** All model configs grouped under this server. */
   modelConfigs: ModelConfig[];
   /** Models whose vllmModelId matched a served model. */
-  matched: Array<{ config: ModelConfig; vllmModelId: string; maxModelLen?: number; ctxError?: string }>;
+  matched: Array<{
+    config: ModelConfig;
+    vllmModelId: string;
+    maxModelLen?: number;
+    ctxError?: string;
+    canSetContextWindow?: boolean;
+  }>;
   /** Models whose vllmModelId was NOT found on the server (parked). */
   parked: Array<{ config: ModelConfig; vllmModelId: string }>;
   errorMessage?: string;
@@ -96,8 +104,8 @@ export function registerTestAndRefreshModelsCommand(
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.testAndRefreshModels', async () => {
     const cfg = await getConfig();
-    const models = cfg.models || [];
-    const servers = cfg.servers || [];
+    const models = cfg.models;
+    const servers = cfg.servers;
 
     if (models.length === 0) {
       const pick = await vscode.window.showInformationMessage(
@@ -184,7 +192,7 @@ export function registerTestAndRefreshModelsCommand(
         // served id, so a config that doesn't match was hand-edited to point at a
         // name the server does not serve — that must surface as "parked" loudly,
         // not be forgiven here and replayed as a request the server will reject.
-        const matched: Array<{ config: ModelConfig; vllmModelId: string; maxModelLen?: number; ctxError?: string }> = [];
+        const matched: Array<{ config: ModelConfig; vllmModelId: string; maxModelLen?: number; ctxError?: string; canSetContextWindow?: boolean }> = [];
         const parked: Array<{ config: ModelConfig; vllmModelId: string }> = [];
 
         for (const model of group.models) {
@@ -202,19 +210,22 @@ export function registerTestAndRefreshModelsCommand(
             // must not display as healthy (no context, no model).
             let maxModelLen: number | undefined;
             let ctxError: string | undefined;
+            let canSetContextWindow = false;
             try {
               const limits = await resolveRuntimeLimits(
                 resolveServerType(model, servers),
                 group.serverUrl,
-                group.requestHeaders ?? {},
-                vllmModelId
+                group.requestHeaders,
+                vllmModelId,
+                model.contextWindow
               );
               maxModelLen = limits.contextWindow;
             } catch (err) {
               ctxError = describeError(err);
+              canSetContextWindow = err instanceof MissingContextWindowError;
               outputChannel.appendLine(`[WARN] Model "${vllmModelId}" matched but has no resolvable context: ${ctxError} - it will not be served.`);
             }
-            matched.push({ config: model, vllmModelId, maxModelLen, ctxError });
+            matched.push({ config: model, vllmModelId, maxModelLen, ctxError, canSetContextWindow });
           } else {
             parked.push({ config: model, vllmModelId });
           }
@@ -281,37 +292,101 @@ export function registerTestAndRefreshModelsCommand(
     if (okResults.length > 0) {
       const lines = okResults.map(r => {
         const names = r.matched.map(m => m.vllmModelId).join(', ');
-        const ctx = r.matched[0]?.maxModelLen
-          ? ` (${r.matched[0].maxModelLen.toLocaleString('en-US')} ctx)`
-          : r.matched[0]?.ctxError
-            ? ' (⚠ no context, not served)'
-            : '';
+        const okFirst = r.matched.find(m => m.maxModelLen !== undefined);
+        const ctx = okFirst ? ` (${okFirst.maxModelLen!.toLocaleString('en-US')} ctx)` : '';
+        // A matched model whose context resolve failed is NOT served — the green ✓
+        // belongs to the healthy ones; the broken ones are NAMED here, never
+        // hidden behind a healthy sibling (the ⚠ popup below carries the repair).
+        const ctxFailed = r.matched.filter(m => m.ctxError !== undefined);
+        const failHint = ctxFailed.length > 0
+          ? ` (⚠ no context, not served: ${ctxFailed.map(m => m.vllmModelId).join(', ')})`
+          : '';
         // A server with at least one match is "OK", but a configured model whose
         // wire id isn't served is silently dropped from the picker — surface it
         // rather than reporting unqualified success.
         const parkedNames = r.parked.map(m => m.vllmModelId).join(', ');
         const parkedHint = parkedNames ? ` (parked: ${parkedNames})` : '';
-        return `✓ ${r.serverUrl}: ${names}${ctx}${parkedHint}`;
+        return `✓ ${r.serverUrl}: ${names}${ctx}${failHint}${parkedHint}`;
       });
       vscode.window.showInformationMessage(
         lines.length === 1 ? lines[0] : `Reachable servers:\n${lines.join('\n')}`
       );
     }
 
-    // 3a2. ONE warning for servers whose matched models ALL lack a resolvable
-    //    context window. Their wire ids matched, but nothing will be served — so
-    //    this is a ⚠, never the green ✓ reserved for servers that actually serve.
-    const ctxErrorResults = serverResults.filter(r => r.status === 'ctx-error');
+    // 3a2. ONE warning for EVERY matched model lacking a resolvable context
+    //    window — INCLUDING on servers whose other models are healthy. A green ✓
+    //    for a healthy sibling must never hide the one model that will not be
+    //    served, nor its repair action (previously only all-failed servers
+    //    surfaced here, so a mixed server silently stranded the broken model).
+    const ctxErrorResults = serverResults.filter(r => r.matched.some(m => m.ctxError !== undefined));
     if (ctxErrorResults.length > 0) {
       const lines = ctxErrorResults.map(r => {
         const details = r.matched
+          .filter(m => m.ctxError !== undefined)
           .map(m => `${m.vllmModelId}: ${m.ctxError ?? 'no resolvable context'}`)
           .join('\n  ');
         return `⚠ ${r.serverUrl}: matched but not served:\n  ${details}`;
       });
-      vscode.window.showWarningMessage(
-        lines.length === 1 ? lines[0] : `Models matched but have no resolvable context:\n${lines.join('\n')}`
-      );
+      // The ONE surface for the manual `contextWindow` field. A server that
+      // lists a model but omits max_model_len lands here although chat may work
+      // fine — offer to store the number the
+      // platform itself documents. The settings write fires the config watcher,
+      // which invalidates the provider/resolver caches, so the next pass picks
+      // the model up without a manual reload.
+      const message = lines.length === 1
+        ? lines[0]
+        : `Models matched but have no resolvable context:\n${lines.join('\n')}`;
+      const stuck = ctxErrorResults.flatMap(r => r.matched.filter(m => m.canSetContextWindow));
+      const setPick = stuck.length > 0
+        ? await vscode.window.showWarningMessage(message, 'Set Context Window')
+        : (void vscode.window.showWarningMessage(message), undefined);
+      if (setPick === 'Set Context Window') {
+        let target: (typeof stuck)[number] | undefined = stuck[0];
+        if (stuck.length > 1) {
+          const chosen = await vscode.window.showQuickPick(
+            stuck.map(m => ({ label: m.vllmModelId, description: m.config.server, detail: m.ctxError, config: m.config })),
+            { title: 'Set Context Window', placeHolder: 'Which model reports no context window?', ignoreFocusOut: true }
+          );
+          target = chosen ? stuck.find(m => m.config === chosen.config) : undefined;
+        }
+        if (target) {
+          const answer = await vscode.window.showInputBox({
+            title: `Context window for "${target.vllmModelId}"`,
+            prompt: 'WARNING - server-side defect: vLLM always reports its context window, so a gateway or proxy in front of this server is stripping model metadata. Fix it at the server.',
+            placeHolder: 'Enter the context length in tokens as a workaround, e.g. 262144 - stored on the model as "contextWindow"',
+            ignoreFocusOut: true,
+            validateInput: (v) => (isValidContextWindow(Number(v.trim())) ? undefined : 'Enter a whole number of tokens above 50,000 (e.g. 262144) - Copilot needs the headroom.'),
+          });
+          if (answer !== undefined) {
+            const contextWindow = Number(answer.trim());
+            const configId = resolveConfigId(target.config);
+            if (!configId) {
+              void vscode.window.showErrorMessage(
+                'Cannot store the context window: this model entry has no config id to patch. Re-add the model.'
+              );
+            } else if (findModelConfigIndex(readModels(), configId, target.config.server) < 0) {
+              // patchModelConfig APPENDS on no match. `target.config` is a
+              // snapshot taken before a warning popup, a model picker and an
+              // input box — long enough for the entry to be deleted or re-keyed
+              // elsewhere — so re-check identity against the LIVE store instead
+              // of writing a shell model back to life.
+              void vscode.window.showErrorMessage(
+                `Cannot store the context window: model "${configId}" no longer exists (deleted or re-keyed since the check). Nothing was saved.`
+              );
+            } else try {
+              await patchModelConfig(
+                { id: configId, server: target.config.server },
+                { contextWindow }
+              );
+              void vscode.window.showInformationMessage(
+                `Context window ${contextWindow.toLocaleString('en-US')} stored on "${target.vllmModelId}" - run Test & Refresh again to serve it.`
+              );
+            } catch (writeErr) {
+              void vscode.window.showErrorMessage(`Could not store the context window: ${describeError(writeErr)}`);
+            }
+          }
+        }
+      }
     }
 
     // 3b. ONE failure popup — every unreachable/auth-failed server together.

@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import type { ModelConfig, ServerType } from '../state/config.js';
 import { buildEndpoint } from '../state/config.js';
 import { describeError } from '../provider/messageConverter.js';
-import { resolveRuntimeLimits } from '../backends/runtimeLimits.js';
+import { MissingContextWindowError, resolveRuntimeLimits } from '../backends/runtimeLimits.js';
+import { isValidContextWindow } from '../shared/tokenBudget.js';
 import { autoConfigureOpenRouterModel } from '../backends/openRouter.js';
 import { fetchRemotePreset } from './presetRemote.js';
 import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig, presetBlobUrl } from './presets.js';
@@ -55,7 +56,47 @@ interface VllmModelInfo {
 const OUTPUT_TOKEN_FACTOR = 0.1;
 /** Hard cap on auto-configured output tokens (Qwen3.6 recommends 81920 for complex tasks). */
 const OUTPUT_TOKEN_CAP = 81920;
-
+/**
+ * Strict context resolution with one metadata-gap exception: the requested
+ * model exists in `/v1/models`, but its entry has no positive max_model_len.
+ * That exact shape makes the resolver throw {@link MissingContextWindowError}.
+ * On exactly that error, a previously stored `configuredContextWindow`
+ * answers without a prompt; failing that, the user is asked once. Either
+ * fallback comes back with `fromServer: false` so the caller PERSISTS it as
+ * `contextWindow` on the saved entry (replace-mode save and the preset merge
+ * are full-replaces — an unpersisted value silently vanishes on the next
+ * re-configure). Any other throw — network, auth, model not served —
+ * propagates untouched: the no-fabrication policy stays absolute everywhere
+ * else. Cancel re-throws the original error. The resolver is deliberately
+ * called WITHOUT the fallback here so `fromServer` is exact; every non-
+ * interactive consumer passes the fallback to the resolver instead.
+ */
+async function resolveLimitsOrAskManually(
+  modelId: string,
+  serverType: ServerType,
+  serverUrl: string,
+  requestHeaders?: Record<string, string>,
+  configuredContextWindow?: number,
+): Promise<{ contextWindow: number; fromServer: boolean }> {
+  try {
+    const limits = await resolveRuntimeLimits(serverType, serverUrl, requestHeaders ?? {}, modelId);
+    return { contextWindow: limits.contextWindow, fromServer: true };
+  } catch (err) {
+    if (!(err instanceof MissingContextWindowError)) throw err;
+    if (isValidContextWindow(configuredContextWindow)) {
+      return { contextWindow: configuredContextWindow, fromServer: false };
+    }
+    const answer = await vscode.window.showInputBox({
+      title: `Context window for "${modelId}"`,
+      prompt: `WARNING - server-side defect: vLLM always reports its context window, so whatever fronts ${serverUrl} is stripping model metadata. Fix it at the server.`,
+      placeHolder: 'Enter the context length in tokens as a workaround, e.g. 262144 - stored on the model as "contextWindow"',
+      ignoreFocusOut: true,
+      validateInput: (v) => (isValidContextWindow(Number(v.trim())) ? undefined : 'Enter a whole number of tokens above 50,000 (e.g. 262144) - Copilot needs the headroom.'),
+    });
+    if (answer === undefined) throw err;
+    return { contextWindow: Number(answer.trim()), fromServer: false };
+  }
+}
 export interface AutoConfigResult {
   modelConfig: ModelConfig;
   /** Human-readable summary of what was discovered. */
@@ -91,6 +132,7 @@ async function autoConfigureModel(
   requestHeaders?: Record<string, string>,
   serverType: ServerType = 'vllm',
   serverRoot?: string,
+  configuredContextWindow?: number,
 ): Promise<AutoConfigResult> {
   const summary: string[] = [];
   // `server: ''` is a placeholder — the caller (Add/Auto-configure flow) resolves
@@ -117,8 +159,17 @@ async function autoConfigureModel(
   // Context resolution is MANDATORY — no context, no model (strict policy).
   // The resolver THROWS a backend-specific message (endpoint, field, fix) when the
   // model can't be served; propagating it prevents saving an unusable model.
-  const limits = await resolveRuntimeLimits(serverType, serverUrl, requestHeaders ?? {}, modelId);
-  summary.push(`Context window (${serverType}): ${limits.contextWindow.toLocaleString('en-US')} tokens`);
+  // The one tolerated deviation: a gateway that serves the model but withholds
+  // `max_model_len` — then the user supplies the number once and it rides on
+  // the entry as `contextWindow` (see resolveLimitsOrAskManually). A previously
+  // stored `configuredContextWindow` is passed to the resolver so re-configuring
+  // an existing gateway model reuses it (no re-prompt), and is re-persisted
+  // because replace-mode save would otherwise delete it. Persisting it is safe
+  // even if the gateway later starts reporting `max_model_len`: resolution
+  // always prefers the live server value, so the field merely goes inert.
+  const limits = await resolveLimitsOrAskManually(modelId, serverType, serverUrl, requestHeaders, configuredContextWindow);
+  if (!limits.fromServer) modelConfig.contextWindow = limits.contextWindow;
+  summary.push(`Context window (${serverType}): ${limits.contextWindow.toLocaleString('en-US')} tokens${limits.fromServer ? '' : ' - manual fallback, server reports none'}`);
   suggestedMaxOutputTokens = Math.min(
     Math.floor(limits.contextWindow * OUTPUT_TOKEN_FACTOR),
     OUTPUT_TOKEN_CAP
@@ -399,13 +450,23 @@ async function resolveModelConfigForAdd(
       const userConfig = baseConfig ?? { id: modelId, vllmModelId: modelId, server: '' };
       // Strict policy: a preset config is only usable when the server reports a real
       // context window. Resolve it HERE so the preset path cannot bypass the check —
-      // a failed resolution THROWS and the model is not saved.
-      const limits = await resolveRuntimeLimits(serverType, serverUrl, requestHeaders ?? {}, modelId);
+      // a failed resolution THROWS and the model is not saved. The user-prompted
+      // fallback applies here too (gateway shape); an existing manual value on the
+      // user entry or the preset itself resolves without a prompt.
+      const limits = await resolveLimitsOrAskManually(
+        modelId, serverType, serverUrl, requestHeaders,
+        userConfig.contextWindow
+      );
+      // mergePresetWithUserConfig is FULL-REPLACE (identity excepted): a stored
+      // contextWindow survives only if the preset itself carries one, so re-
+      // persist the fallback whenever the value did not come from the server.
+      const merged = mergePresetWithUserConfig(preset.config, userConfig);
+      if (!limits.fromServer) merged.contextWindow = limits.contextWindow;
       return {
-        modelConfig: mergePresetWithUserConfig(preset.config, userConfig),
+        modelConfig: merged,
         summary: [
           `Using preset ${preset.sourceFile}. Modes: ${modeNames}.`,
-          `Context window (${serverType}): ${limits.contextWindow.toLocaleString('en-US')} tokens`,
+          `Context window (${serverType}): ${limits.contextWindow.toLocaleString('en-US')} tokens${limits.fromServer ? '' : ' - manual fallback, server reports none'}`,
         ],
         presetFile: preset.sourceFile,
       };
@@ -421,7 +482,7 @@ async function resolveModelConfigForAdd(
       title: `Auto-configuring ${modelId}...`,
       cancellable: false,
     },
-    async () => autoConfigureModel(modelId, serverUrl, requestHeaders, serverType, serverRoot)
+    async () => autoConfigureModel(modelId, serverUrl, requestHeaders, serverType, serverRoot, baseConfig?.contextWindow)
   );
 }
 

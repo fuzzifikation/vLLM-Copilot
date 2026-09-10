@@ -90,7 +90,9 @@ describe('discoverModels', () => {
       output,
       onModelDiscovered,
     );
-    expect(spy).toHaveBeenCalledWith('vllm', server, {}, 'm1');
+    // Fifth argument: the entry's manual `contextWindow` fallback (undefined
+    // here — the resolver path is server-reported-first for every model).
+    expect(spy).toHaveBeenCalledWith('vllm', server, {}, 'm1', undefined);
     expect(models).toHaveLength(1);
     expect(models[0].id).toBe('m1');
     expect(models[0].family).toBe('test-family');
