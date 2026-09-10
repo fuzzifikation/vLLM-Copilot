@@ -435,6 +435,33 @@ describe('detectServerType', () => {
     );
     await expect(detectServerType('http://test', {}, 'm')).rejects.toThrow(/HTTP 403/);
   });
+
+  it('a hard aux-probe failure (403/405) does not abort when /v1/models listed the model', async () => {
+    // WAF/proxy shape: unknown paths answered with 403/405 instead of 404.
+    // The stripped-gateway candidate already proved an OpenAI-compatible
+    // server serves the model — an aux probe that cannot answer cannot claim
+    // it, and must not report the working gateway as "unsupported".
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: any) => {
+      if (String(url).includes('/v1/models')) {
+        return Promise.resolve(jsonResponse({ data: [{ id: 'm', object: 'model', owned_by: 'gateway' }] }));
+      }
+      if (String(url).includes('/api/ps')) return Promise.resolve(jsonResponse({}, 405));
+      return Promise.resolve(jsonResponse({ error: 'forbidden' }, 403));
+    });
+    expect(await detectServerType('http://gateway', {}, 'm')).toBe('vllm');
+  });
+
+  it('a hard aux-probe failure still aborts when NO candidate was listed', async () => {
+    // Without a /v1/models candidate the gateway fallback cannot fire, so the
+    // 403 is the only real diagnostic and must not be swallowed.
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: any) => {
+      if (String(url).includes('/v1/models')) {
+        return Promise.resolve(jsonResponse({ data: [{ id: 'other', object: 'model', owned_by: 'x' }] }));
+      }
+      return Promise.resolve(jsonResponse({ error: 'forbidden' }, 403));
+    });
+    await expect(detectServerType('http://test', {}, 'm')).rejects.toThrow(/HTTP 403/);
+  });
 });
 
 // /v1/models signature detection moved to serverSettingsView.test.ts: the
@@ -570,6 +597,35 @@ describe('listServerModels (P13-2)', () => {
     await expect(listServerModels('vllm', 'http://test')).rejects.toMatchObject({ status: 403 });
     // Unlike the resolver, the probe core must NOT burn a retry - the old raw
     // probes never retried either, and a backoff in front of a progress UI is a lie.
+    // (Rejections are never memoized, so the failed probe really did run once.)
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('a Test & Refresh pass costs ONE fetch per server: group probe and context resolver share it', async () => {
+    // The double-fetch finding: listServerModels used to bypass the list memo
+    // while the resolver fetched the same /v1/models again right after it.
+    // Both now read layer 1 - the pass's group probe refills it and the
+    // per-model resolver hits the settled entry.
+    const vllmOk = () =>
+      jsonResponse(200, { data: [{ id: 'm1', object: 'model', owned_by: 'test', max_model_len: 4096 }] });
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(vllmOk()));
+    const entries = await listServerModels('vllm', 'http://test');
+    const limits = await resolveRuntimeLimits('vllm', 'http://test', {}, 'm1');
+    expect(entries.map((e) => e.id)).toEqual(['m1']);
+    expect(limits.contextWindow).toBe(4096);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('repeat probes of one server share the memo; a clear re-probes live', async () => {
+    const vllmOk = () =>
+      jsonResponse(200, { data: [{ id: 'm1', object: 'model', owned_by: 'test', max_model_len: 4096 }] });
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(vllmOk()));
+    await listServerModels('vllm', 'http://test');
+    await listServerModels('vllm', 'http://test');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // The start-of-pass clear is what keeps "Refresh" live truth.
+    clearRuntimeLimitsCache();
+    await listServerModels('vllm', 'http://test');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });

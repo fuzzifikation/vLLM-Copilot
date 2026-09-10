@@ -270,13 +270,24 @@ export async function detectServerType(
   if (model?.max_model_len) return 'vllm';
   if (model?.owned_by === 'llamacpp') return 'llamacpp';
 
+  // Aux-probe failure policy: "no such endpoint" (404 / gibberish) means that
+  // backend is not here — keep probing. A HARD failure (403/405/5xx — WAFs
+  // and proxies love answering unknown paths with those instead of an honest
+  // 404) used to abort detection even when /v1/models had already listed the
+  // target model, reporting a working gateway as "unsupported" — exactly the
+  // stripped-gateway shape the fallback below exists for. With a candidate in
+  // hand, a probe that cannot answer simply cannot claim it: swallow it.
+  // Without a candidate the fallback cannot fire, so hard errors (genuine
+  // auth failures) still surface loudly instead of a vague "no signature".
+  const auxAbort = (error: unknown): boolean => !model && !isInvalidSignature(error);
+
   try {
     const data = await fetchJsonRaw<{ models?: LmStudioModel[] }>(buildEndpoint(serverUrl, 'api/v1/models'), requestHeaders);
     if (Array.isArray(data.models) && data.models.some((entry) => entry.key === modelId || entry.id === modelId)) {
       return 'lmstudio';
     }
   } catch (error) {
-    if (!isInvalidSignature(error)) throw error;
+    if (auxAbort(error)) throw error;
   }
 
   try {
@@ -285,7 +296,7 @@ export async function detectServerType(
       return 'ollama';
     }
   } catch (error) {
-    if (!isInvalidSignature(error)) throw error;
+    if (auxAbort(error)) throw error;
   }
 
   // A matching OpenAI-compatible model entry with no native backend signature
@@ -343,8 +354,14 @@ export class ServerProbeError extends Error {
  * badge, Test & Refresh group probe). It deliberately does NOT go through
  * `fetchWithRetry`: these are live status probes where an immediate honest
  * failure beats a 1.5 s backoff in front of a progress UI, and the previous
- * probe sites never retried either. Throws {@link ServerProbeError} on HTTP
- * or network failure — callers decide what a failure means.
+ * probe sites never retried either. It DOES share the server-list memo
+ * (layer 1) with the resolvers — same key, same endpoint, same payload shape
+ * per backend — so a Test & Refresh pass costs ONE fetch per server, the
+ * group probe and the per-model context resolvers hitting the same in-flight
+ * or settled entry. "Live truth" is guaranteed by Test & Refresh clearing
+ * both memo layers at the start of the pass. Throws {@link ServerProbeError}
+ * on HTTP or network failure — callers decide what a failure means
+ * (rejections are never cached, so a failed probe is always re-run live).
  *
  * Diagnostics' independent transport probes and the Add flow's classified
  * pick-list are NOT consumers — their independence/failure UX is the point.
@@ -374,16 +391,24 @@ export async function listServerModels(
     return (await response.json()) as T;
   };
 
+  // Layer-1 memo key, identical to the resolvers' — that is the point: for
+  // every backend that uses layer 1 (vLLM, LM Studio, Ollama) this probe and
+  // the resolver fetch the SAME URL with the SAME payload shape, so one
+  // pass-wide fetch serves both. llama.cpp/OpenRouter resolvers never read
+  // layer 1, so their keys here can never clash with a resolver entry.
+  const key = serverKey(serverType, serverUrl, requestHeaders);
   switch (serverType) {
     case 'lmstudio': {
-      const data = await probeJson<{ models?: LmStudioModel[] }>(buildEndpoint(serverUrl, 'api/v1/models'));
+      const data = await serverListOnce(key, () =>
+        probeJson<{ models?: LmStudioModel[] }>(buildEndpoint(serverUrl, 'api/v1/models')),
+      );
       return (data.models ?? [])
         .map((m) => ({ id: m.key ?? m.id ?? '' }))
         .filter((m) => m.id);
     }
     case 'ollama': {
-      const data = await probeJson<{ models?: Array<{ model?: string; name?: string }> }>(
-        buildEndpoint(serverUrl, 'api/ps'),
+      const data = await serverListOnce(key, () =>
+        probeJson<{ models?: Array<{ model?: string; name?: string }> }>(buildEndpoint(serverUrl, 'api/ps')),
       );
       return (data.models ?? [])
         .map((m) => ({ id: m.model ?? m.name ?? '' }))
@@ -391,7 +416,9 @@ export async function listServerModels(
     }
     default: {
       // vllm, llamacpp, openrouter: OpenAI-compatible /v1/models.
-      const data = await probeJson<{ data?: VllmModel[] }>(buildEndpoint(serverUrl, 'v1/models'));
+      const data = await serverListOnce(key, () =>
+        probeJson<{ data?: VllmModel[] }>(buildEndpoint(serverUrl, 'v1/models')),
+      );
       return (data.data ?? [])
         .map((m) => ({ id: m.id, ownedBy: m.owned_by, maxModelLen: m.max_model_len }))
         .filter((m) => m.id);

@@ -11,7 +11,7 @@ import { getConfig, buildEndpoint, findModelConfigIndex, resolveConfigId, resolv
 import type { ModelConfig } from '../state/config.js';
 import { patchModelConfig, readModels } from '../state/configStore.js';
 import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
-import { listServerModels, MissingContextWindowError, resolveRuntimeLimits, ServerProbeError, type ServerModelEntry } from '../backends/runtimeLimits.js';
+import { clearRuntimeLimitsCache, listServerModels, MissingContextWindowError, resolveRuntimeLimits, ServerProbeError, type ServerModelEntry } from '../backends/runtimeLimits.js';
 import { isValidContextWindow } from '../shared/tokenBudget.js';
 import { runDiagnostics, formatReport } from '../ui/diagnostics.js';
 import { resetOpenRouterCaches } from '../backends/openRouter.js';
@@ -103,6 +103,12 @@ export function registerTestAndRefreshModelsCommand(
   outputChannel: vscode.OutputChannel
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.testAndRefreshModels', async () => {
+    // "Refresh" means live truth: drop both memo layers BEFORE probing, so a
+    // list fetched by another surface seconds ago (model info, discovery)
+    // cannot be served to this pass. Within the pass the layers refill and
+    // the group probe shares its ONE fetch per server with the context
+    // resolvers (they read the same list memo).
+    clearRuntimeLimitsCache();
     const cfg = await getConfig();
     const models = cfg.models;
     const servers = cfg.servers;
