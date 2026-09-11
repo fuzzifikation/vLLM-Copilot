@@ -4,8 +4,7 @@
  * files are created, stale bundled copies overwritten, user-created files and
  * already-current files untouched. Also pins the duplicate-name warning
  * contract of discoverPersonalities (pickers label by name, so twins must be
- * reported). Active-personality resolution is a production-only path, not
- * pinned here.
+ * reported) and the portable resolution of {@link resolveModelReplacements}.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as path from 'path';
@@ -15,7 +14,6 @@ import {
   syncBundledPersonalities,
   resolveModelReplacements,
   migratePersonalityPathRefs,
-  presetBasenameOf,
 } from '../src/persona/personalityStore.js';
 
 const fsMock = vi.hoisted(() => {
@@ -256,10 +254,15 @@ describe('resolveModelReplacements (portable personality resolution)', () => {
     expect(r).toBeNull();
   });
 
-  it('presetBasenameOf splits on BOTH separators regardless of platform', () => {
-    expect(presetBasenameOf('c:\\x\\prompt-replacements-raw.json')).toBe('prompt-replacements-raw.json');
-    expect(presetBasenameOf('/x/prompt-replacements-raw.json')).toBe('prompt-replacements-raw.json');
-    expect(presetBasenameOf('prompt-replacements-raw.json')).toBe('prompt-replacements-raw.json');
+  it('a Linux-stored shipped path remaps on this host (both-separator split, not the platform one)', async () => {
+    // The other direction of the Windows case above. The resolver's private
+    // basename split must handle BOTH separators regardless of host platform
+    // (path splits by the current platform only) — Settings Sync carries
+    // paths across machines, and the shipped-preset identity rides on the
+    // basename. Resolves to this machine's seeded copy.
+    const linuxPath = '/home/me/.config/Code/User/globalStorage/System-Sciences.vllm-copilot/personalities/prompt-replacements-sarcastic-robot.json';
+    const r = await resolveModelReplacements(context, { systemMessageReplacementsFile: linuxPath });
+    expect(r).toEqual({ sourcePath: robotSeeded, personality: 'Sarcastic Robot' });
   });
 });
 

@@ -381,7 +381,7 @@ const DEFAULT_POLL_MS = 15000;
  * Callers get cached data synchronously via {@link getCachedAggregated} and
  * {@link getCachedRaw}, and receive push notifications on each completed cycle.
  */
-export class ServerMetricsEngine {
+class ServerMetricsEngine {
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
   /** Whether a fetch cycle is currently running — `tick()` reschedules itself in
    *  its `finally`, so a second concurrent cycle would spawn a second timer chain. */

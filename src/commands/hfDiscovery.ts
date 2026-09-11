@@ -436,10 +436,7 @@ async function resolveModelConfigForAdd(
         { title: 'Auto-Discover from HuggingFace', icon: new vscode.ThemeIcon('search') },
         { title: 'View Preset File', icon: new vscode.ThemeIcon('link-external') },
       );
-      // Real VS Code resolves the chosen MessageItem; test mocks may resolve
-      // the bare title string. Accept both shapes.
-      const chosen = choice as string | { title?: string } | undefined;
-      picked = typeof chosen === 'string' ? chosen : chosen?.title;
+      picked = choice?.title;
       if (picked !== 'View Preset File') break;
       await vscode.env.openExternal(vscode.Uri.parse(presetBlobUrl(preset.sourceFile)));
     }

@@ -1,9 +1,10 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { personalityTemplate, ServerSettingsViewProvider, resolveDetectedServerType } from '../src/ui/serverSettingsView.js';
+import { personalityTemplate, ServerSettingsViewProvider } from '../src/ui/serverSettingsView.js';
 import { ModelConfig } from '../src/state/config.js';
 import { resetOpenRouterCaches } from '../src/backends/openRouter.js';
+import { clearRuntimeLimitsCache } from '../src/backends/runtimeLimits.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 describe('ServerSettingsViewProvider', () => {
@@ -599,23 +600,90 @@ describe('ServerSettingsViewProvider', () => {
 });
 
 // Relocated from runtimeLimits.test.ts when detectServerTypeFromV1Models
-// merged into resolveDetectedServerType (its only production caller).
-describe('resolveDetectedServerType', () => {
-  it('returns vllm when any entry has a positive max_model_len', () => {
-    expect(resolveDetectedServerType([{ owned_by: 'llamacpp' }, { owned_by: 'vllm', max_model_len: 262144 }], [])).toBe('vllm');
+// merged into its only production caller. The detector is module-private
+// (N-1, 2026-09-11): driven through refreshWebview's server-group build, the
+// same fetch-stub harness the block above uses, asserting the payload field
+// the webview actually receives.
+describe('server type detection (via refreshWebview)', () => {
+  let provider: ServerSettingsViewProvider;
+  let mockContext: any;
+
+  beforeEach(() => {
+    resetOpenRouterCaches();
+    // The server-list memo is module state keyed by URL - all cases share one
+    // URL, so without this the first probe's answer would serve every case.
+    clearRuntimeLimitsCache();
+    mockContext = {
+      extensionUri: { fsPath: 'extension' },
+      globalStorageUri: { fsPath: 'global-storage' },
+      subscriptions: [],
+      secrets: { get: () => Promise.resolve(undefined), store: () => Promise.resolve(), delete: () => Promise.resolve() },
+    };
+    provider = new ServerSettingsViewProvider(mockContext, { appendLine: vi.fn(), dispose: vi.fn() } as any);
   });
 
-  it('returns llamacpp when entries have owned_by llamacpp and no positive max_model_len', () => {
-    expect(resolveDetectedServerType([{ owned_by: 'llamacpp' }, { owned_by: 'llamacpp' }], [])).toBe('llamacpp');
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it('falls back to the sibling serverType when there is no /v1/models signal', () => {
-    expect(resolveDetectedServerType([{ owned_by: 'mystery' }], [{ serverType: 'ollama' }])).toBe('ollama');
-    expect(resolveDetectedServerType([], [])).toBeUndefined();
+  /** One configured server entry, one /v1/models answer → the detected type. */
+  async function detect(
+    serverEntry: Record<string, unknown>,
+    modelsBody: unknown,
+    tagsStatus = 500,
+  ): Promise<unknown> {
+    vscode.workspace._mockConfig = {
+      get: (key: string) => (key === 'models' ? [] : key === 'servers' ? [serverEntry] : undefined),
+      update: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        return new Response('', { status: tagsStatus });
+      }
+      return new Response(JSON.stringify(modelsBody), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    const postMessage = vi.fn().mockResolvedValue(true);
+    (provider as any).view = { webview: { postMessage } };
+    (provider as any).isWebviewReady = true;
+    await (provider as any).refreshWebview();
+    const payload = (postMessage.mock.calls.find(c => c[0]?.type === 'data') as [any] | undefined)?.[0];
+    return payload?.servers?.[0]?.detectedServerType;
+  }
+
+  it('returns vllm when any entry has a positive max_model_len', async () => {
+    expect(await detect(
+      { id: 's', serverUrl: 'http://d:8000' },
+      { data: [{ id: 'a', owned_by: 'llamacpp' }, { id: 'b', owned_by: 'vllm', max_model_len: 262144 }] },
+    )).toBe('vllm');
   });
 
-  it('does not treat a zero max_model_len as a vLLM signal', () => {
-    expect(resolveDetectedServerType([{ owned_by: 'llamacpp', max_model_len: 0 }], [])).toBe('llamacpp');
+  it('returns llamacpp when entries have owned_by llamacpp and no positive max_model_len', async () => {
+    expect(await detect(
+      { id: 's', serverUrl: 'http://d:8000' },
+      { data: [{ id: 'a', owned_by: 'llamacpp' }, { id: 'b', owned_by: 'llamacpp' }] },
+    )).toBe('llamacpp');
+  });
+
+  it('falls back to the persisted entry serverType when the probe yields no /v1/models signal', async () => {
+    // Ollama entry: the vLLM probe never runs against it, the lister answer
+    // carries no vLLM/llama.cpp signature - the entry's own type is adopted.
+    expect(await detect(
+      { id: 's', serverUrl: 'http://d:8000', serverType: 'ollama' },
+      { data: [] },
+      500,
+    )).toBe('ollama');
+  });
+
+  it('stays undefined with neither a probe signal nor a persisted type', async () => {
+    expect(await detect({ id: 's', serverUrl: 'http://d:8000' }, { data: [] })).toBeUndefined();
+  });
+
+  it('does not treat a zero max_model_len as a vLLM signal', async () => {
+    expect(await detect(
+      { id: 's', serverUrl: 'http://d:8000' },
+      { data: [{ id: 'a', owned_by: 'llamacpp', max_model_len: 0 }] },
+    )).toBe('llamacpp');
   });
 });
 

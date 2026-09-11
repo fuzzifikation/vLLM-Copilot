@@ -52,11 +52,22 @@ import type { ProviderClient } from './contracts.js';
  * clamp warning, and a legacy per-mode `max_tokens` can never shrink or
  * collapse the menu on a mode switch.
  */
+/**
+ * Minimal log sink for {@link discoverModels}: the function only writes lines.
+ * A structural single-method interface (same pattern as `ClearCacheProvider` in
+ * `commands/addServerCore.ts`) keeps callers from fabricating a full
+ * `vscode.OutputChannel` — a fake with stub members would silently no-op the
+ * day discovery calls anything beyond `appendLine`.
+ */
+export interface DiscoveryLogSink {
+  appendLine(value: string): void;
+}
+
 export async function discoverModels(
   modelOverrides: ModelConfig[],
   servers: ServerEntry[],
   client: Pick<ProviderClient, 'getModelContextWindow'>,
-  output: vscode.OutputChannel,
+  output: DiscoveryLogSink,
   onModelDiscovered?: (modelId: string, contextWindow: number) => void,
   /**
    * Currently selected model mode per picker id (provider-tracked). When a mode

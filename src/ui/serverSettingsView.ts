@@ -88,9 +88,8 @@ interface ServerGroup {
  * serverType of the group's registry entry instead of silently defaulting to
  * vllm. Never guesses: absent both, returns undefined and the caller falls back
  * to the vLLM policy default.
- * @internal Exported for testing.
  */
-export function resolveDetectedServerType(
+function resolveDetectedServerType(
   entries: Array<{ owned_by?: string; max_model_len?: number }>,
   siblings: ReadonlyArray<{ serverType?: ServerType }>
 ): ServerType | undefined {

@@ -42,7 +42,7 @@ const KNOWN_FAMILIES = ['codellama', 'llama', 'qwen', 'mistral', 'phi', 'gemma',
  * e.g. "meta-llama/Llama-3-70B-Instruct" → { family: "llama", fromFallback: false }
  *      "some-org/SomeNewModel-7B"        → { family: "some-org", fromFallback: true }
  */
-export function extractFamilyWithSource(modelId: string): ExtractedFamily {
+function extractFamilyWithSource(modelId: string): ExtractedFamily {
   // Check for known family names. Match only when the family name is a distinct
   // token — i.e. preceded by start-of-string or one of the separators '/', '-',
   // '_', '.'. This prevents matching a family name embedded mid-word (e.g.

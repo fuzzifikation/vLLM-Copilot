@@ -330,10 +330,36 @@ export const env: {
 };
 
 // ── window ─────────────────────────────────────────────────────────────────
+/** Mirrors the real vscode.MessageItem: a dialog resolves the CLICKED item. */
+export interface MessageItem {
+  title: string;
+  isCloseAffordance?: boolean;
+  icon?: unknown;
+}
+/** Mirrors the real vscode.MessageOptions. */
+export interface MessageOptions {
+  modal?: boolean;
+  detail?: string;
+}
+
+// The dialog overloads mirror @types/vscode exactly: string items resolve the
+// chosen string, MessageItem items resolve the chosen item. A single
+// string-returning signature here would force production call sites to carry
+// dead `typeof choice === 'string'` branches to satisfy test typecheck - the
+// mock must never bend production shape (tests are not customers).
 export const window: {
-  showInformationMessage(message: string, ...items: (string | Record<string, unknown>)[]): Promise<string | undefined>;
-  showWarningMessage(message: string, ...items: (string | Record<string, unknown>)[]): Promise<string | undefined>;
-  showErrorMessage(message: string, ...items: (string | Record<string, unknown>)[]): Promise<string | undefined>;
+  showInformationMessage(message: string, ...items: string[]): Promise<string | undefined>;
+  showInformationMessage(message: string, options: MessageOptions, ...items: string[]): Promise<string | undefined>;
+  showInformationMessage<T extends MessageItem>(message: string, ...items: T[]): Promise<T | undefined>;
+  showInformationMessage<T extends MessageItem>(message: string, options: MessageOptions, ...items: T[]): Promise<T | undefined>;
+  showWarningMessage(message: string, ...items: string[]): Promise<string | undefined>;
+  showWarningMessage(message: string, options: MessageOptions, ...items: string[]): Promise<string | undefined>;
+  showWarningMessage<T extends MessageItem>(message: string, ...items: T[]): Promise<T | undefined>;
+  showWarningMessage<T extends MessageItem>(message: string, options: MessageOptions, ...items: T[]): Promise<T | undefined>;
+  showErrorMessage(message: string, ...items: string[]): Promise<string | undefined>;
+  showErrorMessage(message: string, options: MessageOptions, ...items: string[]): Promise<string | undefined>;
+  showErrorMessage<T extends MessageItem>(message: string, ...items: T[]): Promise<T | undefined>;
+  showErrorMessage<T extends MessageItem>(message: string, options: MessageOptions, ...items: T[]): Promise<T | undefined>;
   showOpenDialog(options?: unknown): Promise<Uri[] | undefined>;
   showInputBox(options?: InputBoxOptions, token?: CancellationToken): Promise<string | undefined>;
   showQuickPick<T extends QuickPickItem>(

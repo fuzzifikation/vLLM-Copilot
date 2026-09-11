@@ -89,6 +89,7 @@ path 7's resolution API, so the state layer settles first.
 | 17 | Personality system | F | `persona/personalityStore`, `persona/promptReplacer`, persona/common merge |
 | 18 | Copilot session janitor | F | `shared/sessionManager` |
 | 19 | Presets pipeline (dev-side) | D | `model-configs/`, `gen-preset-index`, drift canaries |
+| 20 | OpenRouter Model Selector webview (added round 9) | F | `ui/modelSelectorView`, `resources/modelSelector.js`, `backends/openRouter` benchmarks |
 
 ---
 
@@ -968,6 +969,20 @@ commit `e19ae55` and later the same day.
   `exactOptionalPropertyTypes` (53): both would force ~135 defensive
   guards/casts, violating the no-unnecessary-guards doctrine. Revisit only
   on a specific class of bug they would have caught.
+
+## Round 9: full-repo re-review via the portable agent (2026-09-11, executed same session)
+
+Whole-repo pass on owner request ("we changed so much"), v1.36.10 `b971bdb`. Native tooling per Step 0, double-run determinism verified; `dep:check` both cruises clean (68 modules, 0 violations), SCCs 0, rent 472 targets, `validate-webview-js` 4/4. New path 20 (Model Selector, v1.36.7+) reviewed against a stated intent and found minimal: one postMessage, all cost math client-side, "Use now" reuses the shared `addServerCore` gate+save. All 16 cluster MOVE_GAINs dispositioned (14 by standing rulings; 2 rejected below).
+
+- **P5-9 (medium, EXECUTED)** - the test mock's dialog signature was shaping production: `test/__mocks__/vscode.ts` typed every `show*Message` as `Promise<string | undefined>`, so four production call sites carried dead `as string | { title?: string }` + `typeof` branches that can never fire against the real API (`serverRegistryMigration.ts`, `outputLengthMigration.ts` ×2, `hfDiscovery.ts`). The mock now mirrors the real `@types/vscode` overload set (string items resolve the string, `MessageItem` items resolve the item); the four normalizations are gone, call sites read `choice?.title` directly. Production no longer bends to mock shape - tests are not customers, and this one had a customer-sized lie. Verification: `grep -rn "as string | { title" src/` → empty.
+- **P6-2 (low, EXECUTED)** - `provider.ts` fabricated a full `vscode.OutputChannel` via `as unknown as` (6 stub members, lying `dispose`) so `discoverModels` could call the ONE member it uses. `discoverModels` now takes the structural `DiscoveryLogSink { appendLine }` (the `ClearCacheProvider` pattern), the fake channel collapsed to a one-method closure, the double-cast is gone. A future `output.show()` inside discovery is now a type error instead of a silent no-op.
+- **N-1 (EXECUTED, owner ruling "all 4")** - four exports bought only by tests went module-private, tests rerouted to their sole production caller: `ServerMetricsEngine` (`vllmMetrics.test.ts` drives `getMetricsEngine` + `ReturnType` seam), `resolveDetectedServerType` (`serverSettingsView.test.ts` drives `refreshWebview` with the file's fetch-stub harness, asserting the posted `detectedServerType`), `extractFamilyWithSource` (`modelInfo.test.ts` asserts `buildModelInfo` `family` + `onFamilyFallback`, +1 preset-authoritative case), `presetBasenameOf` (`personalityStore.test.ts` gains a Linux-stored-path resolver case, the cross-OS split proven at the level that ships). Census TEST_ONLY 10 → 6. Gotcha: the detection reroute initially failed because all five cases shared one server URL and `serverListOnce`'s layer-1 memo served the first answer to all - `clearRuntimeLimitsCache()` in `beforeEach`, the TTL-memo afterEach doctrine biting a third time.
+
+Round-9 waivers (do not re-propose): `toSelectorEndpoint` (view-vocabulary adapter; weight points at the generic `perMillion` helper - moving selector wire vocabulary into the vendor plane pollutes it); `pathsEquivalent` (2 external consumers, honest API beside its sibling in `config.ts`); `fetchOpenRouterAccount`/`fetchOpenRouterCredits` (same precedent as `parseOpenRouterBranchInput`: absorbing would export the private body across the module wall); `refreshEngineHeaders`, `updateDeepDiveTitle`, `cleanWorkspace`, `clearPersonalityCache`, `mergePresetWithUserConfig` (guard module-private state, absorb impossible without exporting the organ); `migratePersonalityPathRefs`, `DashboardDndController` (ENTRY/activation wiring placement); manual-contextWindow offer shells (shared rule `isValidContextWindow` already extracted, shells differ by flow position).
+
+Noted, not proposed: `getMetricsEngine` grew a 7th positional param (`undefined` = don't-manage) - same family as the waived `buildModelInfo`/`consumeStream` signature-hygiene precedents.
+
+Baseline delta: dep:check clean → clean; SCCs 0 → 0; candidates 16 → 16; Q 0.753 → 0.743 with ~+70 functions (different node set, not comparable - record the line, no regression flag); TEST_ONLY 10 → 6; net production change of the round: −4 dead mock-shaped branches, −6 lying adapter members + 1 double-cast.
 
 ## Open queue (pending user rulings)
 

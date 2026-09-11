@@ -7,7 +7,10 @@
  * runtime resolver — kept display-only.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { ServerMetricsEngine, type ServerMetrics } from '../src/ui/vllmMetrics.js';
+import { getMetricsEngine, type ServerMetrics } from '../src/ui/vllmMetrics.js';
+
+/** The engine surface as production hands it out - the class itself is module-private. */
+type Engine = ReturnType<typeof getMetricsEngine>;
 
 const jsonResponse = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -25,7 +28,7 @@ function stubFetch(rows: Array<Record<string, unknown>>, health = 200, models = 
 }
 
 /** Drive one engine to its first completed tick and collect every aggregated snapshot. */
-async function firstTick(engine: ServerMetricsEngine, seen: ServerMetrics[]): Promise<void> {
+async function firstTick(engine: Engine, seen: ServerMetrics[]): Promise<void> {
   engine.subscribe((agg) => seen.push(agg));
   await vi.waitFor(() => expect(seen.length).toBeGreaterThanOrEqual(1));
 }
@@ -37,8 +40,7 @@ describe('ServerMetricsEngine — configured contextWindow fallback (vLLM displa
 
   it('applies the fallback to a row without max_model_len (contextByModel + server row)', async () => {
     stubFetch([{ id: 'gw-model', object: 'model', owned_by: 'gateway' }]);
-    const engine = new ServerMetricsEngine('http://gateway:8000', {}, 'vllm', ['gw-model']);
-    engine.setContextWindowFallbacks({ 'gw-model': 262144 });
+    const engine = getMetricsEngine('gw', 'http://gateway:8000', {}, 'vllm', ['gw-model'], undefined, { 'gw-model': 262144 });
     const seen: ServerMetrics[] = [];
     try {
       await firstTick(engine, seen);
@@ -54,8 +56,7 @@ describe('ServerMetricsEngine — configured contextWindow fallback (vLLM displa
       { id: 'gw-model', object: 'model', owned_by: 'gateway' },
       { id: 'ok-model', object: 'model', owned_by: 'vllm', max_model_len: 8192 },
     ]);
-    const engine = new ServerMetricsEngine('http://gateway:8000', {}, 'vllm', ['gw-model', 'ok-model']);
-    engine.setContextWindowFallbacks({ 'gw-model': 262144, 'ok-model': 131072 });
+    const engine = getMetricsEngine('gw', 'http://gateway:8000', {}, 'vllm', ['gw-model', 'ok-model'], undefined, { 'gw-model': 262144, 'ok-model': 131072 });
     const seen: ServerMetrics[] = [];
     try {
       await firstTick(engine, seen);
@@ -71,8 +72,7 @@ describe('ServerMetricsEngine — configured contextWindow fallback (vLLM displa
 
   it('a fallback never resurrects a model absent from /v1/models', async () => {
     stubFetch([]);
-    const engine = new ServerMetricsEngine('http://gateway:8000', {}, 'vllm', ['ghost-model']);
-    engine.setContextWindowFallbacks({ 'ghost-model': 262144 });
+    const engine = getMetricsEngine('gw', 'http://gateway:8000', {}, 'vllm', ['ghost-model'], undefined, { 'ghost-model': 262144 });
     const seen: ServerMetrics[] = [];
     try {
       await firstTick(engine, seen);
@@ -86,8 +86,7 @@ describe('ServerMetricsEngine — configured contextWindow fallback (vLLM displa
 
   it('an empty fallback map clears a previously applied fallback on the next tick', async () => {
     stubFetch([{ id: 'gw-model', object: 'model', owned_by: 'gateway' }]);
-    const engine = new ServerMetricsEngine('http://gateway:8000', {}, 'vllm', ['gw-model']);
-    engine.setContextWindowFallbacks({ 'gw-model': 262144 });
+    const engine = getMetricsEngine('gw', 'http://gateway:8000', {}, 'vllm', ['gw-model'], undefined, { 'gw-model': 262144 });
     const seen: ServerMetrics[] = [];
     try {
       await firstTick(engine, seen);
@@ -112,7 +111,7 @@ describe('ServerMetricsEngine — liveness through a /v1-only proxy', () => {
 
   it('health 404 with a healthy /v1/models is ONLINE (a proxy answer is not death)', async () => {
     stubFetch([{ id: 'gw-model', object: 'model', owned_by: 'gateway' }], 404);
-    const engine = new ServerMetricsEngine('http://gateway:8000', {}, 'vllm', ['gw-model']);
+    const engine = getMetricsEngine('gw2', 'http://gateway:8000', {}, 'vllm', ['gw-model']);
     const seen: ServerMetrics[] = [];
     try {
       await firstTick(engine, seen);
@@ -124,7 +123,7 @@ describe('ServerMetricsEngine — liveness through a /v1-only proxy', () => {
 
   it('health 404 with a dead /v1/models stays OFFLINE (no alibi)', async () => {
     stubFetch([], 404, 500);
-    const engine = new ServerMetricsEngine('http://gateway:8000', {}, 'vllm', []);
+    const engine = getMetricsEngine('gw3', 'http://gateway:8000', {}, 'vllm', []);
     const seen: ServerMetrics[] = [];
     try {
       await firstTick(engine, seen);

@@ -197,7 +197,7 @@ export async function getBundledPresetNameToBasename(
  * both separators makes the shipped-preset detection work Windows→Linux and
  * back, which is exactly when it matters.
  */
-export function presetBasenameOf(storedPath: string): string {
+function presetBasenameOf(storedPath: string): string {
   return storedPath.split(/[\\/]/).pop() ?? '';
 }
 

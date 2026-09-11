@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildModelInfo, extractFamilyWithSource } from '../src/provider/modelInfo.js';
+import { buildModelInfo } from '../src/provider/modelInfo.js';
 
 describe('buildModelInfo picker id derivation', () => {
   it('uses an explicit id as the picker id', () => {
@@ -132,24 +132,55 @@ describe('buildModelInfo outputMenuCeiling (pick-as-advertised scaling)', () => 
   });
 });
 
-// ── extractFamilyWithSource (folded from test/modelUtils.test.ts) ──────
+// ── family heuristic (folded from test/modelUtils.test.ts; exercised through
+// buildModelInfo, its sole production caller - the helper is module-private) ──
 
-describe('extractFamilyWithSource', () => {
-  it('reports fromFallback=true for org-name fallback (GLM/ChatGLM not in list)', () => {
+describe('buildModelInfo family heuristic', () => {
+  it('reports org-name fallback (GLM/ChatGLM not in list) via the fallback callback', () => {
     // GLM — exactly the family-fallback trap the old known-bugs doc flagged. Intentionally not in
     // KNOWN_FAMILIES; the authoritative family must come from a preset or HF.
-    expect(extractFamilyWithSource('zai-org/GLM-5.2')).toEqual({
-      family: 'zai-org',
-      fromFallback: true,
-    });
+    const fallbacks: Array<[string, string]> = [];
+    const info = buildModelInfo(
+      { id: 'zai-org/GLM-5.2', max_model_len: 32768 },
+      { id: 'glm', vllmModelId: 'zai-org/GLM-5.2', server: 'srv' },
+      { maxOutputTokens: 4096 },
+      'vllm',
+      undefined,
+      (family, modelId) => fallbacks.push([family, modelId]),
+    );
+    expect(info.family).toBe('zai-org');
+    // fromFallback surfaced to the caller so discovery can log the guess.
+    expect(fallbacks).toEqual([['zai-org', 'zai-org/GLM-5.2']]);
   });
 
   it('matches codellama before llama (longer family wins via iteration order)', () => {
     // codellama is checked first; the substring "llama" appears inside it but
     // the loop returns the codellama match, not llama.
-    expect(extractFamilyWithSource('codellama/CodeLlama-34b')).toEqual({
-      family: 'codellama',
-      fromFallback: false,
-    });
+    const fallbacks: string[] = [];
+    const info = buildModelInfo(
+      { id: 'codellama/CodeLlama-34b', max_model_len: 16384 },
+      { id: 'cl', vllmModelId: 'codellama/CodeLlama-34b', server: 'srv' },
+      { maxOutputTokens: 4096 },
+      'vllm',
+      undefined,
+      family => fallbacks.push(family),
+    );
+    expect(info.family).toBe('codellama');
+    // A known family is not a guess - no fallback warning.
+    expect(fallbacks).toEqual([]);
+  });
+
+  it('a preset-declared family is authoritative and never warns', () => {
+    const fallbacks: string[] = [];
+    const info = buildModelInfo(
+      { id: 'zai-org/GLM-5.2', max_model_len: 32768 },
+      { id: 'glm', vllmModelId: 'zai-org/GLM-5.2', server: 'srv', family: 'GLM' },
+      { maxOutputTokens: 4096 },
+      'vllm',
+      undefined,
+      family => fallbacks.push(family),
+    );
+    expect(info.family).toBe('GLM');
+    expect(fallbacks).toEqual([]);
   });
 });

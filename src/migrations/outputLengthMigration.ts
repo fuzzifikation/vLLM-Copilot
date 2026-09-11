@@ -195,14 +195,13 @@ export async function maybeOfferOutputLengthMigration(
     const proposals = planOutputLengthMigration(models, presets);
     if (proposals.length === 0) return; // no honest menus to offer — never nag
 
-    const pick = await vscode.window.showInformationMessage(
+    const choice = await vscode.window.showInformationMessage(
       `vLLM-Copilot 1.35 adds an "Output Length" dropdown to the model picker for models with a maxOutputTokens menu. ${proposals.length} configured model${proposals.length === 1 ? '' : 's'} can get it. Update now?`,
       { title: BTN_UPDATE, isCloseAffordance: false },
       { title: BTN_REVIEW },
       { title: BTN_NOT_NOW, isCloseAffordance: true },
     );
-    const choice = (pick as string | { title?: string } | undefined);
-    const title = typeof choice === 'object' && choice !== null ? choice.title : choice;
+    const title = choice?.title;
 
     if (title === BTN_NOT_NOW) {
       await context.globalState.update(MIGRATION_FLAG, 'declined');
@@ -227,8 +226,7 @@ export async function maybeOfferOutputLengthMigration(
         { title: BTN_UPDATE },
         { title: 'Cancel', isCloseAffordance: true },
       );
-      const confirmTitle = (confirm as string | { title?: string } | undefined);
-      if ((typeof confirmTitle === 'object' && confirmTitle !== null ? confirmTitle.title : confirmTitle) !== BTN_UPDATE) return;
+      if (confirm?.title !== BTN_UPDATE) return;
     }
 
     try {

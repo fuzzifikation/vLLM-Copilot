@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.36.10
+minor UI improvement:
+
+- **Restart Window button on the server migration dialog.** When the extension cannot adopt your servers into the registry and a restart would fix it, a dialog now blocks until you answer, with a one-click **Restart Window**. Before, it was a plain notification that disappeared after a few seconds, leaving you to find the restart command yourself.
+
 ## v1.36.9
 
 Support for servers behind metadata-stripping gateways, personalities stored by name, webview styling fixed, bogus startup error removed.

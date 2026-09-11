@@ -134,7 +134,7 @@ describe('maybeRunServerRegistryMigration', () => {
     // registered, so the write throws "not a registered configuration".
     vi.mocked(vscode.workspace).getConfiguration = vi.fn(() => ({
       get: (k: string) => (settings as Record<string, unknown>)[k],
-      update: vi.fn(async (k: string) => {
+      update: vi.fn(async () => {
         throw new Error('Unable to write to settings because it is not a registered configuration');
       }),
       has: () => false,

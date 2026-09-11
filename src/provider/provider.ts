@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { VllmClient } from './vllmClient.js';
 import { SystemMessagePipeline } from './systemMessagePipeline.js';
-import { discoverModels } from './discovery.js';
+import { discoverModels, type DiscoveryLogSink } from './discovery.js';
 import { runChatResponse } from './streamOrchestrator.js';
 import type { ProviderClient } from './contracts.js';
 import { resolveOverrideForModel, resolveModelSettings, readPickerSelection, resolveServerConfig, type ModelConfig } from '../state/config.js';
@@ -293,11 +293,9 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
    * logging). A changed failure reason, a new failure, or the recovery
    * summary all differ from the previous pass and still log.
    */
-  private discoveryChannel(collector: Set<string>): vscode.OutputChannel {
+  private discoveryChannel(collector: Set<string>): DiscoveryLogSink {
     const previous = this.lastDiscoveryLines;
     return {
-      name: this.output.name,
-      append: (value: string) => { collector.add(value); this.output.append(value); },
       appendLine: (value: string) => {
         // The collector records EVERY line this pass generates, suppressed or
         // not: it becomes the next pass's comparison set. Adding only the
@@ -307,12 +305,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         if (previous.has(value)) return;
         this.output.appendLine(value);
       },
-      clear: () => this.output.clear(),
-      replace: (value: string) => this.output.replace(value),
-      show: () => this.output.show(),
-      hide: () => this.output.hide(),
-      dispose: () => { /* the real channel belongs to the extension */ },
-    } as unknown as vscode.OutputChannel;
+    };
   }
 
   /**
