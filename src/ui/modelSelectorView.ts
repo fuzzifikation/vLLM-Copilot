@@ -35,7 +35,14 @@
  * (500/day) and is NEVER polled; provider lists come through the shared
  * per-session cache the dashboard and Model Settings already use.
  *
- * Universe: EVERY text-output catalog model. Models Artificial Analysis
+ * Universe: EVERY text-output catalog model, narrowed by two capability
+ * checkboxes read from the catalog payload: TOOL-CALLING (on by default —
+ * `supported_parameters` ∋ `tools`; without it Copilot agent mode cannot work)
+ * and IMAGE INPUT (off by default — `input_modalities` ∋ `image`; pasted
+ * screenshots are a nice-to-have, defaulting it on would hide the strongest
+ * pure-text coders). Both are view filters, never add gates: uncheck to see
+ * the full text-output universe again.
+ * Models Artificial Analysis
  * scores (via OpenRouter's `GET /v1/benchmarks`, joined on the catalog
  * `canonical_slug`) get the full treatment: per-provider endpoint rows, dots,
  * Pareto stars. Everything else still appears in the searchable list as ONE
@@ -166,6 +173,13 @@ interface SelectorModelRow {
    * and priceable, but never plotted and without a "Use" button.
    */
   list?: SelectorListPrice;
+  /** Catalog advertises tool-calling (`supported_parameters` ∋ `tools`). The
+   *  tool-calling checkbox filters on this; unknown counts as false, exactly
+   *  like the add-time capability read. */
+  tools: boolean;
+  /** Catalog advertises image input (`input_modalities` ∋ `image`). The
+   *  image-input checkbox filters on this. */
+  img: boolean;
 }
 
 /** Endpoint-shaped fields read from the catalog headline instead of a real
@@ -346,6 +360,8 @@ function openModelSelector(context: vscode.ExtensionContext, output: vscode.Outp
               id: v.id,
               base: v.base,
               endpoints: [],
+              tools: v.tools,
+              img: v.img,
               ...(v.list ? { list: v.list } : {}),
             },
         );
@@ -607,16 +623,21 @@ async function useModelNow(wireId: string, providerTag: string, providerName: st
  */
 function catalogToTextVariants(
   catalog: OpenRouterModelData[],
-): { id: string; base: string; list?: SelectorListPrice }[] {
-  const variants: { id: string; base: string; list?: SelectorListPrice }[] = [];
+): { id: string; base: string; tools: boolean; img: boolean; list?: SelectorListPrice }[] {
+  const variants: { id: string; base: string; tools: boolean; img: boolean; list?: SelectorListPrice }[] = [];
   for (const m of catalog) {
     const outs = m.architecture?.output_modalities;
     if (Array.isArray(outs) && outs.length > 0 && !outs.includes('text')) continue;
     const id = m.id;
     if (!id) continue;
     const base = m.canonical_slug?.trim() || id.split(':')[0];
+    // Capability flags for the webview's checkboxes. Absent/unknown counts as
+    // not-advertised — the same reading `normalizeOpenRouterModel` applies at
+    // add time, so the selector and the saved config never disagree.
+    const tools = m.supported_parameters?.includes('tools') ?? false;
+    const img = m.architecture?.input_modalities?.includes('image') ?? false;
     const list = toListPrice(m);
-    variants.push({ id, base, ...(list ? { list } : {}) });
+    variants.push({ id, base, tools, img, ...(list ? { list } : {}) });
   }
   return variants;
 }
@@ -733,7 +754,7 @@ const ENDPOINT_FANOUT_CONCURRENCY = 5;
  * near-instant.
  */
 async function buildSelectorRows(
-  variants: { id: string; base: string }[],
+  variants: { id: string; base: string; tools: boolean; img: boolean }[],
 ): Promise<SelectorModelRow[]> {
   const rows: SelectorModelRow[] = [];
   let index = 0;
@@ -750,7 +771,7 @@ async function buildSelectorRows(
         .filter((ep) => ep.status === undefined || ep.status >= 0)
         .map(toSelectorEndpoint)
         .filter((e): e is SelectorEndpoint => e !== undefined);
-      if (endpoints.length > 0) rows.push({ id: v.id, base: v.base, endpoints });
+      if (endpoints.length > 0) rows.push({ id: v.id, base: v.base, tools: v.tools, img: v.img, endpoints });
     }
   }
   const lanes = Math.min(ENDPOINT_FANOUT_CONCURRENCY, variants.length);
@@ -834,6 +855,8 @@ function buildHtml(webview: vscode.Webview, scriptUri: vscode.Uri, styleUri: vsc
         <option value="1048576">1M</option>
       </select>
     </div>
+    <label class="chk" title="Copilot agent mode needs tool-calling. On: only models the catalog advertises tools for. Off: everything."><input id="cb-tools" type="checkbox" checked> tool-calling</label>
+    <label class="chk" title="On: only models that accept image input (pasted screenshots). Off (default): everything - image-blind models are still excellent coders."><input id="cb-img" type="checkbox"> image input</label>
     <label class="chk"><input id="cb-free" type="checkbox" checked> free variants</label>
     <label class="chk"><input id="cb-batch" type="checkbox"> batch variants</label>
     <input id="q" type="text" placeholder="search all models…" spellcheck="false">
@@ -890,6 +913,7 @@ function buildHtml(webview: vscode.Webview, scriptUri: vscode.Uri, styleUri: vsc
         <p class="where">q<sub>i</sub> are the Artificial Analysis indices a model reports (coding, agentic, intelligence), w<sub>i</sub> the weights you set. The indices live on <b>different numeric scales</b> (the coding index runs far higher than the intelligence index), so each is first normalized to 0-1 against the best and worst of the loaded set - n<sub>i</sub> above - before weighting. Averaging the raw values instead would let the widest-scale axis dominate your weights, and a model missing one index could outscore the leader of all three by reweighting over its two high-scale ones. <b>Completeness rule (for the plot):</b> a dot or a star needs real data for what you rank on - the blend needs all three indices, a single axis needs that one. Nothing is reweighted, guessed, or massaged. Models without a benchmark score stay in the <b>list</b> - searchable, priced at their catalog list price, quality shown as <i>-</i> - but never earn a dot or a star; <b>selecting one loads its provider lists</b> and turns it into normal provider rows, "Use" included. A model leading every index therefore always tops the blend.</p>
       <p>A pair is on the <b>Pareto front</b> (&#9733;) when no other pair is both cheaper and better, on the currently selected axis. Because every provider of one model shares the same quality score, only that model's cheapest price reaches the front - and when several providers serve it at that exact price, they all share the star.</p>
       <p class="where">Benchmarks are never polled: they define the <i>plot</i> universe - which models get provider rows, dots and stars - so the whole view needs an OpenRouter server with a key. The list below the chart covers every text-output model in the catalog regardless. Rates and provider windows come from the shared per-session endpoint cache.</p>
+      <p class="where">The <b>tool-calling</b> (on) and <b>image input</b> (off) checkboxes narrow list <i>and</i> plot by what the catalog advertises: <i>tool-calling</i> is on because Copilot agent mode cannot work without it; <i>image input</i> is off because image-blind models are still excellent coders. These are view filters only - uncheck one and its models are back, listed and addable as before.</p>
       <h3>No warranty</h3>
       <p class="where">Every price and statistic here is a best guess from OpenRouter's published rate cards, read at fetch time. Rates change, providers change, and bugs happen. This view is no guarantee and no billing promise, and this extension takes no responsibility for price accuracy or for over-charging a bug may cause. Verify prices on the model's own page before you spend; checking prices and owning your usage stays your responsibility.</p>
     </div>

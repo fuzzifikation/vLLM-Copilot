@@ -47,6 +47,7 @@
     cache: el('s-cache'), out: el('s-out'), axis: el('sel-axis'), ctx: el('sel-ctx'),
     prompt: el('sel-prompt'),
     free: el('cb-free'), batch: el('cb-batch'), q: el('q'),
+    tools: el('cb-tools'), img: el('cb-img'),
     wc: el('sw-c'), wa: el('sw-a'), wi: el('sw-i')
   };
 
@@ -245,6 +246,13 @@
       var m = models[i];
       if (!inputs.batch.checked && m.id.indexOf(':batch') !== -1) continue;
       if (!inputs.free.checked && m.id.indexOf(':free') !== -1) continue;
+      // Capability filters: what Copilot actually uses. Tool-calling is ON by
+      // default (agent mode cannot work without it); image input is opt-in
+      // (pasted screenshots only - defaulting it on would hide the strongest
+      // pure-text coders). Absent flag = catalog does not advertise it =
+      // filtered, the same reading the extension applies at add time.
+      if (inputs.tools.checked && m.tools !== true) continue;
+      if (inputs.img.checked && m.img !== true) continue;
       // Search box: the shared quickpick-style matcher (substring or
       // subsequence) over the id and every provider name. Since 2026-09-11
       // the text does NOT drop rows: it marks them (hit). The table shows
@@ -515,20 +523,57 @@
   // providers sort apart, so the highlight is what shows the twin set).
   var jumpKey = null;
 
+  // Block sort (feature 2026-09-11): a header click orders the MODEL BLOCKS
+  // by that column; provider rows inside a block ALWAYS stay cheapest-first
+  // (the decision flow is pick-a-block-then-scan-providers-by-our-calculated
+  // price — re-sorting the few children by anything else would only shuffle
+  // that anchor). null = default order: best quality first, cheapest tie-break.
+  // A click cycles natural-best → reversed → default.
+  var blockSort = null; // {col, dir} — dir 1 = ascending, -1 = descending
+  // Per column: nat = the direction that shows the BEST block first
+  // (1 = lowest first, -1 = highest first); get = a row's value for the
+  // column. A block's rank is its best value across its provider rows; a
+  // block where no provider reports the column sinks last in BOTH directions.
+  var BLOCK_COLS = {
+    name: { nat: 1 },
+    eff: { nat: 1, get: function (r) { return r.eff; } },
+    ctx: { nat: -1, get: function (r) { return r.ep.ctx; } },
+    lat: { nat: 1, get: function (r) { return r.ep.lat; } },
+    tput: { nat: -1, get: function (r) { return r.ep.tput; } },
+    q: { nat: -1, get: function (r) { return r.q; } }
+  };
+
+  // One header cell. Sortable columns get data-col + tabindex + aria-sort and
+  // carry the click-cycle hint; the active column shows its direction arrow.
+  // The hint states the block rule explicitly so the arrow is never misread
+  // as re-sorting the provider children.
+  function thHtml(col, label, title) {
+    var t = title || '';
+    if (col) t += (t ? '. ' : '') + 'Click orders the model blocks (again: reverse, again: reset). Providers inside a block always stay cheapest-first.';
+    var attrs = t ? ' title="' + esc(t) + '"' : '';
+    if (!col) return '<th' + attrs + '>' + label + '</th>';
+    var arrow = '', aria = 'none';
+    if (blockSort && blockSort.col === col) {
+      aria = blockSort.dir === 1 ? 'ascending' : 'descending';
+      arrow = blockSort.dir === 1 ? ' \u25B2' : ' \u25BC';
+    }
+    return '<th class="sortable" tabindex="0" data-col="' + col + '" aria-sort="' + aria + '"' + attrs + '>' + label + arrow + '</th>';
+  }
+
   function drawTable(rows) {
     var thead = document.querySelector('#tbl thead');
     var tbody = document.querySelector('#tbl tbody');
     thead.innerHTML = '<tr><th title="Pareto front: no provider is both cheaper and better">*</th>' +
-      '<th>model</th><th>provider</th>' +
-      '<th title="effective cost of a heavy day (100M prompt tokens) under your usage profile (see How it is calculated)">$/100M day</th>' +
-      '<th title="the provider\'s own context window">ctx</th>' +
-      '<th title="p50 time to first token, last 30 min (OpenRouter-reported)">lat</th>' +
-      '<th title="p50 output throughput, last 30 min (OpenRouter-reported)">tok/s</th>' +
+      thHtml('name', 'model') + '<th title="providers are always ordered by our calculated price - pick a block, then scan its few providers top-down">provider</th>' +
+      thHtml('eff', '$/100M day', 'effective cost of a heavy day (100M prompt tokens) under your usage profile (see How it is calculated)') +
+      thHtml('ctx', 'ctx', "the provider's own context window") +
+      thHtml('lat', 'lat', 'p50 time to first token, last 30 min (OpenRouter-reported)') +
+      thHtml('tput', 'tok/s', 'p50 output throughput, last 30 min (OpenRouter-reported)') +
       '<th title="uptime, last day">up</th>' +
       '<th title="input $/1M tokens">in</th><th title="output $/1M tokens">out</th>' +
       '<th title="cache-read $/1M tokens; none* = provider has no cache rate, cached share pays full input">cache</th>' +
           '<th title="cache-write $/1M tokens: with cache activity the new-input share is billed at THIS rate instead of input">write</th>' +
-      '<th' + (axisTitle() ? ' title="' + esc(axisTitle()) + '"' : '') + '>' + esc(shortAxis()) + '</th></tr>';
+      thHtml('q', esc(shortAxis()), axisTitle() || undefined) + '</tr>';
     var sorted = sortRows(rows);
     // Same-price twin set for the dot-click jump: identical published rates
     // produce a bit-identical p_eff, so strict equality finds them. Scoped to
@@ -575,21 +620,23 @@
     // model's quality, provider count - with the provider rows as children.
     // Collapsed by default; selecting any pair opens its group (select()
     // marks it), the caret toggles without selecting. Single-provider models
-    // skip the wrapper entirely - nothing to collapse. Group ORDER follows
-    // the group leader = each model's first row in flat order (models share
-    // one quality score across providers, so that is the model's best pair).
+    // skip the wrapper entirely - nothing to collapse. Block order comes from
+    // sortRows (the active block-sort column, or the default best-quality
+    // first); insertion order here preserves it, and each block's children
+    // arrive from sortRows already contiguous and cheapest-first.
     var groups = [], gById = {};
     for (var i = 0; i < sorted.length; i++) {
       var g = gById[sorted[i].m.id];
       if (!g) { g = gById[sorted[i].m.id] = { id: sorted[i].m.id, rows: [] }; groups.push(g); }
       g.rows.push(sorted[i]);
     }
-    var byEff = function (a, b) { return a.eff - b.eff; };
     var html = '';
     for (i = 0; i < groups.length; i++) {
       var grp = groups[i];
       if (grp.rows.length === 1) { html += pairRowHtml(grp.rows[0], false); continue; }
-      grp.rows.sort(byEff);
+      // Children arrive from sortRows already cheapest-first (cmpEff) and
+      // contiguous - the lead is the cheapest pair. (The old re-sort by
+      // `a.eff - b.eff` was a NaN comparator waiting for a bare row.)
       var lead = grp.rows[0];
       var open = expanded[grp.id] === true;
       var anyFront = false, maxCtx, mark = false, k;
@@ -666,16 +713,66 @@
   // collapsible model blocks, and the keyboard handler walks this SAME flat
   // order; landing on a row inside a collapsed group opens the group (select
   // marks it expanded), so hidden rows reveal themselves on arrival.
+  // Block-aware since 2026-09-11: rows are grouped by model, the providers
+  // inside a block ALWAYS sort cheapest-first, and the blocks themselves are
+  // ordered by the active header column (blockSort) or by the default
+  // best-quality-first rule. A block ranks by its BEST value for the column
+  // (cheapest price, largest window, lowest latency, ...); a block where no
+  // provider reports the column sinks last regardless of sort direction.
   function sortRows(rows) {
-    return rows.slice().sort(function (a, b) {
-      var aq = a.q === undefined || a.q === null ? -Infinity : a.q;
-      var bq = b.q === undefined || b.q === null ? -Infinity : b.q;
-      if (bq !== aq) return bq - aq;
-      // Unpriceable bare rows sink below every priced one.
-      var ae = a.eff === undefined ? Infinity : a.eff;
-      var be = b.eff === undefined ? Infinity : b.eff;
-      return ae - be;
-    });
+    var groups = [], byId = {}, i, g;
+    for (i = 0; i < rows.length; i++) {
+      g = byId[rows[i].m.id];
+      if (!g) { g = byId[rows[i].m.id] = { id: rows[i].m.id, rows: [] }; groups.push(g); }
+      g.rows.push(rows[i]);
+    }
+    for (i = 0; i < groups.length; i++) groups[i].rows.sort(cmpEff);
+    groups.sort(cmpBlock);
+    var out = [];
+    for (i = 0; i < groups.length; i++) {
+      for (var j = 0; j < groups[i].rows.length; j++) out.push(groups[i].rows[j]);
+    }
+    return out;
+  }
+  function cmpEff(a, b) {
+    // Unpriceable bare rows sink below every priced one.
+    var ae = a.eff === undefined ? Infinity : a.eff;
+    var be = b.eff === undefined ? Infinity : b.eff;
+    return ae - be;
+  }
+  function blockBest(g, def) {
+    var best;
+    for (var i = 0; i < g.rows.length; i++) {
+      var v = def.get(g.rows[i]);
+      if (v === undefined || v === null) continue;
+      if (best === undefined || (def.nat === 1 ? v < best : v > best)) best = v;
+    }
+    return best;
+  }
+  function cmpBlock(a, b) {
+    if (blockSort) {
+      var col = blockSort.col, dir = blockSort.dir, d;
+      if (col === 'name') {
+        var an = a.id.toLowerCase(), bn = b.id.toLowerCase();
+        d = an < bn ? -1 : an > bn ? 1 : 0;
+      } else {
+        var def = BLOCK_COLS[col];
+        var av = blockBest(a, def), bv = blockBest(b, def);
+        if (av === undefined && bv === undefined) d = 0;
+        else if (av === undefined) return 1; // missing always last, both directions
+        else if (bv === undefined) return -1;
+        else d = av < bv ? -1 : av > bv ? 1 : 0;
+      }
+      if (d) return d * dir;
+    }
+    // Default block order (also the tie-break under any column sort): the
+    // model's best quality first, its cheapest pair second - exactly the
+    // pre-block-sort flat rule, now applied per block.
+    var aq = -Infinity, bq = -Infinity, i, q;
+    for (i = 0; i < a.rows.length; i++) { q = a.rows[i].q; if (q !== undefined && q !== null && q > aq) aq = q; }
+    for (i = 0; i < b.rows.length; i++) { q = b.rows[i].q; if (q !== undefined && q !== null && q > bq) bq = q; }
+    if (bq !== aq) return bq - aq;
+    return cmpEff(a.rows[0], b.rows[0]);
   }
 
   // ── Detail panel: one pair's formula, itemized, under current controls ──
@@ -972,7 +1069,7 @@
   });
 
   // ── Control wiring ───────────────────────────────────────────
-  [inputs.cache, inputs.out, inputs.axis, inputs.ctx, inputs.prompt, inputs.free, inputs.batch, inputs.wc, inputs.wa, inputs.wi].forEach(function (node) {
+  [inputs.cache, inputs.out, inputs.axis, inputs.ctx, inputs.prompt, inputs.tools, inputs.img, inputs.free, inputs.batch, inputs.wc, inputs.wa, inputs.wi].forEach(function (node) {
     node.addEventListener('input', rerender);
     node.addEventListener('change', rerender);
   });
@@ -986,6 +1083,36 @@
     if (hits.length > 0) jumpTo(hits[0].m.id, hits[0].ep.tag);
   });
   el('btn-refresh').addEventListener('click', function () { vscode.postMessage({ type: 'refresh' }); });
+
+  // Header sort wiring (delegated: thead content is rebuilt on every draw,
+  // the THEAD element itself is permanent). Click / Enter / Space cycle one
+  // column: best-first -> reversed -> back to the default order.
+  (function () {
+    var head = document.querySelector('#tbl thead');
+    function cycle(col) {
+      var nat = BLOCK_COLS[col].nat;
+      if (!blockSort || blockSort.col !== col) blockSort = { col: col, dir: nat };
+      else if (blockSort.dir === nat) blockSort = { col: col, dir: -nat };
+      else blockSort = null;
+      rerender();
+    }
+    head.addEventListener('click', function (e) {
+      var th = e.target.closest ? e.target.closest('th[data-col]') : null;
+      if (th) cycle(th.getAttribute('data-col'));
+    });
+    head.addEventListener('keydown', function (e) {
+      var th = e.target;
+      if (!th || th.tagName !== 'TH' || !th.getAttribute('data-col')) return;
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      var col = th.getAttribute('data-col');
+      cycle(col);
+      // The redraw rebuilt the header, so the activated th no longer exists -
+      // hand focus to its fresh twin or a keyboard user is dropped on the floor.
+      var fresh = head.querySelector('th[data-col="' + col + '"]');
+      if (fresh) fresh.focus();
+    });
+  })();
 
   // Header modals: disclaimer (!) and calculation help (?). Dialog semantics
   // live in the markup (role=dialog, aria-modal, labelled heading); here the

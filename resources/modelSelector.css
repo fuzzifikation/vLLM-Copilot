@@ -94,6 +94,11 @@ th, td { padding: 2px 7px; border-bottom: 1px solid var(--vscode-widget-border, 
 th { text-align: right; color: var(--vscode-descriptionForeground); font-weight: 600; position: sticky; top: 0; background: var(--vscode-editor-background); }
 th:nth-child(-n+3), td.mid { text-align: left; }
 td.num, th:not(:nth-child(-n+3)) { text-align: right; }
+/* Sortable block-order columns (main table only, never the detail breakdown):
+   clickable, and the active column keeps its label lit while sorted. */
+#tbl th.sortable { cursor: pointer; user-select: none; }
+#tbl th.sortable:hover { color: var(--vscode-foreground); }
+#tbl th.sortable[aria-sort="ascending"], #tbl th.sortable[aria-sort="descending"] { color: var(--vscode-textLink-foreground, #3794ff); }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.1)); }
 /* Same effective price as the clicked dot's pair (declared before
