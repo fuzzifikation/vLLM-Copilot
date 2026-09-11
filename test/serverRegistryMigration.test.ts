@@ -129,6 +129,26 @@ describe('maybeRunServerRegistryMigration', () => {
     expect(error).toHaveBeenCalled();
   });
 
+  it('offers a Restart Window button when the write fails with a registration error', async () => {
+    // Simulate the VS Code config-registry race: the servers key is not yet
+    // registered, so the write throws "not a registered configuration".
+    vi.mocked(vscode.workspace).getConfiguration = vi.fn(() => ({
+      get: (k: string) => (settings as Record<string, unknown>)[k],
+      update: vi.fn(async (k: string) => {
+        throw new Error('Unable to write to settings because it is not a registered configuration');
+      }),
+      has: () => false,
+      inspect: () => undefined,
+    }) as unknown as vscode.WorkspaceConfiguration);
+    await maybeRunServerRegistryMigration(context, output as never);
+
+    expect(error).toHaveBeenCalled();
+    const callArgs = error.mock.calls[0];
+    // Modal dialog: second arg is { modal: true }, third is a MessageItem.
+    expect(callArgs[1]).toEqual({ modal: true });
+    expect((callArgs[2] as { title: string }).title).toBe('Restart Window');
+  });
+
   it('a retry after a partial write reuses the already-written server instead of duplicating', async () => {
     // State left behind by a first attempt where the servers write succeeded
     // but the models write failed: registry holds the entry, models are legacy.

@@ -20,6 +20,7 @@ import { planRegistryMigration, type LegacyModelConfig } from './registryMigrati
 
 const MIGRATION_FLAG = 'vllmCopilot.serverRegistryMigration.v1';
 const BTN_SHOW = 'Show servers';
+const BTN_RESTART = 'Restart Window';
 
 /**
  * Replace every header VALUE with a marker, keeping the header names. The
@@ -150,7 +151,22 @@ export async function maybeRunServerRegistryMigration(
       const toast = restartNeeded
         ? 'vLLM-Copilot: could not adopt your servers into the new server registry. Restart VS Code to finish - servers are adopted automatically on next start.'
         : `vLLM-Copilot: could not adopt your servers into settings, will retry next start. ${msg}`;
-      void vscode.window.showErrorMessage(toast);
+      if (restartNeeded) {
+        // Modal dialog: the notification toast auto-dismisses after a few
+        // seconds, but a failed migration that needs a restart must not be
+        // missed. A modal blocks until the user picks an action (or Escape,
+        // which resolves to undefined = no restart; the migration retries on
+        // the next activation regardless, since the marker stays unset).
+        void vscode.window
+          .showErrorMessage(toast, { modal: true }, { title: BTN_RESTART })
+          .then(choice => {
+            if (choice?.title === BTN_RESTART) {
+              void vscode.commands.executeCommand('workbench.action.restartWindow');
+            }
+          });
+      } else {
+        void vscode.window.showErrorMessage(toast);
+      }
       output.appendLine(`[WARN] Server registry migration write failed: ${msg}${restartNeeded ? ' - restart VS Code to register the new servers setting; the migration retries on next start.' : ''}`);
       return;
     }
