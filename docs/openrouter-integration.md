@@ -56,10 +56,11 @@ Dashboard
   → engine: GET /api/v1/key, /api/v1/credits    (account budget, best-effort)
 
 Model Selector (webview, opened from an OR server row)
-  → GET /api/v1/benchmarks        (quality axis, once per open/refresh, never polled)
-  → GET /api/v1/models            (universe = AA-scored text-output variants)
-  → GET /api/v1/models/{id}/endpoints   (per-provider rates + tiers + perf stats, shared cache)
-  → client-side p_eff per (model, provider), Pareto front, chart + table
+  → GET /api/v1/benchmarks        (quality axis + plot universe, once per open/refresh, never polled)
+  → GET /api/v1/models            (list universe = ALL text-output variants; unpriced ones show at the catalog list price)
+  → GET /api/v1/models/{id}/endpoints   (per-provider rates + tiers + perf stats, shared cache; only for benchmark-scored ids)
+  → client-side p_eff per (model, provider), Pareto front, chart + table (plot = scored pairs only)
+  → selecting a list-price row → lazy GET /api/v1/models/{id}/endpoints (shared cache) upgrades it to provider rows
   → "Use this model now" → shared add tail (duplicate gate + confirm) on the opener entry
 ```
 
@@ -75,8 +76,9 @@ Model Selector (webview, opened from an OR server row)
 | `src/ui/vllmMetrics.ts` | Metrics engine - resolves per-model context + output ceiling from the relay catalog, caches per-provider `/endpoints` lists and per-model context/output per session. |
 | `src/ui/dashboard.ts` | Relay tree: Account node + one node per model; per-provider limits, pricing, cost, the symmetric Attention icon, and the Model Selector entry point on OpenRouter rows. |
 | `src/ui/serverSettingsView.ts` | Fetches per-model provider lists (lazily, on open) and posts them to the Model Settings webview. |
-| `src/ui/modelSelectorView.ts` | Model Selector extension side: benchmarks/catalog/endpoints fan-out, benchmark join on `canonical_slug`, per-provider rate + tier conversion, configured-model marks, "Use this model now" (Auto/Exact routing → shared add tail on the opener entry). |
+| `src/ui/modelSelectorView.ts` | Model Selector extension side: benchmarks/catalog/endpoints fan-out (endpoints only for benchmark-scored ids; every other text variant gets its catalog list-price row, upgraded by a lazy on-select endpoints request), benchmark join on `canonical_slug`, per-provider rate + tier conversion, configured-model marks, "Use this model now" (Auto/Exact routing → shared add tail on the opener entry). |
 | `resources/modelSelector.js` / `.css` | Model Selector webview side: client-side cost re-derivation, Pareto scan, chart + 13-column table (multi-provider models collapse to one summary row, providers as children), keyboard row selection, calculation + disclaimer modals. |
+| `resources/webview-search.js` | Shared model-list matcher (substring + subsequence): the Model Selector filter box and, through a Searcher adapter, the Model Settings dropdown's Choices.js instance - one function, both lists. |
 | `resources/serverSettings.js` | Provider dropdown - shows each provider's context window, output cap, and per-1M pricing. |
 | `src/provider/messageConverter.ts` | Error formatting - the single path that surfaces all OpenRouter failures (code + formatted message). |
 | `src/usage/usageStore.ts` | Token/cost tracker - prefers actual `usage.cost` for OpenRouter; `usedByok` is OpenRouter's upstream-key BYOK, distinct from VS Code's `isBYOK`. |

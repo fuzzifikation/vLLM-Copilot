@@ -1227,8 +1227,10 @@ export interface OpenRouterTimePricingWindow {
 }
 
 /** Split `pricing.overrides` into prompt-threshold tiers and time-of-day
- *  windows, dropping entries with neither a usable threshold nor a UTC pair. */
-function parseEndpointPricingOverrides(raw: unknown): {
+ *  windows, dropping entries with neither a usable threshold nor a UTC pair.
+ *  Exported for catalog-level consumers (the Model Selector's list-price
+ *  projection parses the SAME override array the endpoint parser folds). */
+export function parseEndpointPricingOverrides(raw: unknown): {
   tiers?: OpenRouterPricingTier[];
   timeWindows?: OpenRouterTimePricingWindow[];
 } {

@@ -7,6 +7,13 @@
 // The dot unit is a (model, provider) PAIR: the extension fans the scored
 // catalog out to per-model endpoint lists, so the same model appears once per
 // provider that passes the context filter, each at its own real price.
+// Models without a provider list (everything the benchmarks do not score, or
+// a scored model whose fan-out found no usable endpoint) still occupy ONE
+// table row at the catalog list price - listed, searchable, never plotted.
+// Selecting such a row lazily fetches its real provider endpoints from the
+// extension (shared cache, one call) and upgrades it to the normal
+// per-provider rows with "Use" (user ruling 2026-09-11: the plot stays
+// scored-only, the list stays complete, every listed model stays addable).
 
 (function () {
   'use strict';
@@ -14,7 +21,7 @@
   var vscode = acquireVsCodeApi();
 
   // ── State ────────────────────────────────────────────────────
-  var models = [];            // [{id, base, bm, endpoints: [{tag, provider, ...}]}]
+  var models = [];            // [{id, base, bm, endpoints: [{tag, provider, ...}], list?: {...}}] - list = catalog fallback when endpoints is empty
   var qRange = null;          // per-axis {lo,hi} over the scored universe (blend normalization)
   var qRangeSrc = null;       // the models array qRange was computed from (cache key)
   var profile = { rCached: 0.936348, rOut: 0.008256 }; // overwritten by extension
@@ -23,6 +30,7 @@
   var haveData = false;
   var configured = [];        // [{id, provider?, elsewhere?, pc?}] - configs the user already has (extension-owned truth; pc = non-default prompt-cache policy)
   var dataSrv = null;         // server id the visible rows were fetched for (echoed back in 'use')
+  var endpointState = {};     // list-row id -> 'pending' | 'done' | 'failed' (lazy provider fetch, ruling 2026-09-11)
   var noDataMsg = null;       // set on fetch failure: the empty chart says WHY instead of blaming the filters
   // Display unit: one heavy day of work = 100M prompt tokens (calibrated
   // 2026-09-09 against real usage: ~90M tokens by 20:00 on a working day).
@@ -30,7 +38,11 @@
   // UI SHOWS (table, chart, detail, tooltips). Rankings are scale-free.
   var DAY = 100;
 
-  function el(id) { return document.getElementById(id); }
+  var el = function (id) { return document.getElementById(id); };
+  // Shared fuzzy matcher (resources/webview-search.js, loaded first - the
+  // SAME function the Model Settings dropdown runs). The substring fallback
+  // only matters if that script ever fails to load.
+  var SEARCH = window.VllmSearch || { matches: function (t, h) { return h.indexOf(t) !== -1; } };
   var inputs = {
     cache: el('s-cache'), out: el('s-out'), axis: el('sel-axis'), ctx: el('sel-ctx'),
     prompt: el('sel-prompt'),
@@ -148,9 +160,10 @@
   // leader of every index provably tops the blend (n=1 each axis -> 100).
   // Completeness is enforced, not reweighted (user ruling 2026-09-09 after
   // external review): the blend scores ONLY models reporting all three
-  // indices, a single axis only models reporting that one - undefined here
-  // means computeRows DROPS the model. No guessing, no massaging: a partial
-  // model never earns a score (or a tie at 100) it has no data for.
+  // indices, a single axis only models reporting that one. No guessing, no
+  // massaging: a partial model never earns a score (or a tie at 100) it has
+  // no data for. Undefined here means NO DOT and NO STAR (2026-09-11: the
+  // model itself stays in the table as a list row, quality shown as '-').
   function quality(m) {
     var axis = inputs.axis.value;
     var bm = m.bm;
@@ -213,6 +226,16 @@
   }
 
   // ── Flatten + filter + score pass (one row per model-provider pair) ──
+  // The table gets a row for EVERY surviving model: pairs from the endpoint
+  // fan-out, or one row at the catalog list price where there are none (the
+  // pseudo-endpoint below: list: true, or bare: true when even the headline
+  // carries no rate - such rows search and price but never plot and never
+  // earn a star; they carry no "Use" until selecting them lazily upgrades
+  // them to real provider rows (routing needs a real provider tag, and one
+  // invented from a headline would lie). A missing quality score no longer
+  // drops the model (that 2026-09-09 rule now governs the plot and the stars
+  // only, via quality()'s undefined reaching drawChart and the Pareto filter
+  // below).
   function computeRows() {
     var minCtx = parseInt(inputs.ctx.value, 10);
     var promptSize = parseInt(inputs.prompt.value, 10);
@@ -222,27 +245,48 @@
       var m = models[i];
       if (!inputs.batch.checked && m.id.indexOf(':batch') !== -1) continue;
       if (!inputs.free.checked && m.id.indexOf(':free') !== -1) continue;
-      if (text && m.id.toLowerCase().indexOf(text) === -1 &&
-          !(m.endpoints || []).some(function (e) { return (e.provider || '').toLowerCase().indexOf(text) !== -1; })) continue;
+      // Search box: the shared quickpick-style matcher (substring or
+      // subsequence) over the id and every provider name. Since 2026-09-11
+      // the text does NOT drop rows: it marks them (hit). The table shows
+      // matches only; the chart keeps EVERY dot for context and dims the
+      // non-matches, so axes and Pareto stars never shift while typing.
+      var hit = true;
+      if (text) {
+        hit = SEARCH.matches(text, m.id.toLowerCase()) ||
+          (m.endpoints || []).some(function (e) {
+            return SEARCH.matches(text, (e.provider || '').toLowerCase());
+          });
+      }
       var q = quality(m);
-      // Strict completeness (see quality()): no score for the selected axis
-      // means no row at all - the model is dropped, never shown with a '-'.
-      if (q === undefined || q === null) continue;
-      for (var j = 0; j < (m.endpoints || []).length; j++) {
-        var ep = m.endpoints[j];
+      var eps = m.endpoints && m.endpoints.length > 0 ? m.endpoints : [m.list
+        ? {
+            tag: '', provider: '', list: true,
+            in: m.list.in, out: m.list.out, cache: m.list.cache,
+            write: m.list.write, w1h: m.list.w1h, ctx: m.list.ctx,
+            tiers: m.list.tiers, timeWorst: m.list.timeWorst
+          }
+        : { tag: '', provider: '', list: true, bare: true }];
+      for (var j = 0; j < eps.length; j++) {
+        var ep = eps[j];
         // Provider's OWN window must satisfy the selector — the catalog max is
-        // not a promise the cheap provider keeps.
+        // not a promise the cheap provider keeps. A list row is filtered by
+        // the catalog's advertised window; a bare row proves nothing, so any
+        // min-context filter drops it.
         if (minCtx > 0 && (ep.ctx === undefined || ep.ctx < minCtx)) continue;
         var tierHit = activeTier(ep, promptSize);
         rows.push({
-          m: m, ep: ep, q: q,
-          eff: effPerMillion(ep, promptSize, cfgPolicy(m.id, ep.tag, ep, promptSize)),
+          m: m, ep: ep, q: q, hit: hit,
+          eff: ep.bare ? undefined : effPerMillion(ep, promptSize, cfgPolicy(m.id, ep.tag, ep, promptSize)),
           tierOn: !!tierHit,
           tierAt: tierHit ? tierHit.at : undefined
         });
       }
     }
-    // Pareto front over the pairs. Rows are processed in cost order, and
+    // Pareto front over the pairs - real provider pairs with a score only:
+    // a list-price headline is not a provider truth and an unscored row has
+    // no quality to be front-ranked on. Computed over ALL rows, never the
+    // search matches: stars are a property of the loaded data, not of what
+    // you happen to have typed (same stability law as the blend range). Rows are processed in cost order, and
     // bit-identical prices (the common case: providers copying the same rate
     // card) form one tie group scored together: every pair at the group's
     // best quality earns the star, not just the sort-lucky first. A pair is
@@ -251,7 +295,9 @@
     // a quality score, so within a model only the cheapest price reaches the
     // front; price twins there share the star.
     var bestBelow = -Infinity;
-    var byCost = rows.slice().sort(function (a, b) { return a.eff - b.eff; });
+    var byCost = rows.filter(function (r) {
+      return !r.ep.list && r.eff !== undefined && r.q !== undefined && r.q !== null;
+    }).sort(function (a, b) { return a.eff - b.eff; });
     var gi = 0;
     while (gi < byCost.length) {
       var gj = gi, bestIn = -Infinity;
@@ -349,18 +395,25 @@
   function drawChart(rows) {
     var wrap = el('chart');
     wrap.innerHTML = '';
-    var scored = rows.filter(function (r) { return r.q !== undefined && r.q !== null; });
+    // The plot shows scored pairs on REAL provider endpoints only. List-price
+    // rows are catalog headlines, not provider truths: they live in the table.
+    // A search never removes dots (ruling 2026-09-11): the axes, the stars
+    // and the whole field stay put while typing, hits are marked by a ring.
+    var searching = inputs.q.value.trim() !== '';
+    var scored = rows.filter(function (r) {
+      return r.q !== undefined && r.q !== null && r.eff !== undefined && !r.ep.list;
+    });
     if (rows.length === 0) {
       var d0 = document.createElement('div');
       d0.className = 'hint';
-      d0.textContent = noDataMsg || 'No provider passes the current filters - lower min context, widen the id filter, or pick an axis the loaded models report.';
+      d0.textContent = noDataMsg || 'Nothing passes the capacity filters - lower min context or re-tick the variant checkboxes.';
       wrap.appendChild(d0);
       return;
     }
     if (scored.length === 0) {
       var d1 = document.createElement('div');
       d1.className = 'hint';
-      d1.textContent = 'No benchmark scores for the current selection on this axis - the table below still ranks by cost.';
+      d1.textContent = 'No benchmark-scored provider passes the current filters - the list below still shows every model.';
       wrap.appendChild(d1);
       return;
     }
@@ -405,10 +458,10 @@
     ylab.textContent = axisLabel() + ' (higher is better)';
     svg.appendChild(ylab);
 
-    // Dots: unscored on the floor, then dominated, front last (on top).
-    function dotY(r) { return (r.q === undefined || r.q === null) ? H - padB - 6 : y(r.q); }
+    // Dots: dominated first, front last (on top). Unscored and list-price
+    // rows are already out of `scored` - they never get a dot.
     function dot(r, cls) {
-      var c = svgEl('circle', { cx: x(costDay(r)), cy: dotY(r), r: r.front ? 5.5 : 3.5, 'class': cls });
+      var c = svgEl('circle', { cx: x(costDay(r)), cy: y(r.q), r: r.front ? 5.5 : 3.5, 'class': cls });
       var title = document.createElementNS(SVG_NS, 'title');
       title.textContent = r.m.id + ' @ ' + r.ep.provider +
         (r.ep.quant && r.ep.quant !== 'unknown' ? ' (' + r.ep.quant + ')' : '') +
@@ -416,21 +469,32 @@
         (r.tierOn ? ' [long-context tier]' : '') +
         ' - ctx ' + fmtCtx(r.ep.ctx) +
         ' - lat ' + fmtLat(r.ep.lat) + ' - ' + fmtTput(r.ep.tput) + ' - up ' + fmtUp(r.ep.uptime) +
-        ((r.q === undefined || r.q === null) ? ' - no score on this axis' : ' - ' + r.q.toFixed(1));
+        ' - ' + r.q.toFixed(1);
       c.appendChild(title);
       if (pairKey(r) === selectedKey) c.setAttribute('class', cls + ' selected');
       c.addEventListener('click', function () { jumpTo(r.m.id, r.ep.tag); });
       svg.appendChild(c);
     }
-    rows.forEach(function (r) { if (r.q === undefined || r.q === null) dot(r, 'dot-unscored'); });
-    rows.forEach(function (r) { if (r.q !== undefined && r.q !== null && !r.front) dot(r, 'dot-dominated'); });
-    rows.forEach(function (r) { if (r.q !== undefined && r.q !== null && r.front) dot(r, 'dot-front'); });
+    scored.forEach(function (r) { if (!r.front) dot(r, 'dot-dominated'); });
+    scored.forEach(function (r) { if (r.front) dot(r, 'dot-front'); });
+    // Search hits get a solid ring on top of their dot (ruling 2026-09-11,
+    // after live use: dimming the rest alone was too hard to spot). The
+    // dashed white halo below stays the SELECTION's exclusive mark, so hit
+    // ring and selection are never confused.
+    if (searching) {
+      scored.forEach(function (r) {
+        if (!r.hit) return;
+        svg.appendChild(svgEl('circle', {
+          cx: x(costDay(r)), cy: y(r.q), r: r.front ? 8.5 : 6.5, 'class': 'dot-hit'
+        }));
+      });
+    }
     // Selection halo on top of every dot: a dashed ring around the selected
     // pair, so the pick stays visible even under overlapping dots or the
-    // dimmed dominated/unscored styles (CSS adds the glow to the dot itself).
-    for (var si = 0; si < rows.length; si++) {
-      if (pairKey(rows[si]) === selectedKey) {
-        svg.appendChild(svgEl('circle', { cx: x(costDay(rows[si])), cy: dotY(rows[si]), r: 10, 'class': 'dot-halo' }));
+    // dimmed dominated styles (CSS adds the glow to the dot itself).
+    for (var si = 0; si < scored.length; si++) {
+      if (pairKey(scored[si]) === selectedKey) {
+        svg.appendChild(svgEl('circle', { cx: x(costDay(scored[si])), cy: y(scored[si].q), r: 10, 'class': 'dot-halo' }));
         break;
       }
     }
@@ -492,15 +556,17 @@
         (classes.length ? ' class="' + classes.join(' ') + '"' : '') + '>' +
         '<td>' + (r.front ? '&#9733;' : '') + '</td>' +
         '<td class="mid modelid">' + cfgMarkHtml(cfgMark(r.m.id, ep.tag)) + esc(r.m.id) + (r.tierOn ? ' <span class="hint">(tier)</span>' : '') + '</td>' +
-        '<td class="mid prov">' + esc(ep.provider) + '</td>' +
-        '<td class="num">' + (ep.timeWorst ? '<span title="time-of-day pricing - shown at the most expensive window; look up the exact windows on the provider\'s OpenRouter page">&#9719;</span> ' : '') + usd2(r.eff * DAY) + '</td>' +
+        (ep.list
+          ? '<td class="mid prov dim">' + (ep.bare ? 'no pricing' : 'list price') + '</td>'
+          : '<td class="mid prov">' + esc(ep.provider) + '</td>') +
+        '<td class="num">' + (ep.timeWorst ? '<span title="time-of-day pricing - shown at the most expensive window; look up the exact windows on the provider\'s OpenRouter page">&#9719;</span> ' : '') + usd2(r.eff === undefined ? undefined : r.eff * DAY) + '</td>' +
         '<td class="num">' + fmtCtx(ep.ctx) + '</td>' +
-        '<td class="num">' + fmtLat(ep.lat) + '</td>' +
-        '<td class="num">' + fmtTput(ep.tput) + '</td>' +
-        '<td class="num">' + fmtUp(ep.uptime) + '</td>' +
+        '<td class="num">' + (ep.list ? '-' : fmtLat(ep.lat)) + '</td>' +
+        '<td class="num">' + (ep.list ? '-' : fmtTput(ep.tput)) + '</td>' +
+        '<td class="num">' + (ep.list ? '-' : fmtUp(ep.uptime)) + '</td>' +
         '<td class="num">' + usd(rate.in) + '</td>' +
         '<td class="num">' + usd(rate.out) + '</td>' +
-        '<td class="num">' + (noCache ? 'none*' : usd(rate.cache)) + '</td>' +
+        '<td class="num">' + (ep.bare ? '-' : (noCache ? 'none*' : usd(rate.cache))) + '</td>' +
         '<td class="num">' + (rate.write ? usd(rate.write) : '-') + '</td>' +
         '<td class="num"><b>' + fmtQ(r.q) + '</b></td></tr>';
     }
@@ -605,7 +671,10 @@
       var aq = a.q === undefined || a.q === null ? -Infinity : a.q;
       var bq = b.q === undefined || b.q === null ? -Infinity : b.q;
       if (bq !== aq) return bq - aq;
-      return a.eff - b.eff;
+      // Unpriceable bare rows sink below every priced one.
+      var ae = a.eff === undefined ? Infinity : a.eff;
+      var be = b.eff === undefined ? Infinity : b.eff;
+      return ae - be;
     });
   }
 
@@ -619,6 +688,17 @@
       return;
     }
     var m = hit.m, ep = hit.ep;
+    // A bare row (no list price either) has nothing to itemize - say so,
+    // show the lazy-fetch state, and still offer the model's own page.
+    if (ep.bare) {
+      box.innerHTML = '<h2>' + esc(m.id) + '</h2>' +
+        '<div class="hint">' + listStateText(m.id) + '</div>' +
+        '<div class="detail-actions"><button id="btn-page">OpenRouter page</button></div>';
+      el('btn-page').addEventListener('click', function () {
+        vscode.postMessage({ type: 'open', url: 'https://openrouter.ai/' + m.id.split(':')[0] });
+      });
+      return;
+    }
     var promptSize = parseInt(inputs.prompt.value, 10);
     var rate = activeRates(ep, promptSize);
     var pc = cfgPolicy(m.id, ep.tag, ep, promptSize);
@@ -662,6 +742,7 @@
       (ep.timeWorst ? '<span class="badge">&#9719; time-of-day pricing - shown at the peak window, check the provider\'s OpenRouter page for your windows</span>' : '') +
       (pc === 'off' ? '<span class="badge">prompt cache off in your config - priced uncached</span>' : '') +
       (pc === '1h' ? '<span class="badge">1-hour prompt cache in your config - write priced at ' + (rate.w1h ? usd(rate.w1h) : 'the 5-min rate (no 1h rate published)') + '</span>' : '') +
+      (ep.list ? '<span class="badge">' + listStateText(m.id) + '</span>' : '') +
       '<span class="badge">ctx ' + fmtCtx(ep.ctx) + '</span>' +
       '<span class="badge">lat ' + fmtLat(ep.lat) + '</span>' +
       '<span class="badge">' + fmtTput(ep.tput) + '</span>' +
@@ -683,10 +764,14 @@
       '<div class="detail-q">quality: ' + axisLabel() + ' = <b>' + fmtQ(hit.q) + '</b>' +
       ' (coding ' + fmtQ(bm.coding) + ' &middot; agentic ' + fmtQ(bm.agentic) + ' &middot; intelligence ' + fmtQ(bm.intelligence) + ')</div>' +
       '<div class="detail-actions">' +
-      '<button id="btn-use">' + (cfg === true ? 'Re-configure (replaces existing)' : 'Use this model now') + '</button>' +
+      // A list-price row offers no Use: routing needs a real provider tag,
+      // and one invented from a catalog headline would be a lie. Selecting
+      // the row has already requested its real endpoints - the upgrade
+      // re-renders this card with the button (ruling 2026-09-11).
+      (ep.list ? '' : '<button id="btn-use">' + (cfg === true ? 'Re-configure (replaces existing)' : 'Use this model now') + '</button>') +
       '<button id="btn-page">OpenRouter page</button>' +
       '</div>';
-    el('btn-use').addEventListener('click', function () {
+    if (!ep.list) el('btn-use').addEventListener('click', function () {
       // The extension asks Auto-vs-exact-provider routing, then adds the model
       // to the server the selector was opened from (the webview cannot touch
       // settings). The tag is this pair's VERBATIM provider slug - the exact
@@ -700,9 +785,31 @@
     });
   }
 
+  // What a list-price/bare detail card says about the lazy provider fetch
+  // (ruling 2026-09-11: selecting a list row asks the extension for its real
+  // endpoints; "Use" arrives with them).
+  function listStateText(id) {
+    var st = endpointState[id];
+    if (st === 'pending') return 'loading this model\u2019s provider lists\u2026';
+    if (st === 'failed') return 'no usable providers found - list price only, press Refresh to retry';
+    return 'catalog list price - selecting a row loads its providers';
+  }
+
   function select(id, tag) {
     selectedKey = id + '\u0000' + tag;
     expanded[id] = true; // the selected pair must be visible: its group opens
+    // A list-price row (no provider fan-out ran for it - unscored models and
+    // fan-out misses) upgrades on selection: ask the extension for this one
+    // model's real endpoints (shared cache, one call). Click, Enter and the
+    // arrow keys all arrive through here, so one hook covers every path.
+    var mm = null;
+    for (var mi = 0; mi < models.length; mi++) {
+      if (models[mi].id === id) { mm = models[mi]; break; }
+    }
+    if (mm && !(mm.endpoints && mm.endpoints.length) && !endpointState[id]) {
+      endpointState[id] = 'pending';
+      vscode.postMessage({ type: 'endpoints', id: id, srv: dataSrv });
+    }
     render(computeRows());
   }
 
@@ -715,8 +822,11 @@
 
   // ── Render orchestration ─────────────────────────────────────
   function render(rows) {
+    // The search is a highlight, not a filter: the chart gets EVERY row
+    // (non-matches dimmed), the table and the legend get only the matches.
+    var shown = rows.filter(function (r) { return r.hit; });
     drawChart(rows);
-    drawTable(rows);
+    drawTable(shown);
     drawDetail(rows);
     el('v-cache').textContent = parseFloat(inputs.cache.value).toFixed(1) + '%';
     el('v-out').textContent = parseFloat(inputs.out.value).toFixed(2) + '% of prompt';
@@ -737,9 +847,9 @@
     if (here) leg += '<span class="cfg-mark">&#x2713;</span> configured on this server (using it again overwrites) &nbsp;&nbsp;';
     if (other) leg += '<span class="cfg-mark-other">&#9671;</span> configured on another entry with the same URL';
     var seenIds = {}, multi = false, ri2;
-    for (ri2 = 0; ri2 < rows.length; ri2++) {
-      if (seenIds[rows[ri2].m.id]) { multi = true; break; }
-      seenIds[rows[ri2].m.id] = 1;
+    for (ri2 = 0; ri2 < shown.length; ri2++) {
+      if (seenIds[shown[ri2].m.id]) { multi = true; break; }
+      seenIds[shown[ri2].m.id] = 1;
     }
     if (multi) { if (leg) leg += ' &nbsp;&nbsp;'; leg += '<span class="dim">&#9656;</span> model with several providers: click the row to open it, the arrow to toggle'; }
     el('legend').innerHTML = leg;
@@ -773,6 +883,35 @@
       rerender();
       return;
     }
+    if (msg.type === 'endpoints') {
+      // Lazy provider list for one list-price row. A response that raced a
+      // server switch (srv no longer the visible data) is discarded.
+      if (msg.srv !== dataSrv) return;
+      var um = null;
+      for (var ui = 0; ui < models.length; ui++) {
+        if (models[ui].id === msg.id) { um = models[ui]; break; }
+      }
+      if (!um || (um.endpoints && um.endpoints.length)) return; // stale or already upgraded
+      if (msg.endpoints && msg.endpoints.length > 0) {
+        um.endpoints = msg.endpoints;
+        endpointState[msg.id] = 'done';
+        // The list pseudo-row is gone - keep the selection alive by moving
+        // it to the model's cheapest real pair (the group leader).
+        if (selectedKey === msg.id + '\u0000') {
+          var ps = parseInt(inputs.prompt.value, 10);
+          var best = msg.endpoints[0], bestE = Infinity;
+          msg.endpoints.forEach(function (ep) {
+            var e = effPerMillion(ep, ps, cfgPolicy(msg.id, ep.tag, ep, ps));
+            if (e < bestE) { bestE = e; best = ep; }
+          });
+          selectedKey = msg.id + '\u0000' + best.tag;
+        }
+      } else {
+        endpointState[msg.id] = 'failed';
+      }
+      rerender();
+      return;
+    }
     if (msg.type !== 'data') return;
     // Every data branch below (success or error banner) ends the wait.
     el('busy').hidden = true;
@@ -784,7 +923,7 @@
       // live "Use this model now" pointing at data the refresh just failed to
       // confirm (and on a first failure, "Fetching…" had never been replaced).
       noDataMsg = 'No data loaded - fix the problem above and press Refresh.';
-      models = []; selectedKey = null; jumpKey = null;
+      models = []; selectedKey = null; jumpKey = null; endpointState = {};
       drawChart([]); drawTable([]); drawDetail([]);
       setBanner(bmError, 'error');
       el('stamp').textContent = 'no data';
@@ -792,7 +931,7 @@
     }
     if (msg.catalogError) {
       noDataMsg = 'No data loaded - fix the problem above and press Refresh.';
-      models = []; selectedKey = null; jumpKey = null;
+      models = []; selectedKey = null; jumpKey = null; endpointState = {};
       drawChart([]); drawTable([]); drawDetail([]);
       setBanner('Catalog fetch failed: ' + msg.catalogError, 'error');
       el('stamp').textContent = 'no data';
@@ -801,6 +940,7 @@
     noDataMsg = null;
     dataSrv = msg.srv || null;
     models = msg.models || [];
+    endpointState = {}; // fresh row set (refresh or server switch): rows may re-request
     configured = msg.configured || [];
     var bmBySlug = {};
     (msg.bm || []).forEach(function (b) { bmBySlug[b.slug] = b; });
@@ -811,11 +951,14 @@
     var providers = 0;
     models.forEach(function (m) { providers += (m.endpoints || []).length; });
     if (models.length === 0) {
-      setBanner('No scored model returned a usable provider list - open the Output panel and try Refresh.', 'warn');
+      setBanner('The OpenRouter catalog returned no text model - open the Output panel and try Refresh.', 'warn');
     } else {
       setBanner(null);
     }
-    el('stamp').textContent = models.length + ' scored model variants, ' + providers +
+    var listed = 0;
+    models.forEach(function (m) { if ((m.endpoints || []).length > 0) listed++; });
+    el('stamp').textContent = models.length + ' models listed, ' + listed +
+      ' with provider lists, ' + providers +
       ' priced providers' + (msg.asOf ? ', scores as of ' + msg.asOf : '');
 
     // Prefill the profile sliders ONCE from the calibrated usage data; never
@@ -834,6 +977,14 @@
     node.addEventListener('change', rerender);
   });
   inputs.q.addEventListener('input', rerender);
+  // Enter in the search box = quickpick commit: select the top match (the
+  // table's first row - best quality, cheapest tie-break). The chart halo,
+  // the scroll and the detail card all follow the selection.
+  inputs.q.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' || !haveData) return;
+    var hits = sortRows(computeRows().filter(function (r) { return r.hit; }));
+    if (hits.length > 0) jumpTo(hits[0].m.id, hits[0].ep.tag);
+  });
   el('btn-refresh').addEventListener('click', function () { vscode.postMessage({ type: 'refresh' }); });
 
   // Header modals: disclaimer (!) and calculation help (?). Dialog semantics
@@ -887,7 +1038,7 @@
   // detail card's real buttons is the keyboard path through the feature.
   el('table-wrap').addEventListener('keydown', function (e) {
     if (!haveData) return;
-    var sorted = sortRows(computeRows());
+    var sorted = sortRows(computeRows().filter(function (r) { return r.hit; }));
     if (sorted.length === 0) return;
     var idx = -1;
     for (var i = 0; i < sorted.length; i++) {

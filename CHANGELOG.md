@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.36.11-rc0
+The Model Selector was a plot of the benchmark-scored few; it becomes a complete model list that only plots the scored ones.
+
+- **Model Selector lists every OpenRouter model.** The table now covers the full catalog, not just the benchmark-scored models: everything is searchable. A model without performance data appears as one row at the OpenRouter catalog list price, quality `-`, sorted below the scored models; the plot still shows only models with benchmark scores. Selecting such a row loads that model's real provider lists on demand (one cached call), turning it into the normal per-provider rows with "Use this model now" and Auto/Exact routing. Nothing extra is fetched up front: the list rows come from the catalog call the view already made.
+- **Searching the Model Selector highlights instead of deleting.** Typing in the search box no longer removes dots from the chart: the whole field stays put and matching dots get a ring, so the axes and the Pareto stars never shift while you type. Pressing Enter in the box selects the best match - halo, detail card and scroll included, like the VS Code quickpick.
+- **One search function in both Webviews.** The Model Selector's search box and the Model Settings model dropdown now share a single matcher (quickpick-style: substring, then type-skip matching, so `dskv4` finds `deepseek/...-v4...`). Previously the dropdown ran the dropdown library's own typo-tolerant search and the selector a hand-rolled one.
+
 ## v1.36.10
 minor UI improvement:
 

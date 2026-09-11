@@ -73,7 +73,10 @@ svg.scatter { width: 100%; height: auto; display: block; }
 
 circle.dot-front { fill: var(--vscode-charts-green, #4caf50); stroke: var(--vscode-editor-background); stroke-width: 1; cursor: pointer; }
 circle.dot-dominated { fill: var(--vscode-textLink-foreground, #4aa3ff); opacity: .35; cursor: pointer; }
-circle.dot-unscored { fill: var(--vscode-descriptionForeground, #999); opacity: .4; cursor: pointer; }
+/* Solid ring on every scored search hit while searching - the search marks,
+   it never deletes or dims (user ruling 2026-09-11). Solid, unlike the
+   dashed selection halo, so the two marks cannot be confused. */
+circle.dot-hit { fill: none; stroke: var(--vscode-editorWarning-foreground, #e2c08d); stroke-width: 1.4; opacity: .95; pointer-events: none; }
 circle.selected { stroke: var(--vscode-focusBorder, #fff); stroke-width: 2.5; opacity: 1; filter: drop-shadow(0 0 3px var(--vscode-focusBorder, #fff)); }
 /* Dashed halo around the selected pair's dot, drawn above all dots; the
    ring itself never swallows a click aimed at a neighbor. */

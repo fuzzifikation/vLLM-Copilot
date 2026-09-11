@@ -523,6 +523,18 @@
         noResultsText: 'No model matches that search',
         allowHTML: false,        // labels are server-reported text - never HTML
       });
+      // One matcher for both searchable Webview lists (ruling 2026-09-11):
+      // swap the bundled Fuse for the shared quickpick-style matcher
+      // (resources/webview-search.js, loaded before this file). _searcher is
+      // Choices 11.2.4's private searcher field - a plain instance property
+      // read on every keystroke, so replacing it after construction is
+      // enough; the in-guard makes a vendor bump that renames it a visible
+      // console warning instead of a silent return to Fuse.
+      if (window.VllmSearch && '_searcher' in mChoices) {
+        mChoices._searcher = window.VllmSearch.searcher();
+      } else if (window.VllmSearch) {
+        console.warn('Choices.js: _searcher field not found - keeping bundled search. Re-check after a vendor:choices bump.');
+      }
     }
     mSel.addEventListener('change', () => { S.selModel = mSel.value; render(); });
     // Server type is an entry-level fact — applying it posts immediately and the

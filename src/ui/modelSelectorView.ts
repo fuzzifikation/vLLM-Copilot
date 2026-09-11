@@ -35,10 +35,17 @@
  * (500/day) and is NEVER polled; provider lists come through the shared
  * per-session cache the dashboard and Model Settings already use.
  *
- * Universe: the models Artificial Analysis scores (via OpenRouter's
- * `GET /v1/benchmarks`, joined on the catalog `canonical_slug`). Unscored
- * catalog rows are not shown — without a quality axis they are dots without a
- * y value. Auth: the OpenRouter server entry the view was OPENED from (its
+ * Universe: EVERY text-output catalog model. Models Artificial Analysis
+ * scores (via OpenRouter's `GET /v1/benchmarks`, joined on the catalog
+ * `canonical_slug`) get the full treatment: per-provider endpoint rows, dots,
+ * Pareto stars. Everything else still appears in the searchable list as ONE
+ * row at the catalog list price (headline rates, worst window folded, same
+ * tier parser) - listed and searchable, but no dot, no star, no provider
+ * breakdown. Selecting a list-price row lazily fetches that one model's
+ * provider endpoints through the shared cache, upgrading it to the normal
+ * per-provider view with "Use" (user ruling 2026-09-11: the plot stays
+ * scored-only, the list stays complete, and any listed model stays addable).
+ * Auth: the OpenRouter server entry the view was OPENED from (its
  * context-menu is the only entry point — deliberately no palette command, so
  * with several OpenRouter servers/tokens the panel always knows whose key
  * fetches the data and which entry "Use this model now" adds to).
@@ -52,9 +59,15 @@ import {
   normalizeOpenRouterFromCatalog,
   openRouterCatalogConfigFields,
   openRouterInfoDetailLines,
+  parseEndpointPricingOverrides,
   perMillion,
+  worstCasePricing,
 } from '../backends/openRouter.js';
-import type { OpenRouterBenchmarkRow, OpenRouterModelEndpoint } from '../backends/openRouter.js';
+import type {
+  OpenRouterBenchmarkRow,
+  OpenRouterModelData,
+  OpenRouterModelEndpoint,
+} from '../backends/openRouter.js';
 import { buildModelId, isOpenRouterUrl, normalizeServerUrl, resolveConfigId, resolveVllmModelId, sanitizeRequestHeaders, type ModelConfig } from '../state/config.js';
 import { readModels, readServers, type IdentifiedModelConfig } from '../state/configStore.js';
 import { confirmAndSaveAddedModel, handleDuplicateModelGate } from '../commands/addServerCore.js';
@@ -74,7 +87,11 @@ type ReadyMessage = { type: 'ready' };
 type RefreshMessage = { type: 'refresh' };
 type UseMessage = { type: 'use'; id: string; tag: string; provider: string; srv?: string };
 type OpenMessage = { type: 'open'; url: string };
-type WebviewMessage = ReadyMessage | RefreshMessage | UseMessage | OpenMessage;
+/** Lazy provider-list request for one list-price row (the webview echoes the
+ *  server its visible rows were fetched for; the answer repeats it so a
+ *  response racing a server switch can be discarded). */
+type EndpointsRequestMessage = { type: 'endpoints'; id: string; srv?: string };
+type WebviewMessage = ReadyMessage | RefreshMessage | UseMessage | OpenMessage | EndpointsRequestMessage;
 
 /**
  * One serving provider of a model, flattened to per-1M USD rates. This is the
@@ -128,7 +145,8 @@ interface SelectorEndpoint {
   tiers?: { at: number; in?: number; out?: number; cache?: number; write?: number; w1h?: number }[];
 }
 
-/** A benchmark-scored catalog variant with its usable provider endpoints. */
+/** A catalog variant with its usable provider endpoints (scored variants get
+ *  the endpoint fan-out; everything else rides on the `list` fallback). */
 interface SelectorModelRow {
   /** Full catalog variant id (`author/slug[:variant]`). */
   id: string;
@@ -141,7 +159,22 @@ interface SelectorModelRow {
    */
   base: string;
   endpoints: SelectorEndpoint[];
+  /**
+   * Catalog list price, present exactly when the fan-out produced no usable
+   * provider (every non-scored model, or a scored one whose endpoints all
+   * failed). The webview draws a single "list price" row from it: searchable
+   * and priceable, but never plotted and without a "Use" button.
+   */
+  list?: SelectorListPrice;
 }
+
+/** Endpoint-shaped fields read from the catalog headline instead of a real
+ *  provider: same worst-window fold, same sparse tier contract, but the
+ *  headline is ONE provider's rate (documented caveat of this view). */
+type SelectorListPrice = Pick<
+  SelectorEndpoint,
+  'in' | 'out' | 'cache' | 'write' | 'w1h' | 'ctx' | 'timeWorst' | 'tiers'
+>;
 
 let openPanel: { panel: vscode.WebviewPanel; refresh: () => void } | undefined;
 
@@ -239,8 +272,11 @@ function openModelSelector(context: vscode.ExtensionContext, output: vscode.Outp
   const resourcesUri = vscode.Uri.joinPath(context.extensionUri, 'resources');
   const scriptUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'resources', 'modelSelector.js'));
   const styleUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'resources', 'modelSelector.css'));
+  // Shared fuzzy matcher (same function the Model Settings dropdown runs) -
+  // loaded before modelSelector.js, which calls into it for the search box.
+  const searchJsUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'resources', 'webview-search.js'));
   panel.webview.options = { enableScripts: true, localResourceRoots: [resourcesUri] };
-  panel.webview.html = buildHtml(panel.webview, scriptUri, styleUri);
+  panel.webview.html = buildHtml(panel.webview, scriptUri, styleUri, searchJsUri);
 
   let isReady = false;
   let loading = false;
@@ -253,8 +289,9 @@ function openModelSelector(context: vscode.ExtensionContext, output: vscode.Outp
 
   /** Fetch fresh and push. One in-flight at a time (a double click while a
    *  fetch runs must not stack OpenRouter calls — the benchmarks quota is
-   *  account-wide at 500/day). Benchmarks gate everything: they define the
-   *  model universe, so without them there is nothing to plot. */
+   *  account-wide at 500/day). Benchmarks gate everything: without them
+   *  there is nothing to plot and no provider fan-out, so the whole refresh
+   *  stops at the catalog. */
   async function refresh(): Promise<void> {
     if (!isReady) return;
     if (loading) { pendingRefresh = true; return; }
@@ -267,7 +304,8 @@ function openModelSelector(context: vscode.ExtensionContext, output: vscode.Outp
       ? `Model Selector - ${entry.displayName ?? entry.id}`
       : 'OpenRouter Model Selector';
 
-    // Step 1 — benchmarks define the universe (which models get a quality axis).
+    // Step 1 — benchmarks define the plot universe (which models get a
+    // quality axis and a provider fan-out).
     let bm: OpenRouterBenchmarkRow[] = [];
     let citation: string | undefined;
     let asOf: string | undefined;
@@ -285,17 +323,32 @@ function openModelSelector(context: vscode.ExtensionContext, output: vscode.Outp
       }
     }
 
-    // Step 2 — catalog filtered to scored, text-output variants; Step 3 — fan
-    // out per-provider endpoint lists for exactly those ids. No benchmarks (no
-    // universe) means no catalog work and no provider fan-out.
+    // Step 2 — every text-output catalog variant, each carrying its catalog
+    // list price; Step 3 — fan out per-provider endpoint lists for exactly
+    // the benchmark-scored ids (the fan-out volume stays as before: one call
+    // per scored variant, never per catalog row). Variants the fan-out did
+    // not price keep their list row. No benchmarks (no quality axis) means
+    // no catalog work and no provider fan-out.
     let models: SelectorModelRow[] = [];
     let catalogError: string | undefined;
     if (bm.length > 0) {
       try {
         const scoredBases = new Set(bm.map((r) => r.slug));
         const catalog = await fetchOpenRouterCatalog();
-        const scored = catalogToScoredVariants(catalog, scoredBases);
-        models = await buildSelectorRows(scored);
+        const variants = catalogToTextVariants(catalog);
+        const priced = new Map(
+          (await buildSelectorRows(variants.filter((v) => scoredBases.has(v.base))))
+            .map((r) => [r.id, r] as const),
+        );
+        models = variants.map(
+          (v) =>
+            priced.get(v.id) ?? {
+              id: v.id,
+              base: v.base,
+              endpoints: [],
+              ...(v.list ? { list: v.list } : {}),
+            },
+        );
       } catch (err) {
         catalogError = err instanceof Error ? err.message : String(err);
       }
@@ -335,6 +388,35 @@ function openModelSelector(context: vscode.ExtensionContext, output: vscode.Outp
     });
   }
 
+  /**
+   * Answer a lazy provider-list request for one list-price row: the SAME
+   * shared per-session cache the fan-out uses (a warm hit answers instantly;
+   * failures resolve to an empty list, which the webview shows as "no usable
+   * providers" instead of a toast). The response echoes the REQUESTER's srv
+   * so a response racing a server switch is discarded by the webview - and
+   * so a vanished opener entry answers as a failure instead of leaving the
+   * row stuck on "loading…" forever.
+   */
+  async function fetchEndpointsFor(wireId: string, requesterSrv: string | undefined, output: vscode.OutputChannel): Promise<void> {
+    const entry = findOpenerEntry();
+    if (!entry) {
+      panel.webview.postMessage({ type: 'endpoints', id: wireId, srv: requesterSrv, endpoints: [] });
+      return;
+    }
+    let endpoints: SelectorEndpoint[] = [];
+    try {
+      endpoints = (await getOpenRouterModelEndpointsCached(wireId))
+        .filter((ep) => ep.status === undefined || ep.status >= 0)
+        .map(toSelectorEndpoint)
+        .filter((e): e is SelectorEndpoint => e !== undefined);
+    } catch (err) {
+      output.appendLine(
+        `[WARN] Model Selector lazy provider lookup for "${wireId}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    panel.webview.postMessage({ type: 'endpoints', id: wireId, srv: requesterSrv, endpoints });
+  }
+
   const msgDisposable = panel.webview.onDidReceiveMessage((msg: WebviewMessage) => {
     if (msg.type === 'ready') {
       isReady = true;
@@ -351,6 +433,8 @@ function openModelSelector(context: vscode.ExtensionContext, output: vscode.Outp
         return;
       }
       void useModelNow(msg.id, msg.tag, typeof msg.provider === 'string' ? msg.provider : msg.tag, output);
+    } else if (msg.type === 'endpoints' && typeof msg.id === 'string') {
+      void fetchEndpointsFor(msg.id, msg.srv, output);
     } else if (msg.type === 'open' && typeof msg.url === 'string') {
       // A webview cannot open external links itself (sandbox + CSP). Open the
       // OpenRouter model page through the workbench. The URL is one the webview
@@ -513,29 +597,71 @@ async function useModelNow(wireId: string, providerTag: string, providerName: st
 }
 
 /**
- * Filter the catalog to the benchmark-scored, text-output variants. Drops
- * image/audio/video models (non-text output is not this selector's question)
- * and every model Artificial Analysis does not score (no quality axis, so no
- * y value). Each surviving catalog VARIANT keeps its own id — `:free`/`:batch`
- * are separate entries with their own providers, resolved verbatim (no slug
- * derivation). Returns id + benchmark join key only; the endpoint fan-out
- * supplies every price.
+ * Map the catalog to its text-output variants — the complete list the panel
+ * shows. Drops only image/audio/video models (non-text output is not this
+ * selector's question); benchmark scoring gates the PLOT (the endpoint
+ * fan-out), never the list. Each catalog VARIANT keeps its own id —
+ * `:free`/`:batch` are separate entries with their own providers, resolved
+ * verbatim (no slug derivation). Every variant carries its catalog list
+ * price so the webview can list and price what it cannot plot.
  */
-function catalogToScoredVariants(
-  catalog: Awaited<ReturnType<typeof fetchOpenRouterCatalog>>,
-  scoredBases: Set<string>,
-): { id: string; base: string }[] {
-  const variants: { id: string; base: string }[] = [];
+function catalogToTextVariants(
+  catalog: OpenRouterModelData[],
+): { id: string; base: string; list?: SelectorListPrice }[] {
+  const variants: { id: string; base: string; list?: SelectorListPrice }[] = [];
   for (const m of catalog) {
     const outs = m.architecture?.output_modalities;
     if (Array.isArray(outs) && outs.length > 0 && !outs.includes('text')) continue;
     const id = m.id;
     if (!id) continue;
     const base = m.canonical_slug?.trim() || id.split(':')[0];
-    if (!scoredBases.has(base)) continue;
-    variants.push({ id, base });
+    const list = toListPrice(m);
+    variants.push({ id, base, ...(list ? { list } : {}) });
   }
   return variants;
+}
+
+/**
+ * Catalog list price of one variant: the headline `pricing` record folded to
+ * its worst time window and split into tiers by the SAME parser the endpoint
+ * fan-out uses — the catalog payload carries the identical `overrides` array
+ * (live-verified 2026-09-09), so both price surfaces share one fold.
+ * Undefined when the headline carries no parseable input/output rate: the
+ * variant still appears in the list (searchable, scored where joined), it
+ * simply carries no numbers.
+ */
+function toListPrice(m: OpenRouterModelData): SelectorListPrice | undefined {
+  const p = m.pricing;
+  if (!p) return undefined;
+  const worst = worstCasePricing(p, p.overrides);
+  const shown = (worst ?? p) as Omit<NonNullable<OpenRouterModelData['pricing']>, 'overrides'> & {
+    input_cache_write?: string | null;
+    input_cache_write_1h?: string | null;
+  };
+  const input = perMillion(shown.prompt);
+  const output = perMillion(shown.completion);
+  if (input === undefined || output === undefined) return undefined;
+  // Tiers keep ARRAY ORDER and sparse fields, exactly like the endpoint
+  // conversion — later entries win per price key, gaps inherit the base.
+  const { tiers: rawTiers } = parseEndpointPricingOverrides(p.overrides);
+  const tiers = (rawTiers ?? []).map((t) => ({
+    at: t.minPromptTokens,
+    in: perMillion(t.prompt),
+    out: perMillion(t.completion),
+    cache: perMillion(t.inputCacheRead),
+    write: perMillion(t.inputCacheWrite),
+    w1h: perMillion(t.inputCacheWrite1h),
+  }));
+  return {
+    in: input,
+    out: output,
+    cache: perMillion(shown.input_cache_read),
+    write: perMillion(shown.input_cache_write) ?? 0,
+    w1h: perMillion(shown.input_cache_write_1h),
+    timeWorst: worst ? true : undefined,
+    ctx: typeof m.context_length === 'number' && m.context_length > 0 ? m.context_length : undefined,
+    tiers: tiers.length > 0 ? tiers : undefined,
+  };
 }
 
 /** Convert one endpoint's raw per-token strings to per-1M, or undefined when
@@ -598,11 +724,13 @@ const ENDPOINT_FANOUT_CONCURRENCY = 5;
 
 /**
  * Build the per-(model, provider) rows: fan out the shared provider-list cache
- * for each scored variant id (bounded concurrency), convert each endpoint, and
- * keep only operational endpoints with a parseable base price. A variant whose
- * providers all fail or all lack a usable price is dropped (it cannot be
- * plotted). The provider-list cache is the SAME one the dashboard and Model
- * Settings use, so a warm cache makes this near-instant.
+ * for each variant id it is given (the scored subset - one call per scored
+ * variant, never per catalog row), convert each endpoint, and keep only
+ * operational endpoints with a parseable base price. A variant whose providers
+ * all fail or all lack a usable price is absent from the result - the caller
+ * falls it back to its catalog list row. The provider-list cache is the SAME
+ * one the dashboard and Model Settings use, so a warm cache makes this
+ * near-instant.
  */
 async function buildSelectorRows(
   variants: { id: string; base: string }[],
@@ -630,7 +758,7 @@ async function buildSelectorRows(
   return rows;
 }
 
-function buildHtml(webview: vscode.Webview, scriptUri: vscode.Uri, styleUri: vscode.Uri): string {
+function buildHtml(webview: vscode.Webview, scriptUri: vscode.Uri, styleUri: vscode.Uri, searchJsUri: vscode.Uri): string {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -708,7 +836,7 @@ function buildHtml(webview: vscode.Webview, scriptUri: vscode.Uri, styleUri: vsc
     </div>
     <label class="chk"><input id="cb-free" type="checkbox" checked> free variants</label>
     <label class="chk"><input id="cb-batch" type="checkbox"> batch variants</label>
-    <input id="q" type="text" placeholder="filter by id…" spellcheck="false">
+    <input id="q" type="text" placeholder="search all models…" spellcheck="false">
     <button id="btn-refresh" title="Re-fetch benchmarks + catalog + provider lists">&#x21bb; Refresh</button>
   </section>
   <section id="chart-wrap"><div id="chart"></div></section>
@@ -748,7 +876,7 @@ function buildHtml(webview: vscode.Webview, scriptUri: vscode.Uri, styleUri: vsc
         <li>A model you already <b>configured</b> with a non-default <i>Prompt cache</i> policy is priced under <b>that</b> policy: <i>off</i> rows drop the cached share entirely (plain input, no write), <i>1h</i> rows pay the provider's published 1-hour write rate. The detail card badges which policy was priced.</li>
         <li>Long-context tiers replace the base rates when <i>pricing prompt size</i> sits strictly above the provider's threshold; when a provider reports several, every applicable one contributes per rate (later entries win per key, keys none override stay at base), shown at the peak - exactly like its billing. <i>Min context</i> only filters provider windows - the two knobs are independent: a provider that stays visible because it serves 1M tokens is still priced at your typical prompt size, not at 1M.</li>
         <li>Some providers price by <b>time of day</b> (e.g. <i>tencent/hy3</i> is 37.5% cheaper between 16:00 and 24:00 UTC). This view never bakes your clock into a price: such a provider is shown at its <b>most expensive window</b>, marked with a <b>clock</b> (also in the detail card). Off-peak savings are real - look them up on the provider's OpenRouter page; the exact windows are deliberately not modeled here.</li>
-        <li>A provider only appears when <b>its own</b> context window reaches the min-context selector. The model's catalog max is the largest window across providers, not a promise from the cheap one.</li>
+        <li>A provider only appears when <b>its own</b> context window reaches the min-context selector. The model's catalog max is the largest window across providers, not a promise from the cheap one. A <b>list price</b> row (a model with no per-provider rows) is filtered by the catalog's advertised window instead.</li>
       </ul>
       <h3>Performance columns</h3>
       <ul class="varlist">
@@ -759,9 +887,9 @@ function buildHtml(webview: vscode.Webview, scriptUri: vscode.Uri, styleUri: vsc
       </ul>
       <h3>Quality axis and the Pareto front</h3>
       <div class="eq">blend = 100 &middot; &Sigma; w<sub>i</sub>n<sub>i</sub> / &Sigma; w<sub>i</sub> &nbsp; with &nbsp; n<sub>i</sub> = (q<sub>i</sub> − min<sub>i</sub>) / (max<sub>i</sub> − min<sub>i</sub>)</div>
-      <p class="where">q<sub>i</sub> are the Artificial Analysis indices a model reports (coding, agentic, intelligence), w<sub>i</sub> the weights you set. The indices live on <b>different numeric scales</b> (the coding index runs far higher than the intelligence index), so each is first normalized to 0-1 against the best and worst of the loaded set - n<sub>i</sub> above - before weighting. Averaging the raw values instead would let the widest-scale axis dominate your weights, and a model missing one index could outscore the leader of all three by reweighting over its two high-scale ones. <b>Completeness rule:</b> only models with real data for what you rank on are shown at all - the blend needs all three indices, a single axis needs that one. Nothing is reweighted, guessed, or massaged; a model with a missing benchmark simply is not displayed. A model leading every index therefore always tops the blend.</p>
+        <p class="where">q<sub>i</sub> are the Artificial Analysis indices a model reports (coding, agentic, intelligence), w<sub>i</sub> the weights you set. The indices live on <b>different numeric scales</b> (the coding index runs far higher than the intelligence index), so each is first normalized to 0-1 against the best and worst of the loaded set - n<sub>i</sub> above - before weighting. Averaging the raw values instead would let the widest-scale axis dominate your weights, and a model missing one index could outscore the leader of all three by reweighting over its two high-scale ones. <b>Completeness rule (for the plot):</b> a dot or a star needs real data for what you rank on - the blend needs all three indices, a single axis needs that one. Nothing is reweighted, guessed, or massaged. Models without a benchmark score stay in the <b>list</b> - searchable, priced at their catalog list price, quality shown as <i>-</i> - but never earn a dot or a star; <b>selecting one loads its provider lists</b> and turns it into normal provider rows, "Use" included. A model leading every index therefore always tops the blend.</p>
       <p>A pair is on the <b>Pareto front</b> (&#9733;) when no other pair is both cheaper and better, on the currently selected axis. Because every provider of one model shares the same quality score, only that model's cheapest price reaches the front - and when several providers serve it at that exact price, they all share the star.</p>
-      <p class="where">Benchmarks are never polled: they define the model universe, so the whole view needs an OpenRouter server with a key. Rates and provider windows come from the shared per-session endpoint cache.</p>
+      <p class="where">Benchmarks are never polled: they define the <i>plot</i> universe - which models get provider rows, dots and stars - so the whole view needs an OpenRouter server with a key. The list below the chart covers every text-output model in the catalog regardless. Rates and provider windows come from the shared per-session endpoint cache.</p>
       <h3>No warranty</h3>
       <p class="where">Every price and statistic here is a best guess from OpenRouter's published rate cards, read at fetch time. Rates change, providers change, and bugs happen. This view is no guarantee and no billing promise, and this extension takes no responsibility for price accuracy or for over-charging a bug may cause. Verify prices on the model's own page before you spend; checking prices and owning your usage stays your responsibility.</p>
     </div>
@@ -778,6 +906,7 @@ function buildHtml(webview: vscode.Webview, scriptUri: vscode.Uri, styleUri: vsc
       <p><b>"Use this model now" only writes a config entry.</b> It buys nothing and guarantees nothing about which provider or price will actually serve a request; routing stays with OpenRouter, and Auto can move between providers at any time.</p>
     </div>
   </div>
+  <script src="${searchJsUri}"></script>
   <script src="${scriptUri}"></script>
 </body>
 </html>`;

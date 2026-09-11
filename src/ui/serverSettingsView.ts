@@ -263,6 +263,11 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     const choicesJsUri = webviewView.webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'resources', 'choices.min.js')
     );
+    // Shared fuzzy matcher (same function the Model Selector runs) - loaded
+    // before serverSettings.js, which swaps it into Choices at init.
+    const searchJsUri = webviewView.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'resources', 'webview-search.js')
+    );
     const choicesCssUri = webviewView.webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'resources', 'choices.min.css')
     );
@@ -351,6 +356,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   <div id="root"><p class="empty-state">Loading...</p></div>
   <div class="modal-overlay" id="modal"><div class="modal-box" id="modalBody"></div></div>
   <script src="${choicesJsUri}"></script>
+  <script src="${searchJsUri}"></script>
   <script src="${scriptUri}"></script>
 </body>
 </html>`;
