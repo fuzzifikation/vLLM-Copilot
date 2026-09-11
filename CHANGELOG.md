@@ -1,8 +1,9 @@
 # Changelog
 
-## v1.36.9-rc0
+## v1.36.9
 
 Support for servers behind metadata-stripping gateways, personalities stored by name, webview styling fixed, bogus startup error removed.
+Essentially, this is a workaround for a bad IT setup.
 
 ### Added
 
