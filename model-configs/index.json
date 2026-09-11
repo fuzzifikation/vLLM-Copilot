@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-03",
+  "updated": "2026-09-11",
   "presets": [
     {
       "match": [
@@ -19,6 +19,12 @@
         "DeepSeek-V4-Pro"
       ],
       "file": "DeepSeek-V4-Pro.json"
+    },
+    {
+      "match": [
+        "DeepSeek-V4.1-Flash"
+      ],
+      "file": "DeepSeek-V4.1-Flash.json"
     },
     {
       "match": [

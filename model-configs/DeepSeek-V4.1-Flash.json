@@ -1,0 +1,96 @@
+// DeepSeek V4.1 Flash — Model configuration
+// HuggingFace: https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash
+//   (released 2026-09-09; multimodal MoE, 552B backbone, 8B active prefill /
+//    16B active decode, 1M context — vision is NATIVE, unlike V4-Flash)
+// Tech report: https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/main/DeepSeek_V41_Tech_Report.pdf
+//
+// NOT the same model as DeepSeek-V4-Flash. Distinct architecture
+// (DeepseekV41ForCausalLM / model_type "deepseek_v41") with its own vLLM
+// tokenizer mode, reasoning parser and tool parser. The V4-Flash preset
+// does NOT match this model (substring match breaks on the ".").
+//
+// SERVE REQUIREMENTS (heavier than V4 — verified via vLLM recipes,
+// https://github.com/vllm-project/recipes/blob/main/models/deepseek-ai/DeepSeek-V4.1-Flash.yaml
+// and tracking issue vllm-project/vllm#56400):
+//   - vLLM 0.30.0+; no pip wheel serves this architecture — use the
+//     dedicated image: vllm/vllm-openai:deepseekv41-flash
+//   - --tokenizer-mode deepseek_v41  (the release ships NO Jinja chat
+//     template; vLLM's built-in V4.1 encoder IS the template)
+//   - --reasoning-parser deepseek_v41
+//   - --tool-call-parser deepseek_v41 --enable-auto-tool-choice
+//     (tool calls use DSML tag blocks, not JSON fences — server-side,
+//     invisible to this client)
+//
+// Sampling recommendations (model card "Minimal Inference", confirmed in the
+// tech report eval sections §5.3/Table 4):
+//   temperature = 1.0, top_p = 0.95 (thinking/agentic), top_p = 1.0 otherwise
+//   context_window = 1M tokens, max_tokens >= 256K
+//
+// Thinking mode — vLLM behavior (differs from V4!):
+//   V4.1 uses a NUMERIC reasoning budget (integer 1-100), rendered into the
+//   prompt as a "Reasoning Effort: N" prefix on the first turn. Top-level
+//   reasoning_effort accepts: "low"=25, "high"=50, "xhigh"=75, "max"=100, or
+//   an int 1-100 (vLLM deepseek_v41 tokenizer). "none" disables thinking.
+//   "minimal" and "medium" are REJECTED (ValueError) — unlike other families.
+//   NOTE the mismatch with DeepSeek's own API tiers (tech report Table 2:
+//   max=100, high=75, low=50): vLLM's "high" is 50, NOT DeepSeek's 75.
+//   This preset therefore uses "xhigh" (=75, DeepSeek's "high") for the
+//   standard thinking mode.
+//   TRAP: with no thinking/effort set, thinking is ON at effort 50 — a
+//   request with a small max_tokens spends its budget on the trace and
+//   returns empty content with finish_reason=length. The explicit modes
+//   below always pin the effort, so this cannot happen via the picker.
+//
+// To use manually, copy the "config" object below into settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//
+// Token budgets:
+//   - Context window: 1,048,576 tokens (config.json max_position_embeddings)
+//   - maxOutputTokens ladder [262144, 131072, 65536, 32768] (default 262,144).
+//     The card recommends max_tokens >= 256K; effort-100 traces observed in
+//     the tech report reach ~250K output tokens. 256K leaves ~786K input at
+//     full 1M server context. On smaller serve windows pick a shorter length
+//     in the Output Length dropdown — output + input must fit max_model_len.
+//
+// Modes:
+//   - Think (Max):    effort 100 — benchmark settings, best accuracy
+//   - Think (High):   effort 75 — DeepSeek's API "high" tier (default)
+//   - No Think:       thinking off (reasoning_effort "none"), direct answers
+
+{
+  "presetVersion": 1,
+  "match": ["DeepSeek-V4.1-Flash"],
+  "meta": {
+    "name": "DeepSeek V4.1 Flash",
+    "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash",
+    "notes": "1M-context multimodal MoE (native vision). Numeric reasoning budget via reasoning_effort (max=100/xhigh=75/none, vLLM deepseek_v41); card sampling temp=1.0, top_p=0.95. Needs vLLM 0.30+ docker image with --tokenizer-mode/--reasoning-parser/--tool-call-parser deepseek_v41."
+  },
+  "config": {
+    "vllmModelId": "DeepSeek-V4.1-Flash",
+    "displayName": "DeepSeek V4.1 Flash",
+    "family": "deepseek_v41",
+    "maxOutputTokens": [262144, 131072, 65536, 32768],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
+    },
+    "modelModes": {
+      "Think (Max)": {
+        "reasoning_effort": "max",
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "Think (High)": {
+        "reasoning_effort": "xhigh",
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "No Think": {
+        "reasoning_effort": "none",
+        "temperature": 1.0,
+        "top_p": 1.0
+      }
+    },
+    "defaultMode": "Think (High)"
+  }
+}
