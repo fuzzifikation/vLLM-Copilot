@@ -1,6 +1,6 @@
 # Disclaimer
 
-vLLM-Copilot is MIT-licensed software, provided as-is. This page states what that means in practice. Using the extension means you accept it. The [MIT license](LICENSE) is the grant; this page does not add rights and does not take that disclaimer away.
+The vLLM-Copilot extension you install is MIT-licensed software, provided as-is. The source repository is licensed under [BUSL-1.1](LICENSE). This page states what that means in practice. Using the extension means you accept it. The MIT grant (see [README](README.md#license)) is the grant for extension builds; this page does not add rights and does not take that disclaimer away.
 
 ## What this extension does not do
 
@@ -24,6 +24,6 @@ You choose the servers, keys, models, personalities, parameters, and backends. Y
 
 ## Source
 
-The source is public: [https://github.com/fuzzifikation/vLLM-Copilot](https://github.com/fuzzifikation/vLLM-Copilot). You can inspect the code, this disclaimer, and the MIT license before you install or use the extension. Installing or using it is your choice.
+The source is public: [https://github.com/fuzzifikation/vLLM-Copilot](https://github.com/fuzzifikation/vLLM-Copilot). You can inspect the code, this disclaimer, and the licenses (MIT for extension builds, BUSL-1.1 for the source repository) before you install or use the extension. Installing or using it is your choice.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS, COPYRIGHT HOLDERS, OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

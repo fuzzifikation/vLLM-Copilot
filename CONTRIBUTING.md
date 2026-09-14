@@ -26,6 +26,8 @@ See the architecture section in [`.github/copilot-instructions.md`](.github/copi
 
 ## License compliance
 
+This repository is licensed under the [Business Source License 1.1](LICENSE) — see the header for the Additional Use Grant (unmodified production use is free; adapted builds in production need a commercial license). Contributions are accepted under the same license; each release converts to MIT four years after first public distribution. The compiled extension shipped to the Marketplace is separately MIT-licensed.
+
 All production (shipped) dependencies must carry permissive open-source licenses
 (MIT, ISC, BSD-2/3-Clause, Apache-2.0). Compliance is enforced in the build:
 

@@ -48,6 +48,11 @@ scripts/
 # (read by scripts/build-icon-font.py). The runtime only loads the woff2.
 resources/OR-logo.svg
 
+# The root LICENSE is the BUSL-1.1 source-repository license. The shipped
+# extension is MIT (package.json "license"); vsce would otherwise auto-pack
+# the repo LICENSE into the VSIX as LICENSE.txt, so it stays out here.
+LICENSE
+
 # Repo/build config (not needed at runtime)
 .gitignore
 package-lock.json

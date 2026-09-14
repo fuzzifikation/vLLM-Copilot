@@ -5,7 +5,7 @@
 </a>
 
 # vLLM-Copilot
-[![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot) [![vLLM](https://img.shields.io/badge/vLLM-Primary-01C286)](https://github.com/vllm-project/vllm) [![OpenRouter Supported](https://img.shields.io/badge/OpenRouter-Supported-00B3A6?logo=openrouter&logoColor=white)](https://openrouter.ai) [![Agents Window](https://img.shields.io/badge/VS_Code-Agents_Window_Ready-007ACC?logo=visualstudiocode&logoColor=white)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md) [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
+[![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot) [![vLLM](https://img.shields.io/badge/vLLM-Primary-01C286)](https://github.com/vllm-project/vllm) [![OpenRouter Supported](https://img.shields.io/badge/OpenRouter-Supported-00B3A6?logo=openrouter&logoColor=white)](https://openrouter.ai) [![Agents Window](https://img.shields.io/badge/VS_Code-Agents_Window_Ready-007ACC?logo=visualstudiocode&logoColor=white)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md) [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main) [![License: BUSL-1.1 source](https://img.shields.io/badge/License-BUSL--1.1-orange)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE) [![License: MIT extension](https://img.shields.io/badge/License-MIT%20extension-yellow.svg)](#license)
 
 **Your vLLM-served models inside GitHub Copilot and the VS Code Agents window.**
 GitHub Copilot provides the familiar chat, tools, and model picker; you provide the model. Requests to your models (prompts, code, context) are never sent to Copilot!
@@ -378,9 +378,13 @@ Your vLLM servers are not limited to VS Code: the [GitHub Copilot CLI](https://g
 
 ## License
 
-See also [DISCLAIMER.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/DISCLAIMER.md). The MIT grant below is unchanged.
+Two licenses — one for what you install, one for this source repository. See also [DISCLAIMER.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/DISCLAIMER.md).
 
-MIT License
+**The extension you install (VSIX / Marketplace builds): MIT License**, free for any use, including commercial, without restriction.
+
+**This source repository: [BUSL-1.1](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)**. You may copy, study, modify, and share the source, and run **unmodified** copies in production, free of charge. Running an **adapted or modified** build in a production (business) environment requires a commercial license — just ask: info@systemwissenschaften.de. Every version converts to MIT automatically, four years after its first public distribution.
+
+MIT License (extension builds)
 
 Copyright (c) 2026 Systemwissenschaften TGU, TTI GmbH
 
