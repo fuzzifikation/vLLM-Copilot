@@ -10,7 +10,7 @@ import {
 } from '../state/config.js';
 import type { ServerEntry } from '../state/serverRegistry.js';
 import { buildModelInfo } from './modelInfo.js';
-import { deriveTokenBudget } from '../shared/tokenBudget.js';
+import { deriveTokenBudget, resolveOutputLengthVector } from '../shared/tokenBudget.js';
 import { describeError } from './messageConverter.js';
 import type { ProviderClient } from './contracts.js';
 
@@ -126,19 +126,24 @@ export async function discoverModels(
       );
 
       const serverModel = { id: vllmModelId, max_model_len: limits.contextWindow };
-      // Menu/banner ceiling: the model's OWN budget (vector head / scalar cap)
-      // with the physical clamps (window + server-reported) applied — what the
-      // model can promise, independent of any pick. Deliberately NOT the legacy
-      // chain: a selected mode's `max_tokens` must not shrink the menu (it
-      // would flicker or vanish on mode switches, breaking the "length menu is
-      // identical for every mode" contract) and must not silently cap a
-      // deliberate pick — the pick outranks legacy per-mode budgets, and the
-      // advertised output re-registers upward to match. `maxOutputTokens:
-      // undefined` makes deriveTokenBudget fall back to the resolved model
-      // budget; buildModelInfo still receives the RAW override for the menu.
+      // Menu/banner ceiling: the model's OWN budget with the physical clamps
+      // (window + server-reported) applied — what the model can promise,
+      // independent of any pick. For a VECTOR-form `maxOutputTokens` the menu
+      // scales with the vector's MAX, not its head: the head is only the
+      // default/advertised budget (auto-generated ladders deliberately put a
+      // ~10%-of-window rung first to keep prompt space), and every higher rung
+      // must stay selectable. Deliberately NOT the legacy chain: a selected
+      // mode's `max_tokens` must not shrink the menu (it would flicker or
+      // vanish on mode switches, breaking the "length menu is identical for
+      // every mode" contract) and must not silently cap a deliberate pick —
+      // the pick outranks legacy per-mode budgets, and the advertised output
+      // re-registers upward to match. `maxOutputTokens: undefined` makes
+      // deriveTokenBudget fall back to the resolved model budget; buildModelInfo
+      // still receives the RAW override for the menu.
+      const menuVector = resolveOutputLengthVector(override.maxOutputTokens);
       const outputMenuCeiling = deriveTokenBudget(
         limits.contextWindow,
-        settings.maxOutputTokens,
+        menuVector ? Math.max(...menuVector) : settings.maxOutputTokens,
         { ...override, maxOutputTokens: undefined },
         limits.maxOutputTokens,
       ).maxOutputTokens;

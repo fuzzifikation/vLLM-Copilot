@@ -1,13 +1,18 @@
 # Changelog
 
-## v1.36.11-rc0
-The Model Selector was a plot of the benchmark-scored few; it becomes a complete model list that only plots the scored ones.
+## v1.36.11
+The Model Selector becomes a complete model list that only plots the benchmark-scored ones.
 
-- **Model Selector lists every OpenRouter model.** The table now covers the full catalog, not just the benchmark-scored models: everything is searchable. A model without performance data appears as one row at the OpenRouter catalog list price, quality `-`, sorted below the scored models; the plot still shows only models with benchmark scores. Selecting such a row loads that model's real provider lists on demand (one cached call), turning it into the normal per-provider rows with "Use this model now" and Auto/Exact routing. Nothing extra is fetched up front: the list rows come from the catalog call the view already made.
-- **Searching the Model Selector highlights instead of deleting.** Typing in the search box no longer removes dots from the chart: the whole field stays put and matching dots get a ring, so the axes and the Pareto stars never shift while you type. Pressing Enter in the box selects the best match - halo, detail card and scroll included, like the VS Code quickpick.
-- **One search function in both Webviews.** The Model Selector's search box and the Model Settings model dropdown now share a single matcher (quickpick-style: substring, then type-skip matching, so `dskv4` finds `deepseek/...-v4...`). Previously the dropdown ran the dropdown library's own typo-tolerant search and the selector a hand-rolled one.
-- **Model Selector filters for what Copilot actually uses.** Two checkboxes narrow the list and the plot together: **tool-calling** (on by default - agent mode cannot work without it) and **image input** (off - opt in when you paste screenshots). They are view filters, not add gates: uncheck one and its models are back, listed and addable as before.
-- **Model Selector columns are sortable.** Click a header to order the model blocks by name, price, context, latency, throughput or quality (click again to reverse, again to reset to best-quality-first). Providers inside a block always stay cheapest-first - pick the block, then scan its few providers by our calculated price.
+- **Model Selector lists every OpenRouter model.** Everything is searchable; a model without benchmark data shows one row at catalog price with quality `-`. Selecting it loads its provider rows as before.
+- **Searching highlights instead of deleting.** The chart keeps all its dots while you type; matches get a ring, Enter picks the best one.
+- **One search in both Webviews.** Model Selector and the Model Settings dropdown now share the same typo-tolerant matcher: `dskv4` finds `deepseek/...-v4`.
+- **Tool-calling and image-input filters.** Two checkboxes narrow list and plot. Tool-calling is on by default, image input off.
+- **Sortable columns.** Click a header to order models by name, price, context, latency, throughput or quality; click again to reverse.
+- **OpenRouter no longer goes red on one slow probe.** Health now uses a small key check instead of the ~1 MB catalog download; a failing catalog is only a yellow warning. Any transient probe failure keeps the last good reading for three polls.
+- **OpenRouter models stay in the Model Picker when the catalog download fails.** The last good catalog carries the picker until the next success.
+- **A model OpenRouter removed is marked on the Dashboard.** Red marker, "not on OpenRouter anymore", tooltip points to the Model Selector for a replacement.
+- **The custom headers box masks its input like the API key box.** Format errors still show live under the box, and a rejected paste is called out as possibly truncated.
+- **Big-output models no longer squeeze the prompt.** Any newly added model with an output budget over 16k gets an Output Length menu (halving steps down to 16384) with a default near 10% of the window, so a 131k output cap on a 262k model no longer reserves all the space for replies. This includes preset budgets from `model-configs/`, which are now re-fitted to the context window the server actually reports.
 
 ## v1.36.10
 minor UI improvement:

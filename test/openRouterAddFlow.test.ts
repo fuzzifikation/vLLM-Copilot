@@ -194,7 +194,9 @@ describe('runOpenRouterAddFlow', () => {
         vllmModelId: 'nvidia/nemotron-3.5-lightning:free',
         server: 'openrouter',
         // Auth + URL live on the registry entry; the model only refs it.
-        maxOutputTokens: 65536,
+        // Offered 65536 on a 1M window > 16384 floor → auto-generated Output
+        // length ladder, head = rung closest to 10% of window (65536).
+        maxOutputTokens: [65536, 32768, 16384],
         capabilities: { toolCalling: true, imageInput: false },
       }),
     );

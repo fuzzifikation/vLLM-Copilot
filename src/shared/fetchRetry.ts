@@ -202,3 +202,21 @@ export async function fetchWithRetry(
   // exhaustiveness filler (CR-68).
   throw new Error(`Request failed after ${MAX_ATTEMPTS} attempts: ${lastError}`);
 }
+
+/**
+ * The transport code behind a failed `fetch`: Node/undici puts the
+ * connect-failure code (`ECONNREFUSED`, `ENOTFOUND`, ...) on `cause.code`;
+ * fall back to the error name (`TimeoutError` for an abort deadline) when
+ * there is none. Shared by every surface that must tell a conclusive
+ * connect-death from a grumpy timeout — the metrics engine's offline
+ * verdict and the OpenRouter key probe.
+ */
+export function transportErrorCode(err: unknown): string {
+  const chain: unknown[] = [err];
+  if (err instanceof Error && err.cause) chain.push(err.cause);
+  for (const link of chain) {
+    const code = (link as { code?: unknown }).code;
+    if (typeof code === 'string') return code;
+  }
+  return err instanceof Error ? err.name : 'UnknownTransportError';
+}

@@ -573,7 +573,7 @@ flowchart TD
     TICK[vllmMetrics tick replays its own relay /v1/models] --> NOR
     TICK --> EP[getOpenRouterModelEndpointsCached]
     SSV[serverSettings provider dropdown] --> EP
-    TICK --> ACC[fetchOpenRouterAccount + Credits, one private body]
+    TICK --> ACC[probeOpenRouterKey + fetchOpenRouterCredits, one private probe body]
     RB[requestBuilder: pin = body provider.only, mode = wire-id suffix] --> DUAL[dual-id feeds usage keying]
     EXT[settings listener .servers/.models + Test and Refresh finally] -->|resetOpenRouterCaches| CAT
 ```

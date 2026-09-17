@@ -3,7 +3,14 @@ import type { ModelConfig, ServerType } from '../state/config.js';
 import { buildEndpoint } from '../state/config.js';
 import { describeError } from '../provider/messageConverter.js';
 import { MissingContextWindowError, resolveRuntimeLimits } from '../backends/runtimeLimits.js';
-import { isValidContextWindow } from '../shared/tokenBudget.js';
+import {
+  buildOutputLengthLadder,
+  fitOutputBudgetToWindow,
+  isValidContextWindow,
+  OUTPUT_TOKEN_CAP,
+  OUTPUT_TOKEN_FACTOR,
+  type OutputBudgetValue,
+} from '../shared/tokenBudget.js';
 import { autoConfigureOpenRouterModel } from '../backends/openRouter.js';
 import { fetchRemotePreset } from './presetRemote.js';
 import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig, presetBlobUrl } from './presets.js';
@@ -52,10 +59,6 @@ interface VllmModelInfo {
 
 // ---- Public API ----
 
-/** Max tokens computed by auto-configure output factor. */
-const OUTPUT_TOKEN_FACTOR = 0.1;
-/** Hard cap on auto-configured output tokens (Qwen3.6 recommends 81920 for complex tasks). */
-const OUTPUT_TOKEN_CAP = 81920;
 /**
  * Strict context resolution with one metadata-gap exception: the requested
  * model exists in `/v1/models`, but its entry has no positive max_model_len.
@@ -101,8 +104,12 @@ export interface AutoConfigResult {
   modelConfig: ModelConfig;
   /** Human-readable summary of what was discovered. */
   summary: string[];
-  /** Suggested max-output token count, derived from server context window. */
-  suggestedMaxOutputTokens?: number;
+  /**
+   * Suggested output budget derived from the server's LIVE context window: a
+   * halving Output length ladder (vector) when the safe budget is large enough
+   * to want a menu, else a scalar. See `buildOutputLengthLadder`.
+   */
+  suggestedMaxOutputTokens?: OutputBudgetValue;
   /**
    * Set only when the config came from the "Use Preset" branch (bundled or
    * remote preset file name). The Add/Auto-configure flows use it to skip the
@@ -155,7 +162,7 @@ async function autoConfigureModel(
     }
     hfBase = vllmInfo?.root ?? undefined;
   }
-  let suggestedMaxOutputTokens: number | undefined;
+  let suggestedMaxOutputTokens: OutputBudgetValue | undefined;
   // Context resolution is MANDATORY — no context, no model (strict policy).
   // The resolver THROWS a backend-specific message (endpoint, field, fix) when the
   // model can't be served; propagating it prevents saving an unusable model.
@@ -170,11 +177,17 @@ async function autoConfigureModel(
   const limits = await resolveLimitsOrAskManually(modelId, serverType, serverUrl, requestHeaders, configuredContextWindow);
   if (!limits.fromServer) modelConfig.contextWindow = limits.contextWindow;
   summary.push(`Context window (${serverType}): ${limits.contextWindow.toLocaleString('en-US')} tokens${limits.fromServer ? '' : ' - manual fallback, server reports none'}`);
-  suggestedMaxOutputTokens = Math.min(
+  const safeOutputBudget = Math.min(
     Math.floor(limits.contextWindow * OUTPUT_TOKEN_FACTOR),
     OUTPUT_TOKEN_CAP
   );
-  summary.push(`Suggested max output tokens: ${suggestedMaxOutputTokens.toLocaleString('en-US')}`);
+  // Large safe budgets become an Output length ladder (head = default near 10%
+  // of the window, lower rungs selectable) instead of one fixed reservation,
+  // same policy the OpenRouter catalog path applies — see tokenBudget.ts.
+  suggestedMaxOutputTokens = buildOutputLengthLadder(safeOutputBudget, limits.contextWindow) ?? safeOutputBudget;
+  summary.push(Array.isArray(suggestedMaxOutputTokens)
+    ? `Output lengths: ${suggestedMaxOutputTokens.map(n => n.toLocaleString('en-US')).join(', ')} tokens (default first)`
+    : `Suggested max output tokens: ${suggestedMaxOutputTokens.toLocaleString('en-US')}`);
 
   // Use the base HF repo (root) for HF lookups — quantized variants (e.g. `qwen3.6-27b-fp8`)
   // don't exist on HF; only the base model (`Qwen/Qwen3.6-27B`) does.
@@ -459,12 +472,27 @@ async function resolveModelConfigForAdd(
       // persist the fallback whenever the value did not come from the server.
       const merged = mergePresetWithUserConfig(preset.config, userConfig);
       if (!limits.fromServer) merged.contextWindow = limits.contextWindow;
+      // Host-reality fit: a preset's declared `maxOutputTokens` encodes the
+      // OFFICIAL model card (e.g. 128k output on a 1M-window model), but this
+      // server may host a far smaller window — the declared budget would then
+      // advertise almost nothing for the prompt. Fit it against the LIVE
+      // window: menus whose every rung fits survive verbatim, everything else
+      // is rebuilt as a halving ladder with a default near 10% of the window
+      // (see fitOutputBudgetToWindow).
+      const presetBudget = merged.maxOutputTokens;
+      const fittedBudget = fitOutputBudgetToWindow(presetBudget, limits.contextWindow);
+      const budgetRefitted = JSON.stringify(fittedBudget) !== JSON.stringify(presetBudget);
+      if (budgetRefitted) merged.maxOutputTokens = fittedBudget;
+      const summaryLines = [
+        `Using preset ${preset.sourceFile}. Modes: ${modeNames}.`,
+        `Context window (${serverType}): ${limits.contextWindow.toLocaleString('en-US')} tokens${limits.fromServer ? '' : ' - manual fallback, server reports none'}`,
+      ];
+      if (budgetRefitted) {
+        summaryLines.push(`Preset output budget ${JSON.stringify(presetBudget)} does not fit this server's window - using ${JSON.stringify(fittedBudget)} instead.`);
+      }
       return {
         modelConfig: merged,
-        summary: [
-          `Using preset ${preset.sourceFile}. Modes: ${modeNames}.`,
-          `Context window (${serverType}): ${limits.contextWindow.toLocaleString('en-US')} tokens${limits.fromServer ? '' : ' - manual fallback, server reports none'}`,
-        ],
+        summary: summaryLines,
         presetFile: preset.sourceFile,
       };
     }

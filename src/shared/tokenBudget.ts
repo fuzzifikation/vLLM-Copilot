@@ -63,6 +63,74 @@ export function resolveOutputBudgetScalar(value: OutputBudgetValue | undefined):
   return resolveOutputLengthVector(value)?.[0];
 }
 
+/**
+ * Output-budget policy constants, shared by every add path (OpenRouter catalog,
+ * HuggingFace auto-discovery, preset/model-config application). The former
+ * twin copies in `backends/openRouter.ts` and `commands/hfDiscovery.ts` claimed
+ * an import cycle as their excuse; this module imports nothing, so there was
+ * never one. If the convention changes, it changes HERE.
+ */
+export const OUTPUT_TOKEN_FACTOR = 0.1;
+export const OUTPUT_TOKEN_CAP = 81920;
+/** Lowest rung of the auto-generated Output length ladder (see buildOutputLengthLadder). Internal to this module's policy. */
+const OUTPUT_MENU_FLOOR = 16384;
+
+/**
+ * Build the Output length ladder for a model whose offered output budget is
+ * large enough to starve the prompt: halve the offered value down stepwise to
+ * `OUTPUT_MENU_FLOOR` (131072 -> 131072, 65536, 32768, 16384).
+ *
+ * The HEAD is the rung closest to 10% of the context window, because the head
+ * is the advertised/default budget and VS Code derives prompt space as
+ * window - output: a 262k-window model offering 131k output advertises 32k by
+ * default instead of reserving 131k for output, freeing ~229k for the prompt.
+ * The remaining rungs follow in descending order and all stay selectable —
+ * discovery scales the menu by the vector's MAX, not the head. Returns
+ * undefined when the offered value is at or below the floor: small models
+ * keep the plain scalar budget and render no menu, exactly as before.
+ */
+export function buildOutputLengthLadder(offered: number, contextWindow: number): number[] | undefined {
+  if (offered <= OUTPUT_MENU_FLOOR) return undefined;
+  const rungs: number[] = [];
+  for (let v = offered; v > OUTPUT_MENU_FLOOR; v = Math.floor(v / 2)) rungs.push(v);
+  rungs.push(OUTPUT_MENU_FLOOR);
+  const target = contextWindow * OUTPUT_TOKEN_FACTOR;
+  const head = rungs.reduce((best, v) => (Math.abs(v - target) < Math.abs(best - target) ? v : best), rungs.at(0)!);
+  return [head, ...rungs.filter(v => v !== head)];
+}
+
+/**
+ * Fit a declared output budget (preset/model-config scalar or menu) to the
+ * context window the server ACTUALLY reports. Preset budgets encode the
+ * official model card (e.g. 128k output on a 1M-window model); an IT department
+ * hosting that model at 131k would advertise an output budget that leaves the
+ * prompt under 10% of the window. Rules:
+ *   - A budget is trusted when it leaves >= 10% of the window for the prompt
+ *     (same trust line the OpenRouter catalog path applies to reported caps).
+ *   - An author-declared menu whose EVERY rung fits is kept verbatim — a
+ *     curated menu is intent, not a guess.
+ *   - Everything else (a scalar, or a menu with at least one unfitting rung)
+ *     is rebuilt from the largest fitting rung, or from the safe 10%-capped
+ *     budget when none fit, as a halving ladder — so the add path always ends
+ *     with a default near 10% of the live window and the large rungs stay
+ *     selectable above it.
+ * `undefined` passes through (no declared budget, runtime default applies).
+ */
+export function fitOutputBudgetToWindow(
+  declared: OutputBudgetValue | undefined,
+  contextWindow: number,
+): OutputBudgetValue | undefined {
+  if (declared === undefined) return undefined;
+  const trustLine = contextWindow * (1 - OUTPUT_TOKEN_FACTOR);
+  if (Array.isArray(declared) && declared.every(v => v < trustLine)) return declared;
+  const values = Array.isArray(declared) ? declared : [declared];
+  const fitting = values.filter(v => v < trustLine);
+  const offered = fitting.length > 0
+    ? Math.max(...fitting)
+    : Math.min(Math.floor(contextWindow * OUTPUT_TOKEN_FACTOR), OUTPUT_TOKEN_CAP);
+  return buildOutputLengthLadder(offered, contextWindow) ?? offered;
+}
+
 export interface TokenBudget {
   /** The total context window (input + output) used for derivation. */
   maxModelLen: number;

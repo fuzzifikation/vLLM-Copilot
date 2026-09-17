@@ -73,7 +73,9 @@ export function parseHeadersInput(raw: string): { headers: Record<string, string
     }
   }
 
-  return { error: 'Headers must be JSON like {"X-API-Key":"..."} or lines like X-API-Key: value' };
+  // The box is masked (password: true), so this message is the user's only
+  // feedback: name the likeliest blind-paste failure (truncation) up front.
+  return { error: 'Could not parse - the paste may be truncated or corrupted. Format: {"X-API-Key":"..."} or lines like X-API-Key: value' };
 }
 
 /** Repair a malformed JSON string; returns undefined if repair itself throws. */
@@ -136,11 +138,17 @@ export async function promptForServerAuth(options: {
   // reachable". Skipping is still possible via Escape (returns `undefined`) or
   // Enter on empty (returns `''`) — both mean "no custom headers" and must NOT
   // abort the whole Add flow.
+  // `password: true` like the key box: header values are credentials too
+  // (proxy secrets, client secrets) and must not sit in clear text while
+  // shoulder-surfers lurk. Masked text makes typos invisible, so validation
+  // feedback is the user's only eyes here: parse errors (and `jsonrepair`'s
+  // corrected form) surface live under the box via validateInput below.
   const headersInput = await vscode.window.showInputBox({
     title: options.headersTitle,
     prompt: options.headersPrompt,
     placeHolder: options.headersPlaceholder,
     ignoreFocusOut: true,
+    password: true,
     validateInput: (v) => {
       const r = parseHeadersInput(v);
       return 'error' in r ? r.error : undefined;

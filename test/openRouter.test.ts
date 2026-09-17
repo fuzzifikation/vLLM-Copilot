@@ -185,6 +185,31 @@ describe('normalizeOpenRouterModel', () => {
     expect(headroom.runtimeLimits).toEqual({ contextWindow: 1048576, maxOutputTokens: 384000 });
   });
 
+  it('builds an Output length ladder when the offered output squeezes the prompt', () => {
+    // The reported-cap path preserved the scalar (correct), but advertising
+    // 131072 output on a 262144 window left only ~131k for the prompt.
+    // The ladder's head (default/advertised budget) is the rung closest to
+    // 10% of the window; higher rungs stay selectable above it.
+    const squeezed = normalizeModelViaCatalog(
+      { id: 'big/out', context_length: 262144, top_provider: { context_length: 262144, max_completion_tokens: 131072 } },
+      'x',
+    );
+    expect(squeezed.runtimeLimits).toEqual({ contextWindow: 262144, maxOutputTokens: 131072 });
+    expect(squeezed.outputLengthVector).toEqual([32768, 131072, 65536, 16384]);
+
+    // Non-power-of-two offered value halves down and ends at the exact floor.
+    const odd = normalizeModelViaCatalog(
+      { id: 'odd/out', context_length: 262144, top_provider: { context_length: 262144, max_completion_tokens: 128000 } },
+      'x',
+    );
+    expect(odd.outputLengthVector).toEqual([32000, 128000, 64000, 16384]);
+  });
+
+  it('keeps a plain scalar budget (no ladder) when offered output is at/below 16384', () => {
+    const small = normalizeModelViaCatalog(base, 'deepseek/deepseek-chat');
+    expect(small.outputLengthVector).toBeUndefined();
+  });
+
   it('derives estimated per-1M USD rates from per-token pricing strings', () => {
     const info = normalizeModelViaCatalog(base, 'x');
     expect(info.cost).toEqual({
@@ -546,13 +571,48 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
     expect(a.map((m) => m.id)).toContain('openai/gpt-4');
   });
 
-  it('a failed catalog is never memoized: the next call re-fetches live', async () => {
+  it('a failed catalog on a COLD start (no snapshot yet) is never memoized: the next call re-fetches live', async () => {
     const spy = mockCatalogFetch();
     spy.mockRejectedValueOnce(new Error('boom'));
     spy.mockRejectedValueOnce(new Error('boom')); // fetchWithRetry's second attempt
     await expect(fetchOpenRouterCatalog()).rejects.toThrow();
     spy.mockImplementation(() => Promise.resolve(catalogResponse()));
     await expect(fetchOpenRouterCatalog()).resolves.toHaveLength(5);
+  });
+
+  it('a failed revalidation serves the LAST SUCCESSFUL catalog (stale-if-error keeps the picker populated)', async () => {
+    // Canary (user report 2026-09-17, shipped 1.36.10): one grumpy catalog
+    // download dropped EVERY OpenRouter model from the Copilot picker. Once a
+    // snapshot exists, a failed refresh must serve it stale — hours-old truth
+    // beats a "no models" lie; a genuinely removed model still drops on the
+    // next successful fetch.
+    const spy = mockCatalogFetch();
+    await expect(fetchOpenRouterCatalog()).resolves.toHaveLength(5);
+    const realNow = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(realNow + 61_000); // past the memo TTL
+    try {
+      spy.mockRejectedValueOnce(new Error('boom'));
+      spy.mockRejectedValueOnce(new Error('boom')); // fetchWithRetry's second attempt
+      await expect(fetchOpenRouterCatalog()).resolves.toHaveLength(5);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('resetOpenRouterCaches drops the stale snapshot: an explicit refresh reports the failure honestly', async () => {
+    // Test & Refresh must never silently "succeed" on hours-old data.
+    const spy = mockCatalogFetch();
+    await expect(fetchOpenRouterCatalog()).resolves.toHaveLength(5);
+    const realNow = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(realNow + 61_000);
+    try {
+      resetOpenRouterCaches();
+      spy.mockRejectedValueOnce(new Error('boom'));
+      spy.mockRejectedValueOnce(new Error('boom'));
+      await expect(fetchOpenRouterCatalog()).rejects.toThrow();
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });
 

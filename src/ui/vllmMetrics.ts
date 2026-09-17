@@ -16,10 +16,10 @@
 
 import * as vscode from 'vscode';
 import { buildEndpoint, normalizeServerUrl, sanitizeRequestHeaders, type ServerType } from '../state/config.js';
-import { buildRequestHeaders } from '../shared/fetchRetry.js';
+import { buildRequestHeaders, transportErrorCode } from '../shared/fetchRetry.js';
 import { resolveRuntimeLimits } from '../backends/runtimeLimits.js';
 import {
-  fetchOpenRouterAccount,
+  probeOpenRouterKey,
   fetchOpenRouterCredits,
   getOpenRouterModelEndpointsCached,
   normalizeOpenRouterFromCatalog,
@@ -89,6 +89,15 @@ export interface ServerMetrics {
   preemptions: number | null;
   evictions: number | null;
   error?: string;
+  /**
+   * Warning shown while still `online`, from either source: a HELD snapshot
+   * (the tick debounce re-publishes the last good metrics after inconclusive
+   * probe failures, see {@link OFFLINE_CONFIRM_TICKS}), or degraded OpenRouter
+   * relay DATA (the catalog probe failed while the key probe kept the node
+   * reachable — the relay answers, its catalog sulked). The dashboard renders
+   * a yellow dot with this note, never red Offline.
+   */
+  staleError?: string;
   /** Per-model context window (non-vLLM only, resolved lazily + cached). modelId → window. */
   contextByModel?: Record<string, number>;
   /**
@@ -105,6 +114,16 @@ export interface ServerMetrics {
   /** OpenRouter per-model provider lists from `GET /api/v1/models/{id}/endpoints`
    *  (relay nodes). modelId → providers with per-1M pricing, matched by tag. */
   providersByModel?: Record<string, OpenRouterModelEndpoint[]>;
+  /**
+   * OpenRouter relay: configured wire model ids ABSENT from the catalog this
+   * tick parsed successfully — OpenRouter no longer lists them (renamed or
+   * removed upstream), so chat requests to these ids will fail and the
+   * picker already dropped them. Set only when this tick's catalog was
+   * parsed cleanly (absence against a failed/stale download proves nothing);
+   * cleared automatically on any catalog data gap. The dashboard flags those
+   * model nodes instead of letting a dead id smile from the tree.
+   */
+  missingModels?: string[];
 }
 
 // Raw parsed data from /metrics — richer than ServerMetrics
@@ -370,6 +389,30 @@ function parseLabels(raw: string | undefined): Record<string, string> {
  */
 const DEFAULT_POLL_MS = 15000;
 
+/** Classification of an OFFLINE verdict — decides whether the engine may hold
+ *  the last good reading instead of painting a healthy server red:
+ *  - `answered`: the probe returned an HTTP status. The server is by
+ *    definition REACHABLE (a 429 literally means "alive, rate-limited"); an
+ *    offline verdict from a status code is never a death certificate.
+ *  - `dead`: the request failed with a conclusive transport code (connection
+ *    refused, unknown host) — nothing is listening at that address.
+ *  - `transient`: failed without an answer but inconclusively (cycle timeout,
+ *    socket reset) — grumpiness, not death. */
+type OfflineKind = 'answered' | 'dead' | 'transient';
+
+/** Consecutive inconclusive failed ticks the engine holds the last good
+ *  reading before conceding Offline (~45 s at the default 15 s poll). Without
+ *  this debounce, ONE slow or rate-limited probe of the fat `/v1/models`
+ *  catalog (OpenRouter, ~1 MB, routinely over the 5 s cycle deadline while
+ *  chat works fine) replaced a healthy dashboard with red "Offline" and
+ *  wiped every model row (user report 2026-09-17). */
+const OFFLINE_CONFIRM_TICKS = 3;
+
+/** Transport codes that ARE a conclusive death certificate: nothing accepts
+ *  connections at that address, or the name does not resolve. These go Offline
+ *  immediately; every other no-answer failure is debounced like a timeout. */
+const DEAD_TRANSPORT_CODES = new Set(['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ENETDOWN', 'EADDRNOTAVAIL', 'ENOTFOUND']);
+
 /**
  * Polling engine for a single vLLM server.
  *
@@ -386,6 +429,10 @@ class ServerMetricsEngine {
   /** Whether a fetch cycle is currently running — `tick()` reschedules itself in
    *  its `finally`, so a second concurrent cycle would spawn a second timer chain. */
   private inFlight = false;
+  /** Consecutive inconclusive offline ticks currently held against the last
+   *  good reading (see {@link OFFLINE_CONFIRM_TICKS}). Any published result —
+   *  online, or a confirmed offline — resets it. */
+  private transientOfflineTicks = 0;
   private _lastAggregated: ServerMetrics | null = null;
   private _lastRaw: ServerRawData | null = null;
   /** Epoch ms of the last cache fill (`_lastAggregated`/`_lastRaw`), 0 before
@@ -589,9 +636,34 @@ class ServerMetricsEngine {
     this.inFlight = true;
 
     try {
-      const { aggregated, raw } = await fetchAllEndpoints(this.serverUrl, this.requestHeaders, this.serverType);
+      const { aggregated, raw, offlineKind } = await fetchAllEndpoints(this.serverUrl, this.requestHeaders, this.serverType);
 
       if (this._disposed) return;
+
+      // A failed probe is NOT a death certificate. An inconclusive offline
+      // verdict (HTTP 429/5xx answer, timeout, socket reset) must not wipe a
+      // healthy reading over one bad tick — the OpenRouter relay routinely
+      // fails the fat catalog probe for a cycle or two while chat works
+      // fine. Hold and re-publish the last good reading, stale-flagged, until
+      // the verdict is confirmed. Conclusive transport death
+      // (`offlineKind === 'dead'`) and the first-ever observation pass
+      // straight through.
+      if (!aggregated.online && offlineKind !== 'dead' && this._lastAggregated?.online) {
+        this.transientOfflineTicks++;
+        if (this.transientOfflineTicks < OFFLINE_CONFIRM_TICKS) {
+          const held: ServerMetrics = {
+            ...this._lastAggregated,
+            staleError: `${aggregated.error ?? 'connection check failed'} - showing last known good data`,
+          };
+          this._lastAggregated = held;
+          const heldRaw = this._lastRaw ?? raw;
+          for (const cb of [...this.callbacks]) {
+            try { cb(held, heldRaw); } catch { /* subscriber error — best-effort */ }
+          }
+          return;
+        }
+      }
+      this.transientOfflineTicks = 0;
 
       // Resolve the per-backend context window(s), only for non-vLLM backends
       // and only while the server is online. A loaded model's context window is
@@ -678,6 +750,19 @@ class ServerMetricsEngine {
           }
         }
         if (Object.keys(contextByModel).length > 0) aggregated.contextByModel = contextByModel;
+      }
+
+      // Missing-model marker: a configured wire id absent from THIS tick's
+      // cleanly parsed catalog is OpenRouter's own statement that the id is
+      // gone (renamed or removed). Absence is only an accusation when the
+      // catalog itself answered: `online` with no data note means the
+      // response arrived and parsed, so `raw.models` is the live listing.
+      // On any catalog gap the flag stays unset — a sulked download must
+      // never accuse 400 healthy models of dying.
+      if (this.serverType === 'openrouter' && aggregated.online && aggregated.staleError === undefined && this.modelIds.length > 0) {
+        const listed = new Set(raw.models.map((m) => m.id));
+        const missing = this.modelIds.filter((id) => !listed.has(id));
+        if (missing.length > 0) aggregated.missingModels = missing;
       }
 
       // OpenRouter relay: per-model provider pricing from
@@ -894,20 +979,20 @@ async function fetchAllEndpoints(
   serverUrl: string,
   requestHeaders: Record<string, string>,
   serverType: ServerType = 'vllm',
-): Promise<{ aggregated: ServerMetrics; raw: ServerRawData }> {
+): Promise<{ aggregated: ServerMetrics; raw: ServerRawData; offlineKind?: OfflineKind }> {
   const baseUrl = serverUrl.replace(/\/+$/, '');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   const headers = buildRequestHeaders(undefined, requestHeaders);
 
-  // OpenRouter relay: account/key health via `GET /api/v1/key`. Fired
-  // CONCURRENTLY with the endpoint fetches — it has its own timeout and must
-  // never stall the metrics cycle behind a slow /api/v1/key. Fails silently
-  // (bad/missing key, transient) → undefined → the dashboard hides the account
-  // rows rather than fabricating credits. Same for the account budget
-  // (`GET /api/v1/credits`), fired alongside.
-  const accountPromise = serverType === 'openrouter'
-    ? fetchOpenRouterAccount(requestHeaders)
+  // OpenRouter relay: the authenticated key probe (`GET /api/v1/key`) is the
+  // relay's HEALTH signal and the account row source. Fired CONCURRENTLY with
+  // the endpoint fetches — it has its own timeout and must never stall the
+  // metrics cycle. It replaced the fat catalog as the verdict source: any
+  // HTTP answer means the relay is reachable (see the Online check). The
+  // account budget (`GET /api/v1/credits`) rides along, display-only.
+  const keyProbePromise = serverType === 'openrouter'
+    ? probeOpenRouterKey(requestHeaders)
     : Promise.resolve(undefined);
   const creditsPromise = serverType === 'openrouter'
     ? fetchOpenRouterCredits(requestHeaders)
@@ -919,17 +1004,22 @@ async function fetchAllEndpoints(
   // 404 / don't exist, so probing them is pointless. /v1/models doubles as the
   // reachability probe for those backends (chat already relies on it).
   const isVllm = serverType === 'vllm';
+  // Probe transport sink: records the error code when a probe fetch itself
+  // fails, so an offline verdict can separate a conclusive death
+  // (ECONNREFUSED/ENOTFOUND) from a timeout. Both probe candidates report
+  // here; the first failure wins.
+  const probeTransport: { code?: string } = {};
   const [healthRes, v1ModelsRes, versionText, metricsText, loadText] = isVllm
     ? await Promise.all([
-        safeFetch(buildEndpoint(baseUrl, 'health'), { signal: controller.signal, headers }),
-        safeFetch(buildEndpoint(baseUrl, 'v1/models'), { signal: controller.signal, headers }),
+        safeFetch(buildEndpoint(baseUrl, 'health'), { signal: controller.signal, headers }, probeTransport),
+        safeFetch(buildEndpoint(baseUrl, 'v1/models'), { signal: controller.signal, headers }, probeTransport),
         safeFetch(buildEndpoint(baseUrl, 'version'), { signal: controller.signal, headers }).then(r => r?.ok ? r.text() : ''),
         safeFetch(buildEndpoint(baseUrl, 'metrics'), { signal: controller.signal, headers }).then(r => r?.ok ? r.text() : ''),
         safeFetch(buildEndpoint(baseUrl, 'load'), { signal: controller.signal, headers }).then(r => r?.ok ? r.text() : ''),
       ])
     : await Promise.all([
         Promise.resolve(new Response(null, { status: 404 })), // no /health for non-vLLM
-        safeFetch(buildEndpoint(baseUrl, 'v1/models'), { signal: controller.signal, headers }),
+        safeFetch(buildEndpoint(baseUrl, 'v1/models'), { signal: controller.signal, headers }, probeTransport),
         Promise.resolve(''), // no /version
         Promise.resolve(''), // no /metrics
         Promise.resolve(''), // no /load
@@ -1005,6 +1095,24 @@ async function fetchAllEndpoints(
     serverLoad = loadData?.server_load;
   }
 
+  // ── OpenRouter relay probes — awaited BEFORE the verdict: for a relay the
+  // key probe IS the health signal (see Online check), so the verdict waits
+  // for it. The endpoint fetches above ran in parallel, never a serial stall.
+  // The 2 s cap stays: a probe slower than the poll interval is worthless for
+  // freshness, and the catalog fetch doubles as the second reachability
+  // witness when the cap beats the key probe. (Neither probe ever rejects.)
+  const [keyProbe, credits] = await Promise.all([
+    Promise.race([
+      keyProbePromise,
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
+    ]),
+    Promise.race([
+      creditsPromise,
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
+    ]),
+  ]);
+  const account = keyProbe?.data;
+
   // ── Online check ──
   // vLLM documents `/health`; LM Studio, llama.cpp, and Ollama do not (their
   // OpenAI-compatible `/v1/models` is the reachability signal, and it's the
@@ -1021,37 +1129,59 @@ async function fetchAllEndpoints(
   // while chat worked fine. Any other `/health` status stays a real verdict
   // (503 = vLLM itself says it is sick; 401 = the proxy is guarding it).
   const relayOnline = isVllm && healthRes?.status === 404 && v1ModelsRes?.ok === true;
-  // A reachable OpenRouter relay that returns a malformed catalog is NOT a
-  // healthy server — report it as an error instead of an online empty catalog.
-  const online = isVllm ? (probeOk || relayOnline) : (probeOk && !malformedOpenRouterCatalog);
+  // OpenRouter relay: the SMALL AUTHENTICATED key probe owns the verdict. It
+  // costs a few hundred bytes and proves exactly the claim the node makes —
+  // "reachable, with THIS entry's credential" — while the ~1 MB public
+  // catalog is DATA, never health: it only corroborates reachability when it
+  // answers itself. Any HTTP status is an answer: 200 alive, 401
+  // alive-but-your-key-is-dead, 429 alive-and-telling-you-to-wait. (Live
+  // 2026-09-17: the catalog blew the 5 s cycle deadline repeatedly while chat
+  // worked fine — judging the relay by it painted a living OpenRouter
+  // Offline, user report on shipped 1.36.10.)
+  const isRelay = serverType === 'openrouter';
+  const relayReachable = keyProbe?.responded === true || v1ModelsRes !== null;
+  const online = isVllm
+    ? (probeOk || relayOnline)
+    : isRelay
+      ? relayReachable
+      : probeOk;
   const errorStr = online
     ? undefined
-    : malformedOpenRouterCatalog
-      ? `OpenRouter /v1/models returned a malformed catalog (expected { data: [...] })`
-      : !probeRes
-        ? 'Cannot connect'
-        : isVllm
-          ? `Health check failed: ${probeRes.status}`
-          : `${serverType} /v1/models failed: ${probeRes.status}`;
+    : !probeRes
+      ? 'Cannot connect'
+      : isVllm
+        ? `Health check failed: ${probeRes.status}`
+        : `${serverType} /v1/models failed: ${probeRes.status}`;
+  // Relay DATA health rides separately from relay HEALTH: a catalog that
+  // failed, answered an error, or came back malformed keeps the node online
+  // (the relay DID answer) and notes itself — the dashboard renders the
+  // yellow stale warning instead of a false death verdict.
+  let relayDataNote: string | undefined;
+  if (online && isRelay) {
+    if (malformedOpenRouterCatalog) {
+      relayDataNote = 'OpenRouter /v1/models returned a malformed catalog (expected { data: [...] })';
+    } else if (!v1ModelsRes) {
+      relayDataNote = 'OpenRouter catalog fetch failed - model data may be stale';
+    } else if (!v1ModelsRes.ok) {
+      relayDataNote = `OpenRouter catalog fetch answered HTTP ${v1ModelsRes.status}`;
+    }
+  }
+  // Classify the offline verdict for the engine's hold/debounce decision.
+  // Any HTTP answer proves reachability (a 429 literally means "alive, rate
+  // limited"); only a no-answer failure carrying a conclusive transport code
+  // is treated as death. Both witnesses report their transport codes.
+  // See {@link OfflineKind}.
+  const offlineKind: OfflineKind | undefined = online
+    ? undefined
+    : (probeRes !== null || keyProbe?.responded === true)
+      ? 'answered'
+      : (keyProbe?.transportCode !== undefined && DEAD_TRANSPORT_CODES.has(keyProbe.transportCode))
+        || (probeTransport.code !== undefined && DEAD_TRANSPORT_CODES.has(probeTransport.code))
+        ? 'dead'
+        : 'transient';
 
   // ── Health body (for deep-dive) — text already read under the deadline above. ──
   const healthBody = online && healthRes?.ok ? healthResText : undefined;
-
-  // ── OpenRouter relay: account/key health + budget (awaited here so the
-  // ── endpoint fetches above ran in parallel — never a serial stall). The probes
-  // are display-only and re-run every tick, so a late/slow result is worthless:
-  // bound them below the poll interval so a hung endpoint can't stretch the
-  // cadence. (The probes never reject — they return undefined on failure.)
-  const [account, credits] = await Promise.all([
-    Promise.race([
-      accountPromise,
-      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
-    ]),
-    Promise.race([
-      creditsPromise,
-      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
-    ]),
-  ]);
 
   // ── Build ServerMetrics (aggregated, for dashboard) ──
   const parser = new MetricsParser();
@@ -1064,7 +1194,7 @@ async function fetchAllEndpoints(
   // "Loading" spinner and the red "Offline" never appears (CR-25 fixed the
   // placeholder, this path inherited the sentinel by reuse).
   const serverMetrics: ServerMetrics = online
-    ? { online: true, version, ...aggregated, models: allModels, maxModelLen, account, credits }
+    ? { online: true, version, ...aggregated, models: allModels, maxModelLen, account, credits, staleError: relayDataNote }
     : { ...emptyMetrics(errorStr ?? 'Unknown error'), loading: false };
 
   // ── Build ServerRawData (raw, for deep-dive) ──
@@ -1089,7 +1219,7 @@ async function fetchAllEndpoints(
     }
   }
 
-  return { aggregated: serverMetrics, raw };
+  return { aggregated: serverMetrics, raw, offlineKind };
 }
 
 /**
@@ -1099,10 +1229,21 @@ async function fetchAllEndpoints(
  * (A synthetic `new Response(null, {status: 0})` is NOT constructible — the
  * Response constructor requires 200..599 — so a status-0 sentinel would throw
  * right back out of the catch and take the whole cycle down with it.)
+ *
+ * When a `transportSink` is passed (the probe calls), the first failed
+ * request records its error code there, so the offline verdict can tell a
+ * conclusive dead transport from a grumpy timeout — see {@link OfflineKind}.
  */
-async function safeFetch(url: string, options: RequestInit): Promise<Response | null> {
+async function safeFetch(
+  url: string,
+  options: RequestInit,
+  transportSink?: { code?: string },
+): Promise<Response | null> {
   try { return await fetch(url, options); }
-  catch { return null; }
+  catch (err) {
+    if (transportSink && transportSink.code === undefined) transportSink.code = transportErrorCode(err);
+    return null;
+  }
 }
 
 /** Build the dashboard's pre-first-poll placeholder (a loading sentinel, not

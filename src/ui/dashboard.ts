@@ -139,8 +139,13 @@ class ServerTreeItem extends vscode.TreeItem {
     // Painting it red "Offline" made every healthy server announce its own
     // death for up to a full connect timeout on every dashboard show.
     const loading = metrics.loading === true && !metrics.online;
+    // A held reading (engine OFFLINE_CONFIRM_TICKS debounce): still online —
+    // the probe just failed transiently and the data is the last good
+    // snapshot. Yellow dot + tooltip warning; a green dot would hide that the
+    // probe is screaming, a red one would lie about a reachable server.
+    const stale = metrics.online && metrics.staleError !== undefined;
     const statusIcon = metrics.online
-      ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'))
+      ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor(stale ? 'charts.yellow' : 'charts.green'))
       : loading
         ? new vscode.ThemeIcon('loading~spin')
         : new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.red'));
@@ -164,7 +169,7 @@ class ServerTreeItem extends vscode.TreeItem {
     const isOpenRouterRelay = serverType === 'openrouter';
     // No "degraded" label — every backend is a first-class dashboard citizen.
     this.description = metrics.online
-      ? (isOpenRouterRelay ? openRouterFundsLabel(metrics.account, metrics.credits) : summary)
+      ? (isOpenRouterRelay ? openRouterFundsLabel(metrics.account, metrics.credits) : summary) + (stale ? ' · ⚠ data may be stale' : '')
       : loading ? 'Loading' : 'Offline';
     const modelsLine = isOpenRouterRelay ? '' : `\n*${metrics.models.join(', ') || 'no models'}*`;
     const contextLine = isOpenRouterRelay || metrics.maxModelLen == null
@@ -175,7 +180,8 @@ class ServerTreeItem extends vscode.TreeItem {
       // Evidence-based backend label: a vLLM-type server whose `/version` never
       // answered is only known to speak the OpenAI shape (the metadata-stripping
       // gateway / relay case). Claiming "vLLM" there asserts more than we probed.
-      (serverType ? `\n**Backend:** ${serverType === 'vllm' && metrics.online ? (metrics.version ? 'vLLM' : 'OpenAI-compatible') : serverType}` : '')
+      (serverType ? `\n**Backend:** ${serverType === 'vllm' && metrics.online ? (metrics.version ? 'vLLM' : 'OpenAI-compatible') : serverType}` : '') +
+      (stale ? `\n\n**Warning:** ${metrics.staleError}` : '')
     );
     // Context value encodes whether deep-dive applies: vLLM-only. Non-vLLM
     // servers expose auth/remove but not the vLLM metrics deep-dive.
@@ -317,23 +323,34 @@ class OpenRouterModelTreeItem extends vscode.TreeItem {
     effectiveOutput?: number,
     /** The constraint(s) that pushed the effective output below the configured budget. */
     clampCauses: OutputClampCause[] = [],
+    /** Configured wire id no longer listed in OpenRouter's live catalog
+     *  (renamed or removed upstream) — engine-verified, only while the
+     *  catalog data is fresh. */
+    missing = false,
   ) {
     super(modelLabel, vscode.TreeItemCollapsibleState.Collapsed);
     // Collapsed one-liner: "<Model> run by <Provider>" — the routing identity
     // tells who actually serves this model. Nothing when no provider is pinned.
-    if (providerLabel) this.description = `run by ${providerLabel}`;
+    const parts: string[] = [];
+    if (providerLabel) parts.push(`run by ${providerLabel}`);
+    if (missing) parts.push('⚠ not on OpenRouter anymore');
+    if (parts.length > 0) this.description = parts.join(' - ');
     const clamped = clampCauses.length > 0;
-    this.iconPath = clamped
-      ? new vscode.ThemeIcon('alert', new vscode.ThemeColor('charts.yellow'))
-      : new vscode.ThemeIcon('symbol-class');
+    this.iconPath = missing
+      ? new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'))
+      : clamped
+        ? new vscode.ThemeIcon('alert', new vscode.ThemeColor('charts.yellow'))
+        : new vscode.ThemeIcon('symbol-class');
     this.id = `openRouterModel:${serverId}:${modelId}`;
     // `clamped` requires at least one numeric binding cause, and every cause sets
     // `effectiveOutput` (catalog → the ceiling; provider → min with it), so the
     // narrowing below is only for the plain `effectiveOutput: number | undefined`
     // parameter type — configuredOutput is required and always present.
-    this.tooltip = clamped && effectiveOutput !== undefined
-      ? new vscode.MarkdownString(this.buildClampTooltip(modelLabel, configuredOutput, effectiveOutput, clampCauses))
-      : new vscode.MarkdownString(`${modelLabel} - click for model-level detail (provider, pricing, context, capabilities, usage).`);
+    this.tooltip = missing
+      ? new vscode.MarkdownString(`${modelLabel} - **OpenRouter no longer lists this model id.** It was renamed or removed upstream, so requests to \`${modelId}\` will fail and the Copilot picker already dropped it. Find the replacement in the Model Selector and re-add it, or remove this entry.`)
+      : clamped && effectiveOutput !== undefined
+        ? new vscode.MarkdownString(this.buildClampTooltip(modelLabel, configuredOutput, effectiveOutput, clampCauses))
+        : new vscode.MarkdownString(`${modelLabel} - click for model-level detail (provider, pricing, context, capabilities, usage).`);
     this.contextValue = 'openRouterModel';
     this.webUrl = `https://openrouter.ai/${modelId}`;
   }
@@ -1024,6 +1041,8 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
    *  description and model-level rows on expand. */
   private getRelayModelTreeItems(serverUrl: string, serverId: string): OpenRouterModelTreeItem[] {
     const models = this.getRelayModels(serverId);
+    const relayMetrics = this.subscriptions.find(s => s.serverId === serverId)?.metrics;
+    const missing = new Set(relayMetrics?.missingModels ?? []);
     const seen = new Set<string>();
     const items: OpenRouterModelTreeItem[] = [];
     for (const model of models) {
@@ -1051,9 +1070,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
       const configuredOutput = resolveModelSettings(model).maxOutputTokens;
       // Cached effective output ceiling for this relay model (inline lookup —
       // absorbed from the single-caller relayEffectiveOutput helper).
-      const catalogCeiling = this.subscriptions
-        .find(s => s.serverId === serverId)
-        ?.metrics.outputByModel?.[modelId];
+      const catalogCeiling = relayMetrics?.outputByModel?.[modelId];
       const clampCauses: OutputClampCause[] = [];
       let effectiveOutput = catalogCeiling;
       if (catalogCeiling !== undefined && catalogCeiling < configuredOutput) {
@@ -1070,7 +1087,7 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
           if (effectiveOutput === undefined || providerCap < effectiveOutput) effectiveOutput = providerCap;
         }
       }
-      items.push(new OpenRouterModelTreeItem(serverUrl, modelId, label, providerLabel, serverId, configuredOutput, effectiveOutput, clampCauses));
+      items.push(new OpenRouterModelTreeItem(serverUrl, modelId, label, providerLabel, serverId, configuredOutput, effectiveOutput, clampCauses, missing.has(modelId)));
     }
     return items;
   }

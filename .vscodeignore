@@ -79,5 +79,8 @@ tsconfig.json
 # Old vsix builds
 *.vsix
 
+# Slides / presentation material (repo documentation, never runtime)
+*.pptx
+
 # Model config presets are SHIPPED so Auto-Configure can apply them at runtime.
 # (loadModelPresets reads *.json only — no other files in this folder.)

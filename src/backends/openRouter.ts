@@ -35,7 +35,8 @@
 import { buildEndpoint, isOpenRouterUrl, sanitizeRequestHeaders } from '../state/config.js';
 import type { ModelConfig } from '../state/config.js';
 import { readServers } from '../state/configStore.js';
-import { buildRequestHeaders, fetchWithRetry } from '../shared/fetchRetry.js';
+import { buildRequestHeaders, fetchWithRetry, transportErrorCode } from '../shared/fetchRetry.js';
+import { buildOutputLengthLadder, OUTPUT_TOKEN_CAP, OUTPUT_TOKEN_FACTOR } from '../shared/tokenBudget.js';
 import type { RuntimeModelLimits } from '../types.js';
 
 /**
@@ -72,25 +73,6 @@ export const OPENROUTER_API_BASE = 'https://openrouter.ai/api';
 
 /** Timeout for the catalog metadata GET (same budget as other metadata probes). */
 const METADATA_TIMEOUT_MS = 10000;
-
-/**
- * Fallback output ceiling when a catalog model reports NO completion cap
- * (`top_provider.max_completion_tokens` / `per_request_limits.completion_tokens`
- * absent or invalid — null for essentially every catalog model): 10% of the
- * context window, hard-capped.
- *
- * The old fallback was the FULL context window, which guaranteed
- * output + input > context on the first real request — OpenRouter 400s with
- * "...1048575 in the output" because output is reserved against the SAME window
- * as the prompt. 10% keeps enough headroom for the prompt.
- *
- * Mirrors `OUTPUT_TOKEN_FACTOR` / `OUTPUT_TOKEN_CAP` in `commands/hfDiscovery.ts`
- * (same convention). Kept local — NOT imported — because importing the commands
- * module here would create a cycle (`hfDiscovery` → `runtimeLimits` → `openRouter`).
- * If either factor changes, update both.
- */
-const OUTPUT_TOKEN_FACTOR = 0.1;
-const OUTPUT_TOKEN_CAP = 81920;
 
 /** Top-level reserved paths on openrouter.ai that are NOT model pages. */
 const RESERVED_PATHS = new Set([
@@ -279,6 +261,13 @@ export interface OpenRouterModelInfo {
     currency?: string;
   };
   runtimeLimits: RuntimeModelLimits;
+  /**
+   * Auto-generated Output length menu (vector-form `maxOutputTokens`) when the
+   * offered output budget is large enough to squeeze the prompt — see
+   * {@link buildOutputLengthLadder}. Written into the model entry instead of
+   * the scalar; undefined leaves today's scalar behavior untouched.
+   */
+  outputLengthVector?: number[];
   expirationDate?: string;
 }
 
@@ -478,6 +467,7 @@ function normalizeOpenRouterModel(
     defaultParams,
     cost,
     runtimeLimits: { contextWindow, maxOutputTokens },
+    outputLengthVector: buildOutputLengthLadder(maxOutputTokens, contextWindow),
     expirationDate: data.expiration_date || undefined,
   };
 }
@@ -509,11 +499,24 @@ export function parseOpenRouterCatalogData<T = OpenRouterModelData>(payload: unk
  * configured OpenRouter model with a fresh full download. The metrics engine
  * never hits this path (its tick reuses one raw response), and the catalog
  * changes on OpenRouter's scale (hours), so a minute of staleness is free.
- * Failures are never cached — the next call re-fetches live.
+ * A failed refresh is never MEMOIZED as the result (the next TTL window
+ * re-fetches live), but it IS absorbed: the last successful snapshot is
+ * served stale instead of throwing (stale-if-error, same discipline as the
+ * provider-list cache's "failure with stale fallback") — a grumpy catalog
+ * download must never empty the picker of models the servers happily serve
+ * (user report 2026-09-17, shipped 1.36.10: one failed catalog fetch dropped
+ * EVERY OpenRouter model from the Copilot picker). A genuinely removed model
+ * still drops on the next successful fetch.
  */
 const CATALOG_MEMO_TTL_MS = 60_000;
 
 let catalogMemo: { promise: Promise<OpenRouterModelData[]>; settledAt?: number } | undefined;
+
+/** Last SUCCESSFUL catalog — the stale-if-error fallback above. Cleared only
+ *  by {@link resetOpenRouterCaches} (settings change, Test & Refresh), so an
+ *  explicit refresh reports a real failure instead of silently serving stale
+ *  data. There is no age cap: hours-stale truth beats a "no models" lie. */
+let lastGoodCatalog: OpenRouterModelData[] | undefined;
 
 /**
  * Fetch OpenRouter's full model catalog (`GET /api/v1/models`) — the
@@ -527,8 +530,10 @@ let catalogMemo: { promise: Promise<OpenRouterModelData[]>; settledAt?: number }
  * authoritative catalog.
  *
  * Public and unauthenticated. Throws on HTTP/network failure and on malformed
- * payloads; `fetchWithRetry` retries transient failures once. Served from the
- * memo above while fresh.
+ * payloads ONLY while no successful snapshot exists yet (cold start); once one
+ * exists, a failed revalidation serves it stale instead (see the memo doc).
+ * `fetchWithRetry` retries transient failures once. Served from the memo above
+ * while fresh.
  */
 export async function fetchOpenRouterCatalog(): Promise<OpenRouterModelData[]> {
   if (catalogMemo && (catalogMemo.settledAt === undefined || Date.now() - catalogMemo.settledAt < CATALOG_MEMO_TTL_MS)) {
@@ -539,10 +544,17 @@ export async function fetchOpenRouterCatalog(): Promise<OpenRouterModelData[]> {
   entry.promise = fetchCatalogUncached().then(
     (catalog) => {
       entry.settledAt = Date.now();
+      lastGoodCatalog = catalog;
       return catalog;
     },
     (err: unknown) => {
       if (catalogMemo === entry) catalogMemo = undefined;
+      if (lastGoodCatalog) {
+        // Stale-if-error. Settled NOW so this stale snapshot serves at most
+        // one TTL window before a fresh download is attempted.
+        entry.settledAt = Date.now();
+        return lastGoodCatalog;
+      }
       throw err;
     },
   );
@@ -911,6 +923,10 @@ export function resetOpenRouterCaches(): void {
   providerListInflight.clear();
   providerListRetryAt.clear();
   catalogMemo = undefined;
+  // An explicit refresh re-probes from ZERO: keeping the stale snapshot would
+  // let Test & Refresh silently succeed on hours-old data while reporting the
+  // catalog as freshly fetched.
+  lastGoodCatalog = undefined;
 }
 
 /**
@@ -936,7 +952,13 @@ export function openRouterCatalogConfigFields(info: OpenRouterModelInfo): Partia
     ...(info.defaultMode ? { defaultMode: info.defaultMode } : {}),
     ...(info.defaultParams ? { defaultParams: info.defaultParams } : {}),
     ...(info.cost ? { cost: info.cost } : {}),
-    ...(info.runtimeLimits.maxOutputTokens !== undefined ? { maxOutputTokens: info.runtimeLimits.maxOutputTokens } : {}),
+    // Vector ladder when the offered output is large (prompt-squeeze case),
+    // scalar budget otherwise — see buildOutputLengthLadder.
+    ...(info.outputLengthVector
+      ? { maxOutputTokens: info.outputLengthVector }
+      : info.runtimeLimits.maxOutputTokens !== undefined
+        ? { maxOutputTokens: info.runtimeLimits.maxOutputTokens }
+        : {}),
   };
 }
 
@@ -948,7 +970,11 @@ export function openRouterCatalogConfigFields(info: OpenRouterModelInfo): Partia
  */
 export function openRouterInfoDetailLines(info: OpenRouterModelInfo): string[] {
   const lines: string[] = [];
-  if (info.runtimeLimits.maxOutputTokens !== undefined) {
+  if (info.outputLengthVector) {
+    const fmt = (n: number) => n.toLocaleString('en-US');
+    const rest = info.outputLengthVector.slice(1).map(fmt).join(', ');
+    lines.push(`Output lengths: ${fmt(info.outputLengthVector[0])} (default), ${rest} tokens`);
+  } else if (info.runtimeLimits.maxOutputTokens !== undefined) {
     lines.push(`Max output: ${info.runtimeLimits.maxOutputTokens.toLocaleString('en-US')} tokens`);
   }
   lines.push(`Tool calling: ${info.capabilities.toolCalling ? 'yes' : 'no'}`);
@@ -1035,47 +1061,63 @@ export interface OpenRouterAccount {
 const ACCOUNT_TIMEOUT_MS = 10_000;
 
 /**
- * Fetch the account/key health for the relay. Returns `undefined` when the
- * request fails or returns no usable `data` (bad/missing key, transient error)
- * — the dashboard degrades by hiding the account rows, never fabricating.
- *
- * Best-effort probe: plain fetch + timeout, NO retry. It runs on every metrics
- * poll (~15s), and `fetchWithRetry`'s 1.5s network-error backoff would add that
- * latency to EVERY tick while /api/v1/key is unreachable — for a value that's
- * optional anyway. Failure → undefined, always.
+ * Outcome of an authenticated small-GET probe (`/api/v1/key`, `/api/v1/credits`).
+ * Unlike the old flattened `T | undefined` shape, the probe KEEPS the
+ * distinction between "the relay answered" and "nothing answered": any HTTP
+ * status — 200, 401, 429, 500 — proves the relay is REACHABLE, which is
+ * exactly the question the dashboard's health verdict asks (a 429 literally
+ * means "alive, beat it"; reading it as death painted a living OpenRouter
+ * Offline — user report 2026-09-17, shipped 1.36.10).
  */
-export function fetchOpenRouterAccount(
-  requestHeaders: Record<string, string> = {},
-): Promise<OpenRouterAccount | undefined> {
-  return fetchOpenRouterAccountData<OpenRouterAccount>('v1/key', requestHeaders);
+export interface OpenRouterProbe<T> {
+  /** True when the relay answered with an HTTP status — reachable by definition. */
+  responded: boolean;
+  /** The HTTP status, when `responded`. */
+  status?: number;
+  /** Transport code (`TimeoutError`, `ECONNREFUSED`, ...) when `!responded`. */
+  transportCode?: string;
+  /** Parsed `data` — only when the answer was 2xx with a usable object body. */
+  data?: T;
 }
 
 /**
- * Shared best-effort body for the two account probes (audit P16-4): plain
- * fetch + timeout, NO retry (the 1.5 s network backoff would stall every
- * metrics poll while the endpoint is down, for optional values), failure →
- * `undefined`, always.
+ * Probe the relay's key endpoint with this entry's own credential. The
+ * dashboard's OpenRouter HEALTH signal: a few hundred bytes, fast, and it
+ * proves exactly the claim the node makes — "reachable, with your key".
+ * Best-effort like its sibling: plain fetch + timeout, NO retry (the 1.5 s
+ * network backoff would stall every metrics poll for a verdict value); it
+ * never rejects — failure is data (`responded: false` + `transportCode`).
  */
-async function fetchOpenRouterAccountData<T extends object>(
+export async function probeOpenRouterKey(
+  requestHeaders: Record<string, string> = {},
+): Promise<OpenRouterProbe<OpenRouterAccount>> {
+  return probeOpenRouterApi<OpenRouterAccount>('v1/key', requestHeaders);
+}
+
+/** Shared probe body (audit P16-4): plain fetch + timeout, NO retry, never
+ *  rejects — see {@link OpenRouterProbe} for what each shape means. */
+async function probeOpenRouterApi<T extends object>(
   path: string,
   requestHeaders: Record<string, string>,
-): Promise<T | undefined> {
+): Promise<OpenRouterProbe<T>> {
   const url = buildEndpoint(OPENROUTER_API_BASE, path);
   const headers = buildRequestHeaders(undefined, requestHeaders);
   let response: Response;
   try {
     response = await fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(ACCOUNT_TIMEOUT_MS) });
-  } catch {
-    return undefined;
+  } catch (err) {
+    return { responded: false, transportCode: transportErrorCode(err) };
   }
-  if (!response.ok) return undefined;
+  if (!response.ok) return { responded: true, status: response.status };
   try {
     const payload = await response.json() as { data?: T };
     // `typeof [] === 'object'` — reject array-shaped data explicitly.
-    if (!payload.data || typeof payload.data !== 'object' || Array.isArray(payload.data)) return undefined;
-    return payload.data;
+    if (!payload.data || typeof payload.data !== 'object' || Array.isArray(payload.data)) {
+      return { responded: true, status: response.status };
+    }
+    return { responded: true, status: response.status, data: payload.data };
   } catch {
-    return undefined;
+    return { responded: true, status: response.status };
   }
 }
 
@@ -1093,13 +1135,13 @@ export interface OpenRouterCredits {
 
 /**
  * Fetch the account budget from `GET /api/v1/credits`. Same best-effort
- * discipline as {@link fetchOpenRouterAccount}: plain fetch + timeout, NO retry,
+ * discipline as {@link probeOpenRouterKey}: plain fetch + timeout, NO retry,
  * failure → undefined (the dashboard hides the rows rather than fabricating).
  */
 export function fetchOpenRouterCredits(
   requestHeaders: Record<string, string> = {},
 ): Promise<OpenRouterCredits | undefined> {
-  return fetchOpenRouterAccountData<OpenRouterCredits>('v1/credits', requestHeaders);
+  return probeOpenRouterApi<OpenRouterCredits>('v1/credits', requestHeaders).then((r) => r.data);
 }
 
 /**

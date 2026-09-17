@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveTokenBudget } from '../src/shared/tokenBudget.js';
+import { deriveTokenBudget, fitOutputBudgetToWindow } from '../src/shared/tokenBudget.js';
 
 describe('deriveTokenBudget', () => {
   it('uses server max_model_len when present, global config for output', () => {
@@ -111,5 +111,37 @@ describe('deriveTokenBudget', () => {
     const withoutCeiling = deriveTokenBudget(10000, 3000, undefined, undefined);
     expect(withCeiling.maxOutputTokens).toBe(3000);
     expect(withCeiling.maxOutputTokens).toBe(withoutCeiling.maxOutputTokens);
+  });
+});
+
+describe('fitOutputBudgetToWindow (preset budget vs. live host window)', () => {
+  it('passes undefined through - no declared budget, runtime default applies', () => {
+    expect(fitOutputBudgetToWindow(undefined, 262144)).toBeUndefined();
+  });
+
+  it('rebuilds a preset scalar that leaves the prompt under 10% of the host window', () => {
+    // Official card: 128k output on a 1M model. IT hosts it at 131072:
+    // advertising 128k output would leave ~3k for the prompt. Rebuilt from the
+    // safe 10% budget (13107, below the 16384 floor) as a plain scalar.
+    expect(fitOutputBudgetToWindow(128000, 131072)).toBe(13107);
+  });
+
+  it('keeps a fitting scalar but gives a large one the halving ladder, default near 10%', () => {
+    // Same 128k preset budget on the official 1M window fits the trust line;
+    // head = rung closest to 104857.
+    expect(fitOutputBudgetToWindow(128000, 1048576)).toEqual([128000, 64000, 32000, 16384]);
+    // Small budgets stay scalar - no menu noise.
+    expect(fitOutputBudgetToWindow(8192, 131072)).toBe(8192);
+  });
+
+  it('keeps an author-declared menu verbatim when every rung fits the host', () => {
+    const menu = [65536, 32768, 16384];
+    expect(fitOutputBudgetToWindow(menu, 262144)).toBe(menu);
+  });
+
+  it('rebuilds a menu whose rungs do not fit the shrunken host', () => {
+    // Preset menu built for the official window; host has 131072.
+    // Largest fitting rung (< 117964) is 98304 -> ladder, head closest to 13107.
+    expect(fitOutputBudgetToWindow([131072, 98304], 131072)).toEqual([16384, 98304, 49152, 24576]);
   });
 });

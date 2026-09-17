@@ -245,9 +245,10 @@ describe('the OpenRouter route (via resolveModelConfigForAddSafely)', () => {
     // Thinking modes came from the reasoning object, not fabricated.
     expect(result!.modelConfig.modelModes?.['Think (High)']).toEqual({ reasoning: { enabled: true, effort: 'high' } });
     // No API completion cap → 10% of the context window, hard-capped at 81920.
-    // floor(500000 × 0.1) = 50000 < 81920 → 50000.
+    // floor(500000 × 0.1) = 50000 < 81920 → 50000, then halved into an Output
+    // length ladder (head = default = rung closest to 10% of the window).
     expect(result!.suggestedMaxOutputTokens).toBeUndefined();
-    expect(result!.modelConfig.maxOutputTokens).toBe(50000);
+    expect(result!.modelConfig.maxOutputTokens).toEqual([50000, 25000, 16384]);
     expect(result!.summary.join('\n')).not.toContain('HuggingFace');
   });
 });
