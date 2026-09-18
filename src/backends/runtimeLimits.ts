@@ -2,7 +2,7 @@ import { buildEndpoint, KNOWN_SERVER_TYPES, type ServerType } from '../state/con
 import { isValidContextWindow } from '../shared/tokenBudget.js';
 import { buildRequestHeaders, fetchWithRetry } from '../shared/fetchRetry.js';
 import { describeError } from '../provider/messageConverter.js';
-import { resolveOpenRouterRuntimeLimits } from './openRouter.js';
+import { resolveOpenRouterRuntimeLimits, fetchOpenRouterCatalog } from './openRouter.js';
 import { isOpenRouterUrl } from '../state/serverCore.js';
 import type { LmStudioModel, RuntimeModelLimits, VllmModel } from '../types.js';
 
@@ -348,10 +348,12 @@ export class ServerProbeError extends Error {
 /**
  * List what a server currently serves, via the backend's documented endpoint:
  * `/api/v1/models` for LM Studio (ids are model KEYS), `/api/ps` for Ollama
- * (loaded models), OpenAI `/v1/models` for vLLM/llama.cpp/OpenRouter.
+ * (loaded models), OpenAI `/v1/models` for vLLM/llama.cpp. OpenRouter answers
+ * from the SHARED session catalog ({@link fetchOpenRouterCatalog}) — one
+ * download per session for every consumer, never a per-caller copy.
  *
- * This is the shared core for the DISPLAY/LOOKUP consumers (Model Settings
- * badge, Test & Refresh group probe). It deliberately does NOT go through
+ * This is the shared core for the DISPLAY/LOOKUP consumers (Test & Refresh
+ * group probe). It deliberately does NOT go through
  * `fetchWithRetry`: these are live status probes where an immediate honest
  * failure beats a 1.5 s backoff in front of a progress UI, and the previous
  * probe sites never retried either. It DOES share the server-list memo
@@ -414,8 +416,16 @@ export async function listServerModels(
         .map((m) => ({ id: m.model ?? m.name ?? '' }))
         .filter((m) => m.id);
     }
+    case 'openrouter': {
+      // The catalog is global and public — identical for every entry and key
+      // — so all consumers share the ONE session download instead of each
+      // probing the entry URL. Test & Refresh resets the memo first, so its
+      // pass still reports a live answer.
+      const catalog = await fetchOpenRouterCatalog();
+      return catalog.flatMap((m) => (m.id ? [{ id: m.id }] : []));
+    }
     default: {
-      // vllm, llamacpp, openrouter: OpenAI-compatible /v1/models.
+      // vllm, llamacpp: OpenAI-compatible /v1/models.
       const data = await serverListOnce(key, () =>
         probeJson<{ data?: VllmModel[] }>(buildEndpoint(serverUrl, 'v1/models')),
       );

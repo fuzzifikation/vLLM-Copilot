@@ -24,6 +24,7 @@ import {
 } from '../backends/openRouter.js';
 import {
   confirmAndSaveAddedModel,
+  discardUnreferencedServerEntry,
   ensureServerEntry,
   handleDuplicateModelGate,
   reportEntryWriteFailure,
@@ -155,13 +156,17 @@ async function pickOpenRouterModel(
  * server URL → API key → model list:
  *
  *   1. Prompt for the API key (+ optional custom headers) — REQUIRED.
- *   2. Pick the model from the catalog typeahead. A pasted model-page URL names
+ *   2. Register the fixed openrouter entry with that key IMMEDIATELY (the
+ *      'Add Server' doctrine shared with the generic wizard: the entry is a
+ *      kept artifact, so cancelling the model picker keeps the server and a
+ *      model can be added later).
+ *   3. Pick the model from the catalog typeahead. A pasted model-page URL names
  *      the model directly (the typeahead is skipped and the confirm dialog is
  *      the consent point); a bare API base or author/slug pre-fills the picker.
  *      Reaching the model list means the OpenRouter endpoint is reachable.
- *   3. Resolve exact metadata (limits, caps, pricing, modes).
- *   4. Detect duplicates on the fixed API base (Update Auth / Replace Config).
- *   5. Confirm + save with `serverType: "openrouter"` and the fixed server URL.
+ *   4. Resolve exact metadata (limits, caps, pricing, modes).
+ *   5. Detect duplicates on the fixed API base (Update Auth / Replace Config).
+ *   6. Confirm + save with `serverType: "openrouter"` and the fixed server URL.
  *
  * @param urlInput - Raw step-1 input (pre-normalization, so a model-page URL
  *   survives for direct resolution or picker pre-fill).
@@ -192,7 +197,34 @@ export async function runOpenRouterAddFlow(
     return;
   }
 
-  // 2. Fetch the catalog ONCE and keep the full snapshot. The picker projects it
+  // 2. Register the fixed openrouter entry NOW, before the catalog or the
+  //    picker — the same 'Add Server' doctrine the generic wizard runs: the
+  //    entry is the artifact the user asked for, written once, directly. From
+  //    here every abandonment (catalog failure, Esc at the picker, dismissed
+  //    confirm) leaves the server registered with its key, ready for a model
+  //    added later via Model Selector, Auto-Configure, or a re-run of this
+  //    wizard (which connection-matches this entry instead of minting a twin).
+  let ownEntry: { id: string; created: boolean };
+  try {
+    ownEntry = await ensureServerEntry({
+      serverUrl: OPENROUTER_API_BASE,
+      requestHeaders,
+      serverType: 'openrouter',
+      preferredId: 'openrouter',
+    });
+  } catch (err) {
+    reportEntryWriteFailure(err, OPENROUTER_API_BASE, output);
+    return;
+  }
+  // An entry THIS run created is discarded only when the duplicate gate proves
+  // it a mistake (credential twin of an already-configured base), never when
+  // the user simply walks away from the picker.
+  const flowCreatedServerId = ownEntry.created ? ownEntry.id : undefined;
+  if (ownEntry.created) {
+    output.appendLine(`[INFO] Registered server "${ownEntry.id}" (${OPENROUTER_API_BASE}) - no model yet.`);
+  }
+
+  // 3. Fetch the catalog ONCE and keep the full snapshot. The picker projects it
   //    for typeahead and metadata normalization matches the picked id against the
   //    SAME snapshot — so the ~500KB catalog is downloaded a single time and there
   //    is no selection→confirmation race. The catalog is REQUIRED (metadata is
@@ -208,9 +240,11 @@ export async function runOpenRouterAddFlow(
     fullCatalog = await fetchOpenRouterCatalog();
   } catch (err) {
     const detail = describeError(err);
-    output.appendLine(`[ERROR] OpenRouter model catalog unavailable: ${detail}`);
+    output.appendLine(`[ERROR] OpenRouter model catalog unavailable: ${detail} - server entry kept, no model saved.`);
     output.show(true);
-    vscode.window.showErrorMessage(`Couldn't load the OpenRouter model catalog. ${detail}`);
+    vscode.window.showErrorMessage(
+      `Couldn't load the OpenRouter model catalog. ${detail} The OpenRouter server is registered - pick a model later.`
+    );
     return;
   }
   // A pasted full model-page URL names the model EXPLICITLY — skip the catalog
@@ -236,13 +270,15 @@ export async function runOpenRouterAddFlow(
     requestedId = await pickOpenRouterModel(catalog, prefill);
   }
   if (!requestedId) {
-    output.appendLine('[WARN] OpenRouter add cancelled - no model selected.');
+    // THE point of registering before the picker: escaping it keeps the server
+    // (a zero-model entry is a legal state; Remove Server deletes it again).
+    output.appendLine('[WARN] OpenRouter add cancelled - no model selected, the server stays registered.');
     output.show(true);
     return;
   }
   output.appendLine(`[INFO] OpenRouter model: ${requestedId}`);
 
-  // 3. Resolve exact metadata from the SAME catalog snapshot (no re-download).
+  // 4. Resolve exact metadata from the SAME catalog snapshot (no re-download).
   let info: OpenRouterModelInfo;
   try {
     info = normalizeOpenRouterFromCatalog(fullCatalog, requestedId);
@@ -259,26 +295,33 @@ export async function runOpenRouterAddFlow(
     `tools ${info.capabilities.toolCalling ? 'yes' : 'no'}`
   );
 
-  // 4. Duplicate detection against the FIXED API base (shared gate with the
+  // 5. Duplicate detection against the FIXED API base (shared gate with the
   //    vLLM path). Models reference the registry, so "on the OpenRouter server"
   //    resolves through each model's server entry — not a URL field on the model.
   const apiBase = normalizeServerUrl(OPENROUTER_API_BASE); // 'https://openrouter.ai/api'
   const gate = await handleDuplicateModelGate(
     requestedId, apiBase, requestHeaders, 'OpenRouter add', output
   );
-  if (!gate) return; // cancelled, or Update Auth took over
+  if (!gate) {
+    // Cancelled at the duplicate dialog, or Update Auth took over: the model is
+    // already configured on a pre-existing entry, so this run's credential
+    // variant of the fixed base served no purpose (same rule as the generic
+    // addModelToServer gate — the picker-cancel path above deliberately keeps).
+    await discardUnreferencedServerEntry(flowCreatedServerId);
+    return;
+  }
   const { replaceExistingId, replaceTargetServer } = gate;
 
-  // 5. Assemble, confirm, save. `id` is composite on the registry entry id so
+  // 6. Assemble, confirm, save. `id` is composite on the registry entry id so
   //    two OpenRouter models stay distinct; `vllmModelId` is the raw wire id.
   //    The API key + URL live on the `openrouter` registry entry; the model
   //    carries only the `server` reference. On 'Replace Config' the replaced
   //    model KEEPS its entry and the new key rotates into it (Update Auth
   //    doctrine) — a ref derived from the entered key would append a duplicate
-  //    instead of replacing. An entry created here is rolled back if the
-  //    confirm is abandoned.
+  //    instead of replacing. The entry was registered in step 2, so a dismissed
+  //    confirm keeps it; only a credential twin made redundant by the replace
+  //    path is discarded.
   let openRouterServerId: string;
-  let createdServerId: string | undefined;
   const replaceServerId = replaceExistingId
     ? await rotateEntryAuth(replaceTargetServer, requestHeaders, output)
     : undefined;
@@ -293,21 +336,13 @@ export async function runOpenRouterAddFlow(
   }
   if (replaceServerId) {
     openRouterServerId = replaceServerId;
-  } else {
-    let entry: { id: string; created: boolean };
-    try {
-      entry = await ensureServerEntry({
-        serverUrl: OPENROUTER_API_BASE,
-        requestHeaders,
-        serverType: 'openrouter',
-        preferredId: 'openrouter',
-      });
-    } catch (err) {
-      reportEntryWriteFailure(err, OPENROUTER_API_BASE, output);
-      return;
+    if (openRouterServerId !== ownEntry.id) {
+      // The model lands on the replaced model's entry — this run's step-2 twin
+      // (fresh credentials for the same base) would sit there unreferenced.
+      await discardUnreferencedServerEntry(flowCreatedServerId);
     }
-    openRouterServerId = entry.id;
-    if (entry.created) createdServerId = entry.id;
+  } else {
+    openRouterServerId = ownEntry.id;
   }
   const finalConfig: IdentifiedModelConfig = {
     id: replaceExistingId ?? buildModelId(openRouterServerId, requestedId),
@@ -325,6 +360,9 @@ export async function runOpenRouterAddFlow(
     `Context window: ${info.runtimeLimits.contextWindow.toLocaleString('en-US')} tokens`,
     ...openRouterInfoDetailLines(info),
   ].join('\n');
-  await confirmAndSaveAddedModel(finalConfig, requestedId, OPENROUTER_API_BASE, summary, output, onSaved, undefined, createdServerId);
+  // NO flowCreatedServerId here on purpose: the entry is step 2's kept
+  // artifact, so a dismissed confirm never rolls it back (same as the generic
+  // addModelToServer save tail).
+  await confirmAndSaveAddedModel(finalConfig, requestedId, OPENROUTER_API_BASE, summary, output, onSaved);
 }
 

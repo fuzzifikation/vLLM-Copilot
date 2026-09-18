@@ -56,10 +56,11 @@ export class PermanentContextError extends Error {
 /**
  * The requested model id is absent from the CURRENT catalog snapshot. Unlike
  * `PermanentContextError` (an entry exists but is unusable — never retried),
- * this means the id wasn't in this particular `/v1/models` response. The catalog
- * is re-fetched every poll, so a metrics engine treats this as "recheck next
- * tick" rather than caching a permanent miss — a transiently incomplete catalog
- * or propagation delay must not permanently disable context for a model.
+ * this means the id wasn't in this particular catalog. The catalog is session-
+ * scoped (refetched on a reset, not every poll), so a metrics engine treats
+ * this as "no permanent miss" — it rechecks against whatever catalog is live
+ * after the next reset rather than caching a permanent failure, so a model
+ * that appears in a later catalog still resolves.
  */
 export class OpenRouterModelNotFoundError extends Error {
   constructor(message: string) {
@@ -494,29 +495,34 @@ export function parseOpenRouterCatalogData<T = OpenRouterModelData>(payload: unk
 }
 
 /**
- * In-flight + short-TTL memo for the catalog (audit P16-1). The catalog is
- * ~500 KB for ~400 models; before the memo, discovery resolved EVERY
- * configured OpenRouter model with a fresh full download. The metrics engine
- * never hits this path (its tick reuses one raw response), and the catalog
- * changes on OpenRouter's scale (hours), so a minute of staleness is free.
- * A failed refresh is never MEMOIZED as the result (the next TTL window
- * re-fetches live), but it IS absorbed: the last successful snapshot is
- * served stale instead of throwing (stale-if-error, same discipline as the
- * provider-list cache's "failure with stale fallback") — a grumpy catalog
- * download must never empty the picker of models the servers happily serve
- * (user report 2026-09-17, shipped 1.36.10: one failed catalog fetch dropped
- * EVERY OpenRouter model from the Copilot picker). A genuinely removed model
- * still drops on the next successful fetch.
+ * In-flight + SESSION-scoped memo for the catalog (audit P16-1, session rule
+ * 2026-09-18). The catalog is ~700 KB for ~400 models and it changes on
+ * OpenRouter's scale (hours), so it is fetched ONCE per extension session:
+ * every consumer (metadata resolution, discovery, Add flow, Model Selector,
+ * the metrics engine) shares this one download. Until the memo existed the
+ * metrics engine re-downloaded it every poll interval — ~5,700 full catalog
+ * fetches a day per OpenRouter entry — exactly the hammering that invites the
+ * rate limits the fetches are supposed to avoid (user report 2026-09-18:
+ * catalog fetches failing, Model Selector timing out).
+ * Freshness comes from actions, not timers: Test & Refresh and settings
+ * changes call {@link resetOpenRouterCaches}, which drops the memo so the
+ * next consumer fetches live. A genuinely added/removed model shows up after
+ * Test & Refresh (or the next session), not on a timer.
+ * A success IS the session's value — there is no revalidation at all, so the
+ * 1.36.10 failure mode (one grumpy refresh emptying the picker of models the
+ * servers happily serve, user report 2026-09-17) is structurally gone. A cold
+ * failure (no snapshot yet) backs off for {@link CATALOG_FAIL_BACKOFF_MS}
+ * before the next real attempt, so a dead OpenRouter is not retried every
+ * poll tick.
  */
-const CATALOG_MEMO_TTL_MS = 60_000;
+const CATALOG_FAIL_BACKOFF_MS = 30_000;
 
-let catalogMemo: { promise: Promise<OpenRouterModelData[]>; settledAt?: number } | undefined;
+let catalogMemo: { promise: Promise<OpenRouterModelData[]> } | undefined;
 
-/** Last SUCCESSFUL catalog — the stale-if-error fallback above. Cleared only
- *  by {@link resetOpenRouterCaches} (settings change, Test & Refresh), so an
- *  explicit refresh reports a real failure instead of silently serving stale
- *  data. There is no age cap: hours-stale truth beats a "no models" lie. */
-let lastGoodCatalog: OpenRouterModelData[] | undefined;
+/** When the last COLD fetch failed; backoff anchor. */
+let catalogColdFailureAt = 0;
+/** The cold failure to re-throw while the backoff window is open. */
+let catalogColdError: unknown;
 
 /**
  * Fetch OpenRouter's full model catalog (`GET /api/v1/models`) — the
@@ -529,32 +535,38 @@ let lastGoodCatalog: OpenRouterModelData[] | undefined;
  * whose body is not `{ data: [...] }` THROWS, it is never treated as an empty
  * authoritative catalog.
  *
- * Public and unauthenticated. Throws on HTTP/network failure and on malformed
- * payloads ONLY while no successful snapshot exists yet (cold start); once one
- * exists, a failed revalidation serves it stale instead (see the memo doc).
- * `fetchWithRetry` retries transient failures once. Served from the memo above
- * while fresh.
+ * Public and unauthenticated. Fetched once per session (see the memo above):
+ * the result is reused until {@link resetOpenRouterCaches}. Throws on
+ * HTTP/network failure and on malformed payloads, then backs off
+ * {@link CATALOG_FAIL_BACKOFF_MS} before the next real attempt. Rejections
+ * inside the backoff window carry the original failure.
+ * ONE plain attempt, no transport retry: this is polled data, and a retry's
+ * 1.5 s backoff would stall the metrics verdict the fetch must never delay
+ * (the probe discipline, same rule). Absorption is the memo's job.
  */
 export async function fetchOpenRouterCatalog(): Promise<OpenRouterModelData[]> {
-  if (catalogMemo && (catalogMemo.settledAt === undefined || Date.now() - catalogMemo.settledAt < CATALOG_MEMO_TTL_MS)) {
-    return catalogMemo.promise;
+  if (catalogMemo) return catalogMemo.promise;
+  // Cold-failure backoff: a dead OpenRouter is not re-attempted every tick.
+  // A reset clears the error too, so a manual refresh (Test & Refresh) always
+  // fetches live instead of eating a backoff hit.
+  if (catalogColdError !== undefined && Date.now() - catalogColdFailureAt < CATALOG_FAIL_BACKOFF_MS) {
+    return Promise.reject(catalogColdError instanceof Error
+      ? catalogColdError
+      : new Error(String(catalogColdError)));
   }
-  const entry: { promise: Promise<OpenRouterModelData[]>; settledAt?: number } =
+  const entry: { promise: Promise<OpenRouterModelData[]> } =
     { promise: undefined as unknown as Promise<OpenRouterModelData[]> };
   entry.promise = fetchCatalogUncached().then(
     (catalog) => {
-      entry.settledAt = Date.now();
-      lastGoodCatalog = catalog;
+      catalogColdError = undefined;
       return catalog;
     },
     (err: unknown) => {
+      // Never memoize a failure as the session's value: drop the entry so a
+      // later tick can succeed, and anchor the backoff on the failure.
       if (catalogMemo === entry) catalogMemo = undefined;
-      if (lastGoodCatalog) {
-        // Stale-if-error. Settled NOW so this stale snapshot serves at most
-        // one TTL window before a fresh download is attempted.
-        entry.settledAt = Date.now();
-        return lastGoodCatalog;
-      }
+      catalogColdFailureAt = Date.now();
+      catalogColdError = err;
       throw err;
     },
   );
@@ -564,11 +576,7 @@ export async function fetchOpenRouterCatalog(): Promise<OpenRouterModelData[]> {
 
 async function fetchCatalogUncached(): Promise<OpenRouterModelData[]> {
   const url = buildEndpoint(OPENROUTER_API_BASE, 'v1/models');
-  const response = await fetchWithRetry(
-    url,
-    { method: 'GET', signal: AbortSignal.timeout(METADATA_TIMEOUT_MS) },
-    {},
-  );
+  const response = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(METADATA_TIMEOUT_MS) });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} ${response.statusText} from ${url}`);
   }
@@ -591,9 +599,10 @@ async function fetchCatalogUncached(): Promise<OpenRouterModelData[]> {
  * fallback.
  *
  * @throws OpenRouterModelNotFoundError when the id is absent from THIS catalog
- *   snapshot (the model isn't listed here — the metrics engine rechecks next
- *   poll since the catalog is re-fetched). A catalog entry that exists but
- *   reports no usable context throws `PermanentContextError` (never retried).
+ *   snapshot (the model isn't listed here — the metrics engine rechecks each
+ *   poll against the session snapshot, which changes only on a reset). A
+ *   catalog entry that exists but reports no usable context throws
+ *   `PermanentContextError` (never retried).
  */
 export function normalizeOpenRouterFromCatalog(
   catalog: OpenRouterModelData[],
@@ -923,10 +932,10 @@ export function resetOpenRouterCaches(): void {
   providerListInflight.clear();
   providerListRetryAt.clear();
   catalogMemo = undefined;
-  // An explicit refresh re-probes from ZERO: keeping the stale snapshot would
-  // let Test & Refresh silently succeed on hours-old data while reporting the
-  // catalog as freshly fetched.
-  lastGoodCatalog = undefined;
+  // An explicit refresh re-probes from ZERO: the cold-failure backoff drops
+  // too — a manual refresh is a user request for a live answer, not another
+  // backoff hit.
+  catalogColdError = undefined;
 }
 
 /**

@@ -135,10 +135,12 @@ export function registerAddServerCommand(
     }
     const serverUrl = normalizeServerUrl(urlInput);
     if (isOpenRouterUrl(serverUrl)) {
-      // OpenRouter entries only make sense with a catalog-picked model; the
-      // dedicated add flow owns that branch.
+      // The dedicated OpenRouter flow owns this host: its fixed /api base,
+      // required key and 'openrouter' type are that flow's business. It also
+      // registers the entry up front, so cancelling its model picker still
+      // leaves a server without a model here.
       void vscode.window.showInformationMessage(
-        'OpenRouter is set up with "Add or Reconfigure Server/Model" - it always adds a model.'
+        'OpenRouter is added with "Add or Reconfigure Server/Model" - enter the key, then cancel the model picker to keep the server without a model.'
       );
       return;
     }
@@ -232,8 +234,9 @@ async function promptAuthAndRegisterServer(
  *      picks a model and runs the shared auto-configure/confirm tail (the same
  *      pieces the auto-configure command reuses).
  *
- * The OpenRouter branch is exempt: its server is a fixed managed remote that
- * only exists together with a catalog-picked model.
+ * The OpenRouter branch keeps the same doctrine inside its own flow: the fixed
+ * openrouter entry is registered as soon as the key is entered, so cancelling
+ * the catalog picker leaves the server registered without a model.
  */
 export function registerAddServerModelCommand(
   context: vscode.ExtensionContext,

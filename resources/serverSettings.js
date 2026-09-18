@@ -439,9 +439,14 @@
       // it takes the primary (accent) button style; Remove Model is a ghost
       // danger button (see button.danger-ghost) — visible without begging for
       // the misclick a loud destructive button invites.
+      // An unconfigured server model has no settings entry yet (selecting it
+      // only shows a live stub), so there is nothing to remove — a greyed
+      // button with the reason beats a confirm dialog that deletes nothing.
       h += '<div class="action-btn-row">';
       h += '<button id="autoConfigureBtn">Auto-Configure</button>';
-      h += '<button id="removeModelBtn" class="danger-ghost">Remove Model</button>';
+      h += '<button id="removeModelBtn" class="danger-ghost"'
+        + (lastRenderConfigured ? '' : ' disabled title="Nothing to remove - this model is not configured yet"')
+        + '>Remove Model</button>';
       h += '</div>';
     } else {
       // Nothing to edit: this server has no configured model and reported none

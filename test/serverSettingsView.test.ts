@@ -36,6 +36,9 @@ describe('ServerSettingsViewProvider', () => {
   });
 
   afterEach(() => {
+    // Release any engines the refresh path started — an undisposed engine
+    // keeps polling and its cached rows would leak into the next test.
+    provider.dispose();
     vi.restoreAllMocks();
   });
 
@@ -575,13 +578,16 @@ describe('ServerSettingsViewProvider', () => {
             : undefined,
         update: vi.fn().mockResolvedValue(undefined),
       };
-      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-        new Response(JSON.stringify({
+      // Per-call Response: the engine reads several endpoints per tick
+      // (/health, /v1/models, ...) and one shared Response body could only
+      // be consumed once.
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+        Promise.resolve(new Response(JSON.stringify({
           data: [
             { id: 'configured', max_model_len: 8192 },
             { id: 'unconfigured', max_model_len: 8192 },
           ],
-        }), { status: 200, headers: { 'content-type': 'application/json' } }),
+        }), { status: 200, headers: { 'content-type': 'application/json' } })),
       );
 
       await (provider as any).refreshWebview();
@@ -590,20 +596,79 @@ describe('ServerSettingsViewProvider', () => {
         'http://secure:8000/v1/models',
         expect.objectContaining({ headers: { Authorization: 'Bearer secret' } }),
       );
-      const payload = postMessage.mock.calls[0][0];
+      // Model rows ride in from the engine's poll loop: the first post shows
+      // "unknown" (empty), the tick re-posts with the rows. Wait for the
+      // settled payload — the shared poll is the whole point of the design.
+      let payload: any;
+      await vi.waitFor(() => {
+        payload = lastDataPayload(postMessage);
+        expect(payload?.servers?.[0]?.serverModelIds).toEqual(['configured', 'unconfigured']);
+      });
       expect(payload.servers[0].url).toBe('http://secure:8000');
-      expect(payload.servers[0].serverModelIds).toEqual(['configured', 'unconfigured']);
       expect(payload.servers[0].models[0]).not.toHaveProperty('requestHeaders');
       expect(payload.servers[0].models[0].server).toBe('srv');
     });
+
+    it('a failed first model-list fetch heals on the next poll tick, without a settings write', async () => {
+      // Canary for the shipped blank-until-toggle bug (user report 2026-09-18):
+      // the old one-shot probe failed once and the view stayed empty until an
+      // unrelated settings write re-triggered the refresh. With the engine as
+      // the model source, the recovery must come from the poll loop alone.
+      const postMessage = vi.fn().mockResolvedValue(true);
+      (provider as any).view = { webview: { postMessage } };
+      (provider as any).isWebviewReady = true;
+      mockContext.extensionUri = { fsPath: 'extension' };
+      mockContext.globalStorageUri = { fsPath: 'global-storage' };
+      const update = vi.fn().mockResolvedValue(undefined);
+      vscode.workspace._mockConfig = {
+        get: (key: string) => key === 'models'
+          ? [{ id: 'm', vllmModelId: 'm', server: 'heal' }]
+          : key === 'servers' ? [{ id: 'heal', serverUrl: 'http://heal:8000' }] : undefined,
+        update,
+      };
+      let modelsAlive = false;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
+        const url = String(input);
+        if (url.endsWith('/v1/models')) {
+          return modelsAlive
+            ? new Response(JSON.stringify({ data: [{ id: 'm', max_model_len: 8192 }] }), { status: 200 })
+            : new Response('', { status: 500 });
+        }
+        if (url.endsWith('/health')) return new Response('', { status: 200 });
+        return new Response('', { status: 404 });
+      });
+
+      await (provider as any).refreshWebview();
+      const engine = (provider as any).engineSubs.get('heal').engine;
+      // First tick: server lives (health ok) but lists nothing → the payload
+      // says "unknown" (empty), which the webview renders without staleness marks.
+      await vi.waitFor(() => expect(engine.getCachedAggregated()).not.toBeNull());
+      expect(lastDataPayload(postMessage).servers[0].serverModelIds).toEqual([]);
+
+      // The server recovers. Nothing writes settings: the next poll tick must
+      // carry the rows into the view by itself.
+      modelsAlive = true;
+      engine.pollNow();
+      await vi.waitFor(() => {
+        expect(lastDataPayload(postMessage)?.servers?.[0]?.serverModelIds).toEqual(['m']);
+      });
+      expect(update).not.toHaveBeenCalled();
+    });
   });
 });
+
+/** The most recent 'data' payload a mocked postMessage ever received. */
+function lastDataPayload(postMessage: any): any {
+  return [...postMessage.mock.calls].reverse().find((c: any[]) => c[0]?.type === 'data')?.[0];
+}
 
 // Relocated from runtimeLimits.test.ts when detectServerTypeFromV1Models
 // merged into its only production caller. The detector is module-private
 // (N-1, 2026-09-11): driven through refreshWebview's server-group build, the
 // same fetch-stub harness the block above uses, asserting the payload field
-// the webview actually receives.
+// the webview actually receives. Since 2026-09-18 the rows (and with them
+// the detection signals) ride in from the shared metrics engine: the helper
+// waits for the tick-driven re-post that carries them.
 describe('server type detection (via refreshWebview)', () => {
   let provider: ServerSettingsViewProvider;
   let mockContext: any;
@@ -623,6 +688,7 @@ describe('server type detection (via refreshWebview)', () => {
   });
 
   afterEach(() => {
+    provider.dispose();
     vi.restoreAllMocks();
   });
 
@@ -630,25 +696,28 @@ describe('server type detection (via refreshWebview)', () => {
   async function detect(
     serverEntry: Record<string, unknown>,
     modelsBody: unknown,
-    tagsStatus = 500,
   ): Promise<unknown> {
     vscode.workspace._mockConfig = {
       get: (key: string) => (key === 'models' ? [] : key === 'servers' ? [serverEntry] : undefined),
       update: vi.fn().mockResolvedValue(undefined),
     };
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
-      const url = String(input);
-      if (url.includes('/api/tags')) {
-        return new Response('', { status: tagsStatus });
-      }
-      return new Response(JSON.stringify(modelsBody), { status: 200, headers: { 'content-type': 'application/json' } });
-    });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify(modelsBody), { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
     const postMessage = vi.fn().mockResolvedValue(true);
     (provider as any).view = { webview: { postMessage } };
     (provider as any).isWebviewReady = true;
     await (provider as any).refreshWebview();
-    const payload = (postMessage.mock.calls.find(c => c[0]?.type === 'data') as [any] | undefined)?.[0];
-    return payload?.servers?.[0]?.detectedServerType;
+    // Wait until the engine tick's rows (the detection signals) have arrived:
+    // for a non-empty listing the tick re-posts; for an empty one the first
+    // post already carries the settled (empty) rows.
+    const expectedIds = ((modelsBody as { data?: Array<{ id: string }> })?.data ?? []).map(m => m.id);
+    let payload: any;
+    await vi.waitFor(() => {
+      payload = lastDataPayload(postMessage);
+      expect(payload?.servers?.[0]?.serverModelIds).toEqual(expectedIds);
+    });
+    return payload.servers[0].detectedServerType;
   }
 
   it('returns vllm when any entry has a positive max_model_len', async () => {
@@ -666,12 +735,12 @@ describe('server type detection (via refreshWebview)', () => {
   });
 
   it('falls back to the persisted entry serverType when the probe yields no /v1/models signal', async () => {
-    // Ollama entry: the vLLM probe never runs against it, the lister answer
-    // carries no vLLM/llama.cpp signature - the entry's own type is adopted.
+    // Ollama entry: the engine lists it via /api/ps (the stub echoes the
+    // same body, whose `models` field is absent), the answer carries no
+    // vLLM/llama.cpp signature - the entry's own type is adopted.
     expect(await detect(
       { id: 's', serverUrl: 'http://d:8000', serverType: 'ollama' },
       { data: [] },
-      500,
     )).toBe('ollama');
   });
 

@@ -6,11 +6,11 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { getConfig, findModelConfigIndex, toPublicModelConfig, normalizeServerUrl, sanitizeRequestHeaders, resolveConfigId, resolveVllmModelId, KNOWN_SERVER_TYPES, type ModelConfig, type ServerType } from '../state/config.js';
+import { getConfig, findModelConfigIndex, toPublicModelConfig, normalizeServerUrl, resolveConfigId, resolveVllmModelId, KNOWN_SERVER_TYPES, type ModelConfig, type ServerType } from '../state/config.js';
 import { patchModelConfig, readModels, readServers, writeServers, type ModelIdentity } from '../state/configStore.js';
 import { firstEntryById } from '../state/serverRegistry.js';
-import { listServerModels } from '../backends/runtimeLimits.js';
 import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from '../backends/openRouter.js';
+import { getMetricsEngine } from './vllmMetrics.js';
 
 import {
   discoverPersonalities,
@@ -74,8 +74,10 @@ interface ServerGroup {
   /** User-set server label (first non-empty among the group's entries), or undefined. */
   serverDisplayName?: string;
   models: ModelConfig[];
+  /** Server-reported model ids from the metrics engine's poll — empty means
+   *  "unknown" (offline or no tick yet), never "the server hosts nothing". */
   serverModelIds: string[];
-  /** Backend detected from the server's /v1/models data (undefined = unknown). */
+  /** Backend detected from the engine's reported model rows (undefined = unknown). */
   detectedServerType?: ServerType;
 }
 
@@ -238,6 +240,22 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private isWebviewReady = false;
   private refreshGeneration = 0;
+  /**
+   * View-scoped engine subscriptions, one per registry entry id. Model
+   * Settings is a real consumer of the poll loop (like the dashboard), not a
+   * second fetcher: the server-reported model list it renders is the engine's,
+   * refreshed every tick — a list that failed once heals on the next poll
+   * instead of sitting blank until the next settings write (2026-09-18 user
+   * report). The engine ref rides along so tick callbacks read rows without
+   * a registry lookup.
+   */
+  private engineSubs = new Map<string, { engine: ReturnType<typeof getMetricsEngine>; dispose: () => void }>();
+  /** Signature of the last posted server-model id sets — engine ticks only
+   *  re-post when it changes, so the poll interval never churns the form. */
+  private lastServerModelSig = '';
+  /** Per-entry `${serverType}|${url}` fingerprint: a hand-edited entry gets an
+   *  immediate re-poll instead of showing the previous backend's cached rows. */
+  private engineEntryFp = new Map<string, string>();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -332,6 +350,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     webviewView.onDidDispose(() => {
       msgDisposable.dispose();
       configDisposable.dispose();
+      this.dispose();
       // Drop the stale view reference so an in-flight refreshWebview (which
       // passed the entry guard before awaiting getConfig) can't postMessage to
       // a dead webview. resolveWebviewView re-creates both on re-show.
@@ -386,52 +405,76 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     // Models whose `server` ref dangles never reach a group and so are absent
     // from this view; `validateConfig` (activation) and discovery (every
     // refresh) already name them, so no third log line belongs here.
-    const servers: ServerGroup[] = await Promise.all(
-      uniqueEntries.map(async (entry) => {
-        const url = normalizeServerUrl(entry.serverUrl);
-        const entryType = entry.serverType;
-        const requestHeaders = sanitizeRequestHeaders(entry.requestHeaders ?? {});
-        // Server-reported model ids via the shared backend-aware lister
-        // (audit P9-1/P13-2): LM Studio is listed by its model-key endpoint and
-        // Ollama by its loaded-models endpoint, so the badge is no longer
-        // silently blind for backends without a meaningful /v1/models. The
-        // vLLM/llama.cpp/OpenRouter branch of the lister answers the same
-        // /v1/models the old raw probe did, and carries the fields the backend
-        // detector below reads.
-        const serverModelIds: string[] = [];
-        let entries: Array<{ owned_by?: string; max_model_len?: number }> = [];
-        try {
-          const listed = await listServerModels(entryType ?? 'vllm', url, requestHeaders);
-          for (const m of listed) {
-            serverModelIds.push(m.id);
-            entries.push({ owned_by: m.ownedBy, max_model_len: m.maxModelLen });
-          }
-        } catch (err) {
-          this.outputChannel.appendLine(`[WARN] Model Settings: model list probe failed for ${url}: ${err instanceof Error ? err.message : String(err)} - server-reported models hidden.`);
-        }
-        // /v1/models can only identify vLLM and llama.cpp. LM Studio / Ollama have no
-        // /v1/models signature — when the endpoint signal is inconclusive (or unreachable),
-        // fall back to the entry's persisted serverType.
-        const detectedServerType = resolveDetectedServerType(entries, [entry]);
-        // Mirror the dashboard's single normalization point for the display
-        // name: trimmed, so whitespace-only hand-edits never render as blank
-        // labels. One rule for every backend, relays included — rename
-        // addresses the entry, so the entry's own label is what shows.
-        const serverDisplayName = entry.displayName?.trim() || undefined;
-        // Public projection: models carry no credentials post-registry — auth
-        // lives on the entry, whose headers never reach the webview DOM.
-        return {
-          key: entry.id,
-          serverId: entry.id,
-          url,
-          serverType: entryType,
-          serverDisplayName,
-          models: (modelsByServer.get(entry.id) ?? []).map(m => toPublicModelConfig(m)),
-          serverModelIds,
-          detectedServerType,
-        };
-      }),
-    );
+    const servers: ServerGroup[] = uniqueEntries.map((entry) => {
+      const url = normalizeServerUrl(entry.serverUrl);
+      const entryType = entry.serverType;
+      // The engine owns the ONLY server-model fetch (shared with the dashboard
+      // and deep-dive). Backend-aware the same way the old probe was: the
+      // engine answers native endpoints for LM Studio/Ollama and /v1/models
+      // for the rest (see ServerMetricsEngine.getServerModels).
+      const engine = getMetricsEngine(
+        entry.id,
+        entry.serverUrl,
+        entry.requestHeaders,
+        entryType ?? 'vllm',
+        // modelIds/fallbacks: NOT managed here — the dashboard owns the
+        // configured-id set; this view only reads the server-reported rows.
+        undefined,
+        this.outputChannel,
+      );
+      if (!this.engineSubs.has(entry.id)) {
+        // First subscriber starts the poll immediately; the engine releases
+        // itself when this view (and the dashboard) close.
+        const sub = engine.subscribe(() => void this.onEngineTick());
+        this.engineSubs.set(entry.id, { engine, dispose: sub.dispose });
+      }
+      // A hand-edited type/URL means the cached rows describe another backend
+      // or box: force an immediate re-poll instead of serving them for one
+      // interval. Only on a KNOWN change — a fresh entry must not poll twice.
+      const fp = `${entryType ?? ''}|${url}`;
+      const prevFp = this.engineEntryFp.get(entry.id);
+      if (prevFp !== undefined && prevFp !== fp) engine.pollNow();
+      this.engineEntryFp.set(entry.id, fp);
+      // Empty (offline or pre-first-tick) means "unknown", which the webview
+      // already renders as no badge/no staleness marks — never as "no models".
+      const serverModels = engine.getServerModels();
+      // /v1/models can only identify vLLM and llama.cpp. LM Studio / Ollama have no
+      // /v1/models signature — when the endpoint signal is inconclusive (or unreachable),
+      // fall back to the entry's persisted serverType.
+      const detectedServerType = resolveDetectedServerType(
+        serverModels.map(m => ({ owned_by: m.ownedBy, max_model_len: m.maxModelLen })),
+        [entry],
+      );
+      // Mirror the dashboard's single normalization point for the display
+      // name: trimmed, so whitespace-only hand-edits never render as blank
+      // labels. One rule for every backend, relays included — rename
+      // addresses the entry, so the entry's own label is what shows.
+      const serverDisplayName = entry.displayName?.trim() || undefined;
+      // Public projection: models carry no credentials post-registry — auth
+      // lives on the entry, whose headers never reach the webview DOM.
+      return {
+        key: entry.id,
+        serverId: entry.id,
+        url,
+        serverType: entryType,
+        serverDisplayName,
+        models: (modelsByServer.get(entry.id) ?? []).map(m => toPublicModelConfig(m)),
+        serverModelIds: serverModels.map(m => m.id),
+        detectedServerType,
+      };
+    });
+    // A server deleted from the registry since the last refresh must stop
+    // being polled through this view (the engine itself releases when the
+    // dashboard leaves too — but a settings-only viewer would keep it alive).
+    const liveIds = new Set(uniqueEntries.map(e => e.id));
+    for (const [id, { dispose }] of [...this.engineSubs]) {
+      if (liveIds.has(id)) continue;
+      dispose();
+      this.engineSubs.delete(id);
+      this.engineEntryFp.delete(id);
+    }
+    // Baseline for the tick-driven re-post rule (see onEngineTick).
+    this.lastServerModelSig = this.serverModelSignature(servers.map(s => [s.key, s.serverModelIds]));
     const firstServer = servers[0];
     const firstModel = resolveConfigId(firstServer?.models[0]) ?? '';
 
@@ -648,6 +691,40 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   private async setSystemMessageCapture(enabled: boolean): Promise<void> {
     await vscode.workspace.getConfiguration('vllm-copilot')
       .update('systemMessageCapture', enabled, vscode.ConfigurationTarget.Global);
+  }
+
+  /** Sorted `entryId:id,id,...` signature — order-independent over both maps. */
+  private serverModelSignature(rows: ReadonlyArray<readonly [string, readonly string[]]>): string {
+    return rows.map(([id, ids]) => `${id}:${[...ids].sort().join(',')}`).sort().join('|');
+  }
+
+  /**
+   * Engine tick notification. The poll fires every interval with fresh
+   * metrics; the form is only re-rendered when the SET of server-reported
+   * model ids actually changed — a throughput update must never churn an
+   * open editor. The webview side already preserves the selection and an
+   * unsaved draft across a 'data' message, so a real model-set change is
+   * safe to push at any moment.
+   */
+  private async onEngineTick(): Promise<void> {
+    const sig = this.serverModelSignature(
+      [...this.engineSubs].map(([id, { engine }]) => [id, engine.getServerModels().map(m => m.id)] as const),
+    );
+    if (sig === this.lastServerModelSig) return;
+    await this.refreshWebview();
+  }
+
+  /**
+   * Drop the view's engine subscriptions (each engine releases itself when no
+   * other view still subscribes). Called on view teardown, and public so a
+   * test that drives the private refresh path can release the engines it
+   * started instead of leaving poll chains alive.
+   */
+  dispose(): void {
+    for (const { dispose } of this.engineSubs.values()) dispose();
+    this.engineSubs.clear();
+    this.engineEntryFp.clear();
+    this.lastServerModelSig = '';
   }
 
   /**

@@ -571,48 +571,44 @@ describe('fetchOpenRouterModel / resolveOpenRouterRuntimeLimits', () => {
     expect(a.map((m) => m.id)).toContain('openai/gpt-4');
   });
 
-  it('a failed catalog on a COLD start (no snapshot yet) is never memoized: the next call re-fetches live', async () => {
+  it('a cold failure (no snapshot) is absorbed: no re-download every tick (backoff), live fetch after a reset', async () => {
+    // Canary (2026-09-18 lockout hunt): a failed cold catalog must not become
+    // a per-poll re-download — the engine asks the memo every tick, and the
+    // backoff keeps that from hammering a dead OpenRouter. A user-initiated
+    // reset (Test & Refresh) is the only immediate live re-check.
     const spy = mockCatalogFetch();
     spy.mockRejectedValueOnce(new Error('boom'));
-    spy.mockRejectedValueOnce(new Error('boom')); // fetchWithRetry's second attempt
     await expect(fetchOpenRouterCatalog()).rejects.toThrow();
+    const callsAfterFailure = spy.mock.calls.length;
+    await expect(fetchOpenRouterCatalog()).rejects.toThrow(); // backoff: no new HTTP
+    expect(spy.mock.calls.length).toBe(callsAfterFailure);
+    resetOpenRouterCaches();
     spy.mockImplementation(() => Promise.resolve(catalogResponse()));
     await expect(fetchOpenRouterCatalog()).resolves.toHaveLength(5);
   });
 
-  it('a failed revalidation serves the LAST SUCCESSFUL catalog (stale-if-error keeps the picker populated)', async () => {
-    // Canary (user report 2026-09-17, shipped 1.36.10): one grumpy catalog
-    // download dropped EVERY OpenRouter model from the Copilot picker. Once a
-    // snapshot exists, a failed refresh must serve it stale — hours-old truth
-    // beats a "no models" lie; a genuinely removed model still drops on the
-    // next successful fetch.
+  it('the session catalog never revalidates: a day later the snapshot is served with ZERO further HTTP', async () => {
+    // Canary (2026-09-18 lockout hunt, replaces the stale-if-error canary):
+    // the 1.36.10 bug was a grumpy refresh emptying the picker; the session
+    // memo makes refreshes nonexistent — one download serves the whole
+    // session, so neither hammering nor a failed refresh can happen. Only a
+    // reset (Test & Refresh, settings change) re-opens the download.
     const spy = mockCatalogFetch();
     await expect(fetchOpenRouterCatalog()).resolves.toHaveLength(5);
-    const realNow = Date.now();
-    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(realNow + 61_000); // past the memo TTL
-    try {
-      spy.mockRejectedValueOnce(new Error('boom'));
-      spy.mockRejectedValueOnce(new Error('boom')); // fetchWithRetry's second attempt
-      await expect(fetchOpenRouterCatalog()).resolves.toHaveLength(5);
-    } finally {
-      nowSpy.mockRestore();
-    }
+    // No clock to advance: the memo has no age logic at all, which is the point.
+    await expect(fetchOpenRouterCatalog()).resolves.toHaveLength(5);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('resetOpenRouterCaches drops the stale snapshot: an explicit refresh reports the failure honestly', async () => {
-    // Test & Refresh must never silently "succeed" on hours-old data.
+  it('resetOpenRouterCaches re-opens the download: an explicit refresh reports the failure honestly', async () => {
+    // Test & Refresh must never silently "succeed" on the session's cached
+    // snapshot — after a reset the next call hits the network and a failure
+    // surfaces instead of being swallowed by the memo.
     const spy = mockCatalogFetch();
     await expect(fetchOpenRouterCatalog()).resolves.toHaveLength(5);
-    const realNow = Date.now();
-    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(realNow + 61_000);
-    try {
-      resetOpenRouterCaches();
-      spy.mockRejectedValueOnce(new Error('boom'));
-      spy.mockRejectedValueOnce(new Error('boom'));
-      await expect(fetchOpenRouterCatalog()).rejects.toThrow();
-    } finally {
-      nowSpy.mockRestore();
-    }
+    resetOpenRouterCaches();
+    spy.mockRejectedValueOnce(new Error('boom'));
+    await expect(fetchOpenRouterCatalog()).rejects.toThrow();
   });
 });
 

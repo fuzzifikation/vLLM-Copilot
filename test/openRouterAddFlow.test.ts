@@ -225,6 +225,44 @@ describe('runOpenRouterAddFlow', () => {
     expect(out.appendLine).toHaveBeenCalledWith(expect.stringContaining('[ERROR] OpenRouter model catalog unavailable'));
   });
 
+  it('cancelling the model picker keeps the registered OpenRouter server (zero-model entry)', async () => {
+    // 'Add Server' doctrine on the OpenRouter branch: the entry is written the
+    // moment the key is entered, so Escape at the catalog picker must NOT lose
+    // the server - the user adds the model later. Regression: the entry used to
+    // be created only at save time, so a cancelled picker added nothing.
+    const out = freshOutput();
+    stubOpenRouterFetch();
+    inputBoxSpy.mockResolvedValueOnce('sk-or-v1-test'); // API key
+    // Empty registry: the flow must CREATE the openrouter entry itself.
+    const updateSpy = vi.fn().mockResolvedValue(undefined);
+    vscode.workspace._mockConfig = {
+      get: (key: string) => (key === 'models' ? [] : key === 'servers' ? [] : undefined),
+      update: updateSpy,
+      inspect: () => ({ defaultValue: 'none' }),
+    };
+    // Escape the picker: hide() fires the moment it is shown (after the flow's
+    // onDidHide listener is registered, which happens before show()).
+    createQuickPickSpy.mockImplementation(() => {
+      const stub = makeQuickPickStub();
+      stub.show = vi.fn(() => stub._fireHide());
+      return stub;
+    });
+
+    await runOpenRouterAddFlow(out, provider, 'https://openrouter.ai/api');
+
+    expect(createQuickPickSpy).toHaveBeenCalled();
+    const serversWrite = updateSpy.mock.calls.find(c => c[0] === 'servers');
+    expect(serversWrite?.[1]).toEqual([
+      expect.objectContaining({
+        id: 'openrouter',
+        serverUrl: 'https://openrouter.ai/api',
+        serverType: 'openrouter',
+        requestHeaders: { Authorization: 'Bearer sk-or-v1-test' },
+      }),
+    ]);
+    expect(resolveSpy).not.toHaveBeenCalled(); // no model was saved
+  });
+
   it('Replace Config retains the existing entry id (duplicate on the fixed API base)', async () => {
     const out = freshOutput();
     stubOpenRouterFetch();

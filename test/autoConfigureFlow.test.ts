@@ -140,6 +140,53 @@ describe('registerAutoConfigureModelCommand', () => {
     expect(provider.clearCache).toHaveBeenCalled();
   });
 
+  it('auto-configures a server-reported model on a servers-only config (zero configured models)', async () => {
+    // Servers-only setup: a registry entry exists, nothing is configured yet.
+    // Model Settings posts {server, id} for an unconfigured server-reported
+    // model; the command must run discovery and offer the save, NOT bail with
+    // "no models configured" — that gate killed the exact scenario the
+    // new-model branch exists for.
+    const servers = [
+      { id: 'host-8000', serverUrl: 'http://host:8000', requestHeaders: { 'X-Key': 'solo' } },
+    ];
+    vscode.workspace._mockConfig = {
+      get: (key: string) => (key === 'models' ? [] : key === 'servers' ? servers : undefined),
+      update: chatUpdate,
+      inspect: () => ({ defaultValue: 'none' }),
+    };
+    resolveSpy = vi.spyOn(hfDiscovery, 'resolveModelConfigForAddSafely').mockResolvedValue({
+      modelConfig: { id: 'fresh-model', vllmModelId: 'fresh-model', server: 'host-8000' },
+      summary: ['discovered'],
+    });
+    infoSpy.mockResolvedValue('Save to Settings' as any);
+
+    registerAutoConfigureModelCommand({} as any, provider, output);
+    await (vscode as any).commands._run('vllm-copilot.autoConfigureModel', {
+      server: 'host-8000',
+      id: 'fresh-model',
+    });
+
+    // Discovery ran against the entry's own URL and credentials.
+    expect(resolveSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'fresh-model',
+      'http://host:8000',
+      { 'X-Key': 'solo' },
+      undefined,
+      undefined,
+      'vllm',
+    );
+    // The confirm/save tail ran and wrote the new entry.
+    expect(replaceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'fresh-model on host-8000',
+        vllmModelId: 'fresh-model',
+        server: 'host-8000',
+      }),
+    );
+  });
+
   it('targets the selected entry\'s credentials when one URL has multiple identities', async () => {
     const siblings = [
       { id: 'identity-a', vllmModelId: 'model-a', server: 'srv-a' },

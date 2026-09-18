@@ -17,10 +17,11 @@
 import * as vscode from 'vscode';
 import { buildEndpoint, normalizeServerUrl, sanitizeRequestHeaders, type ServerType } from '../state/config.js';
 import { buildRequestHeaders, transportErrorCode } from '../shared/fetchRetry.js';
-import { resolveRuntimeLimits } from '../backends/runtimeLimits.js';
+import { listServerModels, resolveRuntimeLimits, type ServerModelEntry } from '../backends/runtimeLimits.js';
 import {
   probeOpenRouterKey,
   fetchOpenRouterCredits,
+  fetchOpenRouterCatalog,
   getOpenRouterModelEndpointsCached,
   normalizeOpenRouterFromCatalog,
   PermanentContextError,
@@ -29,7 +30,6 @@ import {
   type OpenRouterCredits,
   type OpenRouterModelData,
   type OpenRouterModelEndpoint,
-  parseOpenRouterCatalogData,
 } from '../backends/openRouter.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -435,6 +435,15 @@ class ServerMetricsEngine {
   private transientOfflineTicks = 0;
   private _lastAggregated: ServerMetrics | null = null;
   private _lastRaw: ServerRawData | null = null;
+  /**
+   * Server-reported model rows from the last authoritative read (see
+   * {@link getServerModels}) — the single fetched list every display surface
+   * reads. Session-scoped on purpose: model lists change when servers change,
+   * not every poll interval (2026-09-18 — re-downloading OpenRouter's ~700 KB
+   * catalog every 15 s per entry was pure hammering, and self-hosted list
+   * probes cost nothing but proved nothing new).
+   */
+  private _lastModelRows: Array<Record<string, unknown>> = [];
   /** Epoch ms of the last cache fill (`_lastAggregated`/`_lastRaw`), 0 before
    *  the first completed cycle. The Deep-Dive panel stamps a pushed cache with
    *  this instead of the render time, so a stale snapshot never wears a fresh
@@ -448,8 +457,9 @@ class ServerMetricsEngine {
    * usable window — never retried); number = resolved value. OpenRouter is a
    * relay: each configured model has its OWN context window, so this is a map,
    * not a scalar. For OpenRouter, an id ABSENT from the current catalog is not
-   * cached at all (`undefined`) — the catalog is re-fetched every poll, so the
-   * engine rechecks it next tick instead of caching a permanent miss.
+   * cached at all (`undefined`) — the catalog is session-scoped (refetched on a
+   * reset, not every poll), so the engine rechecks it against whatever catalog
+   * is live rather than caching a permanent miss.
    */
   private resolvedContextByModel = new Map<string, number | null | undefined>();
   /**
@@ -509,10 +519,32 @@ class ServerMetricsEngine {
     // A different box may serve the same wire id with a different context
     // window: per-model resolutions are per-box truth, not per-entry truth.
     this.clearResolvedLimits();
+    // Rows describe the OLD box's served list — re-read on the next tick.
+    this._lastModelRows = [];
   }
 
   /** Latest aggregated metrics (synchronous, may be null before first poll). */
   getCachedAggregated(): ServerMetrics | null { return this._lastAggregated; }
+
+  /**
+   * The latest server-reported model rows — the same authoritative id space
+   * the runtime resolver and Test & Refresh match against. EMPTY while the
+   * last published verdict is not online: callers must read that as
+   * "unknown", never as "this server hosts nothing" (the exact display
+   * policy of the one-shot probe this replaced).
+   */
+  getServerModels(): ServerModelEntry[] {
+    if (!this._lastAggregated?.online) return [];
+    return this._lastModelRows.flatMap((m): ServerModelEntry[] =>
+      typeof m.id === 'string'
+        ? [{
+            id: m.id,
+            ownedBy: typeof m.owned_by === 'string' ? m.owned_by : undefined,
+            maxModelLen: typeof m.max_model_len === 'number' ? m.max_model_len : undefined,
+          }]
+        : [],
+    );
+  }
 
   /** Latest raw server data (synchronous, may be null before first poll). */
   getCachedRaw(): ServerRawData | null { return this._lastRaw; }
@@ -559,6 +591,8 @@ class ServerMetricsEngine {
     this.serverType = serverType;
     // A different backend resolves limits on an entirely different endpoint.
     this.clearResolvedLimits();
+    // …and lists its models on one — the cached rows describe another backend.
+    this._lastModelRows = [];
   }
 
   /** Per-model resolved limits describe the PREVIOUS url/backend: drop them. */
@@ -713,10 +747,11 @@ class ServerMetricsEngine {
               this.resolvedOutputByModel.set(modelId, limits.maxOutputTokens ?? null);
             } catch (err) {
               if (err instanceof OpenRouterModelNotFoundError) {
-                // Absent from THIS catalog snapshot. The catalog is already
-                // re-fetched every poll, so recheck next tick rather than
-                // caching a permanent miss — a transiently incomplete catalog
-                // or propagation delay must not disable context. No extra HTTP.
+                // Absent from THIS catalog snapshot. Leave it uncached rather
+                // than a permanent miss — the catalog is session-scoped, so it
+                // is re-served (from the memo, no extra HTTP) every tick and
+                // refetched on a reset; a model that appears in a later catalog
+                // must still resolve, so context is never permanently disabled.
                 continue;
               }
               if (isPermanentContextError(err)) {
@@ -756,10 +791,13 @@ class ServerMetricsEngine {
       // cleanly parsed catalog is OpenRouter's own statement that the id is
       // gone (renamed or removed). Absence is only an accusation when the
       // catalog itself answered: `online` with no data note means the
-      // response arrived and parsed, so `raw.models` is the live listing.
-      // On any catalog gap the flag stays unset — a sulked download must
-      // never accuse 400 healthy models of dying.
-      if (this.serverType === 'openrouter' && aggregated.online && aggregated.staleError === undefined && this.modelIds.length > 0) {
+      // response arrived and parsed, and a NON-EMPTY listing is what makes
+      // absence mean anything — while the session's first catalog is still
+      // downloading (the 2 s race in fetchAllEndpoints yields no rows) or
+      // reported nothing, there is no listing to be absent from. On any
+      // catalog gap the flag stays unset — a sulked download must never
+      // accuse 400 healthy models of dying.
+      if (this.serverType === 'openrouter' && aggregated.online && aggregated.staleError === undefined && raw.models.length > 0 && this.modelIds.length > 0) {
         const listed = new Set(raw.models.map((m) => m.id));
         const missing = this.modelIds.filter((id) => !listed.has(id));
         if (missing.length > 0) aggregated.missingModels = missing;
@@ -782,6 +820,32 @@ class ServerMetricsEngine {
           if (s.status === 'fulfilled' && s.value.length > 0) providersByModel[this.modelIds[i]] = s.value;
         }
         if (Object.keys(providersByModel).length > 0) aggregated.providersByModel = providersByModel;
+      }
+
+      // Server-reported model rows — the shared list every display surface
+      // reads (dashboard Models node, Model Settings picker). `/v1/models`-
+      // served backends (vLLM, llama.cpp) and the OpenRouter relay (whose rows
+      // are the session catalog — fetched once, see fetchAllEndpoints) already
+      // hold them in this cycle's `raw.models`, so this is a pure re-map, no
+      // extra HTTP. LM Studio and Ollama are authoritative on their NATIVE
+      // endpoints (model keys / loaded models — the ids the resolver and Test &
+      // Refresh use), so the shared memoized lister fetches those, and
+      // `aggregated.models` adopts them: the dashboard tree, Model Settings and
+      // Test & Refresh can no longer disagree on what a server hosts. A failed
+      // lister leaves the rows EMPTY (unknown, never stale); the dashboard keeps
+      // the `/v1/models` ids this tick parsed.
+      if (aggregated.online) {
+        if (this.serverType === 'lmstudio' || this.serverType === 'ollama') {
+          try {
+            const listed = await listServerModels(this.serverType, this.serverUrl, this.requestHeaders);
+            this._lastModelRows = listed.map((m) => ({ id: m.id }));
+            aggregated.models = listed.map((m) => m.id);
+          } catch {
+            this._lastModelRows = [];
+          }
+        } else {
+          this._lastModelRows = raw.models;
+        }
       }
 
       this._lastAggregated = aggregated;
@@ -1004,6 +1068,20 @@ async function fetchAllEndpoints(
   // 404 / don't exist, so probing them is pointless. /v1/models doubles as the
   // reachability probe for those backends (chat already relies on it).
   const isVllm = serverType === 'vllm';
+  const isRelay = serverType === 'openrouter';
+  // The OpenRouter catalog is fetched ONCE per session via the shared memo
+  // (2026-09-18: it used to be re-downloaded here — ~700 KB per entry every
+  // poll interval, ~5,700 downloads a day per relay — exactly the hammering
+  // that risks a rate-limit lockout). The memo serves the cached snapshot on
+  // every tick at zero network cost; only the first tick of a session (or a
+  // Test & Refresh reset) pays the download. It runs CONCURRENTLY with the
+  // key probe below. A failure yields no rows and a data-gap note — never a
+  // lie about an empty relay; the memo's 30 s backoff absorbs a dead
+  // OpenRouter instead of re-downloading every tick.
+  const catalogPromise = isRelay
+    ? fetchOpenRouterCatalog().then((data) => ({ ok: true as const, data }))
+        .catch(() => ({ ok: false as const }))
+    : Promise.resolve(undefined);
   // Probe transport sink: records the error code when a probe fetch itself
   // fails, so an offline verdict can separate a conclusive death
   // (ECONNREFUSED/ENOTFOUND) from a timeout. Both probe candidates report
@@ -1019,7 +1097,11 @@ async function fetchAllEndpoints(
       ])
     : await Promise.all([
         Promise.resolve(new Response(null, { status: 404 })), // no /health for non-vLLM
-        safeFetch(buildEndpoint(baseUrl, 'v1/models'), { signal: controller.signal, headers }, probeTransport),
+        // Relay: no per-tick /v1/models — the catalog comes from the session
+        // memo above. The key probe (below) is the relay's liveness signal.
+        isRelay
+          ? Promise.resolve<Response | null>(null)
+          : safeFetch(buildEndpoint(baseUrl, 'v1/models'), { signal: controller.signal, headers }, probeTransport),
         Promise.resolve(''), // no /version
         Promise.resolve(''), // no /metrics
         Promise.resolve(''), // no /load
@@ -1052,22 +1134,28 @@ async function fetchAllEndpoints(
   const modelNames: string[] = [];
   let maxModelLen: number | null = null;
   let parsedModels: Array<Record<string, unknown>> = [];
-  let malformedOpenRouterCatalog = false;
-  if (serverType === 'openrouter' && v1ModelsRes?.ok) {
-    // OpenRouter's /v1/models IS the authoritative catalog. The SAME boundary
-    // as fetchOpenRouterCatalog() applies to EVERY successful response,
-    // including an empty body (shared parser, audit P16-2 — this rule used to
-    // be sync'd by comment, one drift from a lying dashboard): a 200/204 that
-    // is not `{ data: [...] }` is a malformed protocol response, never a
-    // healthy empty catalog — otherwise a broken relay body would read as an
-    // online server with no models. Entries without a string id are dropped.
-    const catalog = modelsText
-      ? parseOpenRouterCatalogData<Record<string, unknown>>(parseJsonSafe<unknown>(modelsText))
-      : undefined;
-    if (catalog === undefined) {
-      malformedOpenRouterCatalog = true;
-    } else {
-      parsedModels = catalog;
+  let catalogFetchFailed = false;
+  if (isRelay) {
+    // OpenRouter's catalog IS the authoritative model list, read from the
+    // session memo (see catalogPromise). fetchOpenRouterCatalog already
+    // validated the payload ({ data: [...] }), so a failure here is the
+    // session's first download failing (or its backoff re-throwing) —
+    // recorded as a data gap, never a healthy empty catalog. The read races
+    // on the SAME 2 s probe cap the key probe uses below: in steady state
+    // the memo is already settled and this costs nothing, but a cold
+    // download still in flight can never stall the health verdict (the rows
+    // arrive next tick, once the memo settles). 'pending' is neither data
+    // nor failure — no rows this tick, no gap note.
+    const cat = await Promise.race([
+      catalogPromise,
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 2000)),
+    ]);
+    if (cat !== 'pending') {
+      if (cat?.ok) {
+        parsedModels = cat.data as unknown as Array<Record<string, unknown>>;
+      } else {
+        catalogFetchFailed = true;
+      }
     }
   } else if (modelsText) {
     const modelsData = parseJsonSafe<{ data?: Array<Record<string, unknown>> }>(modelsText);
@@ -1099,8 +1187,7 @@ async function fetchAllEndpoints(
   // key probe IS the health signal (see Online check), so the verdict waits
   // for it. The endpoint fetches above ran in parallel, never a serial stall.
   // The 2 s cap stays: a probe slower than the poll interval is worthless for
-  // freshness, and the catalog fetch doubles as the second reachability
-  // witness when the cap beats the key probe. (Neither probe ever rejects.)
+  // freshness. (Neither probe ever rejects.)
   const [keyProbe, credits] = await Promise.all([
     Promise.race([
       keyProbePromise,
@@ -1129,17 +1216,16 @@ async function fetchAllEndpoints(
   // while chat worked fine. Any other `/health` status stays a real verdict
   // (503 = vLLM itself says it is sick; 401 = the proxy is guarding it).
   const relayOnline = isVllm && healthRes?.status === 404 && v1ModelsRes?.ok === true;
-  // OpenRouter relay: the SMALL AUTHENTICATED key probe owns the verdict. It
-  // costs a few hundred bytes and proves exactly the claim the node makes —
-  // "reachable, with THIS entry's credential" — while the ~1 MB public
-  // catalog is DATA, never health: it only corroborates reachability when it
-  // answers itself. Any HTTP status is an answer: 200 alive, 401
-  // alive-but-your-key-is-dead, 429 alive-and-telling-you-to-wait. (Live
-  // 2026-09-17: the catalog blew the 5 s cycle deadline repeatedly while chat
-  // worked fine — judging the relay by it painted a living OpenRouter
-  // Offline, user report on shipped 1.36.10.)
-  const isRelay = serverType === 'openrouter';
-  const relayReachable = keyProbe?.responded === true || v1ModelsRes !== null;
+  // OpenRouter relay: the SMALL AUTHENTICATED key probe owns the verdict,
+  // alone. It costs a few hundred bytes and proves exactly the claim the node
+  // makes — "reachable, with THIS entry's credential". The public catalog is
+  // DATA, never health, and is fetched once per session (not per tick), so it
+  // is not a liveness witness here. Any key-probe HTTP status is an answer:
+  // 200 alive, 401 alive-but-your-key-is-dead, 429
+  // alive-and-telling-you-to-wait; the offline-confirm debounce absorbs a
+  // one-off slow probe. (2026-09-17/18: the ~1 MB catalog blew the cycle
+  // deadline and, downloaded every poll, courted a rate-limit lockout.)
+  const relayReachable = keyProbe?.responded === true;
   const online = isVllm
     ? (probeOk || relayOnline)
     : isRelay
@@ -1157,14 +1243,8 @@ async function fetchAllEndpoints(
   // (the relay DID answer) and notes itself — the dashboard renders the
   // yellow stale warning instead of a false death verdict.
   let relayDataNote: string | undefined;
-  if (online && isRelay) {
-    if (malformedOpenRouterCatalog) {
-      relayDataNote = 'OpenRouter /v1/models returned a malformed catalog (expected { data: [...] })';
-    } else if (!v1ModelsRes) {
-      relayDataNote = 'OpenRouter catalog fetch failed - model data may be stale';
-    } else if (!v1ModelsRes.ok) {
-      relayDataNote = `OpenRouter catalog fetch answered HTTP ${v1ModelsRes.status}`;
-    }
+  if (online && isRelay && catalogFetchFailed) {
+    relayDataNote = 'OpenRouter catalog fetch failed - model data may be stale';
   }
   // Classify the offline verdict for the engine's hold/debounce decision.
   // Any HTTP answer proves reachability (a 429 literally means "alive, rate

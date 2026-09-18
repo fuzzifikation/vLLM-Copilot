@@ -129,6 +129,7 @@ button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-off
 .dirty-status { font-size: 0.75em; margin-right: auto; color: var(--vscode-descriptionForeground); }
 .dirty-status.dirty { color: var(--vscode-inputValidation-warningForeground, var(--vscode-editorWarning-foreground, #cca700)); }
 #saveBtn:disabled, #revertBtn:disabled { opacity: 0.5; cursor: default; }
+#removeModelBtn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Identity card — server/type/model/displayName/actions in one bordered
    block (same visual language as .personality-card). Its job is anchoring:

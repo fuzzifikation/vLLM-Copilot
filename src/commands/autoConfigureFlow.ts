@@ -17,12 +17,11 @@ export function registerAutoConfigureModelCommand(
   output: vscode.OutputChannel
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.autoConfigureModel', async (arg?: { server?: string; id?: string }) => {
+    // NO empty-models gate here: a servers-only config is exactly when the
+    // webview calls this with {server, id} to create the FIRST model from a
+    // server-reported id. A "nothing configured" bail belongs to the no-args
+    // QuickPick path only (below), where an empty store really means nothing to pick.
     const existing = readModels();
-    if (existing.length === 0) {
-      output.appendLine('[INFO] Auto-configure cancelled - no models configured.');
-      vscode.window.showInformationMessage('No models configured. Use "Add or Reconfigure Server/Model" first.');
-      return;
-    }
     // Server facts live on the registry; models reference entries by `server` id.
     const servers = readServers();
 
@@ -79,7 +78,14 @@ export function registerAutoConfigureModelCommand(
         return;
       }
     } else {
-      // No args — show QuickPick to select a model
+      // No usable args — show QuickPick to select a model. This is the ONLY
+      // path where an empty model store is a dead end; the arg path above
+      // creates models on servers-only configs.
+      if (existing.length === 0) {
+        output.appendLine('[INFO] Auto-configure cancelled - no models configured.');
+        vscode.window.showInformationMessage('No models configured. Use "Add or Reconfigure Server/Model" first.');
+        return;
+      }
       const items = existing.map((m, idx) => {
         const label = m.displayName || resolveVllmModelId(m);
         return {

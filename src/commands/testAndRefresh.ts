@@ -511,9 +511,10 @@ export function registerTestAndRefreshModelsCommand(
       // Clear cached models so the provider re-fetches on next use. Guaranteed
       // to run even if a popup/diagnostic path throws unexpectedly.
       provider.clearCache();
-      // "Refresh" promises live truth on every backend, but the OpenRouter arm
-      // of the resolver reads the catalog memo (60 s TTL) and only this hook
-      // clears it. Without it, a manual refresh re-reads a stale catalog.
+      // "Refresh" promises live truth on every backend. The OpenRouter catalog
+      // is now session-scoped (fetched once, reused every poll), so only this
+      // hook refetches it — without the reset a manual refresh would re-read
+      // the session's cached catalog and report a model added upstream as gone.
       resetOpenRouterCaches();
     }
   });

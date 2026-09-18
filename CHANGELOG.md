@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.36.12
+
+### Fixed
+
+- **Auto-Configure works before the first model exists.** With only servers configured, picking a server-reported model in Model Settings and clicking Auto-Configure answered "No models configured" and stopped. It now runs discovery on that server and offers to save the model.
+- **Model Settings now shows the models your server serves.** It fetched the model list separately from the dashboard, in one attempt; when that attempt missed, the model dropdown stayed empty until you changed some setting. It now reads the same live poll the dashboard runs, so a missed fetch recovers on the next poll by itself.
+- **Remove Model is greyed out for unconfigured models.** Such a model has no settings entry yet, so the button could only confirm a removal and then find nothing to remove.
+- **OpenRouter model data downloads once per session, not every refresh.** The dashboard re-downloaded the ~700 KB model catalog every poll for every OpenRouter server, which invited rate-limit lockouts: model fetches failed and the Model Selector timed out. **Test & Refresh** still re-downloads it on demand.
+- **Cancelling the OpenRouter model picker keeps the server.** Adding openrouter.ai with your key now registers the server up front, so quitting the model picker (or a failed catalog download) leaves the server configured and you can pick a model later.
+
 ## v1.36.11
 The Model Selector becomes a complete model list that only plots the benchmark-scored ones.
 

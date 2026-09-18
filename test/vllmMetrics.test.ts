@@ -6,8 +6,9 @@
  * an empty map clears a previously applied fallback. Same contract as the
  * runtime resolver — kept display-only.
  */
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { getMetricsEngine, type ServerMetrics } from '../src/ui/vllmMetrics.js';
+import { resetOpenRouterCaches } from '../src/backends/openRouter.js';
 
 /** The engine surface as production hands it out - the class itself is module-private. */
 type Engine = ReturnType<typeof getMetricsEngine>;
@@ -15,9 +16,10 @@ type Engine = ReturnType<typeof getMetricsEngine>;
 const jsonResponse = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
 
-/** vLLM endpoint stub: /health and /v1/models statuses configurable, rest inert. */
-function stubFetch(rows: Array<Record<string, unknown>>, health = 200, models = 200): void {
-  vi.spyOn(globalThis, 'fetch').mockImplementation((input: unknown) => {
+/** vLLM endpoint stub: /health and /v1/models statuses configurable, rest inert.
+ *  Returns the spy so a test can count calls or swap the implementation live. */
+function stubFetch(rows: Array<Record<string, unknown>>, health = 200, models = 200) {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation((input: unknown) => {
     const url = String(input);
     if (url.endsWith('/health')) return Promise.resolve(new Response('', { status: health }));
     if (url.endsWith('/v1/models')) return Promise.resolve(models === 200 ? jsonResponse({ data: rows }) : new Response('', { status: models }));
@@ -28,9 +30,9 @@ function stubFetch(rows: Array<Record<string, unknown>>, health = 200, models = 
 }
 
 /** Drive one engine to its first completed tick and collect every aggregated snapshot. */
-async function firstTick(engine: Engine, seen: ServerMetrics[]): Promise<void> {
+async function firstTick(engine: Engine, seen: ServerMetrics[], timeoutMs = 1000): Promise<void> {
   engine.subscribe((agg) => seen.push(agg));
-  await vi.waitFor(() => expect(seen.length).toBeGreaterThanOrEqual(1));
+  await vi.waitFor(() => expect(seen.length).toBeGreaterThanOrEqual(1), { timeout: timeoutMs });
 }
 
 describe('ServerMetricsEngine — configured contextWindow fallback (vLLM display)', () => {
@@ -142,16 +144,24 @@ describe('ServerMetricsEngine — liveness through a /v1-only proxy', () => {
  * answered" is an offline verdict.
  */
 describe('ServerMetricsEngine — OpenRouter relay health (catalog is data, not health)', () => {
+  beforeEach(() => {
+    // The catalog is session-memoized module state; a leaked snapshot would
+    // serve stale data to the next case and mask a catalog-failure verdict.
+    resetOpenRouterCaches();
+  });
   afterEach(() => {
     vi.restoreAllMocks();
+    resetOpenRouterCaches();
   });
 
-  type Stub = { json?: unknown; status?: number; reject?: Error };
+  type Stub = { json?: unknown; status?: number; reject?: Error; hang?: boolean };
   function stubRelay(key: Stub, catalog: Stub): void {
     const answer = (s: Stub) =>
-      s.reject
-        ? Promise.reject(s.reject)
-        : Promise.resolve(new Response(s.json !== undefined ? JSON.stringify(s.json) : '', { status: s.status ?? 200 }));
+      s.hang
+        ? new Promise<Response>(() => { /* never settles: the 2 s race must carry the tick */ })
+        : s.reject
+          ? Promise.reject(s.reject)
+          : Promise.resolve(new Response(s.json !== undefined ? JSON.stringify(s.json) : '', { status: s.status ?? 200 }));
     vi.spyOn(globalThis, 'fetch').mockImplementation((input: unknown) => {
       const url = String(input);
       if (url.endsWith('/v1/key')) return answer(key);
@@ -245,6 +255,117 @@ describe('ServerMetricsEngine — OpenRouter relay health (catalog is data, not 
       expect(seen[0].online).toBe(true); // key probe answered — relay lives
       expect(seen[0].staleError).toBeDefined(); // catalog data gap noted
       expect(seen[0].missingModels).toBeUndefined(); // and NO model is accused
+    } finally {
+      engine.dispose();
+    }
+  });
+
+  it('a still-DOWNLOADING cold catalog accuses nothing (pending rows are absence of data, not evidence)', async () => {
+    // The session's first tick races the catalog read on 2 s; a download
+    // slower than that publishes online-with-no-rows. An empty listing is
+    // not a listing models can be absent from — one slow first tick must
+    // not paint red "not on OpenRouter anymore" markers on everything
+    // (2026-09-18 self-review catch on the session-memo change).
+    stubRelay(keyOk, { hang: true });
+    const engine = getMetricsEngine('or7', 'https://openrouter.ai/api', {}, 'openrouter', ['deepseek/deepseek-chat']);
+    const seen: ServerMetrics[] = [];
+    try {
+      await firstTick(engine, seen, 3000); // the 2 s race cap runs for real
+      expect(seen[0].online).toBe(true); // key probe answered — relay lives
+      expect(seen[0].staleError).toBeUndefined(); // pending is neither data nor failure
+      expect(seen[0].missingModels).toBeUndefined();
+      expect(engine.getServerModels()).toEqual([]); // rows unknown, never an empty-lie
+    } finally {
+      engine.dispose();
+    }
+  });
+});
+
+/**
+ * The engine's server-reported model rows (2026-09-18): the single fetched
+ * list every display surface reads (Model Settings picker, dashboard Models
+ * node) after the old one-shot probe in Model Settings left its view blank
+ * until a settings write. Contract: `/v1/models`-served backends map the
+ * already-parsed rows (no extra HTTP); LM Studio/Ollama adopt their NATIVE
+ * endpoint's authoritative ids in rows AND `aggregated.models`; a failed
+ * native probe yields empty rows (unknown, never stale) while the dashboard
+ * keeps this tick's `/v1/models` ids; offline always reads empty.
+ */
+describe('ServerMetricsEngine — server-reported model rows (getServerModels)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('vLLM maps the tick rows: id + owned_by + max_model_len, no extra fetch', async () => {
+    const fetchSpy = stubFetch([{ id: 'm1', object: 'model', owned_by: 'vllm', max_model_len: 4096 }]);
+    const engine = getMetricsEngine('rows-vllm', 'http://rows-vllm:8000', {}, 'vllm', []);
+    const seen: ServerMetrics[] = [];
+    try {
+      await firstTick(engine, seen);
+      expect(engine.getServerModels()).toEqual([{ id: 'm1', ownedBy: 'vllm', maxModelLen: 4096 }]);
+      // The row list is a re-map of the tick's /v1/models, not a second probe.
+      const modelFetches = fetchSpy.mock.calls.filter(c => String(c[0]).endsWith('/v1/models')).length;
+      expect(modelFetches).toBe(1);
+    } finally {
+      engine.dispose();
+    }
+  });
+
+  it('lmstudio: the native key endpoint owns rows AND the dashboard model node', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/models')) return jsonResponse({ models: [{ key: 'real/key', id: 'alias' }] });
+      if (url.endsWith('/v1/models')) return jsonResponse({ data: [{ id: 'alias' }] });
+      return new Response('', { status: 404 });
+    });
+    const engine = getMetricsEngine('rows-lms', 'http://rows-lms:1234', {}, 'lmstudio');
+    const seen: ServerMetrics[] = [];
+    try {
+      await firstTick(engine, seen);
+      expect(engine.getServerModels().map(m => m.id)).toEqual(['real/key']);
+      expect(seen[0].models).toEqual(['real/key']); // one id space, no drift
+    } finally {
+      engine.dispose();
+    }
+  });
+
+  it('ollama: failed native probe leaves rows unknown while the dashboard keeps /v1/models ids', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith('/api/ps')) return new Response('', { status: 500 });
+      if (url.endsWith('/v1/models')) return jsonResponse({ data: [{ id: 'loaded-model' }] });
+      return new Response('', { status: 404 });
+    });
+    const engine = getMetricsEngine('rows-oll', 'http://rows-oll:11434', {}, 'ollama');
+    const seen: ServerMetrics[] = [];
+    try {
+      await firstTick(engine, seen);
+      expect(seen[0].online).toBe(true); // /v1/models answered — server lives
+      expect(engine.getServerModels()).toEqual([]); // "unknown", never a stale or empty-lie list
+      expect(seen[0].models).toEqual(['loaded-model']); // dashboard loses nothing
+    } finally {
+      engine.dispose();
+    }
+  });
+
+  it('offline reads empty rows regardless of the last good list', async () => {
+    const fetchSpy = stubFetch([{ id: 'm1', object: 'model', owned_by: 'vllm', max_model_len: 4096 }], 200, 200);
+    const engine = getMetricsEngine('rows-off', 'http://rows-off:8000', {}, 'vllm', []);
+    const seen: ServerMetrics[] = [];
+    try {
+      await firstTick(engine, seen);
+      expect(engine.getServerModels().map(m => m.id)).toEqual(['m1']);
+      // Now kill the server: conclusive death (health AND models refuse)...
+      fetchSpy.mockImplementation(async (input: unknown) => {
+        const err = new Error('connect') as Error & { cause: unknown };
+        err.cause = Object.assign(new Error('inner'), { code: 'ECONNREFUSED' });
+        void input;
+        throw err;
+      });
+      engine.pollNow();
+      await vi.waitFor(() => expect(seen.length).toBeGreaterThanOrEqual(2));
+      expect(seen[1].online).toBe(false);
+      expect(engine.getServerModels()).toEqual([]);
     } finally {
       engine.dispose();
     }

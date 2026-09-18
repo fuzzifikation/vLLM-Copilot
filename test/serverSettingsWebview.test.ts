@@ -133,6 +133,33 @@ describe('Model Settings webview', () => {
     sel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     expect((document.getElementById('mSel') as HTMLSelectElement).value).toBe('acme/open-model');
   });
+
+  it('greys out Remove Model for unconfigured server models', () => {
+    // An unconfigured server model is a live stub with no settings entry, so
+    // removal could only confirm a deletion and then find nothing (the flow
+    // before 2026-09-18). Pins: enabled for the configured selection, disabled
+    // with a reason after switching to the stub, and the disabled click posts
+    // nothing (jsdom honors disabled, exactly like the webview's Chromium).
+    const { dom, posted } = loadWebview({ Think: {} }, ['wire-model', 'ghost-model']);
+    const document = dom.window.document;
+    const btn = document.getElementById('removeModelBtn') as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+
+    const sel = document.getElementById('mSel') as HTMLSelectElement;
+    sel.value = 'ghost-model';
+    sel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    const btn2 = document.getElementById('removeModelBtn') as HTMLButtonElement;
+    expect(btn2.disabled).toBe(true);
+    expect(btn2.getAttribute('title')).toContain('not configured');
+    btn2.click();
+    expect(posted.some((m: any) => m.type === 'removeModel')).toBe(false);
+
+    // And back to the configured entry re-enables it (state follows the selection).
+    const sel3 = document.getElementById('mSel') as HTMLSelectElement;
+    sel3.value = 'model-config';
+    sel3.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    expect((document.getElementById('removeModelBtn') as HTMLButtonElement).disabled).toBe(false);
+  });
 });
 
 // The cross-OS personality bug, pinned at the dropdown: a shipped preset is
