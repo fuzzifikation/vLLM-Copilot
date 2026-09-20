@@ -5,7 +5,7 @@
 </a>
 
 # vLLM-Copilot
-[![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot) [![vLLM](https://img.shields.io/badge/vLLM-Primary-01C286)](https://github.com/vllm-project/vllm) [![OpenRouter Supported](https://img.shields.io/badge/OpenRouter-Supported-00B3A6?logo=openrouter&logoColor=white)](https://openrouter.ai) [![Agents Window](https://img.shields.io/badge/VS_Code-Agents_Window_Ready-007ACC?logo=visualstudiocode&logoColor=white)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md) [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main) [![License: BUSL-1.1 source](https://img.shields.io/badge/License-BUSL--1.1-orange)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE) [![License: MIT extension](https://img.shields.io/badge/License-MIT%20extension-yellow.svg)](#license)
+[![VS Marketplace](https://img.shields.io/badge/Get_on_VS_Marketplace-blue?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=System-Sciences.vllm-copilot) [![vLLM](https://img.shields.io/badge/vLLM-Primary-01C286)](https://github.com/vllm-project/vllm) [![OpenRouter Supported](https://img.shields.io/badge/OpenRouter-Supported-00B3A6?logo=openrouter&logoColor=white)](https://openrouter.ai) [![Agents Window](https://img.shields.io/badge/VS_Code-Agents_Window_Ready-007ACC?logo=visualstudiocode&logoColor=white)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/agents-window.md) [![Last Commit](https://img.shields.io/github/last-commit/fuzzifikation/vLLM-Copilot)](https://github.com/fuzzifikation/vLLM-Copilot/commits/main)  [![License: MIT extension](https://img.shields.io/badge/License-MIT%20extension-yellow.svg)](#license)[![License: BUSL-1.1 source](https://img.shields.io/badge/License-BUSL--1.1-orange)](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/LICENSE)
 
 **Your vLLM-served models inside GitHub Copilot and the VS Code Agents window.**
 GitHub Copilot provides the familiar chat, tools, and model picker; you provide the model. Requests to your models (prompts, code, context) are never sent to Copilot!
@@ -13,6 +13,24 @@ GitHub Copilot provides the familiar chat, tools, and model picker; you provide 
 </div>
 
 > **Disclaimer.** This extension does not protect against misuse, does not provide security or safety guardrails, and does not guarantee the absence of bugs. Language models may produce harmful or incorrect output and may misuse this extension (tools, file edits, commands). Paid models cost real money and any price this extension shows is a best-guess estimate: the bill is yours. You own the consequences. Source is public: [github.com/fuzzifikation/vLLM-Copilot](https://github.com/fuzzifikation/vLLM-Copilot). Full text: [DISCLAIMER.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/DISCLAIMER.md).
+
+<div align="center">
+
+**Video guides**
+*thank you for 1k downloads!*
+<table>
+<tr>
+<td align="center"><a href="https://www.youtube.com/watch?v=yXGaIWgzmXo&list=PLX5fAAeBRJkg&index=1"><img src="https://img.youtube.com/vi/yXGaIWgzmXo/maxresdefault.jpg" width="280" alt="vllm-Copilot: 1. Getting Started (7:43)"></a><br><a href="https://www.youtube.com/watch?v=yXGaIWgzmXo&list=PLX5fAAeBRJkg&index=1">1. Getting Started (7:43)</a></td>
+<td align="center"><a href="https://www.youtube.com/watch?v=bG3CfTAKE6I&list=PLX5fAAeBRJkg&index=2"><img src="https://img.youtube.com/vi/bG3CfTAKE6I/maxresdefault.jpg" width="280" alt="vllm-Copilot: 2. Server Dashboard (1:35)"></a><br><a href="https://www.youtube.com/watch?v=bG3CfTAKE6I&list=PLX5fAAeBRJkg&index=2">2. Server Dashboard (1:35)</a></td>
+</tr>
+<tr>
+<td align="center"><a href="https://www.youtube.com/watch?v=Aioj3uz1bZI&list=PLX5fAAeBRJkg&index=3"><img src="https://img.youtube.com/vi/Aioj3uz1bZI/maxresdefault.jpg" width="280" alt="vllm-Copilot: 3. System Prompt Replacement and Personalities (8:49)"></a><br><a href="https://www.youtube.com/watch?v=Aioj3uz1bZI&list=PLX5fAAeBRJkg&index=3">3. System Prompt Replacement and Personalities (8:49)</a></td>
+<td align="center"><a href="https://www.youtube.com/watch?v=m9sAsLGscCQ&list=PLX5fAAeBRJkg&index=4"><img src="https://img.youtube.com/vi/m9sAsLGscCQ/maxresdefault.jpg" width="280" alt="vllm-Copilot: 4. OpenRouter Integration (6:22)"></a><br><a href="https://www.youtube.com/watch?v=m9sAsLGscCQ&list=PLX5fAAeBRJkg&index=4">4. OpenRouter Integration (6:22)</a></td>
+</tr>
+</table>
+</div>
+
+## Description
 
 For teams running AI on their own vLLM servers for many users, this gives you the Copilot integration: 
 

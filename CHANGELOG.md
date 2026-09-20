@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.36.13
+One thousand downloads. Thank you for riding with us.
+
+### Added
+
+- **Video guides.** Four short walkthroughs (Getting Started, Server Dashboard, System Prompt Replacement and Personalities, OpenRouter Integration) are linked at the top of the README as a clickable grid.
+
 ## v1.36.12
 
 ### Fixed
