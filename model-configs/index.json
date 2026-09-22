@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-11",
+  "updated": "2026-09-22",
   "presets": [
     {
       "match": [
@@ -85,6 +85,13 @@
         "Hy3"
       ],
       "file": "Tencent-Hy3-config.json"
+    },
+    {
+      "match": [
+        "MiMo-V2.6-Flash",
+        "MiMo-V2.6-Pro"
+      ],
+      "file": "XiaomiMiMo-MiMo-V2.6-RL.json"
     },
     {
       "match": [

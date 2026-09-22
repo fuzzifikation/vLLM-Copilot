@@ -18,6 +18,7 @@ Ready-to-use model configurations shipped with the extension. **Add or Reconfigu
 | `glm-5.2-config.json` | GLM-5.2 (Z-AI) | Think (Max), Think (High), No Think | ❌ | ✅ |
 | `GLM-5.3.json` | GLM-5.3 (Z.ai, full) | Think (Max), Think (High), Think (Low) | ❌ | ✅ (always on) |
 | `GLM-5.3-Flash.json` | GLM-5.3-Flash (Z.ai) | Think (Max), Think (High), Think (Low) | ✅ | ✅ (always on) |
+| `XiaomiMiMo-MiMo-V2.6-RL.json` | MiMo-V2.6 Flash-RL / Pro-RL (Xiaomi, one preset for both + quants) | Think, No Think | ✅ | ✅ (binary on/off) |
 
 To use a preset manually, copy the **`config`** object from the corresponding file into your `vllm-copilot.models` array (no reload needed) - the surrounding `presetVersion`/`match`/`meta` envelope is preset-format only, not user settings.
 

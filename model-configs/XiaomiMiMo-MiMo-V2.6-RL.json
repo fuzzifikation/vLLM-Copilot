@@ -1,0 +1,80 @@
+// MiMo-V2.6 (Xiaomi) - Flash-RL and Pro-RL share ONE preset.
+// Sources: https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Flash-RL
+//          https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Pro-RL
+// Verified 2026-09-22 against both model cards, both chat templates and
+// the vLLM MiMo-V2.5 recipe (the V2.6 cards point at it).
+//
+// ONE FILE FOR BOTH IS DELIBERATE. Pro-RL (1.02T/42B) and Flash-RL (309B/15B)
+// differ only in backbone size. Everything this config expresses is identical:
+// same family (mimo_v2), same chat template (byte-identical enable_thinking
+// clause in both repos), 1,048,576-token native context on both, same serve
+// flags (--reasoning-parser mimo --tool-call-parser mimo), same recommended
+// sampling (temp=1.0, top_p=0.95 - also in generation_config.json). A second
+// file would be a copy-paste twin waiting to drift. Do not split unless a
+// future variant changes thinking semantics.
+//
+// MATCHING: two scoped patterns, one preset. findPresetForModel scans every
+// pattern of every preset and the longest match wins, so a served id
+// containing either string lands here. All 16 quantized Flash repos
+// (ggml-org GGUF, mlx-community mxfp4, Vontra MLX-4bit, ProCreations NVFP4,
+// ...) embed "MiMo-V2.6-Flash-RL" in their id, so they match too - quantization
+// never changes the template. The patterns stay scoped to V2.6 on purpose:
+// MiMo-V2-Flash and MiMo-V2.5 were NOT verified template-identical and must
+// not be caught by a broad "MiMo" pattern.
+//
+// THINKING IS BINARY. The template only knows enable_thinking: true/false.
+// With false it pre-fills an empty  block so the model skips reasoning;
+// with true (or omitted) the model emits its own reasoning, extracted by the
+// server's "mimo" reasoning parser. There is NO reasoning_effort and NO
+// low/high/max ladder in this family - any such mode would be fiction.
+//
+// Modalities: both are omnimodal (text/image/video/audio). The extension
+// schema only expresses imageInput; video/audio are not sent by Copilot.
+//
+// Token budgets (1,048,576 native context):
+//   - Ladder tops at 131,072 (same reasoning as GLM-5.3-Flash): agentic RL
+//     models burn long thinking traces; at full context that still leaves
+//     ~917K input. On smaller serve windows pick a shorter Output Length.
+//
+// To use manually, copy the "config" object below into settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//   vllmModelId must be the EXACT served model id (this holds the Flash-RL
+//   canonical name; the Add flow overwrites it with what the server reports).
+
+{
+  "presetVersion": 1,
+  "match": ["MiMo-V2.6-Flash", "MiMo-V2.6-Pro"],
+  "meta": {
+    "name": "MiMo-V2.6 (Flash-RL / Pro-RL)",
+    "source": "https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Flash-RL",
+    "verified": "2026-09-22",
+    "notes": "One preset for both V2.6 RL checkpoints (identical template, parsers, sampling, 1M context). Binary thinking via enable_thinking - no effort levels. temp=1.0, top_p=0.95. Matches all quantized variants."
+  },
+  "config": {
+    "vllmModelId": "MiMo-V2.6-Flash-RL",
+    "displayName": "MiMo-V2.6",
+    "family": "mimo_v2",
+    "maxOutputTokens": [131072, 65536, 32768, 16384],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
+    },
+    "modelModes": {
+      "Think": {
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        },
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "No Think": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        },
+        "temperature": 1.0,
+        "top_p": 0.95
+      }
+    },
+    "defaultMode": "Think"
+  }
+}
