@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM (& OpenRouter) integration for GitHub Copilot & Agents window on self-hosted and remote servers (supports full featureset of vLLM, OpenRouter and Copilot). No subscription, no telemetry, no work content to any third party. Dashboard UI with full statistics of your servers",
-  "version": "1.36.13",
+  "version": "1.36.14",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -558,7 +558,7 @@
                   "type": "integer",
                   "default": 1,
                   "minimum": 0,
-                  "markdownDescription": "How many times to automatically retry when the model returns an empty or truncated response. Uses an **assistant prefill** to nudge the model: for empty responses it restarts the turn; for truncated responses (ending with `:`) it continues the partial output. **Default: 1.** Set to 0 to disable."
+                  "markdownDescription": "Shared retry budget for empty or truncated model responses and replayable mid-stream server errors that occur before answer text or a tool call reaches Copilot. Empty responses use an **assistant prefill**; vLLM responses ending with `:` use continuation; early server errors replay the identical request. **Default: 1.** Set to 0 to disable all three retry shapes."
                 },
                 "systemMessageReplacementsFile": {
                   "type": "string",
@@ -620,6 +620,12 @@
             "default": 4000,
             "markdownDescription": "Maximum characters of request/response bodies to log per entry. Set to `0` for no truncation (full bodies). Only applies when file logging is enabled.",
             "order": 2
+          },
+          "vllm-copilot.fixEmptyToolParameters": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Inject a minimal `parameters: { type: \"object\", properties: {} }` into tool definitions that omit the `parameters` field. Some upstream providers (e.g. Stealth on OpenRouter) reject zero-argument tools with a 502 error. **Default: on** — the empty schema correctly represents \"no arguments\". Disable only if your provider requires the field absent.",
+            "order": 3
           }
         }
       },

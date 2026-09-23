@@ -1094,7 +1094,7 @@ rulings were each re-verified against current bytes this pass.
 | P2-1 | `messageConverter.ts` holds three concerns (477 lines) | **defer / hygiene** (no graph edge; correction: three, not four - the image handling is inline in the converter and the transport predicate lives in the orchestrator) |
 | P2-2 | multiple inactivity timers on the stream path | **waived** (three distinct phases: initial response, headers/body sniff window, body idle; one budget each) |
 | P2-3 | `VllmClient.chatCompletionStream` pass-through | **waived** (keeps ProviderClient stable; the bigger spine question is parked as U10) |
-| P3-1 | two retry shapes in one loop | **waived** (Intent: empty nudge vs vLLM colon-continue) |
+| P3-1 | multiple retry shapes in one loop | **waived** (Intent: empty nudge, vLLM colon continuation, and identical replay for an early server error are phase-specific recovery shapes) |
 | P3-2 | in-place mutation of `openaiMessages` | **waived** (documented, cheaper than clone) |
 | P4-1 | three-tier tool-arg parse | **waived** (Intent) |
 | P4-2 | accumulation vs repair in different files | **waived** (parser stays vscode-free, verified) |

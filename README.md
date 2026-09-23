@@ -158,7 +158,7 @@ coding, and creative work, including their sampling and vLLM-specific request se
 | Full per-model configuration (endpoint, headers, capabilities, token budgets, sampling, and modes) | ✅ (partial) | ✅ |
 | Personality presets | ❌ | ✅ |
 | Hidden System Instructions (capture & replace) | ❌ | ✅ |
-| Auto-continue on empty responses | ❌ | ✅ |
+| Auto-continue for incomplete or replayable responses | ❌ | ✅ |
 | Chat session cleanup across workspaces | ❌ | ✅ |
 | Token usage & throughput stats per request | ❌ | ✅ |
 
@@ -202,11 +202,11 @@ The live observability that makes it worthwhile for teams. A native sidebar (no 
 
 ### Robustness
 
-Models misbehave. The extension includes a few recovery attempts for empty or truncated streams. They are best-effort. They can fail, they can retry the wrong thing, and they are not a safety net.
+Models and providers misbehave. The extension makes bounded recovery attempts for incomplete responses and replayable early stream failures. They are best-effort: they can fail, they can retry the wrong thing, and they are not a safety net.
 
-- **Auto-continue on empty or truncated responses.** Some models (notably Qwen) occasionally return zero tokens or stop mid-sentence. The extension can retry with an assistant prefill (`autoContinueRetries`, default 1). A retry is not guaranteed to produce a complete or correct answer.
+- **Auto-continue for incomplete or replayable responses.** Some models (notably Qwen) occasionally return no answer or stop mid-sentence; remote providers can also fail after HTTP 200 but before answer text or a tool call reaches Copilot. The extension retries with assistant prefill, vLLM continuation, or the identical request as appropriate (`autoContinueRetries`, default 1). A retry is not guaranteed to produce a complete or correct answer.
 - **Tool-call repair.** When a model truncates a tool call mid-JSON (`finish_reason: 'length'`), the extension recovers the partial call with `jsonrepair` + `best-effort-json-parser`. These are the same libraries Copilot's BYOK uses, so the call is not dropped to empty `{}`.
-- **Bounded retries.** Transient server errors are retried once, honoring `Retry-After` (capped at 10 s), and never after partial output has already been streamed.
+- **Bounded HTTP retries.** Transient HTTP errors before streaming are retried once, honoring `Retry-After` (capped at 10 s). Mid-stream HTTP-200 failures use the separate `autoContinueRetries` budget above and are never replayed after answer text or a tool call has reached Copilot.
 - **Connection diagnostics.** Corporate proxy? TLS-inspecting gateway? Missing intermediate certs? **Test & Refresh Models** verifies servers are reachable, lists loaded models, and corrects ID mismatches. **Diagnose Connection** runs a deep report comparing SChannel vs. OpenSSL, DNS/TCP reachability, cert-chain inspection, proxy detection, and a settings dump, with a one-line failure classification.
 
 ---
@@ -326,7 +326,7 @@ Beyond the basics, vLLM request-body parameters give you full request control: `
 
 The backend is auto-detected on Add Server and in Model Settings; set it explicitly per server via the registry entry's `serverType`.
 
-**Every backend gets:** native Copilot integration (chat, tools, vision, streaming), model modes, output length picker, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue on empty responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
+**Every backend gets:** native Copilot integration (chat, tools, vision, streaming), model modes, output length picker, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue for incomplete or replayable responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
 
 **vLLM-only:** vLLM-specific request parameters, per-request server metrics (TTFT/TPOT, KV cache, speculative decoding), and the Deep-Dive webview. Other backends show client-measured throughput instead; the dashboard shows only the rows each backend actually reports and resolves the model's context window per backend.
 

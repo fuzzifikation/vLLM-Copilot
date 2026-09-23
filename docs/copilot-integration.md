@@ -188,15 +188,17 @@ terminalChat.toolSessionMappings
 
 **Fix:** On graceful termination or stop-without-content paths, emit a minimal text part (empty string) to ensure the stream is non-empty.
 
-### Auto-Continue: Recovering Incomplete Responses
+### Auto-Continue: Recovering Incomplete or Replayable Responses
 
-Local/self-hosted reasoning models sometimes stop (`finish_reason: stop`) without delivering a usable answer. The provider recovers automatically inside a single `provideLanguageModelChatResponse` call - all attempts share one `progress` reporter, so Copilot sees one seamless stream. Controlled by `vllm-copilot.autoContinueRetries` (default `1`, `0` disables). Implemented in `provider.ts`.
+Local/self-hosted reasoning models sometimes stop (`finish_reason: stop`) without delivering a usable answer, while remote providers can fail after committing HTTP 200 but before answer text or a tool call reaches Copilot. The provider recovers automatically inside a single `provideLanguageModelChatResponse` call - all attempts share one `progress` reporter, so Copilot sees one seamless stream. Controlled by `vllm-copilot.autoContinueRetries` (default `1`, `0` disables) and implemented in `src/provider/streamOrchestrator.ts`.
 
-Two distinct triggers, each with its **own** request shape:
+Three distinct failure shapes share that retry budget:
 
-1. **Empty response (nudge).** The model emitted only reasoning (or nothing) then stopped. We append an empty assistant prefill `{ role: 'assistant', content: '' }` and re-send under the **default** chat-template flags. vLLM starts a fresh assistant turn - nothing reached Copilot yet, so nothing is lost.
+1. **Empty response (nudge).** The model emitted only reasoning (or nothing) then stopped. We append an empty assistant prefill `{ role: 'assistant', content: '' }` and re-send under the **default** chat-template flags. vLLM starts a fresh assistant turn - no answer text or tool call reached Copilot yet, so nothing is lost.
 
-2. **Colon-truncation (continuation).** The streamed content ends on a trailing colon (`…as follows:`) - a sentence cut mid-thought. Here we must **resume** the text already shown, not regenerate it. We set vLLM's continuation flags `continue_final_message: true` and `add_generation_prompt: false`, and grow the assistant prefill with everything streamed so far. vLLM reopens the existing assistant message and returns only **new** tokens. Without these flags, vLLM would treat the prefill as a finished turn and regenerate, duplicating what Copilot already displayed.
+2. **Colon truncation (vLLM continuation).** The streamed answer text ends on a trailing colon (`…as follows:`) - a sentence cut mid-thought. Here we **resume** the text already shown, not regenerate it. We set vLLM's continuation flags `continue_final_message: true` and `add_generation_prompt: false`, and grow the assistant prefill with everything streamed so far. vLLM reopens the existing assistant message and returns only **new** tokens. Without these flags, vLLM would treat the prefill as a finished turn and regenerate, duplicating what Copilot already displayed.
+
+3. **Early mid-stream server error (same-request replay).** The provider emits an SSE error before any answer text or finalized tool call reaches Copilot. The extension resets the per-attempt outcome and sends the identical request again, allowing server-side routing to recover. Once answer text or a tool call has reached Copilot, no replay occurs because continuation mode is not available across every backend and duplicate output would be worse than a visible partial failure.
 
 The retry check uses the full content buffer (not the last chunk) so a trailing whitespace-only chunk can't hide the colon. `finish_reason: length` (token-limit truncation) and `content_filter` are deliberately excluded - those need different handling, not a continuation nudge.
 

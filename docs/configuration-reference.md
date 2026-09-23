@@ -4,7 +4,7 @@
 
 > **Copilot can write this for you:** the extension registers an on-demand **Language Model Tool** (`vllm-copilot_model_schema`) that hands Copilot Chat the model-entry JSON schema plus the parameter resolution rules. Just ask in chat - e.g. *"configure my Qwen3.6 model with Think / No Think modes"* - and Copilot will generate a valid `vllm-copilot.models` entry. The tool serves the bundled `schemas/vllm-copilot-models.schema.json`; no workspace files are created. If your AI doesn't pick it up automatically, force-attach it by typing `#vllmModelSchema` in the chat input.
 
-All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are six top-level settings: `vllm-copilot.servers` (array of **server entries** - endpoints, auth, backend type), `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), `vllm-copilot.enableFileLogging` (request/response logs), `vllm-copilot.logBodyLimit` (log truncation), and `vllm-copilot.dashboard.pollIntervalMs` (metrics polling).
+All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are seven top-level settings: `vllm-copilot.servers` (array of **server entries** - endpoints, auth, backend type), `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), `vllm-copilot.enableFileLogging` (request/response logs), `vllm-copilot.logBodyLimit` (log truncation), `vllm-copilot.fixEmptyToolParameters` (inject empty schema into parameterless tool definitions), and `vllm-copilot.dashboard.pollIntervalMs` (metrics polling).
 
 **Servers and models are separate.** A server entry owns `serverUrl`, `requestHeaders`, `serverType` and its display label; a model entry references its server by `server` id and owns everything model-scoped (token budgets, capabilities, params). There is no default or global server: a registry entry is used only because a model references it.
 
@@ -45,7 +45,7 @@ Two entries may share one URL: identity is the URL + sanitized-headers pair, so 
 | `capabilities.imageInput` | `false` | Model supports vision/image input. |
 | `streamInactivityTimeout` | `0` (off) | SSE stream timeout in ms. `0` = wait indefinitely. |
 | `initialResponseTimeoutMs` | `600000` | Budget in ms for the server to send the **first response headers**. `0` = wait indefinitely. Raise it if the server is slow to start responding (model loading / queue backlog). |
-| `autoContinueRetries` | `1` | Non-negative integer retry count for empty/truncated responses (assistant prefill). Invalid values are clamped safely; `0` = off. |
+| `autoContinueRetries` | `1` | Shared retry budget for empty/truncated responses and replayable mid-stream server errors before answer text or a tool call reaches Copilot. Invalid values are clamped safely; `0` = off. |
 | `systemMessageReplacementsFile` | - | Path to a JSON file of `{ ruleName, find, replace }` pairs applied to every system message. See [System Message Replacements](#system-message-replacements) below. |
 | `cost` | - | Optional per-model cost rates for the dashboard **Token Usage** tracker (per 1,000,000 tokens). See [Token Usage & Cost](#token-usage--cost) below. |
 
@@ -266,7 +266,7 @@ A working chat model - minimum viable config. No modes, no custom params, just a
     // ── Stream & retry ────────────────────────────────────
     "streamInactivityTimeout": 30000,                  // ms with no SSE data before abort; 0 = wait forever
     "initialResponseTimeoutMs": 600000,                // ms for the server to send the first response headers; 0 = wait forever
-    "autoContinueRetries": 1,                          // retries on empty response via assistant prefill; 0 = off
+    "autoContinueRetries": 1,                          // shared budget for incomplete responses + replayable early server errors; 0 = off
 
     // ── System message replacements (optional) ────────────
     "systemMessageReplacementsFile": ".vllm/prompt-replacements.json",
@@ -477,6 +477,7 @@ Or set either form manually on the model entry:
 | `systemMessageCapture` | `false` | Capture unique Copilot system messages to `.vllm/system-messages.json` |
 | `enableFileLogging` | `false` | Write detailed request/response logs (headers and bodies **as-is, unredacted**) to a daily file. Use **Open Log File** to view |
 | `logBodyLimit` | `4000` | Maximum characters of request/response bodies to log per entry. `0` = no truncation |
+| `fixEmptyToolParameters` | `true` | Inject a minimal `parameters: { type: "object", properties: {} }` into tool definitions that omit `parameters`. VS Code Copilot omits the field for zero-argument tools; some upstream providers (e.g. Stealth on OpenRouter) reject those definitions with a 502. Disable only if your provider requires the field absent |
 
 ---
 

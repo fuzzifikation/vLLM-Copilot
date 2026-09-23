@@ -57,18 +57,29 @@ export function buildRequest(
   config: VllmConfig,
   output: vscode.OutputChannel,
 ): BuildRequestResult {
-  // Build tools array if requested
+  // Build tools array if requested. VS Code Copilot omits `parameters`
+  // entirely for zero-argument tools — some upstream providers reject those
+  // definitions with a 502. When the global `fixEmptyToolParameters` setting is
+  // enabled (default), inject a minimal empty JSON Schema so every tool has a
+  // `parameters` field.
+  const fixEmptyToolParameters = vscode.workspace
+    .getConfiguration('vllm-copilot')
+    .get<boolean>('fixEmptyToolParameters', true);
   let tools: any[] | undefined;
   const availableTools = options.tools || [];
   if (availableTools.length > 0) {
-    tools = availableTools.map(tool => ({
-      type: 'function',
-      function: {
+    tools = availableTools.map(tool => {
+      const fn: Record<string, unknown> = {
         name: tool.name,
         description: tool.description,
-        parameters: tool.inputSchema,
-      },
-    }));
+      };
+      if (tool.inputSchema) {
+        fn.parameters = tool.inputSchema;
+      } else if (fixEmptyToolParameters) {
+        fn.parameters = { type: 'object', properties: {} };
+      }
+      return { type: 'function', function: fn };
+    });
   }
 
   // Convert VS Code messages to OpenAI format.

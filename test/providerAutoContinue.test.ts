@@ -32,6 +32,12 @@ async function* streamOf(events: StreamEvent[]): AsyncGenerator<StreamEvent> {
   for (const e of events) yield e;
 }
 
+/** Stream that emits `events`, then throws `err` (mid-stream server death). */
+async function* streamThrowing(events: StreamEvent[], err: Error): AsyncGenerator<StreamEvent> {
+  for (const e of events) yield e;
+  throw err;
+}
+
 /** Build a StreamEvent with sensible empty defaults. */
 function ev(partial: Partial<StreamEvent>): StreamEvent {
   return { content: '', finishedToolCalls: [], ...partial } as StreamEvent;
@@ -54,12 +60,13 @@ function fakeClient(overrides: Partial<ProviderClient> = {}): ProviderClient {
 }
 
 /**
- * Wire up a provider whose retry loop will see `streams` in order — one array of
- * StreamEvents per `chatCompletionStream` call. The last entry is reused if the loop
- * makes more calls than provided.
+ * Wire up a provider whose retry loop will see `streams` in order — one entry per
+ * `chatCompletionStream` call. The last entry is reused if the loop makes more
+ * calls than provided. An entry is either an array of StreamEvents or a factory
+ * returning an AsyncIterable (for streams that throw mid-iteration).
  */
 function setupProvider(
-  streams: StreamEvent[][],
+  streams: Array<StreamEvent[] | (() => AsyncIterable<StreamEvent>)>,
   autoContinueRetries = 1,
   modelExtras: Record<string, unknown> = {},
   serverExtras: Record<string, unknown> = {},
@@ -68,9 +75,9 @@ function setupProvider(
   let call = 0;
   const spy = vi.fn((_modelId: string, messages: any[], options: Record<string, unknown>) => {
     captured.push({ messages: structuredClone(messages), options: structuredClone(options) });
-    const stream = streams[Math.min(call, streams.length - 1)];
+    const entry = streams[Math.min(call, streams.length - 1)];
     call++;
-    return streamOf(stream);
+    return Array.isArray(entry) ? streamOf(entry) : entry();
   });
   const client = fakeClient({
     getConfigCached: async () => ({
@@ -395,6 +402,58 @@ describe('provideLanguageModelChatResponse auto-continue', () => {
     const last = getLastRequest('https://openrouter.ai/api');
     expect(last?.modelId).toBe('deepseek/deepseek-v4-pro-0813');
     expect(last?.promptTokens).toBe(10);
+  });
+
+  // ── mid-stream server-error retry (OpenRouter "JSON error injected into SSE stream") ──
+  const midStreamErr = () => new Error('Server error (mid-stream): JSON error injected into SSE stream');
+
+  it('retries a mid-stream server error when nothing streamed, replaying the same request', async () => {
+    // Provider dies after the 200 before the first token: the turn is fully
+    // replayable and the fresh request re-enters server-side routing. The retry
+    // must use the SAME request shape (no prefill, no continuation flags).
+    const { provider, captured, spy } = setupProvider([
+      () => streamThrowing([], midStreamErr()),
+      [ev({ content: 'Answer', finishReason: null as any }), ev({ finishReason: 'stop' })],
+    ]);
+    const progress = { report: vi.fn() };
+
+    await run(provider, progress);
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(captured[1].messages).toEqual(captured[0].messages);
+    expect(captured[1].options.continue_final_message).toBeUndefined();
+    expect(reportedText(progress)).toBe('Answer');
+  });
+
+  it('does NOT retry a mid-stream error after content reached Copilot', async () => {
+    // A retry would duplicate the already-visible text (continuation mode is
+    // vLLM-only and this is the OpenRouter-shaped failure) — the partial turn
+    // stands and the error surfaces via handleResponseError instead.
+    const { provider, spy } = setupProvider([
+      () => streamThrowing([ev({ content: 'Partial answer', finishReason: null as any })], midStreamErr()),
+      [ev({ content: ' more', finishReason: 'stop' })],
+    ]);
+    const progress = { report: vi.fn() };
+
+    await run(provider, progress);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    // Partial text stands; handleResponseError appends the ⚠️ error part.
+    const text = reportedText(progress);
+    expect(text).toContain('Partial answer');
+    expect(text).toContain('⚠️');
+  });
+
+  it('does not retry a mid-stream error when retries are disabled', async () => {
+    const { provider, spy } = setupProvider(
+      [() => streamThrowing([], midStreamErr())],
+      0,
+    );
+    const progress = { report: vi.fn() };
+
+    await run(provider, progress);
+
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });
 

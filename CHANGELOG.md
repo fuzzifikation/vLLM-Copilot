@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.36.14
+Make provider-backed chats survive strict tool schemas and replayable early stream failures without requiring a new chat. Tool definitions are repaired on every outgoing request, and an upstream failure is retried only before answer text or a tool call has reached Copilot.
+
+### Added
+
+- **Tool parameters injection.** VS Code Copilot omits the `parameters` field for zero-argument tools; some providers (notably Stealth on OpenRouter) reject those definitions with a 502 mid-stream. A new global setting `fixEmptyToolParameters` (on by default) injects an empty object schema into every tool that lacks one before the request leaves. Turn it off in Settings → vLLM-Copilot → Diagnostics if a provider prefers the bare form.
+
+### Fixed
+
+- **Mid-stream server-error retry.** When a provider commits an HTTP 200 then dies before emitting any answer text or tool call (for example, OpenRouter's "JSON error injected into SSE stream" after an upstream crash, load shed, or timeout), the extension now retries the same request within the existing `autoContinueRetries` budget. Once answer text or a tool call has reached Copilot, the partial turn stands and the error surfaces normally instead of risking duplicated output.
+
 ## v1.36.13
 One thousand downloads. Thank you for riding with us.
 

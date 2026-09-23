@@ -298,6 +298,61 @@ describe('buildRequest', () => {
     expect(result.mergedOptions.tool_choice).toBeUndefined();
   });
 
+  // ── fixEmptyToolParameters: inject empty schema when Copilot omits `parameters` ──
+  // VS Code Copilot's LanguageModelChatTool.inputSchema is optional and omitted
+  // for zero-argument tools. Some upstream providers (Stealth on OpenRouter)
+  // 502 on the bare form. Default-on injects { type:'object', properties:{} }.
+
+  it('injects an empty parameters schema when inputSchema is absent and the flag is on (default)', () => {
+    // Default mock: getConfiguration().get(key, default) returns the default,
+    // so fixEmptyToolParameters resolves to `true` without any _mockConfig setup.
+    const result = buildRequest(
+      model,
+      [] as any,
+      opts({ tools: [{ name: 'noargs', description: 'takes nothing' }] }),
+      {
+        models: [{ id: 'm', server: 'srv' }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
+      },
+      output,
+    );
+    expect(result.mergedOptions.tools).toEqual([{
+      type: 'function',
+      function: { name: 'noargs', description: 'takes nothing', parameters: { type: 'object', properties: {} } },
+    }]);
+  });
+
+  it('omits parameters entirely when inputSchema is absent and the flag is off', () => {
+    // Provider requires the field ABSENT (rare). Toggle the setting off via the
+    // workspace mock's _mockConfig; restore the default afterwards so later
+    // tests see the default-on behavior.
+    const previous = (vscode.workspace as any)._mockConfig;
+    (vscode.workspace as any)._mockConfig = {
+      get: (key: string) => (key === 'fixEmptyToolParameters' ? false : undefined),
+      has: () => false,
+      update: () => Promise.resolve(),
+      inspect: () => undefined,
+    };
+    try {
+      const result = buildRequest(
+        model,
+        [] as any,
+        opts({ tools: [{ name: 'noargs', description: 'takes nothing' }] }),
+        {
+          models: [{ id: 'm', server: 'srv' }],
+          servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
+        },
+        output,
+      );
+      expect(result.mergedOptions.tools).toEqual([{
+        type: 'function',
+        function: { name: 'noargs', description: 'takes nothing' },
+      }]);
+    } finally {
+      (vscode.workspace as any)._mockConfig = previous;
+    }
+  });
+
   it('injects provider.only with the exact tag for an OpenRouter model with a pinned provider', () => {
     const result = buildRequest(
       model,

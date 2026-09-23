@@ -82,20 +82,19 @@ export interface ChatDeps {
 /**
  * Handle chat requests by forwarding to the vLLM server and streaming back.
  *
- * Orchestrates phases for each attempt, with optional auto-retry on empty
- * responses using assistant prefill:
+ * Orchestrates phases for each attempt, with bounded auto-retry for incomplete
+ * responses and replayable early stream failures:
  *   1. {@link buildRequest} — assemble the vLLM request (messages + sampling params)
  *   2. {@link consumeStream} — stream the response, reporting parts as they arrive
  *   3. {@link reportPostStreamDiagnostics} — surface truncation / empty-response issues
  *   4. {@link handleResponseError} — classify and report any failure
  *
- * Auto-continue: when the model stops (finish_reason: stop) with an empty response,
- * we re-ask with an empty assistant prefill (a nudge — vLLM starts a fresh turn, and
- * nothing was streamed so nothing is lost). When it stops mid-sentence on a trailing
- * colon, we CONTINUE the text already streamed using vLLM's continuation mode
- * (continue_final_message=true, add_generation_prompt=false) so the model resumes the
- * open assistant message instead of regenerating it (which would duplicate output).
- * All retries share one progress reporter, so Copilot sees a single seamless stream.
+ * Auto-continue: an empty response is re-asked with an empty assistant prefill;
+ * a vLLM response ending in a colon continues the text already streamed; and an
+ * explicit mid-stream server error before answer text or a tool call reaches
+ * Copilot replays the identical request. Retries stop before answer/tool output
+ * can be duplicated. All attempts share one progress reporter, so Copilot sees a
+ * single seamless stream.
  */
 export async function runChatResponse(
   deps: ChatDeps,
@@ -131,7 +130,11 @@ export async function runChatResponse(
 
     // Auto-continue retry loop: initial attempt + up to maxRetries retries.
     //
-    // Two distinct triggers, each with its OWN request shape:
+    // Three distinct triggers:
+    //   0. Mid-stream server error with nothing streamed (provider died after
+    //      the 200, e.g. OpenRouter failover exhaustion): replay the SAME
+    //      request shape — a fresh request re-enters the server's routing.
+    //   The other two, each with its OWN request shape:
     //   1. Empty response (model emitted only reasoning, then stopped): re-ask with an
     //      empty assistant prefill under the DEFAULT chat-template flags. vLLM starts a
     //      fresh assistant turn — a harmless "nudge", since nothing reached Copilot yet.
@@ -169,19 +172,48 @@ export async function runChatResponse(
         token,
         serverConfig
       );
-      await consumeStream(
-        stream,
-        model,
-        progress,
-        token,
-        attemptStartTime,
-        outcome,
-        serverConfig.serverUrl,
-        wireModelId,
-        output,
-        fileLogger,
-        contextWindow,
-      );
+      try {
+        await consumeStream(
+          stream,
+          model,
+          progress,
+          token,
+          attemptStartTime,
+          outcome,
+          serverConfig.serverUrl,
+          wireModelId,
+          output,
+          fileLogger,
+          contextWindow,
+        );
+      } catch (err) {
+        // Mid-stream server error — the provider died after the HTTP 200 was
+        // already committed (e.g. OpenRouter's "JSON error injected into SSE
+        // stream" when an upstream endpoint crashes, load-sheds, or times out
+        // — these can arrive even BEFORE the first token). When nothing
+        // reached Copilot this attempt, the turn is fully replayable and a
+        // fresh request re-enters the server's routing, so retry within the
+        // same auto-continue budget. Once content or a tool call was reported,
+        // a retry would duplicate or disconnect output (continuation mode is
+        // vLLM-only) — rethrow and let handleResponseError report the partial
+        // turn like before. Reasoning-only attempts retry anyway, matching the
+        // empty-response nudge, which tolerates shown-then-discarded thinking.
+        const midStream = err instanceof Error && err.message.startsWith('Server error (mid-stream)');
+        if (
+          !midStream
+          || outcome.hadContent
+          || outcome.hadToolCalls
+          || token.isCancellationRequested
+          || attempt >= maxRetries
+        ) {
+          throw err;
+        }
+        resetOutcome(outcome);
+        output.appendLine(
+          `[INFO] ${model.id}: server error mid-stream with no output - retrying (attempt ${attempt + 1}/${maxRetries + 1})`
+        );
+        continue;
+      }
 
       // Retry when the model stopped (finish_reason: stop) either with no content at all,
       // or mid-sentence on a trailing colon. Use the full buffer (not the last chunk) so a

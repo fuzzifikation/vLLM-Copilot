@@ -106,7 +106,7 @@
       "type": "integer",
       "minimum": 0,
       "default": 1,
-      "description": "Auto-retry count for empty/truncated responses (assistant prefill). 0 = off."
+      "description": "Shared retry budget for empty/truncated responses and replayable mid-stream server errors before answer text or a tool call reaches Copilot. 0 = off."
     },
     "systemMessageReplacementsFile": {
       "type": "string",

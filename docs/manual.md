@@ -38,7 +38,7 @@ Three ideas explain most of how the extension is designed.
 
 Servers live in their own registry, `vllm-copilot.servers`: each entry owns a `serverUrl`, optional `requestHeaders` (auth), `serverType`, and display label. Every entry in `vllm-copilot.models` references exactly one server by its `server` id and carries its own token budgets, capabilities, and params - never URLs or auth. The same server entry can back many models; the same URL can exist as two entries under different credentials. Different teams, environments, or credentials stay isolated because nothing is shared between entries. There is **no global/default server**: an entry is only used because a model references it.
 
-The only other global settings are diagnostics and logging (`vllm-copilot.systemMessageCapture`, `vllm-copilot.enableFileLogging`, `vllm-copilot.logBodyLimit`) and the dashboard poll interval (`vllm-copilot.dashboard.pollIntervalMs`).
+The other global settings cover tool compatibility (`vllm-copilot.fixEmptyToolParameters`), diagnostics and logging (`vllm-copilot.systemMessageCapture`, `vllm-copilot.enableFileLogging`, `vllm-copilot.logBodyLimit`), and the dashboard poll interval (`vllm-copilot.dashboard.pollIntervalMs`).
 
 ### 2. Parameter resolution chain
 
@@ -72,7 +72,7 @@ The backend is auto-detected when you add a server and in Model Settings; it can
 
 ### What every backend gets
 
-Native Copilot integration (chat, tools, vision, streaming), model modes, output length picker, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue on empty responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
+Native Copilot integration (chat, tools, vision, streaming), model modes, output length picker, personality presets, hidden-system-prompt capture & replace, per-server auth/sampling/token budget, auto-continue for incomplete or replayable responses, token usage & cost tracking, and Test & Refresh / Connection Diagnostics.
 
 ### What is vLLM-only
 
@@ -95,6 +95,7 @@ All settings live under `vllm-copilot` in VS Code Settings (`Ctrl+,` → search 
 | `vllm-copilot.systemMessageCapture` | Capture unique Copilot system messages to `.vllm/system-messages.json` (for building replacements). |
 | `vllm-copilot.enableFileLogging` | Write request/response logs to a daily file (see **Open Log File**). |
 | `vllm-copilot.logBodyLimit` | Maximum characters of request/response bodies to log per entry. `0` = no truncation. |
+| `vllm-copilot.fixEmptyToolParameters` | Inject an empty `parameters` schema into tool definitions that omit it (default on). Some upstream providers reject parameterless tool defs with a 502. |
 | `vllm-copilot.dashboard.pollIntervalMs` | Dashboard metrics polling interval (default 15000 ms). |
 
 Server entries carry **`serverUrl`** (required), **`requestHeaders`** (auth/routing, isolated per entry), optional **`serverType`** and **`displayName`**. Model entries reference their server via **`server`** (the entry's `id`). The important model fields:
@@ -105,7 +106,7 @@ Server entries carry **`serverUrl`** (required), **`requestHeaders`** (auth/rout
 - **`modelModes`** / **`defaultMode`** - switchable named presets, and which one starts active.
 - **`maxOutputTokens`** - max response tokens. As an **array**, an ordered list of token counts shown as a second model-picker dropdown ("Output Length"), independent of modes: the first entry is the default and the desired budget; when the dropdown is present the user's pick overrides `max_tokens`.
 - **`capabilities`** - `toolCalling` (default true) and `imageInput` (vision, default false).
-- **`autoContinueRetries`** - retries for empty/truncated responses (default 1).
+- **`autoContinueRetries`** - shared retry budget for empty/truncated responses and replayable early mid-stream server errors (default 1).
 - **`systemMessageReplacementsFile`** - path to a find/replace JSON file for system messages.
 - **`cost`** - per-model cost rates for the usage tracker (per 1M tokens).
 
@@ -218,7 +219,7 @@ The extension merges `.github/copilot-instructions.md`, `AGENTS.md`, and `CLAUDE
 
 ## Reliability & tooling
 
-- **Auto-continue on empty responses.** Some models (notably Qwen) occasionally return zero tokens or truncated output. The extension can retry with an assistant prefill (`autoContinueRetries`, default 1). A retry is not guaranteed to produce a complete or correct answer. Details: [auto-continue.md](auto-continue.md).
+- **Auto-continue for incomplete or replayable responses.** Some models (notably Qwen) occasionally return no answer or truncated output, and remote providers can die after HTTP 200 but before answer text or a tool call reaches Copilot. The extension retries with assistant prefill, vLLM continuation, or the identical request as appropriate (`autoContinueRetries`, default 1). A retry is not guaranteed to produce a complete or correct answer. Details: [auto-continue.md](auto-continue.md).
 - **Tool call & truncated response recovery.** When vLLM truncates a tool call mid-JSON (`finish_reason: 'length'`), the extension uses `jsonrepair` + `best-effort-json-parser` (the same libraries Copilot's BYOK uses) to recover partial content instead of dropping it to empty `{}`.
 - **Connection diagnostics.** **Test & Refresh Models** verifies servers, lists models, corrects ID mismatches, and checks VS Code network gating. **Diagnose Connection** is a deep report comparing SChannel vs. OpenSSL, DNS/TCP reachability, cert chain inspection, proxy detection, and a VS Code settings dump, with a one-line classification of the failure.
 - **One-click migration.** Upgrading from an older version auto-migrates legacy global server/sampling settings into per-model entries on first launch. One-time, idempotent, no data loss.
@@ -278,7 +279,7 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 | [Token & Cost Usage Tracker](usage.md) | Usage/cost data model, persistence, retention, reset behavior. |
 | [Using OpenRouter](openrouter.md) | OpenRouter setup, URL table, manual config, attribution headers. |
 | [Custom System Prompt / Personality Presets](custom-system-prompt.md) | System-prompt capture & replace pipeline. |
-| [Auto-Continue](auto-continue.md) | Empty/truncated response retry - how it works, config, and known limitations. |
+| [Auto-Continue](auto-continue.md) | Incomplete-response and early-server-error retries - request shapes, config, and limitations. |
 | [Agents window](agents-window.md) | Using vLLM models in the VS Code "Open in Agents" window (Agent Host BYOK). |
 | [Copilot integration](copilot-integration.md) | How the extension plugs into Copilot, sessions, tool calls. |
 

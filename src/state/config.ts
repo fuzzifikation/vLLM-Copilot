@@ -124,8 +124,9 @@ export interface ModelConfig {
    */
   initialResponseTimeoutMs?: number;
   /**
-   * How many times to auto-retry when the model returns an empty response.
-   * Uses assistant prefill. 0 = disabled.
+   * Shared retry budget for empty/truncated model responses and replayable
+   * mid-stream server errors before answer text or a tool call reaches Copilot.
+   * 0 = disabled.
    */
   autoContinueRetries?: number;
   /**
