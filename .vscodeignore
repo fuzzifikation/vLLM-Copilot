@@ -49,8 +49,9 @@ scripts/
 resources/OR-logo.svg
 
 # The root LICENSE is the BUSL-1.1 source-repository license. The shipped
-# extension is MIT (package.json "license"); vsce would otherwise auto-pack
-# the repo LICENSE into the VSIX as LICENSE.txt, so it stays out here.
+# extension is MIT (package.json "license"); the package wrapper temporarily
+# substitutes the MIT license and passes a temporary ignore file that includes
+# it, then restores this BUSL file.
 LICENSE
 
 # Repo/build config (not needed at runtime)

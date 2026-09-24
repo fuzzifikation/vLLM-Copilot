@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.36.16
+Close the remaining release-hardening gaps in `docs/code-review.md` before the next public release. This candidate covers deterministic packaging, schema and preset consistency, shipped webview correctness, automation, and repository-rule coherence; the existing provider runtime is the baseline.
+
 ## v1.36.15
 Correct the packaged release notes and retry documentation shipped with v1.36.14. The runtime tool-schema repair and early stream-failure retry are unchanged; this version makes the published documentation match their actual behavior.
 

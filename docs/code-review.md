@@ -12,7 +12,17 @@ When you fix something, delete its entry in the same commit. If a fix was a part
 
 ## Triage
 
-No open findings. Everything below this section is standing rulings (rejections and accepted decisions), not open work.
+- **BUILD-1 — Release gates omit shipped-surface checks.** `npm run build` does not run the webview JavaScript syntax check or a third-party-notice freshness check, so a malformed shipped `resources/*.js` file or stale `THIRD-PARTY-NOTICES.txt` can pass the release gate.
+- **PRESET-1 — Bundled preset files are JSONC, not strict JSON.** The 16 `model-configs/*.json` files contain `//` comments; the runtime parser accepts them, but strict `JSON.parse` and generic tooling reject them. The runtime parser handles inline comments while `scripts/gen-preset-index.mjs` only strips full-line comments, so a future authoring change can make the extension accept a preset that the index generator rejects. Pick one format and make every consumer use the same parser.
+- **SCHEMA-1 — Inline and standalone model schemas drift semantically.** `schemas/vllm-copilot-models.schema.json` rejects unknown top-level fields, requires non-empty `id`/`server`, and constrains nested request params, while the inline `vllm-copilot.models` contribution in `package.json` is materially looser. The existing artifact test checks only property names, required fields, and top-level types. VS Code can therefore accept a model entry that the standalone schema and runtime contract do not treat identically.
+- **SCHEMA-2 — The standalone schema declares Draft-07 but uses the later `$defs` convention.** Ajv accepts it today, but strict older/portable Draft-07 tooling may ignore the definition container or reject the dialect mismatch. Use Draft-07 `definitions` or explicitly adopt a newer supported dialect.
+- **WEB-1 — Webview CSP policy drift.** All three shipped webviews use `style-src 'unsafe-inline' ...`, despite the repository rule requiring the restrictive `${cspSource}`-only style policy. Either move inline styles to CSS or formally accept and document the exception; currently the implementation and its written contract disagree.
+- **WEB-2 — One model-settings HTML attribute path is not escaped.** `resources/serverSettings.js` interpolates the numeric-field value directly into `value="..."`; a hand-edited string containing quotes can break the attribute. Route that value through the existing HTML escaper like the neighboring paths.
+- **PROC-1 — Release validation is manual and has no CI workflow.** `.github` contains no Actions workflow for compile/tests/package gates, so correctness depends on a maintainer remembering the full command sequence.
+- **PROC-2 — Published release versions lack Git tags.** `v1.36.14` and `v1.36.15` are Marketplace versions but have no corresponding `v1.36.x` tags, weakening release provenance and rollback archaeology.
+- **DOC-1 — Repository instructions contain live contradictions.** `.github/copilot-instructions.md` still says the only global settings are `servers` and `enableFileLogging` after additional global diagnostics/tool settings were added, and it simultaneously says plaintext settings are intentional while another section mandates `context.secrets` for API keys. Future agents can follow the wrong rule and change working code in the wrong direction.
+
+Everything below this section is standing rulings (rejections and accepted decisions), not open work.
 
 ---
 

@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM (& OpenRouter) integration for GitHub Copilot & Agents window on self-hosted and remote servers (supports full featureset of vLLM, OpenRouter and Copilot). No subscription, no telemetry, no work content to any third party. Dashboard UI with full statistics of your servers",
-  "version": "1.36.15",
+  "version": "1.36.16-rc0",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -203,12 +203,12 @@
       },
       {
         "command": "vllm-copilot.moveServerUp",
-        "title": "Move \u2191",
+        "title": "Move ↑",
         "category": "vLLM-Copilot"
       },
       {
         "command": "vllm-copilot.moveServerDown",
-        "title": "Move \u2193",
+        "title": "Move ↓",
         "category": "vLLM-Copilot"
       },
       {
@@ -660,13 +660,15 @@
     "dep:graph": "node scripts/dep-graph.mjs",
     "rent": "node scripts/rent-census.mjs",
     "cluster": "node scripts/cluster-census.mjs",
-    "build": "npm run license:check && npm run compile && npm run dep:check && npm run rent -- --fail-on=dead && npm run test:typecheck && npm test && npx @vscode/vsce package"
+    "build": "npm run license:check && npm run compile && npm run dep:check && npm run rent -- --fail-on=dead && npm run test:typecheck && npm test && npm run package:vsix",
+    "package:vsix": "node scripts/package-vsix.mjs"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.7",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^24.13.4",
     "@types/vscode": "^1.128.0",
+    "@vscode/vsce": "4.0.0",
     "choices.js": "^11.2.4",
     "dependency-cruiser": "^18.2.0",
     "jsdom": "^29.1.1",
