@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.36.15
+Correct the packaged release notes and retry documentation shipped with v1.36.14. The runtime tool-schema repair and early stream-failure retry are unchanged; this version makes the published documentation match their actual behavior.
+
 ## v1.36.14
 Make provider-backed chats survive strict tool schemas and replayable early stream failures without requiring a new chat. Tool definitions are repaired on every outgoing request, and an upstream failure is retried only before answer text or a tool call has reached Copilot.
 
