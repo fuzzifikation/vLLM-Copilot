@@ -10,6 +10,11 @@
  * Uses the same license-checker-rseidelsohn library as `npm run license:check`,
  * scoped to --production so dev-only tooling (vitest, typescript, ...) is
  * excluded — it never ships in the VSIX.
+ *
+ * `--check` runs the same generation in memory and fails (exit 1) when the
+ * on-disk file differs, WITHOUT writing it. That is the release-gate mode:
+ * it proves the committed notices match what the current dependency tree
+ * would produce, so a dependency bump cannot ship with a stale notice file.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,6 +23,7 @@ import { init as licenseCheckerInit } from 'license-checker-rseidelsohn';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outFile = path.join(root, 'THIRD-PARTY-NOTICES.txt');
+const check = process.argv.includes('--check');
 
 licenseCheckerInit(
 	{
@@ -121,7 +127,17 @@ licenseCheckerInit(
 		lines.push('is implied.');
 		lines.push('');
 
-		fs.writeFileSync(outFile, lines.join('\n'));
-		console.log(`Wrote ${outFile} (${entries.length} packages + ${vendored.length} vendored)`);
+		const content = lines.join('\n');
+		if (check) {
+			const existing = fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : null;
+			if (existing !== content) {
+				console.error('THIRD-PARTY-NOTICES.txt is STALE (--check). Run `npm run license:notices` and commit the result.');
+				process.exit(1);
+			}
+			console.log(`THIRD-PARTY-NOTICES.txt is up to date (${entries.length} packages + ${vendored.length} vendored).`);
+		} else {
+			fs.writeFileSync(outFile, content);
+			console.log(`Wrote ${outFile} (${entries.length} packages + ${vendored.length} vendored)`);
+		}
 	}
 );

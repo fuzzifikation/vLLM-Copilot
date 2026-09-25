@@ -677,7 +677,7 @@
   function fields(specs) {
     return specs.map(s => '<div class="field"><label>' + E(s.k) + '</label>' +
       (s.t === 'number'
-        ? '<input type="number" data-f="' + E(s.k) + '" value="' + (s.v !== '' ? s.v : '') + '" step="any">'
+        ? '<input type="number" data-f="' + E(s.k) + '" value="' + (s.v !== '' ? E(String(s.v)) : '') + '" step="any">'
         : '<input type="text" data-f="' + E(s.k) + '" value="' + E(String(s.v)) + '">') +
       (s.h ? '<div class="field-hint">' + E(s.h) + '</div>' : '') +
       '</div>').join('');

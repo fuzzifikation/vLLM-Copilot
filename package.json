@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM (& OpenRouter) integration for GitHub Copilot & Agents window on self-hosted and remote servers (supports full featureset of vLLM, OpenRouter and Copilot). No subscription, no telemetry, no work content to any third party. Dashboard UI with full statistics of your servers",
-  "version": "1.36.16-rc0",
+  "version": "1.36.16-rc1",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -652,6 +652,7 @@
     "vendor:choices": "node scripts/vendor-choices.mjs",
     "license:check": "license-checker-rseidelsohn --production --excludePrivatePackages --onlyAllow \"MIT;ISC;Apache-2.0;BSD-2-Clause;BSD-3-Clause;CC0-1.0;CC-BY-3.0;BlueOak-1.0.0\"",
     "license:notices": "node scripts/generate-notices.mjs",
+    "license:notices:check": "node scripts/generate-notices.mjs --check",
     "check:prompt-drift": "node scripts/check-prompt-drift.mjs",
     "check:cli-rules": "node scripts/check-cli-rules.mjs",
     "extract:cli-reference": "node scripts/extract-cli-reference.mjs",
@@ -660,7 +661,7 @@
     "dep:graph": "node scripts/dep-graph.mjs",
     "rent": "node scripts/rent-census.mjs",
     "cluster": "node scripts/cluster-census.mjs",
-    "build": "npm run license:check && npm run compile && npm run dep:check && npm run rent -- --fail-on=dead && npm run test:typecheck && npm test && npm run package:vsix",
+    "build": "npm run license:check && npm run license:notices:check && npm run validate-webview-js && npm run compile && npm run dep:check && npm run rent -- --fail-on-dead && npm run test:typecheck && npm test && npm run package:vsix",
     "package:vsix": "node scripts/package-vsix.mjs"
   },
   "devDependencies": {

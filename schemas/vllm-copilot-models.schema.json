@@ -67,14 +67,14 @@
     },
     "defaultParams": {
       "type": "object",
-      "allOf": [{ "$ref": "#/$defs/requestParams" }],
+      "allOf": [{ "$ref": "#/definitions/requestParams" }],
       "description": "Model-scope request params (raw vLLM request-body keys, snake_case). Layered under modelModes (a selected mode overrides these). The known vLLM parameter vocabulary is enumerated in the referenced definition; UNKNOWN KEYS ARE ALSO ALLOWED and passed through to the request body verbatim, so backend-specific parameters still work."
     },
     "modelModes": {
       "type": "object",
       "description": "Switchable named presets shown in the model picker. Each key is a user-visible mode label (e.g. \"Think\", \"No Think\"); each value is a params object merged into the request body when that mode is active. Per-mode sampling params override `defaultParams`; params set nowhere are omitted so the server's own default applies. Toggle reasoning via chat_template_kwargs.enable_thinking or reasoning_effort.",
       "additionalProperties": {
-        "allOf": [{ "$ref": "#/$defs/requestParams" }],
+        "allOf": [{ "$ref": "#/definitions/requestParams" }],
         "description": "Request params for this mode. Same vocabulary as defaultParams."
       }
     },
@@ -127,7 +127,7 @@
       }
     }
   },
-  "$defs": {
+  "definitions": {
     "requestParams": {
       "type": "object",
       "description": "vLLM request-body parameters. KEYS ARE snake_case (top_p, maxOutputTokens is an entry field, NOT a param). Any param you do not set is OMITTED from the request, so the server's own default applies. The properties below are the KNOWN, documented vLLM vocabulary; other keys are NOT rejected — they are passed through verbatim so newer or backend-specific parameters still reach the server. See docs/configuration-reference.md for the full table.",

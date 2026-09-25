@@ -40,11 +40,38 @@ export const PRESET_CONFIG_KEYS = new Set([
   'estimateCharsPerToken',
 ]);
 
-/** Strip full-line // comments (preset files carry authoring prose above the envelope). */
-function stripComments(text) {
+/**
+ * Strip `//` comments, quote-aware. Mirrors stripJsonComments in
+ * src/commands/presets.ts: the extension and this generator MUST agree on
+ * which files parse, or a preset the extension accepts could be rejected
+ * here (breaking the release) or vice versa (shipping a broken preset).
+ *
+ * A previous version stripped only full-line comments, so a single trailing
+ * comment would make the generator throw while the extension accepted the
+ * file. A Vitest sync test (test/genPresetIndex.test.ts) drives BOTH parsers
+ * over a shared corpus and fails if they ever diverge again.
+ */
+export function stripComments(text) {
+  // Index of the first `//` NOT inside a quoted string, or -1.
+  function findFirstUnquotedSlashSlash(line) {
+    let inQuotes = false;
+    let escapeNext = false;
+    for (let i = 0; i < line.length - 1; i++) {
+      const ch = line[i];
+      if (escapeNext) { escapeNext = false; continue; }
+      if (ch === '\\') { escapeNext = true; continue; }
+      if (ch === '"') { inQuotes = !inQuotes; continue; }
+      if (!inQuotes && ch === '/' && line[i + 1] === '/') return i;
+    }
+    return -1;
+  }
+
   return text
     .split('\n')
-    .filter(line => !line.trim().startsWith('//'))
+    .map(line => {
+      const cut = findFirstUnquotedSlashSlash(line);
+      return cut === -1 ? line : line.substring(0, cut);
+    })
     .join('\n');
 }
 

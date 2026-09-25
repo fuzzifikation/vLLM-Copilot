@@ -51,7 +51,7 @@ These apply to any codebase.
 
 ### Architecture: Server Registry, Models Reference It
 - **Servers are registry entries.** The top-level `vllm-copilot.servers` setting is an explicit lookup table of server entries (`id`, `serverUrl`, optional `requestHeaders`, `serverType`, `displayName`). Each model entry in `vllm-copilot.models` has a required `id` and `server` (the registry entry's id) — models never carry URLs, auth headers, server types, or server labels.
-- **The only global settings are the `servers` registry and `enableFileLogging`.**
+- **The global settings are the `servers` registry plus the standalone toggles/diagnostics keys** (`enableFileLogging`, `logBodyLimit`, `systemMessageCapture`, `fixEmptyToolParameters`, `dashboard.pollIntervalMs`). Everything else lives inside a `servers` entry or a `models` entry.
 - There is NO global `serverUrl`, `apiKey`, `requestHeaders`, or sampling params. The registry is not "a global server" — it is a table; nothing may resolve a server unless a model references its entry.
 - The discovery logic must NOT probe a "global server" — it groups models by their `server` reference (resolved through the registry) and discovers from each server independently.
 - There are NO deprecated legacy fields on `VllmConfig` — `serverUrl`, `apiKey`, and `requestHeaders` were removed outright by the registry migration. Nothing may resolve a server unless a model references its entry.
@@ -143,7 +143,7 @@ Non-negotiable for this codebase:
 
 - **Everything that allocates resources must be `Disposable`.** Timers, event listeners, output channels, providers — all disposed in `dispose()` and pushed to `context.subscriptions` in `activate()`.
 - **Cancellation tokens must be respected.** `chatCompletionStream()` receives a `vscode.CancellationToken`. Check `token.isCancellationRequested` in loops; pass `AbortSignal` to `fetch()`.
-- **Use `context.secrets` for sensitive data** (API keys). Never log or cache keys in plain text.
+- **API keys are stored in plain text in settings, by project decision** (see Key Storage below). Do not "fix" this by moving keys to `context.secrets` — that rule was reversed on purpose. Keys may still be redacted from user-visible logs and diagnostics.
 - **`enabledApiProposals` was removed from `package.json` (2026-09-10, verified against VS Code 1.137 source).** `chatProvider` graduated to stable (in `@types/vscode` since ≥1.128, ungated at runtime). `LanguageModelThinkingPart` is still proposal-only in TYPES but ungated at runtime — reached via feature detection in `consumeStream.ts`. Declarations we are not allowlisted for do nothing except log a `CANNOT USE these API proposals` ERR in every production window. Only re-add an entry when actually testing a live proposal in an F5 dev host (dev mode grants declared proposals), and remove it before shipping.
 - **Event emitters must be disposed.** `vscode.EventEmitter.dispose()` cancels firing and clears listeners.
 - **Settings changes fire `onDidChangeConfiguration`.** React to them — never require reload. Cache invalidation is the pattern.
@@ -154,7 +154,7 @@ Non-negotiable for this codebase:
 - **External JS/CSS files in `resources/` are NOT compiled by TypeScript.** Always validate with `node --check resources/*.js` after changes. Run `npm run validate-webview-js` to check all shipped Webview JavaScript.
 - **Never put inline `<script>` inside template literals.** The `</script>` closing tag will terminate the script block prematurely regardless of escaping. Always use separate `.js` files loaded via `<script src="${webview.asWebviewUri(uri)}">`.
 - **Use a ready handshake.** Webview installs message listener → posts `{ type: 'ready' }` → extension sends initial state. Do NOT post data immediately after setting `webview.html` (race condition).
-- **Restrictive CSP from the start.** Use `default-src 'none'; style-src ${cspSource}; script-src ${cspSource};` — never omit CSP.
+- **Restrictive CSP from the start.** Use `default-src 'none'; style-src ${cspSource}; script-src ${cspSource};` — never omit CSP. `style-src 'unsafe-inline'` is a deliberate, documented exception across all three shipped webviews: our webview code sets element styles directly at runtime, and `script-src` stays locked to `${cspSource}` with no `unsafe-inline` or `unsafe-eval`. Do not "fix" the style exception by refactoring inline styles into CSS files; that is hours of churn for no security gain. New webviews should still start from the restrictive policy and add the exception only if they need it.
 - **Convert local asset URIs with `webview.asWebviewUri()`.** Set `localResourceRoots` to the actual asset directory.
 - **Webview JS has no TypeScript checking.** Common gotchas: `element?.onclick = fn` is a parse error (optional chaining can't be on LHS of assignment), `ontoggle` not `onToggle`, etc.
 - **Debug blank or noninteractive Webviews with `Developer: Open Webview Developer Tools`** — check the webview console before changing the architecture.

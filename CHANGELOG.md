@@ -10,6 +10,7 @@ Close the remaining release-hardening gaps in `docs/code-review.md` before the n
 ### Fixed
 
 - **First-model setup reaches Agents.** Models added after startup now enable Agent Host access automatically.
+- **Model Settings numeric fields survive a hand-edited value.** A quote character in a numeric field (input tokens, timeouts, retry count) broke the input and rendered wrong. Those values are now escaped like every other field.
 
 ## v1.36.15
 Correct the packaged release notes and retry documentation shipped with v1.36.14. The runtime tool-schema repair and early stream-failure retry are unchanged; this version makes the published documentation match their actual behavior.

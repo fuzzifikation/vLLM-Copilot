@@ -8,3 +8,6 @@ export interface PresetIndex {
 }
 
 export declare function buildIndex(dir?: string): PresetIndex;
+
+/** Quote-aware `//` comment stripper; mirrors stripJsonComments in src/commands/presets.ts. */
+export declare function stripComments(text: string): string;

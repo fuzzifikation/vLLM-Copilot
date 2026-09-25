@@ -16,7 +16,9 @@ describe('shipped vllm-copilot-models.schema.json (artifact)', () => {
   const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as {
     required: string[];
     properties: Record<string, { minLength?: number; type?: string }>;
-    $defs: { requestParams: { additionalProperties: boolean; properties: Record<string, { not?: unknown; type?: string; minimum?: number }> } };
+    // Draft-07 `definitions`, not the 2019-09+ `$defs`: the declared dialect
+    // is draft-07, and portable validators ignore an unknown container.
+    definitions: { requestParams: { additionalProperties: boolean; properties: Record<string, { not?: unknown; type?: string; minimum?: number }> } };
   };
 
   it('requires id and server', () => {
@@ -38,11 +40,11 @@ describe('shipped vllm-copilot-models.schema.json (artifact)', () => {
   });
 
   it('allows unknown request params (pass-through)', () => {
-    expect(schema.$defs.requestParams.additionalProperties).toBe(true);
+    expect(schema.definitions.requestParams.additionalProperties).toBe(true);
   });
 
   it('allows max_tokens (per-mode output budget) but forbids the reserved/protected keys', () => {
-    const rp = schema.$defs.requestParams.properties;
+    const rp = schema.definitions.requestParams.properties;
     expect(rp.max_tokens.type).toBe('integer');
     expect(rp.max_tokens.minimum).toBe(1);
     expect(rp.model.not).toBeDefined();
@@ -52,7 +54,7 @@ describe('shipped vllm-copilot-models.schema.json (artifact)', () => {
   });
 
   it('keeps the known vLLM vocabulary intact', () => {
-    const rp = schema.$defs.requestParams.properties;
+    const rp = schema.definitions.requestParams.properties;
     for (const known of ['temperature', 'top_p', 'top_k', 'chat_template_kwargs', 'reasoning_effort', 'bad_words', 'thinking_token_budget']) {
       expect(rp[known]).toBeDefined();
     }
