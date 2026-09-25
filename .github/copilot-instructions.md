@@ -108,6 +108,10 @@ This is a **VS Code Language Model Chat Provider extension** that routes Copilot
 Copilot → provider/provider.ts (VllmChatModelProvider) → provider/vllmClient.ts → vLLM server
 ```
 
+### Extension placement invariant
+
+`package.json` keeps `"extensionKind": ["workspace"]`. In a remote window, request code must run on the workspace host beside the remote vLLM or OpenRouter endpoint so addresses such as `localhost:8000` keep their intended meaning. Keep workspace-only placement; UI or mixed placement is not a fallback. If the optional local config-file backend is enabled, the workspace-hosted extension reaches the client file through VS Code's local `vscode-userdata:` provider, with no second extension. That route is verified end to end (local write, WSL read/write, automatic local observation in the open editor); the mechanism, the VS Code source facts, and the rebuild procedure live in `docs/remote-local-file-bridge.md`.
+
 ### Core layout:
 | Path | Responsibility |
 |---|---|

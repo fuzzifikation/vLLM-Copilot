@@ -1,7 +1,11 @@
 # Changelog
 
 ## v1.36.16
-Close the remaining release-hardening gaps in `docs/code-review.md` before the next public release. This candidate covers deterministic packaging, schema and preset consistency, shipped webview correctness, automation, and repository-rule coherence; the existing provider runtime is the baseline.
+Close the remaining release-hardening gaps in `docs/code-review.md` before the next public release. This candidate covers deterministic packaging, schema and preset consistency, shipped webview correctness, automation, repository-rule coherence, and a settled remote host topology; the existing provider runtime is the baseline.
+
+### Changed
+
+- **The extension is workspace-only.** In a remote window (SSH, WSL, containers) it now always runs on the remote workspace host, so requests originate beside your server and addresses such as `localhost:8000` keep their intended meaning. A local install no longer silently serves a remote window.
 
 ### Fixed
 

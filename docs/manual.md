@@ -26,7 +26,7 @@ The detailed guide to vLLM-Copilot. The [README](../README.md) is the quick pitc
 - **Disclaimer** - this extension does not protect against misuse, does not provide safety or security guardrails, and does not guarantee the absence of bugs. Language models may misuse it. Paid models cost real money and shown prices are best-guess estimates, the bill is yours. Full text: [DISCLAIMER.md](../DISCLAIMER.md).
 - **Quick Start** - install, add a server/model, first chat: see the [README Quick Start](../README.md#quick-start).
 - **Requirements** - GitHub Copilot Chat (no subscription needed) plus either a running model server or an OpenRouter API key: see [Quick Start](../README.md#quick-start).
-- **Remote setups (SSH/WSL/Containers)** - the extension runs on the remote host (`extensionKind: workspace`). Install it while connected to the remote window; a local-first install won't be picked up by the remote automatically. See the note in [Quick Start](../README.md#quick-start).
+- **Remote setups (SSH/WSL/Containers)** - the extension must run on the remote workspace host (`extensionKind: workspace`) because requests originate beside the remote server. Install it while connected to the remote window; a local-first install won't be picked up by the remote automatically. The local UI host remains the home of VS Code client data, which a future config-file backend can access through VS Code's local file service. See the note in [Quick Start](../README.md#quick-start).
 
 ---
 

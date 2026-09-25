@@ -172,7 +172,8 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     options: { silent: boolean },
     token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelChatInformation[]> {
-    // If extension is not installed on the remote, don't show ghost models that can't work.
+    // A forced local UI host cannot serve the remote workspace. Avoid publishing
+    // models that would be discovered and sent from the wrong machine.
     if (vscode.env.remoteName && this.context.extension.extensionKind === vscode.ExtensionKind.UI) {
       return [];
     }
@@ -386,25 +387,20 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken
   ): Promise<void> {
-    // Guard: if we're connected to a remote but the extension is running locally,
-    // the user almost certainly forgot to install the extension on the remote.
-    // Catch this before making a request — the error would be opaque otherwise.
+    // Guard: a forced local UI host cannot serve the remote workspace. Catch
+    // this before making a request because the transport error would otherwise
+    // be opaque and could point at the wrong server.
     if (vscode.env.remoteName && this.context.extension.extensionKind === vscode.ExtensionKind.UI) {
       const remoteHost = vscode.env.remoteName;
       this.output.appendLine(
-        `[ERROR] vLLM-Copilot is running locally while connected to ${remoteHost}. ` +
-        `Install the extension on the remote to enable chat.`
+        `[ERROR] vLLM-Copilot is running on the local UI host in a ${remoteHost} remote window. ` +
+        `Install it on the remote workspace host to enable chat.`
       );
       progress.report(new vscode.LanguageModelTextPart(
-        `⚠️ **vLLM-Copilot is not installed on the remote.**\n\n` +
+        `⚠️ **vLLM-Copilot is running on the local UI host.**\n\n` +
         `You are connected to **${remoteHost}**, but this extension is running on your local machine. ` +
-        `LLM requests will fail or behave unexpectedly.\n\n` +
-        `**To fix this:**\n` +
-        `1. Open the Extensions view: \`Ctrl+Shift+X\`
-` +
-        `2. Click the "..." menu in the extensions toolbar → **Install in ${remoteHost}...** (or look for the 📥 icon)\n` +
-        `3. Search for **vLLM-Copilot** and install it on the remote\n` +
-        `4. Try your request again`
+        `LLM requests will not run against the remote workspace.\n\n` +
+        `Install vLLM-Copilot in **${remoteHost}**, reload the window, and try again.`
       ));
       return;
     }

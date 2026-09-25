@@ -480,7 +480,7 @@ describe('remote-install guard', () => {
 
     // Should have reported a text part with install instructions
     const calls = progress.report.mock.calls.map(c => (c[0] as any)?.value ?? '');
-    expect(calls.some((t: string) => t.includes('not installed on the remote'))).toBe(true);
+    expect(calls.some((t: string) => t.includes('running on the local UI host'))).toBe(true);
     expect(calls.some((t: string) => t.includes('wsl'))).toBe(true);
 
     // Restore
@@ -511,7 +511,7 @@ describe('remote-install guard', () => {
 
     // Should NOT have reported the remote-install error
     const calls = progress.report.mock.calls.map(c => (c[0] as any)?.value ?? '');
-    expect(calls.some((t: string) => t.includes('not installed on the remote'))).toBe(false);
+    expect(calls.some((t: string) => t.includes('running on the local UI host'))).toBe(false);
 
     // Restore
     (vscode.env as any).remoteName = originalRemoteName;
@@ -540,7 +540,7 @@ describe('remote-install guard', () => {
     );
 
     const calls = progress.report.mock.calls.map(c => (c[0] as any)?.value ?? '');
-    expect(calls.some((t: string) => t.includes('not installed on the remote'))).toBe(false);
+    expect(calls.some((t: string) => t.includes('running on the local UI host'))).toBe(false);
 
     // Restore
     (vscode.env as any).remoteName = originalRemoteName;

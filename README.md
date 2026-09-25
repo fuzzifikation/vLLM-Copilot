@@ -127,7 +127,7 @@ No workspace files are created; the schema is served from the extension itself.
 </td></tr>
 </table>
 
-> **Remote (SSH/WSL/Containers):** This extension runs on the remote host (`extensionKind: workspace`). Install it **while connected to the remote window** and VS Code places it on the remote extension host automatically. If you installed it locally first, the remote won't pick it up on its own. Install it on the remote explicitly (Extensions view → *Install in SSH: … / WSL: … / Dev Container: …*).
+> **Remote (SSH/WSL/Containers):** This extension must run on the remote workspace host (`extensionKind: workspace`) so requests originate beside the remote server and addresses such as `localhost:8000` keep their intended meaning. Install it **while connected to the remote window** and VS Code places it on the remote extension host automatically. If you installed it locally first, the remote won't pick it up on its own. Install it on the remote explicitly (Extensions view → *Install in SSH: … / WSL: … / Dev Container: …*).
 
 
 

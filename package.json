@@ -56,8 +56,7 @@
   ],
   "main": "./out/extension.js",
   "extensionKind": [
-    "workspace",
-    "ui"
+    "workspace"
   ],
   "contributes": {
     "viewsContainers": {
@@ -648,6 +647,7 @@
     "test": "vitest run",
     "test:typecheck": "tsc -p test/tsconfig.json --noEmit",
     "test:integration": "vitest run --mode integration test/integration",
+    "test:bridge": "node scripts/run-local-file-bridge-check.mjs",
     "validate-webview-js": "node -e \"const fs=require('fs');const path=require('path');const files=fs.readdirSync('resources').filter(f=>f.endsWith('.js'));files.forEach(f=>{try{const code=fs.readFileSync(path.join('resources',f),'utf8');require('vm').createScript(code);console.log('OK: '+f)}catch(e){console.error('FAIL: '+f+': '+e.message);process.exitCode=1}})\"",
     "vendor:choices": "node scripts/vendor-choices.mjs",
     "license:check": "license-checker-rseidelsohn --production --excludePrivatePackages --onlyAllow \"MIT;ISC;Apache-2.0;BSD-2-Clause;BSD-3-Clause;CC0-1.0;CC-BY-3.0;BlueOak-1.0.0\"",

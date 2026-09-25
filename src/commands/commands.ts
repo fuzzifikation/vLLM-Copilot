@@ -158,17 +158,16 @@ export function registerClearLogFilesCommand(fileLogger: FileLogger): vscode.Dis
 /** Discover and clean Copilot chat sessions across workspaces. */
 export function registerCleanSessionsCommand(
   output: vscode.OutputChannel,
-  extensionKind: vscode.ExtensionKind,
 ): vscode.Disposable {
   return vscode.commands.registerCommand('vllm-copilot.cleanCopilotSessions', async () => {
     // Copilot session files live on the local machine, not the remote server.
-    // When the extension runs in the workspace host (e.g., Remote-SSH, devcontainer),
-    // os.homedir() returns the remote path — which has no sessions.
-    if (extensionKind === vscode.ExtensionKind.Workspace) {
+    // A remote workspace extension would derive the remote user-data root and
+    // find none of the local sessions, so refuse before touching storage.
+    if (vscode.env.remoteName !== undefined) {
       vscode.window.showWarningMessage(
-        'Clean Copilot Sessions works only when the extension runs locally (UI host).\n\n' +
-        'When connected to a remote, the extension runs on the server but Copilot sessions live on your local machine.\n\n' +
-        'To fix: Run this command while not connected to any remote (local workspace only).',
+        'Clean Copilot Sessions works only in a local window.\n\n' +
+        'In a remote window, this extension runs on the workspace host but Copilot sessions live on your local machine.\n\n' +
+        'Run this command while not connected to any remote.',
         'OK'
       );
       return;

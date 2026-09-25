@@ -56,31 +56,31 @@ export async function activate(context: vscode.ExtensionContext) {
     outputChannel = vscode.window.createOutputChannel('vLLM-Copilot');
     context.subscriptions.push(outputChannel);
 
-    // Always log remote detection state for debugging
+    // Always log the actual host location. The manifest selects workspace
+    // placement, but a user can still force a local host with
+    // `remote.extensionKind`; the mismatch guard below handles that case.
     const extKindLabel = context.extension.extensionKind === vscode.ExtensionKind.UI ? 'UI' : 'Workspace';
-    outputChannel.appendLine(`[INFO] Remote detection: remoteName="${vscode.env.remoteName ?? 'none'}", extensionKind=${extKindLabel}`);
+    outputChannel.appendLine(`[INFO] Extension host: remoteName="${vscode.env.remoteName ?? 'none'}", hostKind=${extKindLabel}`);
 
-    // Running locally while connected to a remote — notify user and offer to install on the remote host.
+    // A workspace-only extension can be forced onto the local UI host. Refuse
+    // the request path there rather than allowing it to probe the wrong machine.
     if (vscode.env.remoteName && context.extension.extensionKind === vscode.ExtensionKind.UI) {
       const remoteHost = vscode.env.remoteName;
-      outputChannel.appendLine(`[WARN] Extension is running locally while connected to ${remoteHost} remote - it must be installed on the remote to function.`);
-      const helpAction = `Show Me`;
+      outputChannel.appendLine(`[WARN] Extension is running on the local UI host in a ${remoteHost} remote window.`);
+      const helpAction = 'Show Me';
       vscode.window.showWarningMessage(
-        `vLLM-Copilot is not installed on the ${remoteHost} remote. Chat features will not work until installed.`,
+        `vLLM-Copilot is running on the local UI host in the ${remoteHost} remote window. Chat features will not work until it runs on the remote workspace host.`,
         helpAction,
         'Dismiss'
       ).then((choice) => {
         if (choice === helpAction) {
           outputChannel.appendLine(`[INFO] User triggered install flow for ${remoteHost} remote.`);
-          // Open Extensions view with our extension pre-searched so the user sees
-          // the "Install on {remote}" button. We can't install remotely from a local
-          // UI extension — VS Code API always installs to the current host.
+          // Open the Extensions view with the extension pre-searched. The VS Code
+          // API can only install to the current host, so this helps the user find
+          // the remote installation action.
           vscode.commands.executeCommand('workbench.extensions.search', 'System-Sciences.vllm-copilot');
-          // After installing, the user needs to reload. We can't detect when the
-          // remote install completes, so they'll see the same popup again on reload
-          // if they dismiss it.
           vscode.window.showInformationMessage(
-            `After installing on ${remoteHost}, reload the window to activate vLLM-Copilot. Enable \`extensions.autoUpdate\` in settings to get automatic updates.`,
+            `Install vLLM-Copilot in ${remoteHost} if it is not already installed remotely, then reload the window.`,
             'Dismiss'
           );
         }
@@ -290,7 +290,7 @@ export async function activate(context: vscode.ExtensionContext) {
       registerConfigureUtilityModelCommand(outputChannel),
       registerOpenLogFileCommand(fileLogger),
       registerClearLogFilesCommand(fileLogger),
-      registerCleanSessionsCommand(outputChannel, context.extension.extensionKind),
+      registerCleanSessionsCommand(outputChannel),
       registerSetModelPersonalityCommand(context, activeProvider, outputChannel),
       registerUpdateServerAuthCommand(context, activeProvider, outputChannel),
       registerRenameServerCommand(context, activeProvider, outputChannel),
@@ -336,7 +336,7 @@ export async function activate(context: vscode.ExtensionContext) {
       console.error(`[ERROR] Extension activation failed:\n${reason}`);
     }
     vscode.window.showErrorMessage(
-      `vLLM-Copilot failed to activate: ${detail}. If you are connected through Remote-SSH or WSL, install vLLM-Copilot in the remote extension host as well.\n\nCheck Output → vLLM-Copilot for details.`,
+      `vLLM-Copilot failed to activate: ${detail}.\n\nCheck Output → vLLM-Copilot for details.`,
       'Open Output'
     ).then(selection => {
       if (selection === 'Open Output') outputChannel.show();

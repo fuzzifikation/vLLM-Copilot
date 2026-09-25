@@ -213,7 +213,7 @@ feature-surface registration.
 Verified activation order:
 
 1. output channel
-2. remote-mismatch warning (non-blocking)
+2. extension-host detection log; remote host-mismatch warning remains a defensive path for forced `remote.extensionKind`
 3. setExtensionVersion + setSessionManagerOutput
 4. initUsageStore
 5. FileLogger + enableFileLogging
