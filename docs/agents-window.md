@@ -1,14 +1,8 @@
 # Use vLLM models in the Agents window ("Open in Agents")
 
-VS Code 1.135 added the **Agents window** - the `Open in Agents` button in the
-title bar opens a dedicated window for orchestrating agent sessions across your
-workspaces. Its sessions run in a **separate Agent Host process**, which by
-default does not see models from extension providers - so your vLLM models are
-simply absent there.
+VS Code's Agents window opens a dedicated space for orchestrating agent sessions across workspaces. Its sessions run in a separate Agent Host process, which does not see extension-provider models unless BYOK and Agents-window support are explicitly enabled.
 
-vLLM-Copilot changes that: since v1.35.0 it auto-enables the two VS Code
-settings that expose our models to Agent Host sessions. You configure nothing -
-just restart once.
+vLLM-Copilot handles those settings automatically when at least one model is configured. The bootstrap runs during activation and again when the model setting changes, so the first model added after startup follows the same path as models that already existed when the window opened.
 
 | Surface | What talks to your vLLM server |
 |---|---|
@@ -28,36 +22,24 @@ just restart once.
 
 Rules the bootstrap follows:
 
-- **Your explicit values win.** If you have ever written either setting yourself
-  in `settings.json` - including a deliberate `false` - the extension never
-  touches it. For `supportAgentsWindow` (a map of extensions), only our own
-  entry is added; other extensions' entries are preserved.
-- **Older VS Code is untouched.** On builds that don't know these settings,
-  nothing is written.
-- **Idempotent.** Written once at activation when you have at least one model
-  configured.
+- **Your explicit values win.** A value you wrote yourself, including `false`, is never overwritten. For `supportAgentsWindow`, only this extension's entry is added and other extensions' entries are preserved.
+- **Older VS Code is untouched.** Builds that do not register either setting receive no writes.
+- **No empty opt-in.** The helper checks the effective model array and does nothing when no model is configured.
+- **Idempotent.** Activation and later model-setting changes may call the helper repeatedly, but explicit values prevent duplicate writes.
 
 ## Requirements
 
-1. **VS Code 1.135 or newer** (the Agent Host and both settings ship there).
-2. **A fully restarted VS Code** - not just *Reload Window*. The Agent Host is
-   its own process, and both settings are documented as taking effect only
-   after that process restarts. Quit and relaunch.
-3. **A tool-calling model** - agent sessions hide models that don't declare
-   tool calling, exactly like Agent mode in the normal chat. Your server must
-   serve it accordingly (`--enable-auto-tool-choice --tool-call-parser …`), the
-   same requirement as the [Copilot CLI guide](./copilot-cli.md#vllm-server-requirements).
-4. **Roomy context** - the agent accumulates file contents and tool results
-   fast; 128k+ tokens recommended.
+1. **VS Code 1.135 or newer** for the current Agents-window extension bridge used by this feature.
+2. **A tool-calling model.** Agent sessions hide models that do not declare tool calling. Serve the model with the matching vLLM tool parser and chat template, as described in the [Copilot CLI guide](./copilot-cli.md#vllm-server-requirements).
+3. **Roomy context.** Agents accumulate file contents and tool results quickly; 128k or more tokens is recommended.
 
 ## Use it
 
-1. Restart VS Code (step 2 above).
-2. Click **Open in Agents** in the title bar (or `Chat: Open Agents Window`).
-3. Start a new session: pick your workspace folder, Session Target =
-   **Copilot**.
-4. Open the model picker - your vLLM-Copilot models are listed there. Pick one,
-   prompt, and your GPU does the agent loop.
+1. Click **Open in Agents** in the title bar or run `Chat: Open Agents Window`. If the Agents window was already open before the extension was enabled, reopen it.
+2. Start a new session, select the workspace, and choose the **Copilot** session target.
+3. Open the model picker and select one of the vLLM-Copilot models.
+
+Current VS Code versions synchronize the BYOK model bridge to a running Agent Host. A full VS Code restart is not normally required; restarting remains a fallback if an older host or an already open Agents window does not reload the extension opt-in.
 
 ![vLLM-Copilot models in the Agents window picker](images/Agents-Window.png)
 
@@ -73,21 +55,8 @@ See [Personalities](./custom-system-prompt.md) for the replacement mechanics.
 
 ## Fine print
 
-- **Experimental.** Microsoft documents both settings as experimental;
-  behavior may change between VS Code versions, and agent-host sessions are
-  still preview territory. If the picker stays empty after a full restart,
-  that is worth a bug report - to VS Code first, this extension second.
-- **Model Mode / Output Length dropdowns** are rendered by VS Code from the
-  metadata we provide; whether the Agents window surfaces them the same way the
-  main chat does depends on the host version. If a mode seems ignored, check
-  the request with `vllm-copilot.enableFileLogging` before blaming the model.
-- **Utility tasks** (titles, commit messages): `chat.byokUtilityModelDefault`
-  is already set to `mainAgent` by the extension, so utility flows follow your
-  vLLM model instead of failing when you're signed out of Copilot.
-- **The Local harness** (VS Code's built-in harness that consumes VS Code
-  models directly) remains a main-window feature - the Agents window itself
-  lists it as unsupported there. The Copilot harness + BYOK models is the path
-  for vLLM models in that window.
-- Sessions in the Agents window can use **worktree isolation**, MCP servers,
-  hooks and the usual agent customizations - all harness features, none of them
-  provided or affected by this extension.
+- **Experimental.** Microsoft documents the BYOK bridge as experimental, and Agent Host sessions remain preview functionality. If the picker stays empty after reopening the Agents window, report it to VS Code first.
+- **Model Mode / Output Length controls** are rendered by VS Code from provider metadata. Support in the Agents window depends on the host version. Enable `vllm-copilot.enableFileLogging` before blaming the model when a mode appears ignored.
+- **Utility tasks** such as titles and commit messages use `chat.byokUtilityModelDefault`, which the extension sets to `mainAgent` unless you chose another value.
+- **The Local harness** remains a main-window feature. The Copilot harness with BYOK models is the path for vLLM models in the Agents window.
+- Agent Host sessions can use worktree isolation, MCP servers, hooks, and the usual agent customizations. Those are harness features and are outside this extension.

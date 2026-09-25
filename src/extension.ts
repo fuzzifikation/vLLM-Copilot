@@ -145,6 +145,15 @@ export async function activate(context: vscode.ExtensionContext) {
         if (e.affectsConfiguration('vllm-copilot.servers') || e.affectsConfiguration('vllm-copilot.models')) {
           resetOpenRouterCaches();
         }
+        // The first model can be added after activation. Re-run the idempotent
+        // Agent Host bootstrap here so UI, auto-configure, and hand-edited
+        // first-model flows all reach the same runtime path. The helper checks
+        // that at least one effective model exists before writing settings.
+        if (e.affectsConfiguration('vllm-copilot.models')) {
+          ensureAgentHostModelsEnabled().catch(err => {
+            outputChannel.appendLine(`[WARN] Failed to enable Agent Host model access: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        }
       })
     );
 

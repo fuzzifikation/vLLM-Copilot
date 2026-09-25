@@ -57,8 +57,8 @@ export async function ensureByokUtilityDefault(): Promise<void> {
  *   sessions (docs: "AI language models in VS Code", BYOK note).
  * - `extensions.supportAgentsWindow` — opt-in map deciding which extensions
  *   activate inside the Agents window (docs: "Use the Agents window").
- * Both are gated on registration at runtime (absent on older builds) and take
- * effect only after the agent host process restarts.
+ * Both are gated on registration at runtime (absent on older builds). Current
+ * VS Code versions synchronize BYOK model availability to a running Agent Host.
  */
 const AGENT_HOST_BYOK_MODELS_SECTION_KEY = 'agentHost.byokModels.enabled';
 const SUPPORT_AGENTS_WINDOW_SECTION_KEY = 'supportAgentsWindow';
@@ -68,6 +68,11 @@ const OUR_EXTENSION_ID = 'System-Sciences.vllm-copilot';
 /**
  * Enable our models inside Agent Host sessions ("Open in Agents" window).
  *
+ * The model-count guard belongs here because this helper runs at activation and
+ * from the central models-setting change hook. Without at least one effective
+ * model there is nothing to expose, and removal of the last model must not opt a
+ * fresh profile into Agent Host support.
+ *
  * Same rules as {@link ensureByokUtilityDefault}: unregistered setting on this
  * VS Code build → skip; the user has written an explicit value → respect it,
  * including an explicit `false` (that is an opt-out, not an oversight). For
@@ -75,6 +80,9 @@ const OUR_EXTENSION_ID = 'System-Sciences.vllm-copilot';
  * extensions' entries are preserved, and only a missing entry is added.
  */
 export async function ensureAgentHostModelsEnabled(): Promise<void> {
+  const models = vscode.workspace.getConfiguration('vllm-copilot').get<unknown>('models');
+  if (!Array.isArray(models) || models.length === 0) return;
+
   const chatConfig = vscode.workspace.getConfiguration('chat');
   const byokInspected = chatConfig.inspect(AGENT_HOST_BYOK_MODELS_SECTION_KEY);
   // Absent defaultValue = this VS Code build doesn't know the setting (pre-1.135).

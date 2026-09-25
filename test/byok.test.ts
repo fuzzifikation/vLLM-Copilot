@@ -59,13 +59,43 @@ describe('ensureAgentHostModelsEnabled', () => {
     byok?: any;
     window?: any;
     windowValue?: Record<string, boolean>;
+    models?: unknown[];
   }) => {
     vscode.workspace._mockConfig = {
       inspect: (key: string) => (key === BYOK_KEY ? opts.byok : opts.window),
-      get: (key: string) => (key === WINDOW_KEY ? opts.windowValue : undefined),
+      get: (key: string) => {
+        if (key === 'models') return opts.models ?? [{ id: 'first-model', server: 'server' }];
+        if (key === WINDOW_KEY) return opts.windowValue;
+        return undefined;
+      },
       update: chatUpdate,
     };
   };
+
+  it('does nothing when no model is configured', async () => {
+    mockConfigs({ models: [], byok: { defaultValue: false }, window: { defaultValue: {} } });
+
+    await ensureAgentHostModelsEnabled();
+
+    expect(chatUpdate).not.toHaveBeenCalled();
+  });
+
+  it('enables both Agent Host settings when the first model appears', async () => {
+    mockConfigs({ byok: { defaultValue: false }, window: { defaultValue: {} } });
+
+    await ensureAgentHostModelsEnabled();
+
+    expect(chatUpdate).toHaveBeenCalledWith(
+      BYOK_KEY,
+      true,
+      vscode.ConfigurationTarget.Global,
+    );
+    expect(chatUpdate).toHaveBeenCalledWith(
+      WINDOW_KEY,
+      { [OUR_ID]: true },
+      vscode.ConfigurationTarget.Global,
+    );
+  });
 
   it('respects an explicit user value for the agent-host setting (even false)', async () => {
     mockConfigs({ byok: { defaultValue: false, globalValue: false }, window: { defaultValue: {} } });

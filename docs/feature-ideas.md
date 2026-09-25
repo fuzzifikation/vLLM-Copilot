@@ -1,7 +1,7 @@
 # Feature Ideas: vLLM Capabilities → Better VS Code Experience
 
 **Generated:** 2026-06-06
-**Updated:** 2026-09-08 (shipped entries deleted against the code, not against memory: registry, remote presets, usage tracker, OpenRouter providers, output-length picker, centralized auth update. The stale "12 remaining parameters" table was replaced with the passthrough truth. Completed items live in git history, not here.)
+**Updated:** 2026-09-25 (shipped entries deleted against the code, not against memory: registry, remote presets, usage tracker, OpenRouter providers, output-length picker, centralized auth update. The stale "12 remaining parameters" table was replaced with the passthrough truth. Completed items live in git history, not here.)
 **Source:** [vLLM SamplingParams API Reference](https://docs.vllm.ai/en/latest/api/vllm/sampling_params.html)
 
 **Context:** vLLM supports many per-request sampling parameters. These represent opportunities to build features that VS Code's built-in Copilot doesn't have, making vLLM-Copilot the superior local model integration.
@@ -201,6 +201,143 @@ Since the model list is small (typically < 20 entries) and the server is local/c
 - Interaction with OpenRouter's own account-level limits and `usage.cost` reporting.
 
 **Effort:** Low (soft alert on existing tracker) to Medium (hard cap + request-time enforcement + UI).
+
+---
+
+## ✨ Populate native model-picker metadata
+
+**Category:** Vitamin (picker clarity)
+**Status:** Accepted direction, explicitly deferred. Do not implement now.
+
+VS Code's stable `LanguageModelChatInformation.tooltip` is the hover text shown for a model in the model picker. `detail` is the short secondary line rendered alongside the model name. The extension currently leaves both empty even though discovery already knows the server label, backend, wire model ID, context window, output ceiling, capabilities, and OpenRouter routing state.
+
+Populate the stable fields first, then add the still-proposed `editTools` hint so VS Code can prefer `find-replace`, `multi-find-replace`, `apply-patch`, or `code-rewrite` for models trained or tuned for those edit shapes. `maxContextWindowTokens` is also still proposed and can separate the physical server window from the currently selected input and output budgets. Keep every proposed field behind the existing runtime metadata boundary, but make the stable tooltip and detail useful on their own.
+
+**Why it matters:** the picker becomes self-explanatory on hosts that ignore proposal-era icons, banners, and schemas. It also gives users one place to understand which configured preset, server, and wire model a picker entry actually represents.
+
+**Suggested content:**
+- `detail`: server display name, backend type, or a compact `server / wire-model` identity.
+- `tooltip`: context and output limits, tool and vision support, and current OpenRouter provider or routing mode.
+- `editTools`: model-preset-owned preference, with no inference when absent.
+
+**Effort:** Low for stable `detail` and `tooltip`, medium once preset-owned edit-tool metadata and routing-state formatting are included.
+
+---
+
+## ✨ Task-specific model roles
+
+**Category:** Vitamin (workflow routing)
+**Status:** Idea, not implemented.
+
+VS Code already permits different models for different task classes. `chat.utilityModel` selects the general utility model for titles, summaries, settings search, and Git review. `chat.utilitySmallModel` selects a fast model for commit messages, pull-request text, rename suggestions, branch names, prompt categorization, and intent detection. `inlineChat.defaultModel` is separate again, and the current main-agent model is independent of all three.
+
+A **Configure Model Roles** command could let the user assign configured vLLM models to Main Chat, General Utility, Fast Utility, and Inline Chat. A fast local model can then handle short mechanical tasks while a stronger tool-calling model handles the agent loop. Later roles can cover planning or implementation only when VS Code exposes stable settings for them.
+
+The UI should show the current assignment, capability warnings, and the effective fallback. It must never silently change explicit user values. The smallest useful slice is Main Chat, General Utility, and Fast Utility, using the two existing utility settings plus the current main-model selection.
+
+**Why it matters:** this is a natural extension of the existing server and model registry. It reduces latency and GPU load for utility prompts and makes mixed local-model fleets usable without hand-editing several VS Code settings.
+
+**Open questions:**
+- Should role assignments be global defaults, workspace overrides, or both through the config-file backend?
+- Should the extension offer a fast-model recommendation based on configured context, family, and serving metrics?
+- How should a role behave when its selected model is temporarily unavailable?
+
+**Effort:** Low to medium, depending on whether role assignment lives in the existing Model Settings webview or gets a separate command.
+
+---
+
+## ✨ Availability health without false alarms
+
+**Category:** Vitamin (operational clarity)
+**Status:** Idea, not implemented.
+
+Configured models and live models are different inventories. A user may intentionally keep an old model entry while its server is offline, a model is unloaded, a deployment is being rebuilt, or a remote machine is disconnected. Missing from the picker must not automatically become an error.
+
+A health surface should show configured and available counts separately, then let the user mark entries as parked or ignored. Parked entries remain configured but stop producing repeated warnings until the user reactivates them. Useful state includes last seen, last successful request, server reachability, and whether the model is absent from `/v1/models` versus the whole server being unavailable.
+
+The first UI can be a Dashboard section or view badge. A status-bar warning is justified only for models the user marks as expected to be active, with a grace period and a direct **Run Test & Refresh** action. Never delete or rewrite a configured model based on discovery state.
+
+**Why it matters:** the extension can explain why a model disappeared without turning intentional staleness into dashboard noise.
+
+**Open questions:**
+- Should parking be per model, per server, or both?
+- Should a recovered parked model reactivate automatically or remain quiet until acknowledged?
+- Which state belongs in the config file once the file backend exists?
+
+**Effort:** Medium, mostly state and UX design rather than new inference plumbing.
+
+---
+
+## 🛡️ Native Responses and Anthropic Messages API support
+
+**Category:** Strategic protocol expansion
+**Status:** Idea, not implemented. Keep Chat Completions as the default.
+
+VS Code's built-in Custom Endpoint provider now supports OpenAI Responses and Anthropic Messages alongside Chat Completions. vLLM serves `/v1/responses` and `/v1/messages` today, including streamed content, reasoning, and tool events. Supporting those protocols natively would keep the extension aligned with Copilot's current Custom Endpoint feature set and preserve vLLM-specific request passthrough.
+
+OpenAI Responses offers structured input and output items, reasoning events, tool lifecycle events, and conversation continuation through either `previous_input_messages` or `previous_response_id`. vLLM does not allow both continuation forms together. Its response store is disabled by default because stored messages live only in memory and are never removed before server shutdown, so an extension should not assume `previous_response_id` persistence. Stateless `previous_input_messages` or the existing full-history shape is the safer default unless a deployment explicitly enables and understands server-side state.
+
+Anthropic Messages supports text, images, tool use and results, thinking, and redacted-thinking content blocks. vLLM converts these requests into its chat pipeline and streams reasoning back. The research must establish whether vLLM preserves enough signed or encrypted state for VS Code's `includeEncryptedThinking`; the extension should expose that capability only after a live round-trip proves it.
+
+**Possible product shape:**
+- Add a per-model `apiType`: `chat-completions`, `responses`, or `messages`.
+- Keep one Language Model Chat Provider surface and translate each wire protocol back into the existing VS Code response parts.
+- Preserve arbitrary vLLM parameters per protocol, with an explicit parameter policy where one surface cannot carry a key used by another.
+- Preserve current cancellation, retries, usage, cost, and tool-repair behavior per transport.
+- Add wire tripwires for streaming order, tool calls, reasoning, usage, and continuation.
+
+**Why it matters:** protocol parity is becoming table stakes for model integrations. It may unlock native reasoning state, better tool semantics, and compatibility with model families that do not implement Chat Completions well.
+
+**Risks:** three request bodies, three response grammars, different state semantics, and backend-specific gaps. This is a substantial feature and should follow the config-file and session-storage foundations.
+
+**Effort:** High. Responses first may be the cleaner initial target because OpenAI-style tool and reasoning events map cleanly to the current provider boundary; Messages follows if Anthropic-family preservation proves valuable.
+
+---
+
+## ✨ Inline code completions research
+
+**Category:** Moonshot (new VS Code surface)
+**Status:** Research only. No implementation planned yet.
+
+### Where we are
+
+The extension registers a `LanguageModelChatProvider`, so its models power Chat, tools, agents, and BYOK utility flows. They do not automatically power VS Code's ghost-text inline suggestions. The official docs state that BYOK models currently cannot connect to inline suggestions. That requires a separate stable `InlineCompletionItemProvider` registered with `vscode.languages.registerInlineCompletionItemProvider`.
+
+The current request pipeline cannot be reused as-is. It is built for chat messages, tools, images, reasoning, and long generations. Inline completion needs the live `TextDocument`, cursor position, current line, prefix, suffix, selected IntelliSense item, trigger kind, document version, aggressive cancellation, and small latency budgets.
+
+### What is true
+
+- VS Code provides a stable inline-completion API. Providers are called after typing stops, on explicit invoke, and when cycling completions.
+- `InlineCompletionContext.triggerKind` distinguishes automatic requests from explicit requests.
+- `selectedCompletionInfo` must be respected. A suggestion extending an IntelliSense preview must replace the same range and begin with the selected text.
+- vLLM exposes `/v1/completions` for text-generation models.
+- FIM-capable code models exist, including the StarCoder2 family, which was trained with fill-in-the-middle.
+- The extension can reuse the server registry, authentication headers, model discovery, and remote extension-host placement.
+
+### What is not true
+
+- A BYOK or `LanguageModelChatProvider` model does not automatically receive inline-completion requests.
+- VS Code does not send a prepared FIM prompt. The extension receives the document and cursor and must build the request.
+- vLLM's OpenAI Completions API does not support the OpenAI `suffix` parameter. When a model uses FIM sentinel tokens, the extension must compose those tokens into the prompt itself.
+- A relevant chat model is not automatically a good completion model. Base, code, and instruction-tuned models differ sharply in FIM behavior.
+- A local or remote vLLM server is not automatically fast enough. TTFT, queueing, speculative decoding, and network topology decide whether ghost text feels useful.
+- The current chat request builder, tool conversion, system-message pipeline, and reasoning handling do not solve inline-completion formatting.
+
+### Smallest credible spike
+
+1. Add a separate opt-in inline-completion model setting rather than reusing the active chat model implicitly. It should point to a server entry and wire model ID, with a documented requirement for a FIM-capable model.
+2. Register one provider for trusted file documents. It should debounce automatic requests, honor cancellation, and discard a result if `document.version` changed while the request was running.
+3. Build a bounded prompt from current line, preceding file context, cursor suffix, and model-specific FIM markers. Send a short non-streaming `/v1/completions` request with a strict output cap and stop handling for the current syntactic boundary.
+4. Return an `InlineCompletionItem` only when the document version and cursor still match. Honor `selectedCompletionInfo` with the required replacement range.
+5. Measure TTFT, end-to-end latency, acceptance rate, request cancellation, empty-result rate, and GPU load against at least one FIM model. Test local, SSH, WSL, and Dev Container hosts.
+
+### Product constraints
+
+Inline completion sends code context automatically and repeatedly, so it needs an explicit opt-in and clear documentation about the configured server receiving the prompt. It should remain independent from Copilot inline suggestions and let VS Code manage coexistence between providers. A command can select the completion model and enable it per user or workspace once the request shape is proven.
+
+**Why it matters:** BYOK models currently stop at chat and agents. A successful implementation would make vLLM useful for the most frequent editor interaction as well.
+
+**Effort:** Medium-high research, high production implementation. Do not start before the config-file foundation is settled, because completion-model selection and workspace trust need the same durable configuration model.
 
 ---
 
