@@ -75,6 +75,10 @@ export interface LanguageModelChatInformation {
   readonly maxInputTokens: number;
   readonly maxOutputTokens: number;
   readonly capabilities: LanguageModelChatCapabilities;
+  /** Stable since the chatProvider graduation; mirrors @types/vscode 1.134. */
+  readonly tooltip?: string;
+  /** Stable since the chatProvider graduation; mirrors @types/vscode 1.134. */
+  readonly detail?: string;
 }
 
 export interface LanguageModelChatTool {

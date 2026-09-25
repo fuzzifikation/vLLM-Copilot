@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildModelInfo } from '../src/provider/modelInfo.js';
+import { formatCost } from '../src/usage/usageStore.js';
 
 describe('buildModelInfo picker id derivation', () => {
   it('uses an explicit id as the picker id', () => {
@@ -182,5 +183,73 @@ describe('buildModelInfo family heuristic', () => {
     );
     expect(info.family).toBe('GLM');
     expect(fallbacks).toEqual([]);
+  });
+});
+
+
+describe('buildModelInfo picker price (detail + tooltip)', () => {
+  const model = { id: 'zai-org/GLM-5.3', max_model_len: 262144 };
+  const build = (override: Record<string, unknown>) =>
+    buildModelInfo(model, override as never, { maxOutputTokens: 32768 }, 'vllm');
+
+  it('omits both fields when no cost is configured', () => {
+    const info = build({ id: 'sb', vllmModelId: 'zai-org/GLM-5.3', server: 'srv' });
+    expect(info.detail).toBeUndefined();
+    expect(info.tooltip).toBeUndefined();
+  });
+
+  it('shows a single price line', () => {
+    const info = build({ id: 'sb', vllmModelId: 'zai-org/GLM-5.3', server: 'srv', cost: { input: 0.3, output: 1.2 } });
+    expect(info.detail).toBe('$0.30 in · $1.20 out');
+    expect(info.tooltip).toBe(info.detail);
+  });
+
+  it('never prints context — VS Code already shows Max context in the card', () => {
+    const info = build({ id: 'sb', vllmModelId: 'zai-org/GLM-5.3', server: 'srv', cost: { input: 0.3, output: 1.2 } });
+    expect(info.detail).not.toMatch(/context|\d+K|\d+M/);
+  });
+
+  it('never prints the server, backend or wire model id', () => {
+    const info = build({ id: 'sb', vllmModelId: 'zai-org/GLM-5.3', server: 'srv', cost: { input: 0.3, output: 1.2 } });
+    expect(info.detail).not.toContain('GLM-5.3');
+    expect(info.detail).not.toContain('vllm');
+  });
+
+  it('uses a single line — VS Code flattens newlines in the tooltip', () => {
+    const info = build({ id: 'sb', vllmModelId: 'zai-org/GLM-5.3', server: 'srv', cost: { input: 0.3, output: 1.2, cachedInput: 0.03 } });
+    expect(info.tooltip).not.toContain('\n');
+  });
+
+  it('includes the cached rate only when configured', () => {
+    const withCache = build({ id: 'sb', vllmModelId: 'zai-org/GLM-5.3', server: 'srv', cost: { input: 0.3, output: 1.2, cachedInput: 0.03 } });
+    expect(withCache.detail).toBe('$0.30 in · $1.20 out · $0.03 cached');
+    const without = build({ id: 'sb', vllmModelId: 'zai-org/GLM-5.3', server: 'srv', cost: { input: 0.3, output: 1.2 } });
+    expect(without.detail).not.toContain('cached');
+  });
+
+  it('formats rates with the shared money helper', () => {
+    const info = build({ id: 'sb', vllmModelId: 'zai-org/GLM-5.3', server: 'srv', cost: { input: 0.5, output: 9.9 } });
+    expect(info.detail).toBe('$0.50 in · $9.90 out');
+  });
+
+  it('matches the dashboard for the same configured rate', () => {
+    // One owner for money rendering: the picker and the dashboard must never
+    // print a rate two different ways.
+    const cost = { input: 1.2, output: 12 };
+    const info = build({ id: 'sb', vllmModelId: 'zai-org/GLM-5.3', server: 'srv', cost });
+    expect(info.detail).toBe(`${formatCost(cost.input)} in · ${formatCost(cost.output)} out`);
+  });
+
+  it('shows an unrecognised unit verbatim rather than as a wrong $', () => {
+    // A settings.json written before the USD-only ruling can still carry a
+    // retired unit. It must be shown as-is, never silently rendered as dollars.
+    const info = build({ id: 'sb', vllmModelId: 'zai-org/GLM-5.3', server: 'srv', cost: { input: 0.5, output: 1.5, currency: 'AI Credits' } });
+    expect(info.detail).toBe('AI Credits 0.50 in · AI Credits 1.50 out');
+    expect(info.detail).not.toContain('$');
+  });
+
+  it('treats an empty cost block as no price at all', () => {
+    const info = build({ id: 'sb', vllmModelId: 'zai-org/GLM-5.3', server: 'srv', cost: {} });
+    expect(info.detail).toBeUndefined();
   });
 });

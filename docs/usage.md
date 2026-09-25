@@ -75,10 +75,10 @@ cost = (prompt − cached) / 1M × input
 
 **Actual reported cost (OpenRouter `usage.cost`) IS stored** - it is server truth, not derivable from rates - in separate all-time/day planes (`allTimeCost`/`daysCost`, v3), also per `(server, model)`. The dashboard **prefers actual cost when a model has any**, falling back to the per-1M estimate per slot otherwise. Actual and estimated cost are **never summed**. Editing a rate re-prices the estimate history without any migration; recorded actual spend is unchanged.
 
-- **Rates are per 1,000,000 tokens**, entered in the model's `currency` unit (default `USD`; `"AI Credits"` renders a credits label - 1 credit = $0.01 - values are entered directly, no conversion applied).
-- **Currency decoration uses a small static map, not an i18n library** - `$` (USD), `€` (EUR), `£` (GBP), `¥` (JPY/CNY), `credits` (AI Credits); any other currency falls back to its raw code (`EUR 12.35`). This also means a non-USD currency never renders as a wrong `$`. Actual OpenRouter cost is always USD.
+- **Rates are per 1,000,000 tokens, in USD.** `currency` is a display label that exists only so a hand-edited settings.json shows an unrecognised unit verbatim instead of a wrong `$`; the Set Cost command writes `USD` and offers no other choice.
+- **Currency is USD only.** No second currency is reachable from any UI; a hand-edited `currency` in settings falls back to its raw label (e.g. `EUR 12.35`) so a non-dollar amount never renders as a wrong `$`. Actual OpenRouter cost is always USD.
 - Fresh input is priced at `input`; cache-read input at `cachedInput`. No cache-write surcharge - self-hosted vLLM never bills for it.
-- **Cost is per MODEL only; there is no server-level cost sum.** Models on one server may legitimately use different currencies (USD vs AI Credits), so summing them into a server aggregate would produce a wrong money number. Each model's price sits on its collapsed line (labeled with its currency); the **Today / Overall** rows are token-only. The per-request **Cost** row under Last Request shows the single-request cost with fine precision. The user sums costs across models manually. This was a deliberate decision after `aggregateCost` was removed - do not re-introduce a server cost aggregate.
+- **Cost is per MODEL only; there is no server-level cost sum.** Models on one server may legitimately carry different rates, so summing them into a server aggregate would invent a number the config does not state. Each model's price sits on its collapsed line; the **Today / Overall** rows are token-only. The per-request **Cost** row under Last Request shows the single-request cost with fine precision. The user sums costs across models manually. This was a deliberate decision after `aggregateCost` was removed - do not re-introduce a server cost aggregate.
 - **Entry point:** right-click the Token Usage and Cost node → **Set Cost…** (`vllm-copilot.configureCost`) guides through model → rates → currency and writes the `cost` block via the config store. Hidden from the command palette because it requires a server-context argument.
 
 ## Reset semantics
@@ -94,7 +94,7 @@ This fixed a **pre-existing bug**: the Last Request node was previously written 
 ## Design decisions & gotchas
 
 - **Auto-continue retries count as separate requests.** The retry loop calls `consumeStream` once per attempt, and each completion that carries a usage payload is recorded - a continuation request genuinely re-sends the context and generates new tokens, so per-HTTP-request accounting is the honest number.
-- **`formatCost` precision adapts** so a per-request cost of `$0.000019` never collapses to `$0.0000`: ≥$100 → 0 decimals, ≥$1 → 2, ≥$0.01 → up to 4 with trailing-zero stripping, else up to 6. The collapsed cost summary uses the same fine precision for real currencies (AI Credits keep 2 decimals), so sub-cent actual spend never renders as `$0.00`.
+- **`formatCost` precision adapts** so a per-request cost of `$0.000019` never collapses to `$0.0000`: ≥$100 → 0 decimals, ≥$1 → 2, ≥$0.01 → up to 4 with trailing-zero stripping, else up to 6. The collapsed cost summary uses the same fine precision, so sub-cent actual spend never renders as `$0.00`.
 - **Server URLs are normalized before any store read/write** - the two existing normalization bugs (scheme-less, `/v1` forms) are the reason the store keys on the normalized form.
 
 ## Where the code lives

@@ -165,9 +165,10 @@ export interface ModelConfig {
     /** Cost per 1,000,000 cache-read input tokens. */
     cachedInput?: number;
     /**
-     * Display unit for the rates. Default `"USD"`. Use `"AI Credits"` to compare
-     * with the Copilot model picker (1 credit = $0.01 — enter credit values
-     * directly; no conversion is applied).
+     * Display unit for the rates. USD is the only unit this product uses;
+     * an unrecognised value is shown verbatim so a hand-edit never renders a
+     * wrong `$`. Kept as an open string rather than a literal union so
+     * existing settings.json still validates.
      */
     currency?: string;
   };

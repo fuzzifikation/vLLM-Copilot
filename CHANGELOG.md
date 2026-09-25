@@ -6,11 +6,14 @@ Close the remaining release-hardening gaps in `docs/code-review.md` before the n
 ### Changed
 
 - **The extension is workspace-only.** In a remote window (SSH, WSL, containers) it now always runs on the remote workspace host, so requests originate beside your server and addresses such as `localhost:8000` keep their intended meaning. A local install no longer silently serves a remote window.
+- **The model picker shows what a model costs.** Hovering a model in the picker now reports its configured price per 1M tokens — `$0.30 in · $1.20 out`. Models without configured rates show nothing new. The Server Dashboard is unchanged.
+- **Cost is USD only.** Set Cost no longer offers a second currency. `AI Credits` existed so a model could be priced in the same unit as the Copilot picker (1 credit = $0.01), but it is a Microsoft billing unit, not a currency — nothing else denominates in it. Rates you already configured are untouched; a stored `AI Credits` value now shows as that literal label rather than a wrong `$`. Re-run **Set Cost…** to store the same figures as USD.
 
 ### Fixed
 
 - **First-model setup reaches Agents.** Models added after startup now enable Agent Host access automatically.
 - **Model Settings numeric fields survive a hand-edited value.** A quote character in a numeric field (input tokens, timeouts, retry count) broke the input and rendered wrong. Those values are now escaped like every other field.
+- **The Dashboard no longer prints a dollar sign on a non-dollar rate.** A model priced with a non-USD unit showed `$` in the Pricing row while the totals beneath it showed the real unit.
 
 ## v1.36.15
 Correct the packaged release notes and retry documentation shipped with v1.36.14. The runtime tool-schema repair and early stream-failure retry are unchanged; this version makes the published documentation match their actual behavior.

@@ -123,7 +123,7 @@
         "input": { "type": "number", "description": "Cost per 1,000,000 fresh (uncached) input tokens." },
         "output": { "type": "number", "description": "Cost per 1,000,000 output tokens (includes reasoning tokens)." },
         "cachedInput": { "type": "number", "description": "Cost per 1,000,000 cache-read input tokens." },
-        "currency": { "type": "string", "default": "USD", "description": "Display unit. \"AI Credits\" = compare with Copilot picker (1 credit = $0.01, enter credits directly)." }
+        "currency": { "type": "string", "default": "USD", "description": "Display unit. USD is the only unit used; an unrecognised value is shown verbatim rather than as a wrong dollar sign." }
       }
     }
   },

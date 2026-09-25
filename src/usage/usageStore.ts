@@ -613,31 +613,26 @@ function formatAmount(value: number): string {
 }
 
 /**
- * Static currency-prefix map — deliberately NOT an i18n toolbox. Common
- * currencies render their symbol; anything else falls back to the raw currency
- * string (e.g. `EUR 12.35`) so a non-USD setting never displays a wrong `$`.
- * AI Credits are handled separately (suffix, not prefix).
+ * Currency decoration — deliberately NOT an i18n toolbox. USD is the only
+ * unit this product uses; every rate is denominated in dollars.
+ *
+ * The raw-label fallback exists for a hand-edited `currency` in
+ * settings.json: an unrecognised label is shown verbatim rather than
+ * wearing a `$` that would be a lie. Nothing in the shipped UI can produce
+ * one (ruling 2026-09-25: USD only).
  */
-const CURRENCY_PREFIX: Record<string, string> = {
-  usd: '$', eur: '€', gbp: '£', jpy: '¥', cny: '¥',
-};
 function currencyPrefix(currency?: string): string {
-  const sym = CURRENCY_PREFIX[(currency ?? 'USD').toLowerCase()];
-  return sym ?? `${currency ?? 'USD'} `;
+  const label = currency ?? 'USD';
+  return label.toLowerCase() === 'usd' ? '$' : `${label} `;
 }
 
 /**
  * Format a cost with its currency label, rounded to 2 decimals — the standard
- * money display (model summary, etc.). `"AI Credits"` (case-insensitive)
- * renders a credits suffix; common currencies render their symbol ($ € £ ¥);
- * anything else falls back to the raw currency string. Per-request costs use
+ * money display (model summary, etc.). Per-request costs use
  * {@link formatCostFine} (fine precision) instead.
  */
 export function formatCost(value: number, currency?: string): string {
-  const amount = value.toFixed(2);
-  return (currency ?? 'USD').toLowerCase() === 'ai credits'
-    ? `${amount} credits`
-    : `${currencyPrefix(currency)}${amount}`;
+  return `${currencyPrefix(currency)}${value.toFixed(2)}`;
 }
 
 /**
@@ -646,9 +641,7 @@ export function formatCost(value: number, currency?: string): string {
  * Keeps the adaptive precision (up to 6 decimals, trailing zeros stripped).
  */
 export function formatCostFine(value: number, currency?: string): string {
-  return (currency ?? 'USD').toLowerCase() === 'ai credits'
-    ? `${formatAmount(value)} credits`
-    : `${currencyPrefix(currency)}${formatAmount(value)}`;
+  return `${currencyPrefix(currency)}${formatAmount(value)}`;
 }
 
 /**
@@ -665,10 +658,8 @@ export function formatCostSummary(
   currency: string | undefined,
 ): string | undefined {
   if (todayCost === undefined && overallCost === undefined) return undefined;
-  const isCredits = (currency ?? 'USD').toLowerCase() === 'ai credits';
-  const fmt = (v: number) => isCredits ? formatCost(v, currency) : formatCostFine(v, currency);
   const parts: string[] = [];
-  if (todayCost !== undefined) parts.push(`${fmt(todayCost)} today`);
-  if (overallCost !== undefined) parts.push(`${fmt(overallCost)} total`);
+  if (todayCost !== undefined) parts.push(`${formatCostFine(todayCost, currency)} today`);
+  if (overallCost !== undefined) parts.push(`${formatCostFine(overallCost, currency)} total`);
   return parts.join(' and ');
 }

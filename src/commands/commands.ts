@@ -753,9 +753,10 @@ export function registerResetUsageCommand(outputChannel: vscode.OutputChannel): 
  * Triggered from the Token Usage node's context menu ("Set Cost…", arg =
  * `{ serverUrl }`). Guides the user through: model quickpick → three per-1M
  * rate inputs (input / output / cachedInput, prefilled from any existing
- * `cost`) → currency label quickpick (USD / AI Credits / custom). Writes the
- * `cost` block via {@link patchModelConfig}, so the settings change fires the
- * dashboard's config-change handler and the cost appears without a reload.
+ * `cost`) → USD-only rate inputs (input / output / cachedInput, prefilled
+ * from any existing `cost`). Writes the `cost` block via
+ * {@link patchModelConfig}, so the settings change fires the dashboard's
+ * config-change handler and the cost appears without a reload.
  *
  * Cost is per MODEL — the user sums costs manually (see usageStore docs).
  */
@@ -798,7 +799,6 @@ export function registerConfigureCostCommand(
       return;
     }
     const existing = model.cost ?? {};
-    const currencyNow = existing.currency ?? 'USD';
 
     // Rate inputs, prefilled from the existing cost block. Blank/0 = unpriced.
     const numOrZero = (v: string | undefined): number => {
@@ -815,26 +815,21 @@ export function registerConfigureCostCommand(
       });
     };
 
-    const input = await askRate(existing.input, `Input cost per 1M tokens (${currencyNow}) - fresh, uncached input.`);
+    const input = await askRate(existing.input, `Input cost per 1M tokens (USD) - fresh, uncached input.`);
     if (input === undefined) return;
-    const output = await askRate(existing.output, `Output cost per 1M tokens (${currencyNow}) - includes reasoning tokens.`);
+    const output = await askRate(existing.output, `Output cost per 1M tokens (USD) - includes reasoning tokens.`);
     if (output === undefined) return;
-    const cachedInput = await askRate(existing.cachedInput, `Cache-read input cost per 1M tokens (${currencyNow}).`);
+    const cachedInput = await askRate(existing.cachedInput, `Cache-read input cost per 1M tokens (USD).`);
     if (cachedInput === undefined) return;
 
-    let currency = currencyNow;
-    const curPick = await vscode.window.showQuickPick(
-      ['USD', 'AI Credits', 'Other…'].map(label => ({ label })),
-      { ignoreFocusOut: true, placeHolder: `Currency label (currently ${currencyNow})` },
-    );
-    if (curPick === undefined) return;
-    if (curPick.label === 'Other…') {
-      const custom = await vscode.window.showInputBox({ ignoreFocusOut: true, prompt: 'Currency label (display only)', value: currencyNow });
-      if (custom === undefined) return;
-      if (custom.trim()) currency = custom.trim();
-    } else {
-      currency = curPick.label;
-    }
+    // USD only. This product has no second currency: every rate is
+    // denominated in dollars, and the former "AI Credits" option existed only
+    // to let a model be priced in the same unit as the Copilot picker. That
+    // is a Microsoft unit with a 1:100 relation to the dollar, not a currency
+    // anyone else bills in, and the comparison it enabled is arithmetic the
+    // user can do. The quickpick is gone entirely — a dialog with one option
+    // is a dialog with no decision in it.
+    const currency = 'USD';
 
     const cost = {
       input: numOrZero(input),

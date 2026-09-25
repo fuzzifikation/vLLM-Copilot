@@ -588,7 +588,7 @@
                     "currency": {
                       "type": "string",
                       "default": "USD",
-                      "markdownDescription": "Display unit for the cost values. Default `\"USD\"`. Use `\"AI Credits\"` to compare with the Copilot model picker (1 AI credit = $0.01; **enter credit values directly**, no conversion is applied). Any other label is shown verbatim."
+                      "markdownDescription": "Display unit for the cost values. Default `\"USD\"`, and the only unit this extension uses. An unrecognised label is shown verbatim rather than as a wrong `$`."
                     }
                   },
                   "markdownDescription": "⚡ Optional per-model cost rates for the dashboard **Token Usage** tracker. All rates are per **1,000,000 tokens** and interpreted in `currency` units. Omit the whole object or set all rates to `0` to hide cost lines for this model (e.g. a free local server)."

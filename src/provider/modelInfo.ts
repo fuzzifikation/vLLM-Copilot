@@ -6,6 +6,7 @@
 
 import * as vscode from 'vscode';
 import { deriveTokenBudget, resolveOutputBudgetScalar, resolveOutputLengthVector, type TokenBudget } from '../shared/tokenBudget.js';
+import { formatCost } from '../usage/usageStore.js';
 import { type ModelConfig } from '../state/config.js';
 
 /**
@@ -239,6 +240,39 @@ function buildConfigurationSchema(
 }
 
 /**
+ * The picker's price line: `$0.30 in · $1.20 out · $0.03 cached`, or '' when
+ * the model has no configured rates.
+ *
+ * PRICE IS THE ONLY THING ADDED HERE, by owner ruling after an earlier pass
+ * tried the rest and it read as noise. VS Code already renders the context
+ * window in the card below the picker, and the Server Dashboard already
+ * carries server, backend, wire model ID and capabilities. A server entry is
+ * named by whoever set up the box — often a bare IT hostname — and it never
+ * changes which model you want. Price is the one fact the picker showed
+ * nowhere, and choosing between a cheap local model and a paid one is
+ * exactly the decision being made at this moment.
+ *
+ * VS Code flattens newlines in this tooltip, so it is deliberately ONE line
+ * with explicit separators. Rates go through the shared money helper so the
+ * picker and the dashboard can never print the same rate two different ways.
+ *
+ * READ from `vllm-copilot.models[].cost`; nothing is invented, and no
+ * catalog is fetched.
+ */
+function buildPickerPrice(override: Partial<ModelConfig> | undefined): string {
+  const cost = override?.cost;
+  if (!cost || (cost.input === undefined && cost.output === undefined && cost.cachedInput === undefined)) {
+    return '';
+  }
+
+  const parts: string[] = [];
+  if (cost.input !== undefined) parts.push(`${formatCost(cost.input, cost.currency)} in`);
+  if (cost.output !== undefined) parts.push(`${formatCost(cost.output, cost.currency)} out`);
+  if (cost.cachedInput !== undefined) parts.push(`${formatCost(cost.cachedInput, cost.currency)} cached`);
+  return parts.join(' · ');
+}
+
+/**
  * Resolve the output-length dropdown's options and labels from a VECTOR-form
  * `maxOutputTokens` (ordered; FIRST element is the default). There is
  * deliberately NO derived fallback: a scalar budget renders no length
@@ -350,6 +384,9 @@ export function buildModelInfo(
 
   // Picker id: the override's required `id` IS the unique extension key.
   const presetId = override?.id || serverModel.id;
+  // `detail` and `tooltip` are readonly on the stable type, so they are placed
+  // in the literal rather than assigned afterwards.
+  const price = buildPickerPrice(override);
   // `configurationSchema` is a `chatProvider`-proposal field VS Code reads for the
   // model-modes picker; it is not on the stable LanguageModelChatInformation type,
   // so it is declared via intersection rather than erased with `any`. `isBYOK` is
@@ -380,6 +417,10 @@ export function buildModelInfo(
       serverType === 'openrouter' ? 'vllm-copilot-openrouter' : 'vllm-copilot-model',
     ),
     isBYOK: true,
+    // Omitted entirely when no rates are configured, so the picker is not
+    // left with an empty label. Both fields carry the same line: VS Code
+    // shows the tooltip on hover and the detail beside the model name.
+    ...(price ? { detail: price, tooltip: price } : {}),
   };
 
   const schema = buildConfigurationSchema(override, outputMenuCeiling ?? budget.maxOutputTokens);
