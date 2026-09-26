@@ -19,13 +19,13 @@ import { promptForServerAuth } from './serverAuth.js';
 import { fetchWithTimeout, resolveModelConfigForAddSafely } from './hfDiscovery.js';
 import { runOpenRouterAddFlow } from './openRouterAddFlow.js';
 import {
+  assembleAddedModelConfig,
+  completeDuplicateGate,
   confirmAndSaveAddedModel,
-  discardUnreferencedServerEntry,
   ensureServerEntry,
   handleDuplicateModelGate,
   persistAddedModelOrRollback,
   reportEntryWriteFailure,
-  rotateEntryAuth,
   type ClearCacheProvider,
 } from './addServerCore.js';
 
@@ -451,36 +451,12 @@ async function addModelToServer(
   const gate = await handleDuplicateModelGate(
     modelId, entry.serverUrl, requestHeaders, `Add Model (${entry.serverUrl})`, output
   );
-  if (!gate) {
-    // Cancelled at the duplicate dialog, or Update Auth took over: this run's
-    // credential variant of an already-configured URL served no purpose.
-    await discardUnreferencedServerEntry(flowCreatedServerId);
-    return;
-  }
-  const { replaceExistingId, replaceTargetServer } = gate;
-
-  // On 'Replace Config' the model KEEPS the replaced entry and the entry's
-  // credentials stay in charge (Update Auth doctrine owns key rotation from
-  // here on) — a ref pointing elsewhere would append a duplicate instead of
-  // replacing.
-  let targetServerId = serverId;
-  if (replaceExistingId) {
-    const rotated = await rotateEntryAuth(replaceTargetServer, requestHeaders, output);
-    if (!rotated) {
-      // Entry vanished mid-flow — same zombie-append trap as the OpenRouter
-      // flow: a fresh entry changes the (id, server) match, replaceModelConfig
-      // appends, and two models share one config id. Abort honestly.
-      output.appendLine(`[ERROR] Replace aborted: server entry "${replaceTargetServer}" no longer exists. Nothing was saved.`);
-      void vscode.window.showErrorMessage('vLLM-Copilot: could not replace the existing model: its server entry no longer exists. Nothing was changed; re-run the command to add the model fresh.');
-      return;
-    }
-    targetServerId = rotated;
-    if (targetServerId !== serverId) {
-      // The model lands on the pre-existing entry — this run's credential
-      // twin would sit there unreferenced, holding credentials nobody kept.
-      await discardUnreferencedServerEntry(flowCreatedServerId);
-    }
-  }
+  // Cancelled / Update Auth / vanished-entry abort all come back as undefined;
+  // a defined id is either this flow's entry or the replaced model's entry,
+  // with this run's redundant credential twin already discarded.
+  const targetServerId = await completeDuplicateGate(gate, serverId, flowCreatedServerId, requestHeaders, 'Replace', output);
+  if (targetServerId === undefined) return;
+  const replaceExistingId = gate?.replaceExistingId;
 
   const discoveryResult = await resolveModelConfigForAddSafely(
     output, context, modelId, entry.serverUrl,
@@ -494,19 +470,9 @@ async function addModelToServer(
     return;
   }
 
-  // `id` is composite ("<model> on <entry-id>") so the same model on two
-  // servers stays distinct; `vllmModelId` remains the raw wire identity.
-  // NO createdServerId here on purpose: the entry is step 1's kept artifact,
-  // so a dismissed confirm never rolls it back.
-  const finalConfig: IdentifiedModelConfig = {
-    ...discoveryResult.modelConfig,
-    id: replaceExistingId ?? buildModelId(targetServerId, modelId),
-    vllmModelId: modelId,
-    server: targetServerId,
-  };
-  if (discoveryResult.suggestedMaxOutputTokens !== undefined && finalConfig.maxOutputTokens === undefined) {
-    finalConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
-  }
+  // NO createdServerId on purpose downstream: the entry is step 1's kept
+  // artifact, so a dismissed confirm never rolls it back.
+  const finalConfig = assembleAddedModelConfig(discoveryResult, { modelId, serverId: targetServerId, replaceExistingId });
 
   await confirmAndSaveAddedModel(finalConfig, modelId, entry.serverUrl, discoveryResult.summary.join('\n'), output, onSaved, discoveryResult.presetFile);
 }

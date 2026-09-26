@@ -11,13 +11,14 @@
 
 import * as vscode from 'vscode';
 import type { ServerType } from '../state/config.js';
-import { normalizeServerUrl, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders, isUsableServerUrl, resolveVllmModelId, resolveConfigId, toPublicModelConfig } from '../state/config.js';
+import { normalizeServerUrl, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders, isUsableServerUrl, resolveVllmModelId, resolveConfigId, toPublicModelConfig, buildModelId } from '../state/config.js';
 import { replaceModelConfig, readModels, readServers, writeServers, type IdentifiedModelConfig } from '../state/configStore.js';
 import type { ServerEntry } from '../state/serverRegistry.js';
 import { entryMatchesConnection, firstEntryById, generateServerId, resolveServer } from '../state/serverRegistry.js';
 import { describeError } from '../provider/messageConverter.js';
 import { ensureByokUtilityDefault } from './byok.js';
 import { presetBlobUrl } from './presets.js';
+import type { AutoConfigResult } from './hfDiscovery.js';
 
 /**
  * Minimal provider surface the Add/Configure flows require: the flows only
@@ -104,9 +105,10 @@ export async function ensureServerEntry(options: {
  * APPEND a second model with the same id. Credentials belong to the entry (which
  * other models may share), so the new key/headers merge into it exactly like
  * Update Auth does. Returns the entry id to reference, or `undefined` when the
- * entry is gone (caller falls back to {@link ensureServerEntry}).
+ * entry is gone — {@link completeDuplicateGate} then aborts the replace rather
+ * than minting a fresh entry (a new ref would APPEND a zombie config id).
  */
-export async function rotateEntryAuth(
+async function rotateEntryAuth(
   entryId: string | undefined,
   enteredHeaders: Record<string, string>,
   output: vscode.OutputChannel,
@@ -142,7 +144,7 @@ export async function rotateEntryAuth(
  * meanwhile) is left alone. "Copy JSON" does NOT roll back: the copied config
  * references the entry.
  */
-export async function discardUnreferencedServerEntry(entryId: string | undefined): Promise<void> {
+async function discardUnreferencedServerEntry(entryId: string | undefined): Promise<void> {
   if (!entryId) return;
   const servers = readServers();
   if (!servers.some(s => s.id === entryId)) return;
@@ -238,6 +240,79 @@ export async function handleDuplicateModelGate(
     return undefined;
   }
   return { replaceExistingId: resolveConfigId(target), replaceTargetServer: target.server };
+}
+
+/**
+ * Finish what {@link handleDuplicateModelGate} started: turn the gate's verdict
+ * into the server id the model must reference, or stop. Both Add flows ran this
+ * tail by hand, identically (including a byte-identical abort toast), until the
+ * rule was repatriated here — the decision tree is entry-identity/write-ordering
+ * semantics, which this module owns.
+ *
+ * - Gate stopped (cancelled, or Update Auth took over): this run's credential
+ *   twin of an already-configured URL served no purpose — discard it, stop.
+ * - 'Replace Config': the replaced model KEEPS its entry and the fresh key
+ *   rotates into it (Update Auth doctrine). A vanished entry aborts honestly —
+ *   minting a new one would make `replaceModelConfig` APPEND a zombie reusing
+ *   the replaced model's config id. A repointed target makes this run's twin
+ *   unreferenced, so it is discarded.
+ * - No duplicate: the flow's own entry is the target.
+ *
+ * Returns the target entry id, or `undefined` when the caller must stop —
+ * the same sentinel the gate itself uses.
+ */
+export async function completeDuplicateGate(
+  gate: { replaceExistingId?: string; replaceTargetServer?: string } | undefined,
+  ownServerId: string,
+  flowCreatedServerId: string | undefined,
+  requestHeaders: Record<string, string>,
+  abortLabel: string,
+  output: vscode.OutputChannel,
+): Promise<string | undefined> {
+  if (!gate) {
+    await discardUnreferencedServerEntry(flowCreatedServerId);
+    return undefined;
+  }
+  if (!gate.replaceExistingId) return ownServerId;
+  const rotated = await rotateEntryAuth(gate.replaceTargetServer, requestHeaders, output);
+  if (!rotated) {
+    output.appendLine(`[ERROR] ${abortLabel} aborted: server entry "${gate.replaceTargetServer}" no longer exists. Nothing was saved.`);
+    void vscode.window.showErrorMessage('vLLM-Copilot: could not replace the existing model: its server entry no longer exists. Nothing was changed; re-run the command to add the model fresh.');
+    return undefined;
+  }
+  if (rotated !== ownServerId) {
+    // The model lands on the pre-existing entry — this run's credential twin
+    // would sit there unreferenced, holding credentials nobody kept.
+    await discardUnreferencedServerEntry(flowCreatedServerId);
+  }
+  return rotated;
+}
+
+/**
+ * Fold a discovery result into the composite identity the store expects:
+ * `id` is composite ("<model> on <entry-id>") so the same model on two servers
+ * stays distinct, `vllmModelId` stays the raw wire identity, and on 'Replace
+ * Config' the replaced model's id is KEPT (a fresh composite id would append
+ * instead of replace). The suggested output budget backfills only when the
+ * discovered config has none. Both the Add wizard and the auto-configure
+ * command assembled this by hand until one missing field would have doubled
+ * the drift bug silently. The OpenRouter flow keeps its own assembly: its
+ * display fields come from the catalog, not from discovery.
+ */
+export function assembleAddedModelConfig(
+  discoveryResult: AutoConfigResult,
+  identity: { modelId: string; serverId: string; replaceExistingId?: string },
+): IdentifiedModelConfig {
+  const finalConfig: IdentifiedModelConfig = {
+    ...discoveryResult.modelConfig,
+    id: identity.replaceExistingId ?? buildModelId(identity.serverId, identity.modelId),
+    vllmModelId: identity.modelId,
+    server: identity.serverId,
+  };
+  if (discoveryResult.suggestedMaxOutputTokens !== undefined && finalConfig.maxOutputTokens === undefined) {
+    finalConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
+  }
+  return finalConfig;
 }
 
 /**

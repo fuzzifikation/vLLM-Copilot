@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from '../state/config.js';
-import { resolveConfigId, resolveVllmModelId, buildModelId, findModelConfigIndex } from '../state/config.js';
+import { resolveConfigId, resolveVllmModelId, findModelConfigIndex } from '../state/config.js';
 import { replaceModelConfig, readModels, readServers, type IdentifiedModelConfig } from '../state/configStore.js';
 import { resolveServer } from '../state/serverRegistry.js';
 import { resolveModelConfigForAddSafely } from './hfDiscovery.js';
-import { confirmAndSaveAddedModel, type ClearCacheProvider } from './addServerCore.js';
+import { assembleAddedModelConfig, confirmAndSaveAddedModel, type ClearCacheProvider } from './addServerCore.js';
 
 /**
  * Standalone command: re-run auto-configuration (HuggingFace + vLLM server discovery)
@@ -62,15 +62,7 @@ export function registerAutoConfigureModelCommand(
           return;
         }
 
-        const newConfig: IdentifiedModelConfig = {
-          ...discoveryResult.modelConfig,
-          id: buildModelId(entryId, vllmId),
-          vllmModelId: vllmId,
-          server: entryId,
-        };
-        if (discoveryResult.suggestedMaxOutputTokens !== undefined && newConfig.maxOutputTokens === undefined) {
-          newConfig.maxOutputTokens = discoveryResult.suggestedMaxOutputTokens;
-        }
+        const newConfig = assembleAddedModelConfig(discoveryResult, { modelId: vllmId, serverId: entryId });
         await confirmAndSaveAddedModel(
           newConfig, vllmId, argEntry.serverUrl, discoveryResult.summary.join('\n'), output,
           () => provider.clearCache(), discoveryResult.presetFile

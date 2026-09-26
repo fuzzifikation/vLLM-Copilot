@@ -1,7 +1,8 @@
 import type * as vscode from 'vscode';
 import { buildEndpoint, DEFAULT_MODEL_SETTINGS, type ServerType } from '../state/config.js';
 import { serverErrorMessage } from '../shared/errorEnvelope.js';
-import { fetchWithRetry } from '../shared/fetchRetry.js';
+import { buildRequestHeaders, fetchWithRetry } from '../shared/fetchRetry.js';
+import { STREAM_TIMEOUT_PREFIX } from './messageConverter.js';
 import type { FileLogger } from '../shared/logger.js';
 import { readSseStream } from './streamReader.js';
 import type { OpenAIChatMessage, StreamEvent, VllmChatOptions } from '../types.js';
@@ -135,8 +136,11 @@ export class ChatTransport {
     }
 
     validateMessages(body.messages);
-    const allHeaders = { ...serverConfig?.requestHeaders, 'Content-Type': 'application/json' };
-    this.fileLogger?.logRequest('POST', url, allHeaders, body);
+    // Log EXACTLY what the wire will carry: the same composer fetchWithRetry
+    // uses, CR-22 case-fold included. A hand-rolled spread here used to log a
+    // duplicate content-type header the wire never actually sent.
+    const wireHeaders = buildRequestHeaders({ 'Content-Type': 'application/json' }, serverConfig?.requestHeaders ?? {});
+    this.fileLogger?.logRequest('POST', url, wireHeaders, body);
 
     const controller = new AbortController();
     const onCancellation = token.onCancellationRequested(() => {
@@ -149,7 +153,7 @@ export class ChatTransport {
       if (inactivityMs <= 0) return;
       clearTimeout(inactivityTimer);
       inactivityTimer = setTimeout(() => {
-        controller.abort(`Stream inactivity timeout (${inactivityMs}ms without data)`);
+        controller.abort(`${STREAM_TIMEOUT_PREFIX} (${inactivityMs}ms without data)`);
       }, inactivityMs);
     };
     let initialResponseTimer: ReturnType<typeof setTimeout> | undefined;

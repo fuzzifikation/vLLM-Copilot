@@ -951,12 +951,7 @@ async function scanAgentStore(): Promise<{ agentByCwd: Map<string, number>; orph
 /** Files under the given storage-relative directories. */
 async function countFilesInDirs(wsId: string, dirs: readonly string[]): Promise<number> {
   const counts = await Promise.all(
-    dirs.map(d => {
-      const full = wsId === GLOBAL_ID
-        ? path.join(vsCodeRoot(), 'globalStorage', ...d.split('/'))
-        : wsDir(wsId, ...d.split('/'));
-      return countFilesInDir(full);
-    }),
+    dirs.map(d => countFilesInDir(storageDir(wsId, d))),
   );
   return counts.reduce((a, b) => a + b, 0);
 }

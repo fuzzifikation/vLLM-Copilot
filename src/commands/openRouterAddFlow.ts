@@ -23,12 +23,11 @@ import {
   type OpenRouterModelInfo,
 } from '../backends/openRouter.js';
 import {
+  completeDuplicateGate,
   confirmAndSaveAddedModel,
-  discardUnreferencedServerEntry,
   ensureServerEntry,
   handleDuplicateModelGate,
   reportEntryWriteFailure,
-  rotateEntryAuth,
   type ClearCacheProvider,
 } from './addServerCore.js';
 
@@ -302,48 +301,21 @@ export async function runOpenRouterAddFlow(
   const gate = await handleDuplicateModelGate(
     requestedId, apiBase, requestHeaders, 'OpenRouter add', output
   );
-  if (!gate) {
-    // Cancelled at the duplicate dialog, or Update Auth took over: the model is
-    // already configured on a pre-existing entry, so this run's credential
-    // variant of the fixed base served no purpose (same rule as the generic
-    // addModelToServer gate — the picker-cancel path above deliberately keeps).
-    await discardUnreferencedServerEntry(flowCreatedServerId);
-    return;
-  }
-  const { replaceExistingId, replaceTargetServer } = gate;
+  // Same shared tail as the generic wizard (completeDuplicateGate): cancelled
+  // or Update Auth → this run's credential twin of the fixed base is discarded
+  // (the picker-cancel path above deliberately keeps it); 'Replace Config' →
+  // the replaced model keeps its entry, the key rotates in, a vanished entry
+  // aborts honestly instead of minting a zombie id, and a repointed target
+  // discards this run's step-2 twin. The entry itself was registered in step
+  // 2, so a dismissed confirm keeps it.
+  const openRouterServerId = await completeDuplicateGate(gate, ownEntry.id, flowCreatedServerId, requestHeaders, 'OpenRouter replace', output);
+  if (openRouterServerId === undefined) return;
+  const replaceExistingId = gate?.replaceExistingId;
 
   // 6. Assemble, confirm, save. `id` is composite on the registry entry id so
   //    two OpenRouter models stay distinct; `vllmModelId` is the raw wire id.
   //    The API key + URL live on the `openrouter` registry entry; the model
-  //    carries only the `server` reference. On 'Replace Config' the replaced
-  //    model KEEPS its entry and the new key rotates into it (Update Auth
-  //    doctrine) — a ref derived from the entered key would append a duplicate
-  //    instead of replacing. The entry was registered in step 2, so a dismissed
-  //    confirm keeps it; only a credential twin made redundant by the replace
-  //    path is discarded.
-  let openRouterServerId: string;
-  const replaceServerId = replaceExistingId
-    ? await rotateEntryAuth(replaceTargetServer, requestHeaders, output)
-    : undefined;
-  if (replaceExistingId && !replaceServerId) {
-    // The replaced model's entry vanished while the dialogs were open
-    // (Remove Server ran elsewhere). Falling through would mint a NEW entry,
-    // and replaceModelConfig — matching on (id, server) — would find no match
-    // and APPEND a zombie model reusing the replaced model's config id.
-    output.appendLine(`[ERROR] OpenRouter replace aborted: server entry "${replaceTargetServer}" no longer exists. Nothing was saved.`);
-    void vscode.window.showErrorMessage('vLLM-Copilot: could not replace the existing model: its server entry no longer exists. Nothing was changed; re-run the command to add the model fresh.');
-    return;
-  }
-  if (replaceServerId) {
-    openRouterServerId = replaceServerId;
-    if (openRouterServerId !== ownEntry.id) {
-      // The model lands on the replaced model's entry — this run's step-2 twin
-      // (fresh credentials for the same base) would sit there unreferenced.
-      await discardUnreferencedServerEntry(flowCreatedServerId);
-    }
-  } else {
-    openRouterServerId = ownEntry.id;
-  }
+  //    carries only the `server` reference.
   const finalConfig: IdentifiedModelConfig = {
     id: replaceExistingId ?? buildModelId(openRouterServerId, requestedId),
     vllmModelId: requestedId,

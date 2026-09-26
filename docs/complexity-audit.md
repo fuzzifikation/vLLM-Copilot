@@ -311,7 +311,7 @@ for the provider path, raw `readServers`/`readModels` for write flows.
 flowchart LR
     S[settings: servers + models] <--> ST[configStore: the ONLY writers - verified repo-wide]
     ST --> W[patchModelConfig / replaceModelConfig RMW<br/>servers side: by-id/URL one-liner families - P7-1 waived]
-    R[getConfig reads both keys itself, dead context param] --> CA[VllmClient cache]
+    R[getConfig reads both keys itself<br/>mirrors the store filters, dodges the config-store cycle] --> CA[VllmClient cache]
     SR[serverRegistry pure: resolveServer first-wins, firstEntryById] --> CFG[config.ts resolvers]
     MATH[request math in config.ts: resolveRequestParams, resolveMaxTokensForRequest - P7-3 deferred] -.-> B[provider path]
     CORE[serverCore leaf] --> SR
@@ -330,7 +330,7 @@ self-critique and re-confirmed byte-for-byte this pass; the graph above IS
 the minimum. Sole-writer claim re-verified: `workspace.update` on the two
 keys exists only in `configStore.ts`. All P7-1..P7-7 rulings hold;
 `resolveServerEntry`'s census rent (3 internal callers) is byte-true.
-`config.ts` is 784 lines and the deferred request-math (P7-3) has exactly
+`config.ts` is ~960 lines and the deferred request-math (P7-3) has exactly
 one customer each (`requestBuilder`); `tokenBudget`'s `shared/` home is
 justified solely by `config.ts` importing its scalar math.
 
@@ -997,12 +997,22 @@ Noted, not proposed: `getMetricsEngine` grew a 7th positional param (`undefined`
 
 Baseline delta: dep:check clean → clean; SCCs 0 → 0; candidates 16 → 16; Q 0.753 → 0.743 with ~+70 functions (different node set, not comparable - record the line, no regression flag); TEST_ONLY 10 → 6; net production change of the round: −4 dead mock-shaped branches, −6 lying adapter members + 1 double-cast.
 
+## Round 10: six-cluster re-review, three execution units (2026-09-26)
+
+Whole-repo pass on owner request ("are we over-engineered?"), v1.36.16-rc1 with a clean tree at `8271e49`. Native tooling; rent 506 fns / 1671 call edges, `dep:check` clean both cruises (70/69 modules), SCCs 0, Q 0.792 (node set differs from Round 9 - record the line, no regression flag), DEAD 0. Six cluster reviewers (A-F) produced Tier-A reports; every published claim was independently byte-verified by the executing session before anything was recorded (one reviewer mislabeled an exported symbol as private; grep outranks report). Headline verdict, asked and answered: **not over-engineered**. No node died on any path; what the round found was duplicated authorities - facts with two owners - not node count.
+
+- **Cluster E scored zero.** The `usageStore` getter family is an honest stateful-store query surface guarding five private planes (absorbing a getter would export the mutable state through the module wall); `dashboard.ts` at 1,544 lines contains ZERO `setInterval`/`setTimeout`/`fetch(` - pure render leaf over one emitter; `ServerMetricsEngine#getServerModels` has a real second consumer (`serverSettingsView` subscribes like any viewer); `FileLogger#isActive` kept: deleting the predicate hands activation a shadow copy of the logger's state. Census honesty note: cluster prints `extFiles=2` where bytes show one file with two caller functions.
+- **Wizard-skeleton charge DISMISSED** (cluster D's own bait): the OpenRouter and generic add flows diverge honestly at every step (catalog+typeahead vs probe+picker); only their post-gate tails were copy-pasted - filed as P D-1 instead.
+- Round-10 waivers (do not re-propose): the `toListPrice`/`perMillion`/`toSelectorEndpoint` triangle is ONE shared low-level utility counted from both ends of the wire - moving either projection pollutes the vendor plane with view vocabulary (Round-9 `toSelectorEndpoint` reasoning extended); `loadPersonalityMeta` move refused (`readPersonalityFile`'s module-private cache is the organ); the two ~8-line price-tier maps in `modelSelectorView.ts` surfaced as owner's choice - no existing name owns them and the law does not invent names; `formatMigrationPreview` **parked** (strict-law inline, execute only when the file is next touched); `registerResetUsageCommand`/`registerConfigureCostCommand` stay in `commands.ts` (path-10 recorded intent includes configure cost).
+- Executed unit 1 (duplicate authorities, gauntlet-green + independent behavior-preservation audit): PB-1 one `STREAM_TIMEOUT_PREFIX` owner in `messageConverter.ts` (producers interpolate, matchers compare; composed strings byte-identical); PB-2 `chatTransport` logs through `buildRequestHeaders` - logged headers now equal wire headers including the CR-22 case-fold; PF-2 `countFilesInDirs` calls `storageDir` (the count path and the delete path cannot disagree anymore); P D-1 `completeDuplicateGate` in `addServerCore.ts` owns the post-gate decision tree both wizards hand-rolled (case matrix verified: same discards, same abort log prefixes via `abortLabel`, same abort toast, same target-id semantics, rotate-before-discard order kept) - side effect: `rotateEntryAuth` and `discardUnreferencedServerEntry` lost every external caller and were un-exported; P D-2 `assembleAddedModelConfig` owns composite-id assembly + `suggestedMaxOutputTokens` backfill (spread order verified identical; the OpenRouter flow keeps its catalog-field assembly).
+- Open for units 2-3, ruled by owner 2026-09-26: PF-1 (`parseOpenRouterCatalogData` exported with a docstring naming a consumer grep disproves - un-export, drop the phantom generic, fix the lie and this doc's Path-16 PARSE node), PB-3 (`parseToolCallArgs.onUnparseable` parameter: zero production callers), P A-1 (`planOutputLengthMigration` + `OutputLengthProposal` exported for tests only), PF-3 (`readWorkspaceFolders`: zero prod callers, discards `.unresolved`; reroute 5 test cases to `resolveWorkspaceFolders`), PF-4 (`getBundledPresetNameToBasename` inline), P C-1 (janitor UI out of `commands.ts` into `commands/cleanSessions.ts`, lying header rewritten), P C-2 (diagnose/log/dashboard-web registrations to their domain files, precedent R7-P5-1/2, bundled with P C-1 so no trivia unit exists alone).
+- Ledger doc-rot fixed this round: Path 7's "dead context param" note and 784-line claim on `config.ts` (it takes no params now and is ~960); Path 16's shared-PARSE edge goes stale with PF-1.
+
 ## Open queue (pending user rulings)
 
-No open queue. The Round-8 drift item was ruled same day (2026-09-05): the
-doc was stale, the code is right - the truly-empty case is nudged on
-purpose (transient-hiccup insurance, same budget); `auto-continue.md` now
-says so.
+No open queue. Round-10 rulings (2026-09-26): all filed findings accepted; P A-2
+parked until the file is next touched; the modelSelectorView tier maps waived as
+owner's choice. Units execute 1 → 2 → 3, one commit each, census-diffed.
 
 The three older standing items were ruled at fix-pass 6 (2026-09-03):
 
@@ -1099,8 +1109,8 @@ rulings were each re-verified against current bytes this pass.
 | ID | Finding | Decision |
 |----|---------|----------|
 | P7-1 | No server patch/replace store helpers, ~10 ad-hoc RMW sites | **waived** (false symmetry with patchModelConfig; 1-line map/filter/append families; a helper cannot own the post-prompt re-read) |
-| P7-2 | Resolver alias chain + dead `getConfig` context param | **waived** (4-line adapter, 7 dutiful callers, signature churn for nothing) |
-| P7-3 / P1-3 | config.ts mixes state with request math (784 lines) | **defer** (file-size, not graph complexity; each math export has 1 customer) |
+| P7-2 | Resolver alias chain + dead `getConfig` context param | **waived** (4-line adapter, 7 dutiful callers, signature churn for nothing; the context param was deleted outright by now - Round 10 doc-rot fix) |
+| P7-3 / P1-3 | config.ts mixes state with request math (~960 lines) | **defer** (file-size, not graph complexity; each math export has 1 customer) |
 | P7-4 | `toPublicModelConfig` casts back deleted legacy keys | **keep as-is** (2 real call sites, trust boundary against hand-edited settings.json) |
 | P7-5 | deep-dive bypasses `firstEntryById` | **waived** (`.find` IS first-wins; the helper is for iteration) |
 | P7-6 | deep-dive hand-rolls `resolveServer` | optional 4-line cleanup, not a unit |

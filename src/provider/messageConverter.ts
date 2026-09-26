@@ -460,11 +460,20 @@ export function isTlsCertificateError(msg: string): boolean {
 }
 
 /**
+ * The single owner of the stream-inactivity marker. Producers (chatTransport's
+ * pre-body abort, streamReader's body-race reject) interpolate it; matchers
+ * (streamReader's rethrow branch, this classifier) compare against it. One
+ * vocabulary, one owner: an edited literal here used to silently un-wire the
+ * classifier from its own timeouts.
+ */
+export const STREAM_TIMEOUT_PREFIX = 'Stream inactivity timeout';
+
+/**
  * Classify a single error message against known patterns.
  * Returns an actionable user message if matched, or the original message if not.
  */
 function _classifyMessage(msg: string): string {
-  if (msg.includes('Stream inactivity timeout')) {
+  if (msg.includes(STREAM_TIMEOUT_PREFIX)) {
     return `Stream timed out due to inactivity. The server stopped sending data. Increase streamInactivityTimeout setting or check server health. See Output for details.`;
   }
   if (msg.includes('Initial request timed out')) {

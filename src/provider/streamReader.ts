@@ -9,6 +9,7 @@
 
 import * as vscode from 'vscode';
 import { processSSEChunk, finalizePendingToolCalls, type PendingToolCall } from './sseParser.js';
+import { STREAM_TIMEOUT_PREFIX } from './messageConverter.js';
 import { createParser, type EventSourceMessage } from 'eventsource-parser';
 import type { StreamEvent } from '../types.js';
 import type { FileLogger } from '../shared/logger.js';
@@ -161,7 +162,7 @@ export async function* readSseStream(
           const timeoutPromise = new Promise<never>((_, reject) => {
             timeoutId = setTimeout(() => {
               reader.cancel().catch(() => {});
-              reject(new Error(`Stream inactivity timeout (${inactivityMs}ms without data)`));
+              reject(new Error(`${STREAM_TIMEOUT_PREFIX} (${inactivityMs}ms without data)`));
             }, inactivityMs);
           });
           let result: Awaited<typeof readPromise>;
@@ -192,7 +193,7 @@ export async function* readSseStream(
         // politely-closed reads.)
         if (token.isCancellationRequested) break;
         // Re-throw inactivity timeouts directly — they already have a descriptive message.
-        if (err instanceof Error && err.message.startsWith('Stream inactivity timeout')) {
+        if (err instanceof Error && err.message.startsWith(STREAM_TIMEOUT_PREFIX)) {
           throw err;
         }
         // Distinguish ERR_STREAM_PREMATURE_CLOSE — a network drop or reverse proxy
