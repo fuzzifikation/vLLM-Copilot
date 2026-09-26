@@ -37,7 +37,7 @@ import {
   findModelCost, formatCostFine, getLatestRequest, onUsageStoreDidChange,
   type LastRequestData, type UsageCounts,
 } from '../usage/usageStore.js';
-import { computeCost, fmtCount, fmtMs, fmtTokPerSec, shortUrl, timeAgo } from './dashboard.js';
+import { computeCost, fmtCount, fmtMs, fmtTokPerSec, shortUrl } from './dashboard.js';
 
 /** Toggle key; the module renders nothing while it is off. */
 const SETTING = 'vllm-copilot.statusBar.enabled';
@@ -218,15 +218,22 @@ function buildTooltip(
   const cost = costLabel(d, models);
 
   const lines: string[] = [];
-  lines.push(`$(${icon}) **${modelLabel}** · ${server.label}`);
   // Paragraph break required: a bare newline in a MarkdownString is a soft
-  // break and the renderer merges the lines into one paragraph.
+  // break and the renderer merges the lines into one paragraph. The framing
+  // line leads so the panel reads "last reply, from this model" — reply-
+  // based first, subject second. No age is shown: the tooltip is static
+  // text and VS Code gives no hover callback to refresh it, so any
+  // "N min ago" baked here would rot in place.
+  // Icon per element mirrors the Dashboard's Last-request tree: key=BYOK,
+  // credit-card=cost, symbol-parameter=input, code=output, rocket=generation,
+  // clock=TTFT, symbol-numeric=context (see dashboard's MetricTreeItem rows).
+  lines.push(`_Last reply${d.usedByok ? ' · $(key) BYOK' : ''}_`);
   lines.push('');
-  lines.push(`_Last reply · ${timeAgo(d.timestamp)}${d.usedByok ? ' · BYOK' : ''}_`);
+  lines.push(`$(${icon}) **${modelLabel}** · ${server.label}`);
 
   if (cost !== undefined) {
     lines.push('');
-    lines.push(`**${cost}**`);
+    lines.push(`$(credit-card) **${cost}**`);
   }
 
   const rows: string[] = [];
@@ -237,24 +244,28 @@ function buildTooltip(
   const maxRateCell = (peak: number): string => (peak > 0 ? fmtTokPerSec(peak) : '');
   if (d.cachedTokens != null && d.cachedTokens > 0) {
     const fresh = Math.max(0, d.promptTokens - d.cachedTokens);
-    rows.push(`| Prompt | ${fmtCount(fresh)} + ${fmtCount(d.cachedTokens)} cached | |`);
+    rows.push(`| $(symbol-parameter) Prompt | ${fmtCount(fresh)} + ${fmtCount(d.cachedTokens)} cached | |`);
   } else {
-    rows.push(`| Prompt | ${fmtCount(d.promptTokens)} | |`);
+    rows.push(`| $(symbol-parameter) Prompt | ${fmtCount(d.promptTokens)} | |`);
   }
   const reasoning = d.reasoningTokens != null && d.reasoningTokens > 0
     ? ` (${fmtCount(d.reasoningTokens)} reasoning)`
     : '';
-  rows.push(`| Completion | ${fmtCount(d.completionTokens)}${reasoning} | ${maxCell(peaks.outputTokens)} |`);
-  if (rate != null) rows.push(`| Generation speed | ${fmtTokPerSec(rate)} | ${maxRateCell(peaks.genTokPerSec)} |`);
-  if (ingest != null) rows.push(`| Prompt processing | ~${fmtTokPerSec(ingest)} | ~${maxRateCell(peaks.promptTokPerSec)} |`);
-  if (d.firstTokenTimeMs != null) rows.push(`| TTFT | ${fmtMs(d.firstTokenTimeMs)} | |`);
-  if (d.totalTimeMs != null) rows.push(`| Total | ${fmtMs(d.totalTimeMs)} | |`);
+  rows.push(`| $(code) Completion | ${fmtCount(d.completionTokens)}${reasoning} | ${maxCell(peaks.outputTokens)} |`);
+  if (rate != null) rows.push(`| $(rocket) Generation speed | ${fmtTokPerSec(rate)} | ${maxRateCell(peaks.genTokPerSec)} |`);
+  // No Dashboard counterpart for prompt-ingest speed — zap is the closest
+  // codicon that reads "fast input" without stealing a sibling's icon.
+  if (ingest != null) rows.push(`| $(zap) Prompt processing | ~${fmtTokPerSec(ingest)} | ~${maxRateCell(peaks.promptTokPerSec)} |`);
+  if (d.firstTokenTimeMs != null) rows.push(`| $(clock) TTFT | ${fmtMs(d.firstTokenTimeMs)} | |`);
+  if (d.totalTimeMs != null) rows.push(`| $(history) Total | ${fmtMs(d.totalTimeMs)} | |`);
   if (d.maxModelLen > 0) {
     const pct = ((d.totalTokens / d.maxModelLen) * 100).toFixed(1);
-    rows.push(`| Context | ${fmtCount(d.totalTokens)} of ${fmtCount(d.maxModelLen)} (${pct}%) | ${maxCell(peaks.totalTokens)} |`);
+    rows.push(`| $(symbol-numeric) Context | ${fmtCount(d.totalTokens)} of ${fmtCount(d.maxModelLen)} (${pct}%) | ${maxCell(peaks.totalTokens)} |`);
   }
   if (rows.length > 0) {
     lines.push('');
+    // Column spacing is fixed by VS Code's tooltip renderer — MarkdownString
+    // tables get no CSS hooks and header-cell padding tricks are trimmed.
     lines.push('| | Last reply | Max |');
     lines.push('| --- | ---: | ---: |');
     lines.push(...rows);
@@ -262,8 +273,8 @@ function buildTooltip(
 
   lines.push('');
   lines.push(
-    `[Open Dashboard](command:${FOCUS_DASHBOARD} "Show the vLLM-Copilot dashboard")`
-    + ` · [Reset session max](command:${RESET_PEAKS} "Forget the session maxima and start counting from this reply")`,
+    `[$(dashboard) Open Dashboard](command:${FOCUS_DASHBOARD} "Show the vLLM-Copilot dashboard")`
+    + ` · [$(clear-all) Reset session max](command:${RESET_PEAKS} "Forget the session maxima and start counting from this reply")`,
   );
   lines.push('');
   lines.push('_Last reply and max only. Nothing is stored._');
