@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from '../state/config.js';
+import { stripJsonc } from '../shared/jsonc.js';
 import { jsonrepair } from 'jsonrepair';
 
 // ---- Local preset loading ----
@@ -89,52 +90,6 @@ export interface ModelPreset {
   match: string[];
   /** Provenance metadata, if the preset declares any. */
   meta?: PresetMeta;
-}
-
-/**
- * Strip single-line `//` comments from a JSON string. Handles inline comments
- * but does not strip `//` inside string values (good enough for our preset files
- * which only have comments above the JSON object). Private detail of
- * {@link parsePresetRawJson} (audit P19-3: tests drive the parse boundary, not
- * this step).
- */
-function stripJsonComments(text: string): string {
-  // Index of the first `//` NOT inside a quoted string, or -1. Quote/escape
-  // state machine - kept named inside its only caller, it is not a one-liner.
-  function findFirstUnquotedSlashSlash(line: string): number {
-    let inQuotes = false;
-    let escapeNext = false;
-    for (let i = 0; i < line.length - 1; i++) {
-      const ch = line[i];
-      if (escapeNext) {
-        escapeNext = false;
-        continue;
-      }
-      if (ch === '\\') {
-        escapeNext = true;
-        continue;
-      }
-      if (ch === '"') {
-        inQuotes = !inQuotes;
-        continue;
-      }
-      if (!inQuotes && ch === '/' && line[i + 1] === '/') {
-        return i;
-      }
-    }
-    return -1;
-  }
-
-  return text
-    .split('\n')
-    .map(line => {
-      const inStringResult = findFirstUnquotedSlashSlash(line);
-      if (inStringResult !== -1) {
-        return line.substring(0, inStringResult);
-      }
-      return line;
-    })
-    .join('\n');
 }
 
 /**
@@ -258,7 +213,7 @@ function parsePresetEnvelope(raw: Record<string, unknown>, sourceFile: string): 
  * files through this boundary; the comment-stripper stays private).
  */
 export function parsePresetRawJson(text: string): Record<string, unknown> | null {
-  const cleaned = stripJsonComments(text).trim();
+  const cleaned = stripJsonc(text).trim();
   try {
     const parsed = JSON.parse(cleaned);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {

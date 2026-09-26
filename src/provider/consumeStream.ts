@@ -71,9 +71,17 @@ export async function consumeStream(
     if (event.reasoning_content) {
       if (outcome.firstTokenTime === undefined) outcome.firstTokenTime = Date.now() - startTime;
       outcome.hadReasoning = true;
-      progress.report(ThinkingPart
-        ? new ThinkingPart(event.reasoning_content)
-        : new vscode.LanguageModelTextPart(event.reasoning_content));
+      if (ThinkingPart) {
+        progress.report(new ThinkingPart(event.reasoning_content));
+      } else {
+        // A thinking part renders as a collapsible block Copilot can throw
+        // away, so replaying the turn stays invisible. This fallback is the
+        // opposite: it is ordinary answer content, already on screen, and a
+        // replay would print the same reasoning twice. The retry gate has to
+        // tell those apart, and only this branch can.
+        outcome.hadVisibleReasoning = true;
+        progress.report(new vscode.LanguageModelTextPart(event.reasoning_content));
+      }
     }
 
     // Handle text content

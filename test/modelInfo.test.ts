@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildModelInfo } from '../src/provider/modelInfo.js';
-import { formatCost } from '../src/usage/usageStore.js';
+import { formatCostRate } from '../src/usage/usageStore.js';
 
 describe('buildModelInfo picker id derivation', () => {
   it('uses an explicit id as the picker id', () => {
@@ -232,12 +232,21 @@ describe('buildModelInfo picker price (detail + tooltip)', () => {
     expect(info.detail).toBe('$0.50 in · $9.90 out');
   });
 
+  it('keeps a sub-cent rate readable instead of rounding it away', () => {
+    // A $0.004 per-million rate rendered as $0.00 under the 2-decimal money
+    // format, which deletes the number rather than approximating it. The money
+    // look is kept wherever 2 decimals is lossless, so only the broken values
+    // change.
+    const info = build({ id: 'sb', vllmModelId: 'zai-org/GLM-5.3', server: 'srv', cost: { input: 0.004, output: 0.02 } });
+    expect(info.detail).toBe('$0.004 in · $0.02 out');
+  });
+
   it('matches the dashboard for the same configured rate', () => {
     // One owner for money rendering: the picker and the dashboard must never
     // print a rate two different ways.
     const cost = { input: 1.2, output: 12 };
     const info = build({ id: 'sb', vllmModelId: 'zai-org/GLM-5.3', server: 'srv', cost });
-    expect(info.detail).toBe(`${formatCost(cost.input)} in · ${formatCost(cost.output)} out`);
+    expect(info.detail).toBe(`${formatCostRate(cost.input)} in · ${formatCostRate(cost.output)} out`);
   });
 
   it('shows an unrecognised unit verbatim rather than as a wrong $', () => {

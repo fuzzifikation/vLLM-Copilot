@@ -24,6 +24,7 @@ const createOutcome = (): StreamOutcome => ({
   hadContent: false,
   hadToolCalls: false,
   hadReasoning: false,
+  hadVisibleReasoning: false,
   sawRawThinkTags: false,
 });
 

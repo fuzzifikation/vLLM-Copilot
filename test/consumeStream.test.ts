@@ -9,6 +9,7 @@ const createOutcome = (): StreamOutcome => ({
   hadContent: false,
   hadToolCalls: false,
   hadReasoning: false,
+  hadVisibleReasoning: false,
   sawRawThinkTags: false,
 });
 import { getLastRequest } from '../src/usage/usageStore.js';

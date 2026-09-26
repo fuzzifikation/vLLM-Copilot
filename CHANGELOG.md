@@ -3,18 +3,25 @@
 ## v1.36.16
 Close the remaining release-hardening gaps in `docs/code-review.md` before the next public release. This candidate covers deterministic packaging, schema and preset consistency, shipped webview correctness, automation, repository-rule coherence, and a settled remote host topology; the existing provider runtime is the baseline.
 
+### Added
+
+- **Unattributed catalog cleanup.** Conversations that match no readable workspace folder get their own picker entry; selecting it removes only those catalog rows, no workspace files or memory.
+- **Catalog maintenance retry.** **Maintain Copilot catalog** rebuilds the search index and retries compaction without deleting conversations, and stays available even when no sessions remain.
+- **Orphaned catalog recovery.** A confirmed whole-catalog wipe also removes catalog rows whose session is already gone; scoped cleanup warns about those rows instead of guessing their workspace.
+- **Memory-only cleanup.** Copilot memory options stay selectable after session history is gone, and the summary separates deleted, absent and partially failed.
+
 ### Changed
 
-- **The extension is workspace-only.** In a remote window (SSH, WSL, containers) it now always runs on the remote workspace host, so requests originate beside your server and addresses such as `localhost:8000` keep their intended meaning. A local install no longer silently serves a remote window.
-- **The model picker shows what a model costs.** Hovering a model in the picker now reports its configured price per 1M tokens — `$0.30 in · $1.20 out`. Models without configured rates show nothing new. The Server Dashboard is unchanged.
-- **Cost is USD only.** Set Cost no longer offers a second currency. `AI Credits` existed so a model could be priced in the same unit as the Copilot picker (1 credit = $0.01), but it is a Microsoft billing unit, not a currency — nothing else denominates in it. Rates you already configured are untouched; a stored `AI Credits` value now shows as that literal label rather than a wrong `$`. Re-run **Set Cost…** to store the same figures as USD.
+- **The extension is workspace-only.** In a remote window (SSH, WSL, containers) it now runs on the remote workspace host, so `localhost:8000` keeps meaning your server instead of your client.
+- **The model picker shows what a model costs.** Hovering a model reports its configured price per 1M tokens, such as `$0.30 in · $1.20 out`. Models without configured rates show nothing new.
+- **Cost is USD only.** Set Cost no longer offers a second currency, and a stored `AI Credits` value now renders as that literal label rather than a wrong `$`.
 
 ### Fixed
 
-- **Clean Copilot Sessions now actually deletes your conversations.** The command removed the session *list* but not the session *text*: every prompt and reply, plus a full-text search index over them, stayed in Copilot's session database, where anyone holding a copy of that file could search it for any word. It now removes the selected workspaces' rows from that database, the full-text index, and the session folders (transcripts, chat and inline-chat history, debug logs, tool output), then compacts the database so the deleted text leaves the file instead of sitting in freed pages. Pick the workspaces in the same dialog as before. Sessions with no folder open are reachable via the **All global sessions** entry. Two new checkboxes delete Copilot's memory files, which are kept by default; the global one affects every workspace on your machine, so it says so. The summary now distinguishes what was removed from what was merely made unfindable.
+- **Clean Copilot Sessions now actually deletes your conversations.** It removed only the session list before, so every prompt and reply stayed searchable in Copilot's session database; it now deletes the text, its full-text index and the session folders, then compacts the database, with memory kept unless you opt in.
 - **First-model setup reaches Agents.** Models added after startup now enable Agent Host access automatically.
-- **Model Settings numeric fields survive a hand-edited value.** A quote character in a numeric field (input tokens, timeouts, retry count) broke the input and rendered wrong. Those values are now escaped like every other field.
-- **The Dashboard no longer prints a dollar sign on a non-dollar rate.** A model priced with a non-USD unit showed `$` in the Pricing row while the totals beneath it showed the real unit.
+- **Model Settings numeric fields survive a hand-edited value.** A quote character in a numeric field broke the input rendering; those values are now escaped like every other field.
+- **The Dashboard no longer prints a dollar sign on a non-dollar rate.** A model priced in another currency showed `$` in the Pricing row while the totals beneath it showed the real unit.
 
 ## v1.36.15
 Correct the packaged release notes and retry documentation shipped with v1.36.14. The runtime tool-schema repair and early stream-failure retry are unchanged; this version makes the published documentation match their actual behavior.

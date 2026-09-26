@@ -49,10 +49,13 @@ scripts/
 resources/OR-logo.svg
 
 # The root LICENSE is the BUSL-1.1 source-repository license. The shipped
-# extension is MIT (package.json "license"); the package wrapper temporarily
-# substitutes the MIT license and passes a temporary ignore file that includes
-# it, then restores this BUSL file.
+# extension is MIT (package.json "license"); the package wrapper copies the
+# tree, puts the MIT license into the COPY, and removes this ignore line there.
+# The tracked root file is never overwritten. Both texts live in licenses/.
 LICENSE
+# Only the MIT license ships, via the staged LICENSE. Shipping the folder would
+# put the source license inside the extension, next to a manifest that says MIT.
+licenses/
 
 # Repo/build config (not needed at runtime)
 .gitignore

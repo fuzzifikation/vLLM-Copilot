@@ -9,6 +9,7 @@ const createOutcome = (): StreamOutcome => ({
   hadContent: false,
   hadToolCalls: false,
   hadReasoning: false,
+  hadVisibleReasoning: false,
   sawRawThinkTags: false,
 });
 
@@ -48,6 +49,7 @@ function outcome(partial: Partial<StreamOutcome> = {}): StreamOutcome {
     hadContent: false,
     hadToolCalls: false,
     hadReasoning: false,
+    hadVisibleReasoning: false,
     sawRawThinkTags: false,
     finishReason: undefined,
     contentBuffer: '',

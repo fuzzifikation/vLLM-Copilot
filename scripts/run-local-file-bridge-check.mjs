@@ -35,12 +35,34 @@ function findVsCodeExecutable() {
   const envPath = process.env.VSCODE_EXECUTABLE_PATH;
   if (envPath && existsSync(envPath)) return envPath;
 
-  const candidates = process.platform === 'win32'
-    ? [
-        join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Microsoft VS Code', 'Code.exe'),
-        join(process.env.ProgramFiles ?? '', 'Microsoft VS Code', 'Code.exe'),
-      ]
-    : ['/usr/bin/code', '/usr/local/bin/code', '/snap/bin/code'];
+  // A stock macOS install puts the CLI INSIDE the app bundle and puts nothing
+  // on PATH, so the Linux list alone left `npm run test:bridge` unable to find
+  // a perfectly normal installation. Both bundle locations are checked: a
+  // user-local install in ~/Applications is as standard as the system one.
+  //
+  // The binary is NOT always called `code`. The Insiders build ships
+  // `bin/code-insiders`, so a single `code` name silently misses an Insiders-
+  // only machine, which is exactly the developer most likely to run this.
+  const macBundle = (app, bin = 'code') =>
+    [join('/Applications', app, 'Contents/Resources/app/bin', bin),
+     join(process.env.HOME ?? '', 'Applications', app, 'Contents/Resources/app/bin', bin)];
+  const candidates =
+    process.platform === 'win32'
+      ? [
+          join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Microsoft VS Code', 'Code.exe'),
+          join(process.env.ProgramFiles ?? '', 'Microsoft VS Code', 'Code.exe'),
+        ]
+      : process.platform === 'darwin'
+        ? [
+            ...macBundle('Visual Studio Code.app'),
+            ...macBundle('Visual Studio Code.app', 'code-insiders'),
+            ...macBundle('Visual Studio Code - Insiders.app', 'code-insiders'),
+            ...macBundle('Visual Studio Code - Insiders.app'),
+            ...macBundle('VSCodium.app', 'codium'),
+            '/usr/local/bin/code',
+            '/opt/homebrew/bin/code',
+          ]
+        : ['/usr/bin/code', '/usr/local/bin/code', '/snap/bin/code'];
 
   for (const candidate of candidates) {
     if (candidate && existsSync(candidate)) return candidate;

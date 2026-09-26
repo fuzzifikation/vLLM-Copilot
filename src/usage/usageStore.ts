@@ -628,20 +628,40 @@ function currencyPrefix(currency?: string): string {
 
 /**
  * Format a cost with its currency label, rounded to 2 decimals — the standard
- * money display (model summary, etc.). Per-request costs use
- * {@link formatCostFine} (fine precision) instead.
+ * money display, for amounts that are genuinely money totals (credit balances,
+ * budgets, monthly spend). Per-request costs use {@link formatCostFine} and
+ * per-million model rates use {@link formatCostRate}, because 2 decimals
+ * annihilates both.
  */
 export function formatCost(value: number, currency?: string): string {
   return `${currencyPrefix(currency)}${value.toFixed(2)}`;
 }
 
 /**
- * Fine-precision variant for the per-request Cost row, where numbers are tiny
- * (a request can cost $0.000019) — 2 decimals would collapse it to $0.00.
- * Keeps the adaptive precision (up to 6 decimals, trailing zeros stripped).
+ * Fine-precision variant for numbers that can be legitimately tiny: a request
+ * can cost $0.000019 and a per-million rate can be $0.004, and 2 decimals
+ * renders both as $0.00, which is not rounding, it is erasure. Keeps the
+ * adaptive precision (up to 6 decimals, trailing zeros stripped).
  */
 export function formatCostFine(value: number, currency?: string): string {
   return `${currencyPrefix(currency)}${formatAmount(value)}`;
+}
+
+/**
+ * A per-million model RATE, shared by the model picker and the dashboard.
+ *
+ * Money formatting is right for a total and wrong for a rate: a configured
+ * $0.004 rendered as $0.00, which deletes the number instead of approximating
+ * it. The money look is therefore kept whenever 2 decimals is LOSSLESS (`$0.30`,
+ * `$1.20`), and the adaptive precision takes over only when rounding would
+ * change the value. One owner for both surfaces, so the picker and the
+ * dashboard can never print the same rate two different ways.
+ */
+export function formatCostRate(value: number, currency?: string): string {
+  if (value === 0) return formatCost(0, currency);
+  return Math.abs(Math.round(value * 100) - value * 100) < 1e-9
+    ? formatCost(value, currency)
+    : formatCostFine(value, currency);
 }
 
 /**

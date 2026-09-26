@@ -38,6 +38,7 @@ function createOutcome(): StreamOutcome {
     hadContent: false,
     hadToolCalls: false,
     hadReasoning: false,
+    hadVisibleReasoning: false,
     sawRawThinkTags: false,
     finishReason: undefined,
     firstTokenTime: undefined,
@@ -196,13 +197,18 @@ export async function runChatResponse(
         // same auto-continue budget. Once content or a tool call was reported,
         // a retry would duplicate or disconnect output (continuation mode is
         // vLLM-only) — rethrow and let handleResponseError report the partial
-        // turn like before. Reasoning-only attempts retry anyway, matching the
-        // empty-response nudge, which tolerates shown-then-discarded thinking.
+        // turn like before. `hadVisibleReasoning` joins them because a VS Code
+        // build without LanguageModelThinkingPart reports reasoning as TEXT,
+        // which is visible output that a replay would duplicate; reasoning
+        // rendered as a real thinking part is still discardable and retries,
+        // matching the empty-response nudge, which tolerates
+        // shown-then-discarded thinking.
         const midStream = err instanceof Error && err.message.startsWith('Server error (mid-stream)');
         if (
           !midStream
           || outcome.hadContent
           || outcome.hadToolCalls
+          || outcome.hadVisibleReasoning
           || token.isCancellationRequested
           || attempt >= maxRetries
         ) {
@@ -225,6 +231,14 @@ export async function runChatResponse(
       // convention for "done, here's my tool call." Retrying would re-ask the
       // model after it already took a valid action. The colon branch is already
       // gated by `hadContent`, so `hadToolCalls` only matters for the empty case.
+      //
+      // `hadVisibleReasoning` closes the same hole the mid-stream gate closes:
+      // on a VS Code build with no thinking part, reasoning is reported as
+      // ordinary text, so `hadContent` is still false while the user is already
+      // looking at it. Without this, a reasoning-only stop re-asks the model and
+      // prints the same reasoning a second time. The empty-response nudge and
+      // the colon continuation both assume the user has seen nothing, which is
+      // only true for a genuine thinking part.
       if (token.isCancellationRequested) break;
       const endsWithColon = !!outcome.contentBuffer && outcome.contentBuffer.trimEnd().endsWith(':');
       // Colon-continuation retries are vLLM-only. Without vLLM's
@@ -234,6 +248,7 @@ export async function runChatResponse(
       // (or a reject). Empty-response nudges are backend-agnostic and stay.
       const shouldRetry = (!outcome.hadContent || (endsWithColon && serverConfig.serverType === 'vllm'))
         && !outcome.hadToolCalls
+        && !outcome.hadVisibleReasoning
         && outcome.finishReason === 'stop'
         && attempt < maxRetries;
       if (!shouldRetry) break;

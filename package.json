@@ -661,7 +661,7 @@
     "dep:graph": "node scripts/dep-graph.mjs",
     "rent": "node scripts/rent-census.mjs",
     "cluster": "node scripts/cluster-census.mjs",
-    "build": "npm run license:check && npm run license:notices:check && npm run validate-webview-js && npm run compile && npm run dep:check && npm run rent -- --fail-on-dead && npm run test:typecheck && npm test && npm run package:vsix",
+    "build": "npm run license:check && npm run license:notices:check && npm run validate-webview-js && npm run compile && npm run dep:check && npm run rent -- --fail-on=dead && npm run test:typecheck && npm test && npm run package:vsix",
     "package:vsix": "node scripts/package-vsix.mjs"
   },
   "devDependencies": {

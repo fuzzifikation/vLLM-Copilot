@@ -10,7 +10,7 @@ import { ServerMetrics, getMetricsEngine, emptyMetrics, getPollSettingMs } from 
 import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from '../backends/openRouter.js';
 import {
   getLastRequest, getServerUsage, getServerCost, hasServerUsage, onUsageStoreDidChange,
-  findModelCost, formatCost, formatCostFine, formatCostSummary, emptyCounts,
+  findModelCost, formatCost, formatCostFine, formatCostRate, formatCostSummary, emptyCounts,
   getModelStartedAt,
   type UsageCounts, type CostRates, type LastRequestData,
 } from '../usage/usageStore.js';
@@ -1180,14 +1180,17 @@ export class DashboardTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     }
     if (!priceParts && entry?.cost) {
       const parts: string[] = [];
-      // formatCost, NOT formatUsdRate: this block renders the user's own
+      // formatCostRate, NOT formatUsdRate: this block renders the user's own
       // configured rates, which carry a `currency` label. formatUsdRate
       // hardcodes a `$` and would lie about any non-USD value. The block
       // above is the OpenRouter pinned-provider case and is genuinely USD —
       // the catalog reports dollar rates — so it keeps the USD-only helper.
-      if (entry.cost.input !== undefined) parts.push(`in ${formatCost(entry.cost.input, entry.cost.currency)}`);
-      if (entry.cost.output !== undefined) parts.push(`out ${formatCost(entry.cost.output, entry.cost.currency)}`);
-      if (entry.cost.cachedInput !== undefined) parts.push(`cached ${formatCost(entry.cost.cachedInput, entry.cost.currency)}`);
+      // The rate helper, not the plain money one, because a configured $0.004
+      // collapsed to $0.00 — deleting the number rather than rounding it. The
+      // model picker formats these same rates with the same helper.
+      if (entry.cost.input !== undefined) parts.push(`in ${formatCostRate(entry.cost.input, entry.cost.currency)}`);
+      if (entry.cost.output !== undefined) parts.push(`out ${formatCostRate(entry.cost.output, entry.cost.currency)}`);
+      if (entry.cost.cachedInput !== undefined) parts.push(`cached ${formatCostRate(entry.cost.cachedInput, entry.cost.currency)}`);
       if (parts.length > 0) {
         priceParts = parts;
         priceSource = pinnedProvider

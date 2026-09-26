@@ -94,7 +94,7 @@ This fixed a **pre-existing bug**: the Last Request node was previously written 
 ## Design decisions & gotchas
 
 - **Auto-continue retries count as separate requests.** The retry loop calls `consumeStream` once per attempt, and each completion that carries a usage payload is recorded - a continuation request genuinely re-sends the context and generates new tokens, so per-HTTP-request accounting is the honest number.
-- **`formatCost` precision adapts** so a per-request cost of `$0.000019` never collapses to `$0.0000`: ≥$100 → 0 decimals, ≥$1 → 2, ≥$0.01 → up to 4 with trailing-zero stripping, else up to 6. The collapsed cost summary uses the same fine precision, so sub-cent actual spend never renders as `$0.00`.
+- **`formatCost` precision adapts** so a per-request cost of `$0.000019` never collapses to `$0.0000`: ≥$100 → 0 decimals, ≥$1 → 2, ≥$0.01 → up to 4 with trailing-zero stripping, else up to 6. The collapsed cost summary uses the same fine precision, so sub-cent actual spend never renders as `$0.00`. Configured per-million model rates use it too, in both the model picker and the dashboard, so a `$0.004` rate is never shown as `$0.00`; amounts that are real money totals (credit balances, budgets, monthly spend) keep the 2-decimal money format.
 - **Server URLs are normalized before any store read/write** - the two existing normalization bugs (scheme-less, `/v1` forms) are the reason the store keys on the normalized form.
 
 ## Where the code lives

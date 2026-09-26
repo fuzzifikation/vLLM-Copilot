@@ -643,29 +643,42 @@ construction.
 
 ## Path 18: Copilot session janitor
 
-**Intent**: One maintenance command: count then purge Copilot session state
-from the live `state.vscdb` and three session directories, for sessions VS
-Code itself will not delete.
+**Intent**: One command that removes the conversation TEXT, not just the session list, and reports what is actually gone. The text lives in two places VS Code exposes no API for: per-workspace `state.vscdb` index keys plus session directories on disk, and Copilot's own `session-store.db` (turns plus an untriggered fts5 copy of the same text). Catalog deletion must be safe before workspace files are touched; physical compaction can fail after catalog deletion commits, so the command also exposes a maintenance-only retry without requiring a remaining session.
 
 ```mermaid
 flowchart TD
     CMD[command] --> DISC[discoverWorkspaces]
-    DISC --> CNT[countSessionsBatch readOnly DatabaseSync]
-    DISC --> FSC[count files x2 dirs]
-    CMD --> CLEAN[cleanWorkspace]
-    CLEAN --> DEL[deleteChatKeys: 10 CHAT_KEYS snapshot, writable DatabaseSync]
-    CLEAN --> RM[remove dir x3, skipped for global]
+    DISC --> CNT[countIndexEntries readOnly DatabaseSync]
+    DISC --> FSC[countFilesInDirs]
+    DISC --> FOLD[readWorkspaceFolders: folder / folders / workspace pointer, fileURLToPath]
+    DISC --> CAT[countAgentSessionsByCwd: attributed + unattributed]
+    DISC --> PRES[fileExists catalog: maintenance available with zero sessions]
+    CMD --> CLEAN[clean]
+    CLEAN --> AG[cleanAgentStore: catalog transaction]
+    AG --> GUARD{Unknown selected table rows?}
+    GUARD -->|blocked| OUT
+    GUARD -->|safe| DEL[delete children then parent]
+    DEL --> IDX[rebuild FTS5 search_index then COMMIT]
+    IDX --> VAC[compactAgentStore: VACUUM + wal_checkpoint TRUNCATE]
+    CLEAN --> STORE[after catalog success: cleanStore index key + session dirs]
+    CLEAN --> MEM[cleanMemory: opt-in repo + global, records the result]
+    CMD --> MAINT[maintainAgentStore: rebuild FTS5 without deleting rows]
+    MAINT --> VAC
+    CLEAN --> OUT[CleanOutcome]
+    OUT --> REPORT[reportClean: rendered from the outcome]
 ```
+
+`FOLD` decides which `sessions.cwd` values a workspace selection can match; an unreadable folder is flagged, while unmatched catalog paths are offered as an explicit, separate scope instead of guessed into a workspace. `GUARD` blocks unknown selected-session data while the transaction still protects the parent rows; a failure in `IDX` rolls back the catalog transaction. Neither failure deletes local files. `VAC` reclaims freed pages and truncates the WAL after commit; its failure is reported without undoing the deletion. `MAINT` reaches it independently even when no sessions remain.
 
 ### Findings
 
 | ID | Finding | Severity |
 |----|---------|----------|
-| P18-1 (info) | Structural cost of the no-API bypass, accepted by design: live-DB writes can be resurrected by VS Code's in-memory ItemTable on shutdown (the flow's restart warnings are the tacit admission); `CHAT_KEYS` is a snapshot of undocumented internals, a VS Code rename silently turns the janitor into a placebo with zero failure signal. No action proposed beyond knowing it. | info |
+| P18-1 (info) | Structural cost of the no-API bypass, accepted by design: live-DB writes can be resurrected by VS Code's in-memory ItemTable on shutdown (the flow's restart warnings are the tacit admission); the index key name and catalog table list are snapshots of undocumented internals. Unknown session-keyed tables holding selected data now block catalog and workspace deletion, but an index key rename still needs explicit detection. | info |
 
 ### Minimal graph
 
-One module, one writer, eligibility = the user picked the row. Nothing to cut.
+One module, one writer, eligibility = the user picked the row. `cleanWorkspace`, `cleanGlobal`, `cleanWorkspaceMemory` and `cleanGlobalMemory` were four exported functions with one caller each and two bodies; they are now `cleanStore` (key plus directories, global or workspace) and `cleanMemory` (the opt-in pair), so the summary is rendered from one outcome instead of from the selection flags.
 
 ## Path 19: Presets pipeline (dev-side)
 
@@ -978,7 +991,7 @@ Whole-repo pass on owner request ("we changed so much"), v1.36.10 `b971bdb`. Nat
 - **P6-2 (low, EXECUTED)** - `provider.ts` fabricated a full `vscode.OutputChannel` via `as unknown as` (6 stub members, lying `dispose`) so `discoverModels` could call the ONE member it uses. `discoverModels` now takes the structural `DiscoveryLogSink { appendLine }` (the `ClearCacheProvider` pattern), the fake channel collapsed to a one-method closure, the double-cast is gone. A future `output.show()` inside discovery is now a type error instead of a silent no-op.
 - **N-1 (EXECUTED, owner ruling "all 4")** - four exports bought only by tests went module-private, tests rerouted to their sole production caller: `ServerMetricsEngine` (`vllmMetrics.test.ts` drives `getMetricsEngine` + `ReturnType` seam), `resolveDetectedServerType` (`serverSettingsView.test.ts` drives `refreshWebview` with the file's fetch-stub harness, asserting the posted `detectedServerType`), `extractFamilyWithSource` (`modelInfo.test.ts` asserts `buildModelInfo` `family` + `onFamilyFallback`, +1 preset-authoritative case), `presetBasenameOf` (`personalityStore.test.ts` gains a Linux-stored-path resolver case, the cross-OS split proven at the level that ships). Census TEST_ONLY 10 → 6. Gotcha: the detection reroute initially failed because all five cases shared one server URL and `serverListOnce`'s layer-1 memo served the first answer to all - `clearRuntimeLimitsCache()` in `beforeEach`, the TTL-memo afterEach doctrine biting a third time.
 
-Round-9 waivers (do not re-propose): `toSelectorEndpoint` (view-vocabulary adapter; weight points at the generic `perMillion` helper - moving selector wire vocabulary into the vendor plane pollutes it); `pathsEquivalent` (2 external consumers, honest API beside its sibling in `config.ts`); `fetchOpenRouterAccount`/`fetchOpenRouterCredits` (same precedent as `parseOpenRouterBranchInput`: absorbing would export the private body across the module wall); `refreshEngineHeaders`, `updateDeepDiveTitle`, `cleanWorkspace`, `clearPersonalityCache`, `mergePresetWithUserConfig` (guard module-private state, absorb impossible without exporting the organ); `migratePersonalityPathRefs`, `DashboardDndController` (ENTRY/activation wiring placement); manual-contextWindow offer shells (shared rule `isValidContextWindow` already extracted, shells differ by flow position).
+Round-9 waivers (do not re-propose): `toSelectorEndpoint` (view-vocabulary adapter; weight points at the generic `perMillion` helper - moving selector wire vocabulary into the vendor plane pollutes it); `pathsEquivalent` (2 external consumers, honest API beside its sibling in `config.ts`); `fetchOpenRouterAccount`/`fetchOpenRouterCredits` (same precedent as `parseOpenRouterBranchInput`: absorbing would export the private body across the module wall); `refreshEngineHeaders`, `updateDeepDiveTitle`, `clearPersonalityCache`, `mergePresetWithUserConfig` (guard module-private state, absorb impossible without exporting the organ); `migratePersonalityPathRefs`, `DashboardDndController` (ENTRY/activation wiring placement); manual-contextWindow offer shells (shared rule `isValidContextWindow` already extracted, shells differ by flow position).
 
 Noted, not proposed: `getMetricsEngine` grew a 7th positional param (`undefined` = don't-manage) - same family as the waived `buildModelInfo`/`consumeStream` signature-hygiene precedents.
 
@@ -1061,8 +1074,14 @@ The three older standing items were ruled at fix-pass 6 (2026-09-03):
   collapsed to one named fact.
 - **P19-2**: `sanitizePresetMeta` folded into `parsePresetEnvelope` (lenient
   meta rule kept verbatim).
-- **P19-3**: `stripJsonComments` private; `parsePresetRawJson` is the
-  test-facing parse boundary (canary tests rerouted).
+- **P19-3**: `parsePresetRawJson` is the test-facing parse boundary (canary
+  tests rerouted). The comment stripper is no longer private to that module:
+  `stripJsonc` in `src/shared/jsonc.ts` is the single implementation, shared
+  with the session janitor, which must read user-editable `.code-workspace`
+  files. The generator's `//`-only mirror in `scripts/gen-preset-index.mjs`
+  stays, because that script is dependency-free and cannot import TypeScript;
+  the invariant is directional and now enforced: the runtime parser accepts
+  strictly more, and no shipped preset may use what the generator cannot read.
 - **testAndRefresh x3**: one per-task `errorResult(errorMessage)` closure
   replaces three byte-identical all-parked skeletons.
 - **PF-2**: `LastRequestTreeItem` carries the `LastRequestData` record plus

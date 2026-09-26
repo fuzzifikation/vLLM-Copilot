@@ -302,17 +302,17 @@ Each preset ends with `{ "include": "prompt-replacements-common.json" }` - the s
 
 ### Chat Session Cleanup
 
-**Clean Copilot Sessions** (`Ctrl+Shift+P` → Utilities) is a **security cleanup**, not a disk cleaner. Pick the workspaces you want and it permanently removes their session history:
+**Clean Copilot Sessions** (`Ctrl+Shift+P` → Utilities) is a **security cleanup**, not a disk cleaner. Pick the workspaces you want; it removes their session history and reports anything it cannot finish:
 
 - the session lists in each workspace's `state.vscdb`, and `chatSessions/`, `chatEditingSessions/`, `transcripts/`, `debug-logs/`, `chat-session-resources/`
 - the workspace's rows in Copilot's session catalog — **the actual prompts and replies** — plus the full-text search index over them, selected via the workspace folder
-- the database is then compacted, so the deleted text leaves the file rather than sitting in freed pages
+- the database is then compacted to remove deleted text from freed pages and the WAL, or the result reports that physical cleanup is still needed
 
-Restart VS Code afterwards. A workspace without a folder (no `cwd`) is only reachable through the **All global sessions** entry, which covers the global session list, empty-window chats, and history with no folder. Multi-root workspaces are matched on every root they contain, so one selection clears all of them. A separate, explicitly-labelled entry nukes the entire Copilot catalog across every project at once.
+Restart VS Code afterwards. History with no folder (`cwd IS NULL`) is reachable through **All global sessions**, which also covers the global session list and empty-window chats. Multi-root workspaces are matched on each resolvable root; duplicate normalized roots count once. An unresolvable root is disclosed before deletion and marked incomplete afterwards, even when the other roots were cleaned. Catalog sessions whose paths match no readable workspace folder appear under **Unattributed catalog sessions**; selecting it deletes their catalog text, not workspace files or repo memory. A separate, explicitly-labelled entry wipes the entire Copilot catalog across every project. If catalog text has lost its session row, a scoped cleanup warns rather than guessing its workspace; the whole-catalog option remains available even if only those orphaned rows remain.
 
-Deletion is atomic: if Copilot's storage has changed shape underneath us, the run rolls back and says so rather than half-removing anything.
+Catalog row deletion and search-index rebuilding share one transaction. An incomplete session-store scan stops before the picker; failed directory removal is reported, not treated as an absent folder. Unknown session-keyed tables holding selected data block deletion before any workspace files or memory are touched; a known-table or index-rebuild failure rolls back the catalog transaction and also leaves local data alone. If VACUUM or the WAL checkpoint fails after deletion commits, old bytes may remain. Select **Maintain Copilot catalog** to rebuild the search index and retry compaction without deleting conversations; the option remains available when the catalog file exists even if no sessions remain. Maintenance does not remove orphaned rows.
 
-**Copilot memory is not deleted by default.** Two extra checkboxes in the picker let you opt in: repo memory for the selected workspaces, and global user memory. The second reaches **every workspace on the machine**, not just your selection. Copilot also ships its own *Clear All Memory Files* command — note that it deletes user-level memory everywhere and repo memory only for the workspace you run it in.
+**Copilot memory is not deleted by default.** Two extra checkboxes in the picker let you opt in: repo memory for the selected workspaces, and global user memory. The options remain available when only memory is left, including workspaces with repo memory but no sessions. The second reaches **every workspace on the machine**, not just your selection. The result distinguishes removed, already-absent and failed memory, including partial repo-memory deletion. Copilot also ships its own *Clear All Memory Files* command — note that it deletes user-level memory everywhere and repo memory only for the workspace you run it in.
 
 ---
 

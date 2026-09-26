@@ -6,7 +6,7 @@
 
 import * as vscode from 'vscode';
 import { deriveTokenBudget, resolveOutputBudgetScalar, resolveOutputLengthVector, type TokenBudget } from '../shared/tokenBudget.js';
-import { formatCost } from '../usage/usageStore.js';
+import { formatCostRate } from '../usage/usageStore.js';
 import { type ModelConfig } from '../state/config.js';
 
 /**
@@ -266,9 +266,9 @@ function buildPickerPrice(override: Partial<ModelConfig> | undefined): string {
   }
 
   const parts: string[] = [];
-  if (cost.input !== undefined) parts.push(`${formatCost(cost.input, cost.currency)} in`);
-  if (cost.output !== undefined) parts.push(`${formatCost(cost.output, cost.currency)} out`);
-  if (cost.cachedInput !== undefined) parts.push(`${formatCost(cost.cachedInput, cost.currency)} cached`);
+  if (cost.input !== undefined) parts.push(`${formatCostRate(cost.input, cost.currency)} in`);
+  if (cost.output !== undefined) parts.push(`${formatCostRate(cost.output, cost.currency)} out`);
+  if (cost.cachedInput !== undefined) parts.push(`${formatCostRate(cost.cachedInput, cost.currency)} cached`);
   return parts.join(' · ');
 }
 

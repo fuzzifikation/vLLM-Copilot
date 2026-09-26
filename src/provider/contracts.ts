@@ -64,6 +64,13 @@ export interface StreamOutcome {
   hadToolCalls: boolean;
   /** At least one reasoning/thinking part was reported. */
   hadReasoning: boolean;
+  /**
+   * Reasoning was reported as PLAIN TEXT because this VS Code build has no
+   * `LanguageModelThinkingPart`, so it is real answer content the user can see
+   * and cannot be discarded. Distinct from `hadReasoning`, which is true either
+   * way and is therefore not enough to decide whether a turn can be replayed.
+   */
+  hadVisibleReasoning: boolean;
   /** Raw `<thinking>` tags leaked into content (server is missing a `--reasoning-parser`). */
   sawRawThinkTags: boolean;
   /** The server's `finish_reason` for the turn, once known. */

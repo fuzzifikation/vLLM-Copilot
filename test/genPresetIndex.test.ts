@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PRESET_CONFIG_KEYS as RUNTIME_KEYS, parsePresetRawJson } from '../src/commands/presets.js';
@@ -111,5 +111,42 @@ describe('generator and runtime comment parsing agree', () => {
 
   it('the generator stripper leaves URL values intact (regression guard)', () => {
     expect(JSON.parse(genStrip('{"a":"https://x.test//y"}'))).toEqual({ a: 'https://x.test//y' });
+  });
+});
+
+/**
+ * TRIPWIRE for the one place the two parsers are allowed to differ. The runtime
+ * parser is deliberately MORE tolerant than the generator (it handles block
+ * comments and trailing commas, which the dependency-free mirror does not), so
+ * the invariant is directional, not mutual: every SHIPPED preset must stay
+ * inside the generator's tolerance, because `npm run gen:presets` is the step
+ * that would break.
+ *
+ * Nothing tested that until now. The runtime parser would happily accept a
+ * preset the generator cannot read, the canary would pass, and the next
+ * maintainer to regenerate the index would get a parse error instead of an
+ * index. A block comment in a preset is a one-character mistake with a
+ * release-time cost, so it is pinned here.
+ */
+describe('every shipped preset stays inside the generator tolerance', () => {
+  const PRESET_DIR = join(import.meta.dirname, '..', 'model-configs');
+
+  it('has no block comment or trailing comma in any preset', () => {
+    const offenders: string[] = [];
+    for (const file of readdirSync(PRESET_DIR)) {
+      if (!file.endsWith('.json') || file === 'index.json') continue;
+      const text = readFileSync(join(PRESET_DIR, file), 'utf8');
+      // The generator's own stripper, applied and then parsed: if this throws,
+      // gen:presets throws with it.
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(genStrip(text));
+      } catch (err) {
+        offenders.push(`${file}: ${(err as Error).message}`);
+        continue;
+      }
+      if (parsed === null || typeof parsed !== 'object') offenders.push(`${file}: not an object`);
+    }
+    expect(offenders, 'presets must use // comments only: the index generator cannot read block comments or trailing commas').toEqual([]);
   });
 });

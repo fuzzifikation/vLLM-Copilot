@@ -9,5 +9,5 @@ export interface PresetIndex {
 
 export declare function buildIndex(dir?: string): PresetIndex;
 
-/** Quote-aware `//` comment stripper; mirrors stripJsonComments in src/commands/presets.ts. */
+/** Quote-aware `//` comment stripper; the dependency-free mirror of `stripJsonc` in src/shared/jsonc.ts, narrowed to what shipped presets may contain. */
 export declare function stripComments(text: string): string;

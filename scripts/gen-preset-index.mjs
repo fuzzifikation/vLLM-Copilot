@@ -41,15 +41,22 @@ export const PRESET_CONFIG_KEYS = new Set([
 ]);
 
 /**
- * Strip `//` comments, quote-aware. Mirrors stripJsonComments in
- * src/commands/presets.ts: the extension and this generator MUST agree on
- * which files parse, or a preset the extension accepts could be rejected
- * here (breaking the release) or vice versa (shipping a broken preset).
+ * Strip `//` comments, quote-aware. The runtime counterpart is `stripJsonc` in
+ * src/shared/jsonc.ts, and the two are deliberately NOT identical: the runtime
+ * one also handles block comments and trailing commas, because it must read
+ * user-editable files such as `.code-workspace`, while this generator is
+ * dependency-free Node and mirrors only what shipped presets may contain.
+ *
+ * The resulting invariant is directional, and it is enforced: the extension and
+ * this generator must both accept every SHIPPED preset, so preset files use `//`
+ * comments only. A Vitest test (test/genPresetIndex.test.ts) drives both parsers
+ * over a shared corpus AND asserts no shipped preset uses JSONC this function
+ * cannot read, so the one file kind the runtime tolerates and the generator
+ * does not can never reach model-configs/.
  *
  * A previous version stripped only full-line comments, so a single trailing
  * comment would make the generator throw while the extension accepted the
- * file. A Vitest sync test (test/genPresetIndex.test.ts) drives BOTH parsers
- * over a shared corpus and fails if they ever diverge again.
+ * file; that is why this is quote-aware rather than line-position-based.
  */
 export function stripComments(text) {
   // Index of the first `//` NOT inside a quoted string, or -1.
