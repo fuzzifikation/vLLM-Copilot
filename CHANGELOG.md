@@ -9,6 +9,7 @@ Close the remaining release-hardening gaps in `docs/code-review.md` before the n
 - **Catalog maintenance retry.** **Maintain Copilot catalog** rebuilds the search index and retries compaction without deleting conversations, and stays available even when no sessions remain.
 - **Orphaned catalog recovery.** A confirmed whole-catalog wipe also removes catalog rows whose session is already gone; scoped cleanup warns about those rows instead of guessing their workspace.
 - **Memory-only cleanup.** Copilot memory options stay selectable after session history is gone, and the summary separates deleted, absent and partially failed.
+- **Last request in the status bar.** A chip shows the last served model's glyph (OpenRouter or vLLM) and its generation speed; hovering reports that reply's cost, token split, prompt-processing estimate, timings and session maxima, clicking opens the Dashboard (`vllm-copilot.statusBar.enabled` to hide).
 
 ### Changed
 

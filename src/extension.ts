@@ -34,6 +34,7 @@ import { initUsageStore } from './usage/usageStore.js';
 import { maybeOfferOutputLengthMigration } from './migrations/outputLengthMigration.js';
 import { maybeRunServerRegistryMigration } from './migrations/serverRegistryMigration.js';
 import { DashboardTreeProvider, DashboardDndController, registerOpenDashboardWebCommand } from './ui/dashboard.js';
+import { registerStatusBar } from './ui/statusBar.js';
 import { ServerSettingsViewProvider } from './ui/serverSettingsView.js';
 import { registerOpenDeepDiveCommand } from './ui/deepDiveView.js';
 import { registerOpenModelSelectorCommand } from './ui/modelSelectorView.js';
@@ -318,6 +319,10 @@ export async function activate(context: vscode.ExtensionContext) {
         dashboardTree.setVisible(e.visible);
       }),
     );
+
+    // Last-request status bar chip: renders from the usage store on request
+    // completion, never polls, hidden until the first run of the session.
+    context.subscriptions.push(registerStatusBar());
 
     // Register server settings webview (collapsible section below dashboard)
     const serverSettingsView = new ServerSettingsViewProvider(context, outputChannel, () => activeProvider.clearCache());

@@ -4,7 +4,7 @@
 
 > **Copilot can write this for you:** the extension registers an on-demand **Language Model Tool** (`vllm-copilot_model_schema`) that hands Copilot Chat the model-entry JSON schema plus the parameter resolution rules. Just ask in chat - e.g. *"configure my Qwen3.6 model with Think / No Think modes"* - and Copilot will generate a valid `vllm-copilot.models` entry. The tool serves the bundled `schemas/vllm-copilot-models.schema.json`; no workspace files are created. If your AI doesn't pick it up automatically, force-attach it by typing `#vllmModelSchema` in the chat input.
 
-All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are seven top-level settings: `vllm-copilot.servers` (array of **server entries** - endpoints, auth, backend type), `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), `vllm-copilot.enableFileLogging` (request/response logs), `vllm-copilot.logBodyLimit` (log truncation), `vllm-copilot.fixEmptyToolParameters` (inject empty schema into parameterless tool definitions), and `vllm-copilot.dashboard.pollIntervalMs` (metrics polling).
+All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are eight top-level settings: `vllm-copilot.servers` (array of **server entries** - endpoints, auth, backend type), `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), `vllm-copilot.enableFileLogging` (request/response logs), `vllm-copilot.logBodyLimit` (log truncation), `vllm-copilot.fixEmptyToolParameters` (inject empty schema into parameterless tool definitions), `vllm-copilot.dashboard.pollIntervalMs` (metrics polling), and `vllm-copilot.statusBar.enabled` (last-request status bar item).
 
 **Servers and models are separate.** A server entry owns `serverUrl`, `requestHeaders`, `serverType` and its display label; a model entry references its server by `server` id and owns everything model-scoped (token budgets, capabilities, params). There is no default or global server: a registry entry is used only because a model references it.
 
@@ -133,6 +133,7 @@ The **vLLM Dashboard** sidebar shows live metrics for each configured vLLM serve
 | Setting | Default | Description |
 |---|---|---|
 | `vllm-copilot.dashboard.pollIntervalMs` | `15000` | How often to refresh metrics (ms). Click **Refresh Interval** in the sidebar to change - enter `15s`, `30s`, `1m`, etc. Also editable in Settings |
+| `vllm-copilot.statusBar.enabled` | `true` | Show the last request in the status bar: the model's glyph (OpenRouter or vLLM) and its generation speed. Hover reports that reply's cost, token split and timings; click opens the Dashboard. Appears after the first completed request |
 
 ### Last Request Details
 

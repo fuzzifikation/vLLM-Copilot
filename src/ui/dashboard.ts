@@ -27,7 +27,7 @@ function fmtPct(v: number | null): string {
   return v == null ? '-' : `${Math.round(v)}%`;
 }
 
-function fmtMs(ms: number | null): string {
+export function fmtMs(ms: number | null): string {
   if (ms == null) return '-';
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
 }
@@ -36,33 +36,32 @@ function fmtN(v: number | null): string {
   return v == null ? '-' : String(v);
 }
 
-/** Format a directly-computed tokens/sec value (pooled throughput ratio). */
-function fmtTokPerSec(tokPerSec: number | null): string {
+/**
+ * Format a directly-computed tokens/sec value (pooled throughput ratio,
+ * decode and prefill rates). Above 1000 the shared count abbreviation takes
+ * over: prompt-processing rates reach tens of k tok/s on fast hardware and
+ * `25678 tok/s` is unreadable next to the k/M-abbreviated token rows.
+ */
+export function fmtTokPerSec(tokPerSec: number | null): string {
   if (tokPerSec == null || tokPerSec <= 0) return '-';
+  if (tokPerSec >= 1000) return `${fmtCount(tokPerSec)} tok/s`;
   return tokPerSec >= 100
     ? `${Math.round(tokPerSec)} tok/s`
     : `${tokPerSec.toFixed(1)} tok/s`;
 }
 
 /**
- * Abbreviate large token counts for compact dashboard rows: 3883588 -> "3.88M",
- * 836350 -> "836k", 999 -> "999". Thousands are rounded to whole k (sub-1000
- * precision is noise); millions keep 2 decimals, trailing zeros stripped.
- * No space between the number and the unit. Presentation ONLY - the stored
- * counts are never rounded; this runs at render time on already-accumulated
- * integers. Moved from usageStore (cluster finding C-1): the tree rows are its
- * only consumers.
+ * Abbreviate large counts to THREE significant figures, tokens and token
+ * rates alike: 3883588 -> "3.88M", 836350 -> "836k", 2500 -> "2.5k",
+ * 1234 -> "1.23k", 999 -> "999". Trailing zeros are stripped; the 999,500
+ * boundary rounds up to "1M". Presentation ONLY - the stored counts are
+ * never rounded; this runs at render time on already-accumulated integers.
+ * Moved from usageStore (cluster finding C-1); consumed by the tree rows and
+ * the status bar tooltip alike.
  */
-function fmtCount(n: number): string {
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`;
-  if (n >= 1e3) {
-    const k = Math.round(n / 1e3);
-    if (k >= 1000) { // 999,500 -> 1000k -> "1M"
-      const m = k / 1000;
-      return `${m.toFixed(2).replace(/\.?0+$/, '')}M`;
-    }
-    return `${k}k`;
-  }
+export function fmtCount(n: number): string {
+  if (n >= 999_500) return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`;
+  if (n >= 1e3) return `${Number((n / 1e3).toPrecision(3))}k`;
   return String(n);
 }
 
@@ -70,10 +69,11 @@ function fmtCount(n: number): string {
  * Cost in the configured unit for the given counts, from per-1M rates.
  * Fresh input = prompt - cached (cache-read tokens are priced at the cached
  * rate, not the input rate). Undefined when no rates are configured.
- * Render-time derivation, and the dashboard is its only consumer (cluster
- * finding C-1): the store keeps the numbers, the tree does the money math.
+ * Render-time derivation shared by the two dashboard surfaces (tree rows,
+ * status bar tooltip): the store keeps the numbers, the UI does the money
+ * math (cluster finding C-1).
  */
-function computeCost(counts: UsageCounts, rates: CostRates | undefined): number | undefined {
+export function computeCost(counts: UsageCounts, rates: CostRates | undefined): number | undefined {
   if (!rates) return undefined;
   const input = rates.input ?? 0;
   const output = rates.output ?? 0;
@@ -85,7 +85,7 @@ function computeCost(counts: UsageCounts, rates: CostRates | undefined): number 
     + (counts.completion / 1e6) * output;
 }
 
-function shortUrl(url: string): string {
+export function shortUrl(url: string): string {
   try {
     const u = new URL(url);
     // Omit the port when it's empty (URL constructor leaves `:` for a stripped
@@ -467,7 +467,7 @@ class ModelUsageTreeItem extends vscode.TreeItem {
 }
 
 /** Format a relative time string from a timestamp */
-function timeAgo(ts: number): string {
+export function timeAgo(ts: number): string {
   const seconds = Math.floor((Date.now() - ts) / 1000);
   if (seconds < 5) return 'just now';
   if (seconds < 60) return `${seconds}s ago`;

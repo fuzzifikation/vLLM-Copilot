@@ -123,21 +123,17 @@
   // value="..."/title="..." attributes for third-party strings (CR-27).
   function E(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML.replace(/"/g, '&quot;'); }
 
-  // Compact token-count label for provider rows: 32768 → "32.8k", 131072 →
-  // "131k", 1000000 → "1M". Whole units when ≥ 100 (no noisy decimals), one
-  // decimal below, a trailing ".0" is never shown, and a near-1M value rolls
-  // to "1M" (999500+ → "1M", same as the dashboard's fmtCount). null/0 → null.
-  // Kept tiny — these are informational annotations on a dropdown option, not
+  // Compact token-count label for provider rows, three significant figures
+  // like the dashboard's fmtCount: 32768 → "32.8k", 131072 → "131k",
+  // 1234 → "1.23k", trailing zeros trimmed, a near-1M value rolls to "1M"
+  // (999500+ → "1M"). null/0 → null.
+  // Kept tiny: these are informational annotations on a dropdown option, not
   // precise accounting.
   function fmtTok(n) {
     if (typeof n !== 'number' || !isFinite(n) || n <= 0) return null;
-    const fmt = (v) => (v >= 100 ? String(Math.round(v)) : String(Math.round(v * 10) / 10));
-    if (n >= 1e6) return fmt(n / 1e6) + 'M';
-    if (n >= 1e3) {
-      const k = n / 1e3;
-      if (k >= 1000) return fmt(k / 1000) + 'M'; // 999,500+ → "1M"
-      return fmt(k) + 'k';
-    }
+    var trim = function (v) { return String(parseFloat(v.toPrecision(3))); };
+    if (n >= 999500) return trim(n / 1e6) + 'M';
+    if (n >= 1e3) return trim(n / 1e3) + 'k';
     return String(n);
   }
   // The provider's limits as a compact suffix for the dropdown option, e.g.

@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM (& OpenRouter) integration for GitHub Copilot & Agents window on self-hosted and remote servers (supports full featureset of vLLM, OpenRouter and Copilot). No subscription, no telemetry, no work content to any third party. Dashboard UI with full statistics of your servers",
-  "version": "1.36.16-rc1",
+  "version": "1.36.16-rc2",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -635,6 +635,12 @@
             "type": "number",
             "default": 15000,
             "markdownDescription": "Polling interval in milliseconds for server metrics. **Default: 15000** (15 seconds)."
+          },
+          "vllm-copilot.statusBar.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the last request in the status bar: the model's glyph (OpenRouter or vLLM) and its generation speed. Hover for that reply's cost, token split and timings, click to open the Dashboard. **Default: on**. The item appears after the first completed request.",
+            "order": 1
           }
         }
       }

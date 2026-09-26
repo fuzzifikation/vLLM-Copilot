@@ -525,6 +525,21 @@ export function getLastRequest(serverUrl: string): LastRequestData | undefined {
   return lastRequest.get(serverUrl);
 }
 
+/**
+ * The freshest last-request record across all servers, or undefined while
+ * nothing has been captured this activation. Backs the status bar chip,
+ * which shows whichever server served the most recent run. Ephemeral like
+ * the per-server getter: `resetUsage` deliberately keeps the map, a reload
+ * empties it.
+ */
+export function getLatestRequest(): LastRequestData | undefined {
+  let latest: LastRequestData | undefined;
+  for (const data of lastRequest.values()) {
+    if (!latest || data.timestamp > latest.timestamp) latest = data;
+  }
+  return latest;
+}
+
 /** Cumulative per-model counts for a server across all-time and today. */
 export function getServerUsage(serverUrl: string): ServerUsage {
   return {
