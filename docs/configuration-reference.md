@@ -554,4 +554,4 @@ The following appear under the **vLLM-Copilot: Utilities** category - maintenanc
 | Command | Description |
 |---------|-------------|
 | **Diagnose Connection** | Deep network diagnostic: compares PowerShell (SChannel) vs Node `fetch` (OpenSSL), checks DNS/TCP, dumps VS Code settings + env vars, builds SChannel cert chain (Windows). Report goes to a dedicated Output channel for copy-pasting |
-| **Clean Copilot Sessions** | Multi-select dialog: pick which workspaces to wipe Copilot sessions from |
+| **Clean Copilot Sessions** | Multi-select dialog: pick which workspaces to permanently wipe Copilot session history from, plus optional checkboxes for Copilot memory |

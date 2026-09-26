@@ -11,6 +11,7 @@ Close the remaining release-hardening gaps in `docs/code-review.md` before the n
 
 ### Fixed
 
+- **Clean Copilot Sessions now actually deletes your conversations.** The command removed the session *list* but not the session *text*: every prompt and reply, plus a full-text search index over them, stayed in Copilot's session database, where anyone holding a copy of that file could search it for any word. It now removes the selected workspaces' rows from that database, the full-text index, and the session folders (transcripts, chat and inline-chat history, debug logs, tool output), then compacts the database so the deleted text leaves the file instead of sitting in freed pages. Pick the workspaces in the same dialog as before. Sessions with no folder open are reachable via the **All global sessions** entry. Two new checkboxes delete Copilot's memory files, which are kept by default; the global one affects every workspace on your machine, so it says so. The summary now distinguishes what was removed from what was merely made unfindable.
 - **First-model setup reaches Agents.** Models added after startup now enable Agent Host access automatically.
 - **Model Settings numeric fields survive a hand-edited value.** A quote character in a numeric field (input tokens, timeouts, retry count) broke the input and rendered wrong. Those values are now escaped like every other field.
 - **The Dashboard no longer prints a dollar sign on a non-dollar rate.** A model priced with a non-USD unit showed `$` in the Pricing row while the totals beneath it showed the real unit.

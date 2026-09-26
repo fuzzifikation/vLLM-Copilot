@@ -223,7 +223,7 @@ The extension merges `.github/copilot-instructions.md`, `AGENTS.md`, and `CLAUDE
 - **Tool call & truncated response recovery.** When vLLM truncates a tool call mid-JSON (`finish_reason: 'length'`), the extension uses `jsonrepair` + `best-effort-json-parser` (the same libraries Copilot's BYOK uses) to recover partial content instead of dropping it to empty `{}`.
 - **Connection diagnostics.** **Test & Refresh Models** verifies servers, lists models, corrects ID mismatches, and checks VS Code network gating. **Diagnose Connection** is a deep report comparing SChannel vs. OpenSSL, DNS/TCP reachability, cert chain inspection, proxy detection, and a VS Code settings dump, with a one-line classification of the failure.
 - **One-click migration.** Upgrading from an older version auto-migrates legacy global server/sampling settings into per-model entries on first launch. One-time, idempotent, no data loss.
-- **Chat session cleanup.** The **Clean Copilot Sessions** command lets you pick which workspaces to wipe when sessions grow stale.
+- **Chat session cleanup.** The **Clean Copilot Sessions** command permanently wipes the selected workspaces' session history, including the conversation text and its full-text index inside Copilot's session catalog, then compacts the database. Two optional checkboxes also delete Copilot's memory files; the global one affects every workspace on the machine. See [copilot-integration.md](copilot-integration.md) for the storage layout it acts on.
 
 ---
 
@@ -256,7 +256,7 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 | **Open Log File** | Open today's debug log. |
 | **Clear Log Files** | Delete all debug logs except the active one. |
 | **Diagnose Connection** | Deep TLS/proxy/DNS/cert diagnostic report (utilities). |
-| **Clean Copilot Sessions** | Wipe stale Copilot sessions across workspaces (utilities). |
+| **Clean Copilot Sessions** | Permanently wipe Copilot session history for the workspaces you pick, including the conversation text in Copilot's session catalog (utilities). |
 
 ---
 

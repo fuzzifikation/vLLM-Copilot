@@ -17,10 +17,13 @@ import { FileLogger } from '../shared/logger.js';
 import { describeError } from '../provider/messageConverter.js';
 import { runDiagnostics, formatReport } from '../ui/diagnostics.js';
 import {
+  clean,
+  cleanGlobalMemory,
+  cleanWorkspaceMemory,
   discoverWorkspaces,
-  cleanWorkspace,
-  SessionPickedItem,
-  WorkspaceEntry,
+  ALL_ID,
+  GLOBAL_ID,
+  type WorkspaceEntry,
 } from '../shared/sessionManager.js';
 import { refreshEngineHeaders } from '../ui/vllmMetrics.js';
 import { updateDeepDiveTitle } from '../ui/deepDiveView.js';
@@ -155,7 +158,22 @@ export function registerClearLogFilesCommand(fileLogger: FileLogger): vscode.Dis
   });
 }
 
-/** Discover and clean Copilot chat sessions across workspaces. */
+// ── Clean Copilot Sessions ──────────────────────────────────────────────────
+
+/** The memory options appended below a separator in the workspace picker. */
+const REPO_MEMORY_OPTION = '__repo_memory__';
+const USER_MEMORY_OPTION = '__user_memory__';
+
+type SessionPick = vscode.QuickPickItem & { id?: string };
+
+/**
+ * Discover and wipe Copilot/VS Code session residue for the chosen workspaces.
+ *
+ * This is a security cleanup, not a disk cleaner: it removes the conversation
+ * text in the Copilot catalog (`session-store.db`) and its full-text index, not
+ * just the session lists. See `shared/sessionManager.ts` for the storage map and
+ * for why the compaction result is reported instead of assumed.
+ */
 export function registerCleanSessionsCommand(
   output: vscode.OutputChannel,
 ): vscode.Disposable {
@@ -173,7 +191,6 @@ export function registerCleanSessionsCommand(
       return;
     }
 
-    // Discovery with progress so the user knows something is happening
     const workspaces = await vscode.window.withProgress<WorkspaceEntry[]>(
       { location: vscode.ProgressLocation.Notification, title: 'Scanning for Copilot sessions...' },
       async () => discoverWorkspaces(),
@@ -184,48 +201,186 @@ export function registerCleanSessionsCommand(
       return;
     }
 
-    const picks: SessionPickedItem[] = workspaces.map(ws => ({
-      label: ws.id === '__global__' ? '🌐 All global sessions' : `📁 ${ws.label}`,
-      description: `${ws.sessions} total (${ws.dbSessions} db, ${ws.fsSessions} files)`,
+    const picks: SessionPick[] = workspaces.map(ws => ({
+      label: ws.id === GLOBAL_ID ? '🌐 All global sessions' : `📁 ${ws.label}`,
+      // Conversations and files are different units and stay separate: adding
+      // 650 files to 41 conversations and calling the sum a "total" reads as
+      // 691 chats, and this is the list someone decides what to delete from.
+      description: `${ws.conversations} conversation(s)${ws.fsSessions > 0 ? `, ${ws.fsSessions} file(s)` : ''}`,
       id: ws.id,
     }));
+    // Memory is opt-in and OFF by default: the base action is already a delete,
+    // and silently widening a destructive command is the behaviour being fixed.
+    picks.push(
+      {
+        kind: vscode.QuickPickItemKind.Separator,
+        label: 'Also delete Copilot memory (optional)',
+      },
+      {
+        label: `$(trash) Repo memory for the selected workspace(s)`,
+        description: 'Copilot notes it wrote FROM those sessions',
+        id: REPO_MEMORY_OPTION,
+      },
+      {
+        label: `$(globe) Global Copilot user memory`,
+        description: 'Machine-wide — affects EVERY workspace, not just the selection',
+        id: USER_MEMORY_OPTION,
+      },
+      {
+        kind: vscode.QuickPickItemKind.Separator,
+        label: 'Nuke everything (careful)',
+      },
+      {
+        label: `$(warning) EVERY conversation on this machine`,
+        description: 'The whole Copilot catalog, every project — cannot be undone',
+        id: ALL_ID,
+      },
+    );
 
-    const selected = await vscode.window.showQuickPick<SessionPickedItem>(picks, {
+    const selected = await vscode.window.showQuickPick<SessionPick>(picks, {
       canPickMany: true,
       ignoreFocusOut: true,
       placeHolder: 'Select workspaces to clean (multi-select allowed)',
     });
     if (!selected?.length) return;
 
-    const confirm = await vscode.window.showWarningMessage(
-      `Delete ${selected.length} workspace${selected.length === 1 ? '' : 's'}?\n\nRestart VS Code after for changes to take effect.`,
-      { modal: true },
-      'Delete'
-    );
-    if (confirm !== 'Delete') return;
+    const chosen = selected.filter((s): s is SessionPick & { id: string } => !!s.id);
+    const targets = chosen.filter((s) => !isMemoryOption(s.id));
+    const repoMemory = chosen.some((s) => s.id === REPO_MEMORY_OPTION);
+    const userMemory = chosen.some((s) => s.id === USER_MEMORY_OPTION);
+    const all = chosen.some((s) => s.id === ALL_ID);
+    if (targets.length === 0 && !repoMemory && !userMemory) return;
 
-    let totalKeys = 0;
-    let totalChatDirs = 0;
-    let totalChatSessions = 0;
-    let totalChatEditing = 0;
-    let dbErrors = 0;
-
-    // Use id directly — no brittle label matching
-    for (const item of selected) {
-      const result = await cleanWorkspace(item.id);
-      totalKeys += result.dbKeysRemoved > 0 ? result.dbKeysRemoved : 0;
-      totalChatDirs += result.chatDirRemoved ? 1 : 0;
-      totalChatSessions += result.chatSessionsRemoved ? 1 : 0;
-      totalChatEditing += result.chatEditingSessionsRemoved ? 1 : 0;
-      if (result.dbError) dbErrors++;
+    // "Repo memory for the selected workspace(s)" with no workspace selected
+    // deletes nothing. Saying so beats confirming "repo memory for 0
+    // workspace(s)" and then reporting a success that never happened.
+    if (repoMemory && targets.length === 0 && !all && !userMemory) {
+      vscode.window.showWarningMessage(
+        'Select at least one workspace to delete repo memory for, or pick the global user-memory option instead.',
+        'OK'
+      );
+      return;
     }
 
-    const msg = dbErrors > 0
-      ? `Cleaned ${totalKeys} key(s), removed ${totalChatDirs} chat dir(s), ${totalChatSessions} chatSessions dir(s), ${totalChatEditing} chatEditingSessions dir(s).\n\n⚠ ${dbErrors} workspace(s) had database errors - key removal may be incomplete. Close all Copilot chat sessions and retry.\n\nRestart VS Code for changes to take effect.`
-      : `Cleaned ${totalKeys} key(s), removed ${totalChatDirs} chat dir(s), ${totalChatSessions} chatSessions dir(s), ${totalChatEditing} chatEditingSessions dir(s).\n\nRestart VS Code for changes to take effect.`;
+    if (!(await confirmClean(output, workspaces, targets, repoMemory, userMemory, all))) return;
 
-    vscode.window.showInformationMessage(msg, 'OK');
+    const workspaceTargets = workspaces.filter(ws => targets.some(t => t.id === ws.id));
+    const outcome = await clean({
+      global: workspaceTargets.some(ws => ws.id === GLOBAL_ID),
+      all,
+      workspaces: workspaceTargets
+        .filter(ws => ws.id !== GLOBAL_ID)
+        .map(ws => ({ id: ws.id, folders: ws.folders })),
+    });
+
+    if (repoMemory) {
+      for (const ws of workspaceTargets.filter(w => w.id !== GLOBAL_ID)) {
+        await cleanWorkspaceMemory(ws.id);
+      }
+    }
+    if (userMemory) {
+      await cleanGlobalMemory();
+    }
+
+    reportClean(repoMemory, userMemory, all, outcome);
   });
+}
+
+function isMemoryOption(id: string): boolean {
+  return id === REPO_MEMORY_OPTION || id === USER_MEMORY_OPTION;
+}
+
+/**
+ * The confirm dialog states exactly what will be removed, because the options
+ * reach outside the selection: global user memory wipes memory for workspaces
+ * that are not on screen, and the nuke entry wipes every project's catalog.
+ */
+async function confirmClean(
+  output: vscode.OutputChannel,
+  all: WorkspaceEntry[],
+  targets: SessionPick[],
+  repoMemory: boolean,
+  userMemory: boolean,
+  nuke: boolean,
+): Promise<boolean> {
+  const lines: string[] = [];
+  const folders = all.filter(ws => targets.some(t => t.id === ws.id) && ws.id !== GLOBAL_ID);
+  if (nuke) {
+    lines.push('EVERY Copilot conversation on this machine - all projects, all workspaces');
+  } else {
+    if (folders.length > 0) {
+      lines.push(`Session history for ${folders.length} workspace(s): ${folders.map(f => f.label).join(', ')}`);
+    }
+    if (targets.some(t => t.id === GLOBAL_ID)) {
+      lines.push('Global sessions (the global session list, empty-window chats, and history with no folder)');
+    }
+  }
+  if (repoMemory) lines.push(`Copilot repo memory for ${folders.length} workspace(s)`);
+  if (userMemory) lines.push('Copilot GLOBAL user memory - affects EVERY workspace on this machine');
+
+  const confirm = await vscode.window.showWarningMessage(
+    `This permanently deletes:\n\n${lines.map(l => `  - ${l}`).join('\n')}\n\nCannot be undone. Restart VS Code afterwards.`,
+    { modal: true },
+    'Delete'
+  );
+  output.appendLine(`[INFO] Clean confirmed: ${confirm === 'Delete' ? 'approved' : 'cancelled'}.`);
+  return confirm === 'Delete';
+}
+
+/**
+ * Report what was removed and, just as importantly, what was not. `removed` and
+ * `not compacted` are different claims: the first means the content is gone, the
+ * second means it is unfindable but its bytes survive until VS Code closes.
+ */
+function reportClean(
+  repoMemory: boolean,
+  userMemory: boolean,
+  nuke: boolean,
+  outcome: Awaited<ReturnType<typeof clean>>,
+): void {
+  const removed: string[] = [];
+  if (outcome.removedAgentSessions > 0) removed.push(`${outcome.removedAgentSessions} conversation(s)`);
+  if (outcome.removedDirs > 0) removed.push(`${outcome.removedDirs} session director(ies)`);
+  if (outcome.removedKeys > 0) removed.push(`${outcome.removedKeys} session index key(s)`);
+
+  const warnings: string[] = [];
+  // "Removed 0 conversations" on its own reads like a successful run that found
+  // nothing to do. An explicit nothing-found line is the honest version, and it
+  // is the one case where the user most needs to know the wipe did not happen.
+  if (removed.length === 0 && !outcome.dbError && !outcome.agentStoreError) {
+    warnings.push('Nothing was found to delete for this selection - the storage has already been cleaned.');
+  }
+  if (outcome.dbError || outcome.agentStoreError) {
+    warnings.push('Some databases could not be written - see the Output channel.');
+  }
+  // Gated on actual deletions: a memory-only run never opens the catalog, so it
+  // has nothing to compact. Warning about it would report a compaction failure
+  // for a file this run never touched.
+  if (!outcome.compacted && outcome.removedAgentSessions > 0) {
+    warnings.push(
+      'Deleted sessions are no longer findable, but their bytes remain in the ' +
+      'Copilot database file until VS Code closes and rewrites it. ' +
+      'Close VS Code fully to finish the wipe.',
+    );
+  }
+  if (!repoMemory && !userMemory) {
+    warnings.push(
+      'Copilot memory was NOT deleted. It keeps notes it wrote from these sessions, ' +
+      'plus machine-wide user preferences. To remove them run "Clear All Memory Files" ' +
+      '- but that deletes user memory for every workspace, and repo memory only for the ' +
+      'workspace you run it in.',
+    );
+  }
+
+  const memory = [
+    `Repo memory: ${repoMemory ? 'DELETED for the selected workspace(s)' : 'kept'}.`,
+    `Global user memory: ${userMemory ? 'DELETED for every workspace' : 'kept'}.`,
+  ].join(' ');
+
+  vscode.window.showInformationMessage(
+    `${nuke ? 'Nuked the Copilot session catalog. ' : ''}${removed.length > 0 ? `Removed ${removed.join(', ')}.` : 'Nothing removed.'}\n\n${memory}${warnings.length ? '\n\n' + warnings.join('\n\n') : ''}`,
+    'OK'
+  );
 }
 
 /**

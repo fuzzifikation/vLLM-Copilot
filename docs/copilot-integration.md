@@ -102,18 +102,28 @@ Historical thinking-preservation evidence is recorded in `docs/`; the upstream-b
 
 ## Where Copilot Stores Sessions (Disk Layout)
 
-**Discovery date:** 2026-06-15  
-**Method:** Inspected `state.vscdb` SQLite files via `tmp/check_sessions.py` and `tmp/inspect_sessions2.py`. Implemented in `src/sessionManager.ts`.
+**Re-verified 2026-09-26** against a running VS Code 1.139.1 + Copilot Chat 0.67.0, by reading the live `workbench.desktop.main.js`, the Copilot extension bundle, and the on-disk databases. The layout below is what the **Clean Copilot Sessions** command in `src/shared/sessionManager.ts` acts on. The previous version of this section described the 1.13x layout and is wrong about where the conversation text lives.
 
-### Architecture
+### Where the conversation text actually is
+
+The session *index* is a few MB. The *text* — every prompt and reply — is in one global file:
 
 | Location | Windows path | What's stored |
 |----------|--------------|---------------|
-| **Global DB** | `%APPDATA%/Code/User/globalStorage/state.vscdb` | Global sessions (panel/global context chats) + all user preferences |
-| **Per-workspace DB** | `%APPDATA%/Code/User/workspaceStorage/{hash}/state.vscdb` | Workspace-specific sessions + state |
-| **Filesystem** | `%APPDATA%/Code/User/workspaceStorage/{hash}/GitHub.copilot-chat/` | Transcripts (`.jsonl`), debug logs, `workspace-chunks.db` |
+| **Session index (global)** | `%APPDATA%/Code/User/globalStorage/state.vscdb` | `chat.ChatSessionStore.index` — panel/empty-window sessions |
+| **Session index (workspace)** | `%APPDATA%/Code/User/workspaceStorage/{hash}/state.vscdb` | Same key, scoped to one workspace |
+| **Conversation text (global)** | `%APPDATA%/Code/User/globalStorage/github.copilot-chat/session-store.db` | `turns.user_message` / `turns.assistant_response` — **the actual prompts and replies** |
+| **Full-text index** | same file, table `search_index` | fts5 copy of the same text, keyed by `session_id UNINDEXED` |
+| **Transcripts (workspace)** | `workspaceStorage/{hash}/GitHub.copilot-chat/transcripts/*.jsonl` | Full session transcripts |
+| **Chat sessions (workspace)** | `workspaceStorage/{hash}/chatSessions/*.json` | Per-session chat files |
+| **Inline chat (workspace)** | `workspaceStorage/{hash}/chatEditingSessions/` | Inline chat / edit history |
+| **Tool output (workspace)** | `workspaceStorage/{hash}/GitHub.copilot-chat/chat-session-resources/` | Blobs referenced by `session_files.file_path` |
+| **Debug logs (workspace)** | `workspaceStorage/{hash}/GitHub.copilot-chat/debug-logs/` | Session ids, tool names, spans |
+| **Memory, user (global)** | `globalStorage/github.copilot-chat/memory-tool/memories/` | `preferences.md` — read by **every** workspace |
+| **Memory, repo (workspace)** | `workspaceStorage/{hash}/GitHub.copilot-chat/memory-tool/memories/repo/*.md` | Notes Copilot wrote *from* that repo's sessions |
+| **Empty-window chats** | `globalStorage/emptyWindowChatSessions/*.jsonl` | Sessions created in windows with no folder open |
 
-macOS: `~/Library/Application Support/Code/User/...`  
+macOS: `~/Library/Application Support/Code/User/...`
 Linux: `~/.config/Code/User/...`
 
 The `{hash}` is derived from the workspace folder path. The mapping lives in `workspace.json`:
@@ -122,46 +132,61 @@ The `{hash}` is derived from the workspace folder path. The mapping lives in `wo
 ```
 Multi-root workspaces use a `folders` array instead of a single `folder` string.
 
-### Session Index Format
+### The session catalog schema (`session-store.db`)
 
-Both global and per-workspace DBs store `chat.ChatSessionStore.index` as a single key in `ItemTable`:
-
-```json
-{
-  "version": 1,
-  "entries": {
-    "{uuid}": {
-      "sessionId": "{uuid}",
-      "title": "Check tool calling mime type",
-      "lastMessageDate": 1781548961884,
-      "timing": { "created": ..., "lastRequestStarted": ... },
-      "initialLocation": "panel",
-      "hasPendingEdits": false,
-      "isEmpty": false,
-      "permissionLevel": "default"
-    }
-  }
-}
+```sql
+CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT, repository TEXT, host_type TEXT, ...);
+CREATE TABLE turns (id INTEGER PRIMARY KEY, session_id TEXT REFERENCES sessions(id), turn_index INTEGER,
+                    user_message TEXT, assistant_response TEXT, ...);
+CREATE TABLE session_files (id INTEGER PRIMARY KEY, session_id TEXT REFERENCES sessions(id), file_path TEXT, ...);
+CREATE TABLE session_refs  (id INTEGER PRIMARY KEY, session_id TEXT REFERENCES sessions(id), ref_type TEXT, ref_value TEXT, ...);
+CREATE TABLE checkpoints   (id INTEGER PRIMARY KEY, session_id TEXT REFERENCES sessions(id), ...);
+CREATE VIRTUAL TABLE search_index USING fts5(content, session_id UNINDEXED, source_type UNINDEXED, source_id UNINDEXED);
 ```
 
-**Key insight:** Sessions have **no workspace identifier**. The only link between a session and its workspace is that its transcript file (`{uuid}.jsonl`) exists under that workspace's `GitHub.copilot-chat/transcripts/` directory.
+Three facts the wipe depends on:
 
-### Related Keys in ItemTable
+1. **No foreign keys are declared** (`REFERENCES` is documentation, not enforcement — `PRAGMA foreign_keys` is off), so nothing cascades. Every child table needs an explicit `DELETE`.
+2. **`search_index` has no triggers.** Copilot maintains it in application code. A `DELETE FROM turns` leaves the text greppable via `SELECT * FROM search_index WHERE search_index MATCH 'anything'`.
+3. **`sessions.cwd` is a folder path, not a workspace-storage id** (`g:\vLLM-Copilot`), so the picker resolves `workspace.json` → folder → `cwd`. The two disagree on separators and case, so both sides are folded through `normalizeCwd()` before they are joined. A **multi-root** workspace resolves to EVERY root, because the catalog keys rows by folder: taking only the first root would leave the other roots' conversations behind with no entry that could ever reach them. Remote workspaces (`vscode-remote://…`) have no local path to reconstruct, so they stay listed for their on-disk residue but are never matched against `cwd`.
 
-The following keys hold Copilot session state and are cleaned by the **Clean Copilot Sessions** command:
+### How sessions are attributed to a workspace
+
+The `chat.ChatSessionStore.index` entries carry **no workspace identifier**; they are scoped by living in a particular workspace's `state.vscdb`. Catalog rows are attributed by `sessions.cwd`. Sessions created in a window with no folder open have `cwd IS NULL` and are only reachable through the global picker entry.
+
+The two global-ish entries in the picker are deliberately distinct, because collapsing them is the worst label bug available in a delete command:
+
+| Entry | Scope |
+|---|---|
+| **All global sessions** | the global `state.vscdb` index, `emptyWindowChatSessions/`, and catalog rows with `cwd IS NULL` |
+| **EVERY conversation on this machine** | the whole catalog — every session in every project |
+
+### Failure behaviour
+
+The catalog delete runs in a single `BEGIN IMMEDIATE` transaction covering the parent and every child table, driven by ONE `where` clause so the two statements cannot disagree about scope. If any table has been renamed or dropped, the run rolls back, removes nothing, and reports `agentStoreError` — a partial delete that leaves `sessions` rows whose `turns` are gone (or, worse, live turns whose session is gone) would be a session that is "deleted" but still holds its text.
+
+Afterwards the file is `VACUUM`ed so the freed pages leave the main database file. This can fail while Copilot holds the file open; the summary then says the sessions are no longer findable but that their bytes remain until VS Code closes. There is no separate WAL-truncation step — `VACUUM` implies a checkpoint, so a second flag would have been a second, redundant claim.
+
+### Native VS Code deletion, and why we do not delegate
+
+VS Code ships **`workbench.action.chat.clearHistory`** ("Delete All Local Workspace Chat Sessions", Command Palette → *Chat Agent Sessions*). It is complete for the current workspace: it clears widgets and calls `chatSessionStore.clearAllSessions()`, which deletes both the index entry and the `chatSessions/` files.
+
+It cannot be delegated to for a multi-workspace selection, for two independent reasons found in the 1.139.1 source:
+
+- `getIndexStorageScope()` reads `workspaceContextService.getWorkspace()` with no argument, and `clearAllSessions()` takes no target. The store is bound to the current window; `internalDeleteSession(id)` early-returns for an id that is not in the current workspace's index.
+- Its confirm dialog counts sessions from the `agentSessions` service (the global catalog) while the deletion runs against the workspace-bound `ChatSessionStore` — the number in the dialog and the rows removed come from different sources.
+
+Copilot also ships `github.copilot.chat.tools.memory.clearMemories` for memory. We do not delegate to it either, because its scope does not match a selection: it deletes **user-level** memory for *every* workspace on the machine and **repo** memory only for the workspace you are currently in. The Clean command therefore deletes memory itself, per selected workspace, and labels the global option's real blast radius.
+
+### Related keys in `ItemTable`
+
+Only one of these still exists in VS Code 1.139 (verified against a live `state.vscdb` with 56 chat/agent/session-ish keys present):
 
 ```
-chat.ChatSessionStore.index
-chat.terminalSessions
-agentSessions.state.cache
-agentSessions.model.cache
-agentSessions.readDateBaseline2
-memento/interactive-session
-memento/interactive-session-view-copilot
-memento/chat-todo-list
-chat.untitledInputState
-terminalChat.toolSessionMappings
+chat.ChatSessionStore.index   ← the only surviving one; all others are gone
 ```
+
+The remaining nine (`chat.terminalSessions`, `agentSessions.state.cache`, `memento/interactive-session`, …) were removed by Copilot. The command no longer carries a key list for exactly this reason.
 
 ## Implications for our implementation
 

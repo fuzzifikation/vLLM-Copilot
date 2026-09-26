@@ -302,7 +302,17 @@ Each preset ends with `{ "include": "prompt-replacements-common.json" }` - the s
 
 ### Chat Session Cleanup
 
-Copilot accumulates session data across workspaces. **Clean Copilot Sessions** lets you pick which workspaces to wipe when sessions grow stale. Access via `Ctrl+Shift+P` → **Clean Copilot Sessions** (under Utilities).
+**Clean Copilot Sessions** (`Ctrl+Shift+P` → Utilities) is a **security cleanup**, not a disk cleaner. Pick the workspaces you want and it permanently removes their session history:
+
+- the session lists in each workspace's `state.vscdb`, and `chatSessions/`, `chatEditingSessions/`, `transcripts/`, `debug-logs/`, `chat-session-resources/`
+- the workspace's rows in Copilot's session catalog — **the actual prompts and replies** — plus the full-text search index over them, selected via the workspace folder
+- the database is then compacted, so the deleted text leaves the file rather than sitting in freed pages
+
+Restart VS Code afterwards. A workspace without a folder (no `cwd`) is only reachable through the **All global sessions** entry, which covers the global session list, empty-window chats, and history with no folder. Multi-root workspaces are matched on every root they contain, so one selection clears all of them. A separate, explicitly-labelled entry nukes the entire Copilot catalog across every project at once.
+
+Deletion is atomic: if Copilot's storage has changed shape underneath us, the run rolls back and says so rather than half-removing anything.
+
+**Copilot memory is not deleted by default.** Two extra checkboxes in the picker let you opt in: repo memory for the selected workspaces, and global user memory. The second reaches **every workspace on the machine**, not just your selection. Copilot also ships its own *Clear All Memory Files* command — note that it deletes user-level memory everywhere and repo memory only for the workspace you run it in.
 
 ---
 
