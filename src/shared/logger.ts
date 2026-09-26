@@ -310,3 +310,41 @@ function escape(str: string): string {
     .replace(/\r/g, '\\r')
     .replace(/\t/g, '\\t');
 }
+
+
+/** Open the active log file in an editor. */
+export function registerOpenLogFileCommand(fileLogger: FileLogger): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.openLogFile', async () => {
+    const logPath = fileLogger.getLogFilePath();
+    if (!logPath) {
+      vscode.window.showInformationMessage('File logging is not enabled. Set `vllm-copilot.enableFileLogging` to `true` in Settings.');
+      return;
+    }
+    try {
+      const doc = await vscode.workspace.openTextDocument(logPath);
+      await vscode.window.showTextDocument(doc);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      vscode.window.showErrorMessage(`Could not open log file at: ${logPath} - ${reason}`);
+    }
+  });
+}
+
+/** Delete all log files except the currently active one. */
+export function registerClearLogFilesCommand(fileLogger: FileLogger): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.clearLogFiles', async () => {
+    const answer = await vscode.window.showWarningMessage(
+      'This will delete all vLLM-Copilot log files (except the currently active one). Continue?',
+      { modal: true },
+      'Delete'
+    );
+    if (answer !== 'Delete') return;
+
+    const deleted = await fileLogger.clearLogFiles();
+    if (deleted > 0) {
+      vscode.window.showInformationMessage(`Deleted ${deleted} log file(s).`);
+    } else {
+      vscode.window.showInformationMessage('No log files found to delete.');
+    }
+  });
+}

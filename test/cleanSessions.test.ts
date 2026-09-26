@@ -12,7 +12,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 
-import { registerCleanSessionsCommand } from '../src/commands/commands.js';
+import { registerCleanSessionsCommand } from '../src/commands/cleanSessions.js';
 import { AGENT_TABLES_BY_SESSION_ID, clean, discoverWorkspaces, maintainAgentStore, normalizeCwd, setSessionManagerOutput } from '../src/shared/sessionManager.js';
 
 vi.mock('fs/promises', async importOriginal => {

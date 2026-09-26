@@ -25,6 +25,7 @@ import * as vscode from 'vscode';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describeError, TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
+import { getConfig, buildEndpoint, resolveServerConfig } from '../state/config.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -922,4 +923,69 @@ export function formatReport(r: DiagnosticReport): string {
   lines.push(`CONCLUSION: ${r.conclusion}`);
   lines.push('---');
   return lines.join('\n');
+}
+
+
+/**
+ * Diagnose connection issues for a single model.
+ *
+ * Runs a deep diagnostic (SChannel vs Node fetch, DNS, TCP, cert chain) and
+ * writes the report to the Output channel. Can also be triggered on-demand —
+ * even when Test & Refresh passes — for cases where Copilot chat fails but the
+ * basic test succeeds.
+ */
+export function registerDiagnoseConnectionCommand(
+  outputChannel: vscode.OutputChannel,
+): vscode.Disposable {
+  return vscode.commands.registerCommand('vllm-copilot.diagnoseConnection', async () => {
+    const config = await getConfig();
+    const models = config.models;
+
+    if (models.length === 0) {
+      vscode.window.showInformationMessage(
+        'No models are configured yet. Add a model first to diagnose its connection.'
+      );
+      return;
+    }
+
+    // Let the user pick which model's server to diagnose.
+    const items = models.map(m => ({
+      label: m.displayName || m.id || '(unnamed)',
+      description: resolveServerConfig(m, config.servers)?.serverUrl || 'no server',
+      model: m,
+    }));
+
+    const picked = await vscode.window.showQuickPick(items, {
+      ignoreFocusOut: true,
+      placeHolder: 'Select a model to diagnose',
+    });
+    if (!picked) return;
+
+    // Resolve the model's canonical URL and request headers so the diagnostic
+    // tests the same authenticated, normalized request the extension makes —
+    // not a bare GET (which would 401 on auth-required servers) and not a raw
+    // URL that still carries a redundant `/v1` suffix.
+    const resolved = resolveServerConfig(picked.model, config.servers);
+    if (!resolved) {
+      vscode.window.showWarningMessage(
+        `Model "${picked.label}" references server "${picked.model.server}", which is not registered. Add the server first.`
+      );
+      return;
+    }
+    const { serverUrl: canonicalUrl, requestHeaders } = resolved;
+    const url = buildEndpoint(canonicalUrl, 'v1/models');
+    outputChannel.show(true);
+    outputChannel.appendLine('[INFO] Running diagnostics…');
+
+    try {
+      const report = await runDiagnostics(url, requestHeaders);
+      outputChannel.appendLine(formatReport(report));
+      outputChannel.appendLine('');
+      outputChannel.appendLine(
+        'Copy this report (right-click → Copy) and share it when reporting issues.'
+      );
+    } catch (err) {
+      outputChannel.appendLine(`[ERROR] Diagnostics failed unexpectedly: ${describeError(err)}`);
+    }
+  });
 }

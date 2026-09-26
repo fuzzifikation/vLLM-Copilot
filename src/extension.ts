@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from './provider/provider.js';
 import { getConfig, validateConfig } from './state/config.js';
-import { FileLogger } from './shared/logger.js';
+import { FileLogger, registerOpenLogFileCommand, registerClearLogFilesCommand } from './shared/logger.js';
 import { registerAddServerModelCommand, registerAddServerCommand } from './commands/addServerFlow.js';
 import { registerAutoConfigureModelCommand } from './commands/autoConfigureFlow.js';
 import {
@@ -16,27 +16,24 @@ import { dedupeServerIds } from './state/serverRegistry.js';
 import { resetOpenRouterCaches } from './backends/openRouter.js';
 import { registerSetPollIntervalCommand } from './ui/vllmMetrics.js';
 import {
-  registerDiagnoseConnectionCommand,
-  registerOpenLogFileCommand,
-  registerClearLogFilesCommand,
-  registerCleanSessionsCommand,
   registerUpdateServerAuthCommand,
   registerRenameServerCommand,
   registerMoveServerCommand,
   registerMoveServerStepCommands,
   registerRemoveServerCommand,
   registerRemoveModelCommand,
-  registerOpenDashboardWebCommand,
   registerResetUsageCommand,
   registerConfigureCostCommand,
 } from './commands/commands.js';
+import { registerCleanSessionsCommand } from './commands/cleanSessions.js';
 import { registerTestAndRefreshModelsCommand } from './commands/testAndRefresh.js';
 import { registerSetModelPersonalityCommand } from './commands/personality.js';
+import { registerDiagnoseConnectionCommand } from './ui/diagnostics.js';
 import { setExtensionVersion } from './ui/diagnostics.js';
 import { initUsageStore } from './usage/usageStore.js';
 import { maybeOfferOutputLengthMigration } from './migrations/outputLengthMigration.js';
 import { maybeRunServerRegistryMigration } from './migrations/serverRegistryMigration.js';
-import { DashboardTreeProvider, DashboardDndController } from './ui/dashboard.js';
+import { DashboardTreeProvider, DashboardDndController, registerOpenDashboardWebCommand } from './ui/dashboard.js';
 import { ServerSettingsViewProvider } from './ui/serverSettingsView.js';
 import { registerOpenDeepDiveCommand } from './ui/deepDiveView.js';
 import { registerOpenModelSelectorCommand } from './ui/modelSelectorView.js';
