@@ -478,19 +478,21 @@ function normalizeOpenRouterModel(
  * only when it carries a `data` ARRAY; entries without a string `id` are
  * dropped (they can never match an exact id, and keeping them would
  * misreport them as "model not found"). Returns `undefined` for any other
- * shape — a protocol/proxy failure, never an empty model list. Shared with
- * the metrics engine's parse so the two views of one response can never
- * drift (this rule used to be sync'd by comment).
+ * shape — a protocol/proxy failure, never an empty model list.
  *
- * Generic so each consumer keeps its own entry type (`OpenRouterModelData`
- * for lookups, plain records for the metrics raw view) without casts.
+ * Module-private: the no-drift rule lives UPSTREAM, not here - the fetch
+ * below runs ONE fetch, ONE parse, ONE snapshot every consumer shares, so
+ * there is no second view of the payload to keep in sync. (The former
+ * "shared with the metrics engine" docstring named a consumer grep
+ * disproves: the engine consumes the already-parsed array. Round 10 PF-1
+ * deleted the lie along with the generic that served the phantom.)
  */
-export function parseOpenRouterCatalogData<T = OpenRouterModelData>(payload: unknown): T[] | undefined {
+function parseOpenRouterCatalogData(payload: unknown): OpenRouterModelData[] | undefined {
   const data = (payload as { data?: unknown })?.data;
   if (!Array.isArray(data)) {
     return undefined;
   }
-  return data.filter((m): m is T =>
+  return data.filter((m): m is OpenRouterModelData =>
     !!m && typeof m === 'object' && typeof (m as { id?: unknown }).id === 'string');
 }
 

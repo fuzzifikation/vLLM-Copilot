@@ -1008,17 +1008,16 @@ async function memoryDirMayExist(dirPath: string): Promise<boolean> {
  * — the wipe reported the workspace as cleared while its text stayed in the
  * database.
  *
- * Exported for testing, the same as `userDataRootFromGlobalStorage`: the URI
- * decoding is the kind of thing that regresses silently, and a failure here
- * under-deletes rather than throwing.
+ * Exported because the URI decoding is the kind of thing that regresses
+ * silently and a failure here under-deletes rather than throwing. Round 10
+ * PF-3: `discoverWorkspaces` consumes `unresolved` (surfaced as
+ * `unresolvedFolders`) and the folder-decoding tests drive THIS function -
+ * the old `readWorkspaceFolders` wrapper threw the flag away and had no
+ * production caller.
  */
 type WorkspaceFolderResolution = { folders: string[]; unresolved: boolean };
 
-export async function readWorkspaceFolders(wsId: string): Promise<string[]> {
-  return (await resolveWorkspaceFolders(wsId)).folders;
-}
-
-async function resolveWorkspaceFolders(wsId: string): Promise<WorkspaceFolderResolution> {
+export async function resolveWorkspaceFolders(wsId: string): Promise<WorkspaceFolderResolution> {
   try {
     const data = JSON.parse(
       await fs.readFile(path.join(workspaceStorageRoot(), wsId, 'workspace.json'), 'utf-8'),

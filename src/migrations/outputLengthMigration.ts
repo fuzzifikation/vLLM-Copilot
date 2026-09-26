@@ -35,7 +35,7 @@ import { patchModelConfig, readModels } from '../state/configStore.js';
 const MIGRATION_FLAG = 'vllmCopilot.outputLengthMigration.v1';
 
 /** Patch payload for one model, computed at plan time so apply is a dumb loop. */
-export interface OutputLengthProposal {
+interface OutputLengthProposal {
   /** Config entry identity (patch lookup key). */
   id: string;
   server: string;
@@ -82,8 +82,12 @@ function stripModeMaxTokens(
  * Entries that already hold a vector, or for which no honest menu can be
  * built, are skipped silently. Malformed entries (no id / no server) are
  * skipped — the store would refuse them anyway.
+ *
+ * Module-private (Round 10 P A-1): the ONLY production customer is
+ * {@link maybeOfferOutputLengthMigration} below, and the tests drive that
+ * offer end to end - settings-writer payloads included.
  */
-export function planOutputLengthMigration(
+function planOutputLengthMigration(
   models: readonly ModelConfig[],
   presets: readonly ModelPreset[]
 ): OutputLengthProposal[] {

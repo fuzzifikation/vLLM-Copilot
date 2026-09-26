@@ -178,19 +178,6 @@ export async function getBundledPresetBasenames(context: vscode.ExtensionContext
 }
 
 /**
- * meta.name → bundled basename, from this machine's copies (seeded global
- * folder first, bundled dir as fallback before activation seeding ran).
- * A name reference in config resolves through THIS map, so it can only ever
- * select a shipped preset — a user-dropped twin wearing the same meta.name
- * cannot hijack the reference.
- */
-export async function getBundledPresetNameToBasename(
-  context: vscode.ExtensionContext
-): Promise<Map<string, string>> {
-  return (await readPresetIndex(context)).nameToBasename;
-}
-
-/**
  * Basename of a stored replacements path WITHOUT `path.basename`: the stored
  * string may name a path from ANOTHER OS (Settings Sync, a carried-over
  * workspace) and `path` splits by the CURRENT platform only. Splitting on
@@ -241,7 +228,11 @@ export async function resolveModelReplacements(
 ): Promise<ResolvedReplacements | null> {
   const name = (model.personality || '').trim();
   if (context && name) {
-    const base = (await getBundledPresetNameToBasename(context)).get(name);
+    // meta.name resolves ONLY through this machine's preset index (seeded
+    // global folder first, bundled dir as fallback): a name reference can
+    // select a shipped preset and nothing else - a user-dropped twin
+    // wearing the same meta.name cannot hijack the reference.
+    const base = (await readPresetIndex(context)).nameToBasename.get(name);
     if (base) {
       for (const candidate of [
         path.join(getGlobalPersonalitiesDir(context), base),

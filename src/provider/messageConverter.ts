@@ -221,10 +221,7 @@ function extractToolResultContent(part: vscode.LanguageModelToolResultPart): str
  * caller can fall back to `{}` (matching BYOK). Returns `{}` for empty/absent
  * args (legitimate empty-call case).
  */
-export function parseToolCallArgs(
-  toolCall: FinalizedToolCall,
-  onUnparseable?: (toolName: string, raw: string) => void
-): object | null {
+export function parseToolCallArgs(toolCall: FinalizedToolCall): object | null {
   if (!toolCall.arguments || toolCall.arguments === '{}') return {};
 
   try {
@@ -253,8 +250,7 @@ export function parseToolCallArgs(
     // fall through to unparseable
   }
 
-  onUnparseable?.(toolCall.name, toolCall.arguments);
-  return null; // unparseable — caller should fall back to {}
+  return null; // unparseable — the caller warns and falls back to {}
 }
 
 /**

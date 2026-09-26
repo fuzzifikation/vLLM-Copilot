@@ -8,7 +8,7 @@ import {
   AGENT_TABLES_BY_SESSION_ID,
   discoverWorkspaces,
   normalizeCwd,
-  readWorkspaceFolders,
+  resolveWorkspaceFolders,
   setSessionManagerOutput,
   unhandledSessionKeyedTables,
   userDataRootFromGlobalStorage,
@@ -157,7 +157,7 @@ describe('Copilot catalog delete coverage', () => {
  * every UNC path, and a saved `.code-workspace` pointer was never followed at
  * all (three such entries sat in a live profile with zero resolvable folders).
  */
-describe('readWorkspaceFolders', () => {
+describe('resolveWorkspaceFolders', () => {
   /** Point the module at a throwaway user-data root and return its path. */
   function fakeProfile(): string {
     const root = mkdtempSync(path.join(tmpdir(), 'vllm-copilot-ws-'));
@@ -180,12 +180,13 @@ describe('readWorkspaceFolders', () => {
     const root = fakeProfile();
     writeWorkspaceJson(root, 'posix', { folder: 'file:///home/me/project' });
 
-    return readWorkspaceFolders('posix').then(folders => {
+    return resolveWorkspaceFolders('posix').then(({ folders, unresolved }) => {
       expect(folders).toHaveLength(1);
       // The old decoder produced `home/me/project`, which matches no stored
       // cwd. The separator is what makes it absolute.
       expect(normalizeCwd(folders[0]).startsWith('/')).toBe(true);
       expect(folders[0]).toContain('home/me/project');
+      expect(unresolved).toBe(false);
     });
   });
 
@@ -198,9 +199,10 @@ describe('readWorkspaceFolders', () => {
     if (!drive) return;
     writeWorkspaceJson(root, 'drive', { folder: 'file:///g%3A/JitterPaper' });
 
-    return readWorkspaceFolders('drive').then(folders => {
+    return resolveWorkspaceFolders('drive').then(({ folders, unresolved }) => {
       expect(folders).toHaveLength(1);
       expect(normalizeCwd(folders[0])).toBe(normalizeCwd('g:\\JitterPaper'));
+      expect(unresolved).toBe(false);
     });
   });
 
@@ -208,7 +210,8 @@ describe('readWorkspaceFolders', () => {
     const root = fakeProfile();
     writeWorkspaceJson(root, 'unc', { folder: 'file://server/share/project' });
 
-    return readWorkspaceFolders('unc').then(folders => {
+    return resolveWorkspaceFolders('unc').then(({ folders, unresolved }) => {
+      expect(unresolved).toBe(process.platform !== 'win32');
       if (process.platform === 'win32') {
         // `//server/share/project`, not the relative-looking `server/share/project`.
         expect(normalizeCwd(folders[0]).startsWith('//')).toBe(true);
@@ -242,9 +245,10 @@ describe('readWorkspaceFolders', () => {
       workspace: `file:///${wsFile.replace(/\\/g, '/').replace(/^\//, '')}`,
     });
 
-    return readWorkspaceFolders('saved').then(folders => {
+    return resolveWorkspaceFolders('saved').then(({ folders, unresolved }) => {
       expect(folders).toHaveLength(1);
       expect(folders[0]).toBe(path.resolve(wsFileDir, 'sub'));
+      expect(unresolved).toBe(false);
     });
   });
 
@@ -278,8 +282,12 @@ describe('readWorkspaceFolders', () => {
     const root = fakeProfile();
     writeWorkspaceJson(root, 'remote', { folder: 'vscode-remote://ssh-remote+box/home/me/project' });
 
-    return readWorkspaceFolders('remote').then(folders => {
+    return resolveWorkspaceFolders('remote').then(({ folders, unresolved }) => {
       expect(folders).toEqual([]);
+      // The flag the old wrapper threw away: a remote-only workspace must
+      // be reported unattributable, not merely folder-less, or the wipe
+      // claims a scope it cannot reach.
+      expect(unresolved).toBe(true);
     });
   });
 });

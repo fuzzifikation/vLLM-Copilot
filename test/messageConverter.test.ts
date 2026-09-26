@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import * as vscode from 'vscode';
 import {
   messageToText,
@@ -388,22 +388,9 @@ describe('parseToolCallArgs', () => {
     // Regression: previously returned { _raw: <garbage> } which would round-trip
     // back to the model as an invalid tool_call payload. Then changed to {} which
     // would call tools with empty args. Now returns null so caller can skip.
-    const cb = vi.fn();
-    const result = parseToolCallArgs({ id: 'c1', name: 'tool', arguments: '\x00\x01\x02' }, cb);
+    const result = parseToolCallArgs({ id: 'c1', name: 'tool', arguments: '\x00\x01\x02' });
     expect(result).toBeNull();
   });
 
-  it('invokes the onUnparseable callback when JSON cannot be parsed or repaired', () => {
-    const cb = vi.fn();
-    parseToolCallArgs({ id: 'c1', name: 'someTool', arguments: '\x00\x01\x02' }, cb);
-    expect(cb).toHaveBeenCalledOnce();
-    expect(cb).toHaveBeenCalledWith('someTool', '\x00\x01\x02');
-  });
-
-  it('does NOT invoke the callback on a successful parse', () => {
-    const cb = vi.fn();
-    parseToolCallArgs({ id: 'c1', name: 'tool', arguments: '{"x":1}' }, cb);
-    expect(cb).not.toHaveBeenCalled();
-  });
 });
 
