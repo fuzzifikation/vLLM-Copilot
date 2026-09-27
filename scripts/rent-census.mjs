@@ -1,5 +1,5 @@
 // rent-census.mjs — function-level enforcement of the reuse-or-absorb law
-// (docs/complexity-audit.md, pass 2; copilot-instructions.md rule 7).
+// (docs/complexity-audit.md, pass 2 — the single source for the rent law).
 //
 // A named thing pays rent only if it is genuinely large OR has >= 2
 // production callers. Tests are NOT customers (user ruling 2026-09-03).

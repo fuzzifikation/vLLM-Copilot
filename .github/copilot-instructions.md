@@ -1,49 +1,11 @@
 # AI Assistant Instructions
 
----
-
-## General Coding Principles
-
-These apply to any codebase.
-
-### Workflow
-1. **UNDERSTAND the BIG PICTURE** — read the task, ask clarifying questions, and confirm understanding before starting. Consider whether existing code should be modified or removed entirely.
-2. **ANALYZE first** — read files, understand the current state. Never assume.
-3. **PROPOSE significant changes** before acting (new files, architectural shifts, removing functionality). Small, obvious fixes (typos, formatting, trivial renames, clear bug fixes) can be applied directly.
-4. **If you make a mistake: STOP.** Tell the user immediately — don't hide it, silently fix it, or degrade features to paper over it.
-
-### NEVER DO THESE (without explicit user approval)
-- **Run destructive git commands:** `git checkout`, `git stash`, `git reset`, `git clean`, etc.
-- **Revert or overwrite files without checking contents first.**
-- **HARD RULE, THE BIG ONE: DO NOT PUSH unless the user explicitly asks for a push in that moment.** Not "commit and push" for a trivia file, not "ok", not a previous session's approval, not your own judgment that the unit is ready. Committing locally to save work: always fine, as many commits as you like. A push needs the user's live words ("push it", "commit and push" for a COHERENT UNIT). One push per coherent unit: collapse your micro-commits silently (soft reset, recommit, bland message) before pushing - a push of a test-mock tweak or a two-line wording edit is unacceptable (owner rage 2026-09-04 after 19 pushes since 1.35.3).
-- **Change Version** without asking. Never change version. Version change and number must be allowed by the user.
-- **Version numbers say NOTHING about releases.** A `-rcN` version in `package.json` means: internal work on a new version, NOT shipped, NOT published, history still editable (untagged rc = draft, squashing it is hygiene). Even a plain version number is not a release until the owner ships it, with live words, in that moment. Never conclude from any version that it "was released", never propose publish/announce/celebrate actions because a version exists. (Owner introduced rc numbering precisely because AIs kept assuming a declared version was a published one, 2026-09-04.)
-
-### Communication
-- **Be brief.** Skip fluff, include details only when it matters for decisions or debugging.
-- **Summarize your work** when done: what changed, why, and any assumptions made.
-- **Ask clarifying questions** when a task is ambiguous — don't guess. Use the Questions tool.
-- **Contradict the user** if you believe they are wrong or missing something. Be direct, not deferential.
-
-### Simplicity Over Complexity
-- **Question necessity first.** What is the overall purpose? Is the approach actually necessary? If in doubt or unclear, push back or ask.
-- **Deleting code is better than adding code.** If existing code no longer serves the goal, remove it. No code is sacred.
-- **Prefer fewer files, fewer functions, fewer lines.** Each addition has a maintenance cost.
-- **Don't build workarounds on top of workarounds.** Fix the root cause — which is often deleting the problematic code entirely.
-- **Pause and reconsider the big picture.** After three or more edits for one problem, stop. Re-read the original goal and propose a simpler path.
-- **If the higher purpose is unclear, ask.** Don't guess. Every line of code should serve a user-facing feature.
-- **Verified bugs can be fixed directly.** Evaluate bugs twice (be sure it is a bug). If after second evaluation high confidence → fix. Medium/low confidence → ask first.
-
-### Thoroughness
-- **Check your work.** Code review your changes and check linter for errors and warnings. 
-- **Run tests.** Verify existing tests pass and add tests for new behavior.
-- **Point out issues** even if unrelated to the current task. Inform the user. Prefer proactive feedback over silence.
-- **Update docs** if your changes affect README, docs/code-review.md, or other documentation.
-
-### Task Approach
-- **Decompose, then verify.** Split work into individually verifiable steps. Don't try to do everything at once.
-- **Read before writing.** Understand the existing pattern. If existing code is wrong, propose a fix first — don't blindly copy-paste.
-- **Use available MCP tools (Context 7) and web search** for API behavior. Training data may be outdated.
+> **General working rules are vendored, not duplicated here:** see
+> `.github/instructions/working-principles.instructions.md` (upstream:
+> `fuzzifikation/agents`, re-sync with `G:\agents\bin\sync.ps1`). Git/push
+> discipline, version and release law, changelog epistemology, review
+> governance, verification laws, simplicity laws and communication style live
+> there and apply to every repo. **Everything below is this project only.**
 
 ---
 
@@ -73,7 +35,7 @@ These apply to any codebase.
 - **Intent before content, always.** A release gets a short intent paragraph directly under the version heading (the goal of the release, why it exists), before `### Added`. Each major structural change likewise states its goal first, then the change as its consequence. Never bury the why mid-paragraph, and state it once: the release-level intent paragraph replaces per-entry restatements of the same goal.
 - Be terse in the changelog - this is for users to read. The commit messages can be verbose - those are for AI to read.
 - **PowerShell: never put `$(...)` in a double-quoted git commit message** — PowerShell command-substitutes it and silently corrupts the message. Use single quotes.
-- **`package.json` `changelog` field points at the CHANGELOG.md blob URL, never at GitHub releases.** Marketplace versions and git releases are deliberately different things; not every version gets a git release. Note: a VSIX-installed extension shows the packaged `CHANGELOG.md` snapshot in the extension page's CHANGELOG tab and ignores the manifest field; the field only feeds Marketplace installs.
+- **Repo-specific changelog facts** (the epistemology behind them is upstream): **`package.json` `changelog` field points at the CHANGELOG.md blob URL, never at GitHub releases.** Marketplace versions and git releases are deliberately different things; not every version gets a git release. Note: a VSIX-installed extension shows the packaged `CHANGELOG.md` snapshot in the extension page's CHANGELOG tab and ignores the manifest field; the field only feeds Marketplace installs.
 
 ### code-review.md Policy
 - `docs/code-review.md` tracks **live issues only**. When a finding is fixed, DELETE its entry in the same commit. No status sections, no "fixed by" annotations, no archives, no grades: git history holds what was done, and nobody reads accomplishment logs. Rejection lists, deferred architecture, and accepted product decisions stay (standing rulings, not history).
@@ -180,4 +142,4 @@ Repo-specific essentials only. The full law, ledger, standing doctrine, pre-empt
 - **Review mode stays on.** Nothing gets edited during diagramming. Findings are `P<path>-<n>` IDs (never F-prefixed — F is a cluster label) with severity and user decision recorded in the ledger; the user rules on every finding before code changes. Cluster-analyze, cluster-fix; accepted amputations execute as one commit unit.
 - **Rent law (pass 2).** Every function/module/file must be genuinely large OR have ≥2 independent production call sites (distinct caller functions inside the home file count; unit tests are NOT customers). Small single-caller helpers get absorbed; single-caller sequential chains doing one job collapse into ONE function. "Large" is per-case (phases/branches, no line quota); "consistency" alone does not pay rent. A newly proposed named thing must cite its census rent or its Intent-phase argument. Structure beats test seams: reroute or replace the test, never keep bad structure for ceremony.
 - **Tooling:** `npm run dep:check` (file-level gates, two cruises), `npm run rent` (function rent census), `npm run cluster` (placement), `npm run dep:graph`. Before executing any amputation unit, re-run `npm run rent -- --tsv` and verify the unit's caller claims against the fresh table — and diff after. Trust nothing: not memory, not the audit's own tables, not a reviewer agent's report — verify every published claim against bytes. ENTRY-class wiring (`register*`/`ensure*` whose sole caller is the `extension.ts` activation block) is never absorb-bait.
-- The review persona itself is the user-level language-agnostic `Structural Review` agent (settings-synced); this repo keeps no copy of its description.
+- The review persona is the language-agnostic `Structural Review` agent, **vendored into this repo** at `.github/agents/structural-review.agent.md` with its tooling beside it in `.github/agents/structural-review-assets/` (upstream: `fuzzifikation/agents`; re-sync with `G:\agents\bin\sync.ps1 -Agents <repo>`). Owner ruling 2026-09-27 reverses the earlier user-level-install stance: a repo-scope copy is found in local, WSL and SSH windows alike, because workspace customizations are read from the workspace host. Repo-specific tooling and rulings live in this file and in `docs/complexity-audit.md`, which that agent's tooling probe picks up.

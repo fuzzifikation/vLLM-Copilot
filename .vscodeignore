@@ -24,6 +24,8 @@ out/**/*.map
 
 # Dev docs (not needed at runtime)
 docs/
+# AI-coding customizations (vendored law + review agent): never runtime code
+.github/
 # Extension logo — needed for Marketplace icon
 !docs/images/logo.png
 # prompt-replacements/ is shipped for the Set Model Personality command
