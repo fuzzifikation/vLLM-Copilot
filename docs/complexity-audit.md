@@ -737,6 +737,10 @@ so the same shapes do not get re-proposed:
   export keyword is test-bought.
 - **A grep proves the words are gone, not the behavior.** Dead branches
   hide in copies that carry none of the grepped words; verify by reading.
+- **A reviewer agent's report is itself a hypothesis.** One published
+  "tool defect" finding was a tab-rendering misread the executing session
+  rejected by reading raw bytes. Verify every published claim — including
+  the reviewer's roast of the tooling.
 - **Out of scope by ruling:** auto-merging same-connection registry entries
   (user data decision), collapsing the dual read, hiding the selector split.
 
