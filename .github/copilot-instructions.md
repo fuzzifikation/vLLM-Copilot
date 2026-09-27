@@ -61,9 +61,10 @@ These apply to any codebase.
 - Always use the latest version of any library or framework unless the user specifies otherwise. However, this version must be supported by Copilot, VS Code and vLLM.
 
 ### Build & Test
-- **Compile:** `npm run compile` (runs `tsc -p ./`).
+- **Compile:** `npm run compile` (runs `tsc -p ./`). This type-checks `src/` ONLY — it never proves the test files compile.
 - **Test:** `npm test` (Vitest). Tests exist only as tripwires for real breakage (wire format, settings.json writes, provider lifecycle) — no coverage metric, no ceremony tests.
-- **Package a VSIX:** `npm run build` (compiles, tests, then packages with vsce).
+- **Package a VSIX:** `npm run build` = compile + vitest + **test typecheck** (`tsc -p test/tsconfig.json`) + vsce package. `test/tsconfig.json` extends the root tsconfig, so any compiler flag added at root also applies to `test/**`.
+- **Gauntlet rule:** any tsconfig/compiler-flag change must be verified with `npm run build` (or at least `npx tsc -p test/tsconfig.json --noEmit`). Verifying only compile+test+dep:check once shipped an rc that failed its own build (35 dead test symbols, 2026-09-05). Neither `npm run rent` nor `npm run dep:check` type-checks `test/**`.
 
 ### Changelog Policy
 - **Only issues a user actually experienced in a SHIPPED version get a `Fixed` entry.** A bug that was introduced and fixed within the same unreleased cycle is work-in-progress, not news — no entry, ever. This includes bugs seen only during the author's own rc/VSIX testing: an unpublished rc is not a shipped version.
@@ -71,10 +72,16 @@ These apply to any codebase.
 - **Never compare against never-shipped intermediate behavior** ("before, during this rc, X happened"). If no user ever saw it, it never happened.
 - **Intent before content, always.** A release gets a short intent paragraph directly under the version heading (the goal of the release, why it exists), before `### Added`. Each major structural change likewise states its goal first, then the change as its consequence. Never bury the why mid-paragraph, and state it once: the release-level intent paragraph replaces per-entry restatements of the same goal.
 - Be terse in the changelog - this is for users to read. The commit messages can be verbose - those are for AI to read.
+- **PowerShell: never put `$(...)` in a double-quoted git commit message** — PowerShell command-substitutes it and silently corrupts the message. Use single quotes.
 - **`package.json` `changelog` field points at the CHANGELOG.md blob URL, never at GitHub releases.** Marketplace versions and git releases are deliberately different things; not every version gets a git release. Note: a VSIX-installed extension shows the packaged `CHANGELOG.md` snapshot in the extension page's CHANGELOG tab and ignores the manifest field; the field only feeds Marketplace installs.
 
 ### code-review.md Policy
 - `docs/code-review.md` tracks **live issues only**. When a finding is fixed, DELETE its entry in the same commit. No status sections, no "fixed by" annotations, no archives, no grades: git history holds what was done, and nobody reads accomplishment logs. Rejection lists, deferred architecture, and accepted product decisions stay (standing rulings, not history).
+
+### Standing Review Rulings (owner-decided — do not re-propose)
+- The >50K floor on configured `contextWindow` (`isValidContextWindow`) is intentional: distrust user guesses below Copilot's usable headroom. The asymmetry with server-reported windows (>0) was ruled WAD by the owner (2026-09-10).
+- `detectServerType` aux probes (LM Studio/Ollama): hard errors (403/405/5xx) abort ONLY when no `/v1/models` candidate exists; with a candidate they fall through to the vllm gateway classification.
+- `listServerModels` shares the layer-1 list memo with the resolvers; Test & Refresh clears both memo layers at pass START for live truth. The ≤5s staleness for the Model Settings badge consumer is owner-accepted — do not add a bypass.
 
 ## Structural / Over-engineering Reviews
 
@@ -149,6 +156,16 @@ Non-negotiable for this codebase:
 - **Settings changes fire `onDidChangeConfiguration`.** React to them — never require reload. Cache invalidation is the pattern.
 - **Output channels are for user-visible logs.** Use structured format: `[INFO]`, `[WARN]`, `[ERROR]`.
 
+### Verified VS Code API facts (field-tested — trust these over doc tools)
+
+The `get_vscode_api` doc tool returns stale proposal-era docs. Source of truth: `node_modules/@types/vscode/index.d.ts`.
+
+- The Copilot model picker does NOT re-query providers when opened — it renders VS Code's cache; only the provider's `onDidChangeLanguageModelChatInformation` event re-renders it. `provideLanguageModelChatInfo` runs on activation, `selectLanguageModels()`, and provider change events (all `silent: true` for us).
+- A provider THROWING during model resolve surfaces as a passive vendor-group status line inside the picker (never a popup) and is vendor-wide — it wipes ALL rows. Useless for per-model failures: keep unreachable models as OFFLINE rows instead.
+- `TreeDragAndDropController<T>` requires BOTH `dragMimeTypes` and `dropMimeTypes`; `handleDrag` MUTATES the transfer (no return). Self-drop (reorder) needs the tree's own mime `application/vnd.code.tree.<viewidlowercase>` in `dropMimeTypes`. Full autopsy incl. impossible-API bans (no between-row indicator, ghost-gap hack forbidden): `docs/dashboard-dnd.md`.
+- Static `arguments` in `view/item/context` menu contributions do NOT reach the command (silent no-op with undefined args). Encode variants in separate command identities, never in contribution arguments.
+- Menu-contribution `title` overrides in `view/item/context` are IGNORED (VS Code 1.128, tested). The `contributes.commands` title is the single source of truth for tree context-menu labels.
+
 ### Webview View Conventions
 
 - **External JS/CSS files in `resources/` are NOT compiled by TypeScript.** Always validate with `node --check resources/*.js` after changes. Run `npm run validate-webview-js` to check all shipped Webview JavaScript.
@@ -170,3 +187,4 @@ Things this codebase has been burned by — don't repeat:
 - **String-based type guards when interfaces exist.** Use the types in `types.ts`. If a cast is needed, document why.
 - **Loading all model configs unconditionally.** `model-configs/` can grow. Load selectively.
 - **Synchronous blocking in async callbacks.** VS Code callbacks are async. Don't await in constructors or sync paths.
+- **`openRouterFlow.ts` importing from `addServerFlow.ts`.** The Add wizard imports the OpenRouter flow (as a step-0 branch); a reverse import is a module cycle. The duplicated confirm+save UX is deliberate — do not "unify" it. Keyless connections stay filtered out of the onboarding reuse picker (reuse would 401 at chat).
