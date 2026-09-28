@@ -22,7 +22,9 @@
  * seen since VS Code started (module state, in-memory, never persisted),
  * shown as a third "Max" column in the stats table. Useful for sizing the
  * output budget; a Reset link zeroes it and re-folds the displayed reply as
- * the new baseline.
+ * the new baseline. A generation-speed peak requires a run that decoded for
+ * at least SUSTAINED_MIN_MS: short runs measure a collapsed window (see
+ * decodeTokPerSec) and would set records no one can reproduce.
  *
  * Formatting and the cost derivation are imported from the Dashboard module:
  * both surfaces must render the same numbers with the same rules, one place
@@ -58,6 +60,18 @@ const RESET_PEAKS = 'vllm-copilot.statusBar.resetPeaks';
  * are floored well above zero.
  */
 const peaks = { outputTokens: 0, totalTokens: 0, genTokPerSec: 0, promptTokPerSec: 0 };
+
+/**
+ * Minimum decode duration for a run to enter the generation-speed peak.
+ * Below this, the measurement is either a client-side window collapsed by
+ * SSE burst delivery (short localhost replies arrive in one read: tokens
+ * divided by ~0 ms yields absurd rates) or an exact but unrepresentative
+ * burst measurement server-side. Either way it is not a sustained speed,
+ * and a max odometer must record only reproducible runs. Residual noise
+ * from window-stalling outliers (network hiccup stretching the window)
+ * reads LOW, which a max column absorbs for free.
+ */
+const SUSTAINED_MIN_MS = 3000;
 
 /**
  * Create the chip and keep it in sync with the usage store. Registration is
@@ -99,18 +113,20 @@ function renderStatusBar(item: vscode.StatusBarItem): void {
   }
   const server = resolveServer(data);
   const icon = server.openRouter ? 'vllm-copilot-openrouter' : 'vllm-copilot-model';
-  const rate = decodeTokPerSec(data);
+  const speed = decodeTokPerSec(data);
+  const rate = speed?.rate ?? null;
   const ingest = promptTokPerSec(data);
   // Fold into the session odometer. Every recordRequest fires the store
   // event synchronously and this render reads the record just written, so
   // each request is folded exactly once; re-renders (config changes) are
-  // idempotent maxes.
+  // idempotent maxes. The speed peak takes only sustained runs (see
+  // SUSTAINED_MIN_MS); short-run rates still show in the Last-reply column.
   peaks.outputTokens = Math.max(peaks.outputTokens, data.completionTokens);
   peaks.totalTokens = Math.max(peaks.totalTokens, data.totalTokens);
-  if (rate != null) peaks.genTokPerSec = Math.max(peaks.genTokPerSec, rate);
+  if (speed?.sustained) peaks.genTokPerSec = Math.max(peaks.genTokPerSec, speed.rate);
   if (ingest != null) peaks.promptTokPerSec = Math.max(peaks.promptTokPerSec, ingest);
   item.text = rate != null ? `$(${icon}) ${fmtTokPerSec(rate)}` : `$(${icon})`;
-  item.tooltip = buildTooltip(data, server, icon, rate, ingest);
+  item.tooltip = buildTooltip(data, server, icon, speed, ingest);
   item.show();
 }
 
@@ -131,17 +147,20 @@ function resolveServer(data: LastRequestData): { label: string; openRouter: bool
 }
 
 /**
- * Decode throughput of the captured run. Server-reported when
- * --enable-per-request-metrics is on (generation time covers all output
- * tokens); otherwise measured client-side over [firstTokenTimeMs,
- * totalTimeMs], which spans tokens 2..N only (same accounting as the
- * dashboard's Generation row). A one-token or unmeasurable run yields null
- * instead of an invented rate.
+ * Decode throughput of the captured run, plus whether the run decoded long
+ * enough to count as sustained (odometer eligibility, see SUSTAINED_MIN_MS).
+ * Server-reported when --enable-per-request-metrics is on (generation time
+ * covers all output tokens); otherwise measured client-side over
+ * [firstTokenTimeMs, totalTimeMs], which spans tokens 2..N only (same
+ * accounting as the dashboard's Generation row). A one-token or unmeasurable
+ * run yields null instead of an invented rate. The sustained flag applies to
+ * both sources: even an exact server-timed 5-token burst is not a record-
+ * worthy decode speed.
  */
-function decodeTokPerSec(d: LastRequestData): number | null {
+function decodeTokPerSec(d: LastRequestData): { rate: number; sustained: boolean } | null {
   const genMs = d.metrics?.generation_time_ms;
   if (d.hasMetrics && genMs != null && genMs > 0 && d.completionTokens > 0) {
-    return (d.completionTokens / genMs) * 1000;
+    return { rate: (d.completionTokens / genMs) * 1000, sustained: genMs >= SUSTAINED_MIN_MS };
   }
   if (
     d.completionTokens > 1
@@ -150,7 +169,7 @@ function decodeTokPerSec(d: LastRequestData): number | null {
     && d.totalTimeMs > d.firstTokenTimeMs
   ) {
     const decodeMs = d.totalTimeMs - d.firstTokenTimeMs;
-    return ((d.completionTokens - 1) / decodeMs) * 1000;
+    return { rate: ((d.completionTokens - 1) / decodeMs) * 1000, sustained: decodeMs >= SUSTAINED_MIN_MS };
   }
   return null;
 }
@@ -200,12 +219,15 @@ function costLabel(d: LastRequestData, models: ModelConfig[]): string | undefine
 
 /** Markdown hover panel for one captured request. The rates are computed by
  *  the caller (renderStatusBar folds them into the session odometer too),
- *  so they arrive as parameters instead of being derived twice. */
+ *  so they arrive as parameters instead of being derived twice. A speed from
+ *  a run below the sustained threshold gets an asterisk and a one-line
+ *  footnote where it is shown, instead of a permanent explanation in the
+ *  footer: the exclusion must be visible at the number it describes. */
 function buildTooltip(
   d: LastRequestData,
   server: { label: string },
   icon: string,
-  rate: number | null,
+  speed: { rate: number; sustained: boolean } | null,
   ingest: number | null,
 ): vscode.MarkdownString {
   const md = new vscode.MarkdownString();
@@ -252,7 +274,10 @@ function buildTooltip(
     ? ` (${fmtCount(d.reasoningTokens)} reasoning)`
     : '';
   rows.push(`| $(code) Completion | ${fmtCount(d.completionTokens)}${reasoning} | ${maxCell(peaks.outputTokens)} |`);
-  if (rate != null) rows.push(`| $(rocket) Generation speed | ${fmtTokPerSec(rate)} | ${maxRateCell(peaks.genTokPerSec)} |`);
+  if (speed != null) {
+    const flag = speed.sustained ? '' : ' *';
+    rows.push(`| $(rocket) Generation speed | ${fmtTokPerSec(speed.rate)}${flag} | ${maxRateCell(peaks.genTokPerSec)} |`);
+  }
   // No Dashboard counterpart for prompt-ingest speed — zap is the closest
   // codicon that reads "fast input" without stealing a sibling's icon.
   if (ingest != null) rows.push(`| $(zap) Prompt processing | ~${fmtTokPerSec(ingest)} | ~${maxRateCell(peaks.promptTokPerSec)} |`);
@@ -269,6 +294,13 @@ function buildTooltip(
     lines.push('| | Last reply | Max |');
     lines.push('| --- | ---: | ---: |');
     lines.push(...rows);
+  }
+  // Footnote only while an asterisked speed is on screen: the blank Max
+  // cell alone reads as "missing", so the exclusion needs a word, and it
+  // earns its line only in the tooltip that shows the asterisk.
+  if (speed != null && !speed.sustained) {
+    lines.push('');
+    lines.push(`_* Decoded under ${SUSTAINED_MIN_MS / 1000} s: too short to time. Not counted._`);
   }
 
   lines.push('');

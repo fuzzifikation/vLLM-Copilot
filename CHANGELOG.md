@@ -1,27 +1,28 @@
 # Changelog
 
 ## v1.36.16
-Close the remaining release-hardening gaps in `docs/code-review.md` before the next public release. This candidate covers deterministic packaging, schema and preset consistency, shipped webview correctness, automation, repository-rule coherence, and a settled remote host topology; the existing provider runtime is the baseline.
+A new status bar chip shows the last reply's model, cost and speed. Idea from [@quanghona](https://github.com/quanghona) on GitHub. 
+Also: Clean Copilot Sessions improved.
 
 ### Added
 
-- **Last request in the status bar.** A chip shows the last served model's glyph (OpenRouter or vLLM) and its generation speed; hovering reports that reply's cost, token split, prompt-processing estimate, timings and session maxima, clicking opens the Dashboard (`vllm-copilot.statusBar.enabled` to hide).
-- **Unattributed catalog cleanup.** Conversations that match no readable workspace folder get their own picker entry; selecting it removes only those catalog rows, no workspace files or memory.
-- **Catalog maintenance retry.** **Maintain Copilot catalog** rebuilds the search index and retries compaction without deleting conversations, and stays available even when no sessions remain.
-- **Orphaned catalog recovery.** A confirmed whole-catalog wipe also removes catalog rows whose session is already gone; scoped cleanup warns about those rows instead of guessing their workspace.
-- **Memory-only cleanup.** Copilot memory options stay selectable after session history is gone, and the summary separates deleted, absent and partially failed.
+- **Last request in the status bar.** A chip shows the last served model's glyph (OpenRouter or vLLM) and its generation speed; hovering reports that reply's cost, token split, timings and session maxima, clicking opens the Dashboard (`vllm-copilot.statusBar.enabled` to hide). Speed maxima count only runs that decoded for at least 3 s; shorter replies cannot be timed reliably. Idea from [@quanghona](https://github.com/quanghona) in [#10](https://github.com/fuzzifikation/vLLM-Copilot/issues/10), thanks!
+- **Orphaned conversations get their own cleanup entry.** Clean Copilot Sessions gains an entry for conversations belonging to no readable workspace folder; selecting it removes only those.
+- **Catalog maintenance can be retried.** **Maintain Copilot catalog** rebuilds the search index and retries compaction without deleting conversations, and stays available even when no sessions remain.
+- **Whole-catalog wipe misses nothing.** A confirmed wipe also removes conversations whose session file is already gone; scoped cleanup warns about those instead of guessing where they belong.
+- **Memory cleanup stays available.** Copilot memory options remain selectable after the session history is gone, and the summary says what was deleted, absent or failed.
 
 ### Changed
 
-- **The extension is workspace-only.** In a remote window (SSH, WSL, containers) it now runs on the remote workspace host, so `localhost:8000` keeps meaning your server instead of your client.
+- **The extension is workspace-only.** In a remote window (SSH, WSL, containers) it now runs on the remote machine, so `localhost:8000` keeps meaning your server instead of your laptop.
 - **The model picker shows what a model costs.** Hovering a model reports its configured price per 1M tokens, such as `$0.30 in · $1.20 out`. Models without configured rates show nothing new.
 - **Cost is USD only.** Set Cost no longer offers a second currency, and a stored `AI Credits` value now renders as that literal label rather than a wrong `$`.
 
 ### Fixed
 
-- **Clean Copilot Sessions now actually deletes your conversations.** It removed only the session list before, so every prompt and reply stayed searchable in Copilot's session database; it now deletes the text, its full-text index and the session folders, then compacts the database, with memory kept unless you opt in.
+- **Clean Copilot Sessions now actually deletes your conversations.** Before, it removed only the session list and every prompt and reply stayed readable in Copilot's database. It now deletes the text and folders too, and compacts the database; memory is kept unless you opt in.
 - **First-model setup reaches Agents.** Models added after startup now enable Agent Host access automatically.
-- **Model Settings numeric fields survive a hand-edited value.** A quote character in a numeric field broke the input rendering; those values are now escaped like every other field.
+- **Model Settings survives a hand-edited value.** A quote character in a numeric field broke the settings form; such values now display correctly.
 - **The Dashboard no longer prints a dollar sign on a non-dollar rate.** A model priced in another currency showed `$` in the Pricing row while the totals beneath it showed the real unit.
 
 ## v1.36.15

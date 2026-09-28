@@ -133,7 +133,7 @@ The **vLLM Dashboard** sidebar shows live metrics for each configured vLLM serve
 | Setting | Default | Description |
 |---|---|---|
 | `vllm-copilot.dashboard.pollIntervalMs` | `15000` | How often to refresh metrics (ms). Click **Refresh Interval** in the sidebar to change - enter `15s`, `30s`, `1m`, etc. Also editable in Settings |
-| `vllm-copilot.statusBar.enabled` | `true` | Show the last request in the status bar: the model's glyph (OpenRouter or vLLM) and its generation speed. Hover reports that reply's cost, token split and timings; click opens the Dashboard. Appears after the first completed request |
+| `vllm-copilot.statusBar.enabled` | `true` | Show the last request in the status bar: the model's glyph (OpenRouter or vLLM) and its generation speed. Hover reports that reply's cost, token split and timings plus session maxima; the speed maxima count only runs decoding for at least 3 s, since shorter runs cannot be measured reliably from the client. Click opens the Dashboard. Appears after the first completed request |
 
 ### Last Request Details
 
