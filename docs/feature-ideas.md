@@ -1,7 +1,7 @@
 # Feature Ideas: vLLM Capabilities → Better VS Code Experience
 
 **Generated:** 2026-06-06
-**Updated:** 2026-09-25 (shipped entries deleted against the code, not against memory: registry, remote presets, usage tracker, OpenRouter providers, output-length picker, centralized auth update. The stale "12 remaining parameters" table was replaced with the passthrough truth. Completed items live in git history, not here.)
+**Updated:** 2026-10-01 (shipped entries deleted against the code, not against memory: the picker price line shipped and the rest of the picker enrichment is owner-ruled noise; the `/v1/models` re-fetch complaint was solved better than proposed, the shared metrics engine owns the only server-model fetch. Same day: the dsh bridge idea was spike-verified end to end and promoted out of this ledger into the ruled plan [dsh-bridge-plan.md](./dsh-bridge-plan.md). Earlier sweeps removed: registry, remote presets, usage tracker, OpenRouter providers, output-length picker, centralized auth update, and the stale "12 remaining parameters" table. Completed items live in git history, not here.)
 **Source:** [vLLM SamplingParams API Reference](https://docs.vllm.ai/en/latest/api/vllm/sampling_params.html)
 
 **Context:** vLLM supports many per-request sampling parameters. These represent opportunities to build features that VS Code's built-in Copilot doesn't have, making vLLM-Copilot the superior local model integration.
@@ -135,23 +135,6 @@ The real gaps are all on the **response side**, where passthrough cannot help:
 
 ---
 
-## 🛡️ Cache `/v1/models` Responses in Model Settings Webview
-
-**Category:** Painkiller (performance)
-**Status:** Not implemented
-
-**What:** `serverSettingsView.ts::refreshWebview()` probes every registry entry's model list (`listServerModels`) on every webview refresh: initial load and every config change (`onDidChangeConfiguration` - which covers each model save, since a save writes `vllm-copilot.models`). The model list is static until the server restarts - re-fetching it on every interaction is wasteful.
-
-**Suggestion:** Cache the model list per server entry with lazy invalidation. Re-fetch only when:
-- The webview first loads
-- The user explicitly triggers a refresh
-- A fetch fails (server might have restarted)
-- Settings change (new server added, URL changed)
-
-Since the model list is small (typically < 20 entries) and the server is local/close, the actual cost is negligible for one user. This is a five-line cache for a problem that barely hurts - build it only if it ever shows up in a slow-refresh complaint.
-
----
-
 ## ✨ Shareable Model-Mode Profiles (team task presets)
 
 **Category:** Vitamin (team workflow)
@@ -207,20 +190,17 @@ Since the model list is small (typically < 20 entries) and the server is local/c
 ## ✨ Populate native model-picker metadata
 
 **Category:** Vitamin (picker clarity)
-**Status:** Accepted direction, explicitly deferred. Do not implement now.
+**Status:** Shipped as far as the owner rules; remainder deferred to proposal-API graduation.
 
-VS Code's stable `LanguageModelChatInformation.tooltip` is the hover text shown for a model in the model picker. `detail` is the short secondary line rendered alongside the model name. The extension currently leaves both empty even though discovery already knows the server label, backend, wire model ID, context window, output ceiling, capabilities, and OpenRouter routing state.
+The stable `detail` and `tooltip` fields carry the configured price line (`$0.30 in · $1.20 out · $0.03 cached`, read from `vllm-copilot.models[].cost`, never invented, never fetched). Price was the one fact the picker showed nowhere else: VS Code renders the context window in the card below the picker, and the Server Dashboard already carries server, backend, wire model ID, and capabilities.
 
-Populate the stable fields first, then add the still-proposed `editTools` hint so VS Code can prefer `find-replace`, `multi-find-replace`, `apply-patch`, or `code-rewrite` for models trained or tuned for those edit shapes. `maxContextWindowTokens` is also still proposed and can separate the physical server window from the currently selected input and output budgets. Keep every proposed field behind the existing runtime metadata boundary, but make the stable tooltip and detail useful on their own.
+**Standing ruling (owner, encoded in `modelInfo.ts::buildPickerPrice`):** price is the ONLY content the picker line gets. An earlier pass put server label, backend, wire model ID, context window, and capabilities into the tooltip and it read as noise. Do not re-propose picker enrichment for information the dashboard or the model card already shows.
 
-**Why it matters:** the picker becomes self-explanatory on hosts that ignore proposal-era icons, banners, and schemas. It also gives users one place to understand which configured preset, server, and wire model a picker entry actually represents.
+Deferred remainder, both still proposal-stage in VS Code and kept behind the existing runtime metadata boundary until they graduate:
+- `editTools`: preset-owned hint so VS Code can prefer `find-replace`, `multi-find-replace`, `apply-patch`, or `code-rewrite` for models tuned for those edit shapes. No inference when absent.
+- `maxContextWindowTokens`: separates the physical server window from the currently selected input and output budgets.
 
-**Suggested content:**
-- `detail`: server display name, backend type, or a compact `server / wire-model` identity.
-- `tooltip`: context and output limits, tool and vision support, and current OpenRouter provider or routing mode.
-- `editTools`: model-preset-owned preference, with no inference when absent.
-
-**Effort:** Low for stable `detail` and `tooltip`, medium once preset-owned edit-tool metadata and routing-state formatting are included.
+**Effort:** None for the stable part, it is done. Low per proposed field, once each graduates to the stable API.
 
 ---
 
