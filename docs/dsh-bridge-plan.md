@@ -26,7 +26,7 @@ flowchart LR
     subgraph MAIN["vLLM-Copilot (this repo)"]
         GW[Gateway: POST /v1/chat/completions<br/>loopback + bearer token]
         PIPE[existing pipeline: mode variants,<br/>param layering, converters, retry, usage]
-        API[Exported API: catalog, endpoint, token]
+        API[Exported API: gateway.status, harness.listCatalog]
         GW --> PIPE
     end
     subgraph COMP["Companion ext (new repo): dsh adapter stack"]
@@ -55,7 +55,7 @@ Two repos because the gateway and pipeline ARE this extension (one pipeline, one
 - **Wire shape:** `stream_options.include_usage`, `store: false`, Bearer auth, UA `deepseek-harness/0.2.0-rc.2`. Client is `openai` JS SDK via Node, so no CORS surface.
 - **Request body inventory (measured, `temp/dsh-spike/key-inventory.mjs`):** the harness sends `model`, `messages`, `tools`, `stream`, `stream_options`, `store`, `max_tokens`, and nothing else. Absent: `temperature`, `top_p`, `top_k`, `frequency_penalty`, `presence_penalty`, `repetition_penalty`, `seed`, `stop`, `n`, `response_format`, `reasoning`, `thinking`, `chat_template_kwargs`, `vllm_priority`. The outbound body is a blank canvas, which makes ruling 6 cost nothing.
 - **Thinking preservation (measured, `temp/dsh-spike/reason-check.mjs`):** the harness round-trips reasoning across turns. A stream carrying `delta.reasoning_content` is stored as a thinking block, and the NEXT request's history carries it back on the assistant message as `reasoning_content`, verified byte-for-byte on the wiretap. Mechanism in pi-ai: the parser records the reasoning field name it saw (`reasoning_content`, `reasoning`, or `reasoning_text`) as the block's signature, and history conversion replays the block under that exact field name. So a vLLM server behind `--reasoning-parser` gets its own reasoning back, which is precisely what `preserve_thinking` templates need. This is the capability Copilot Chat denies us (`docs/copilot-integration.md`, Historical Thinking Preservation: Copilot flattens assistant history to visible text before the provider sees it). Gateway duty: stream `reasoning_content` deltas out, and pass `reasoning_content` through on inbound assistant messages untouched instead of stripping unknown keys.
-- **Certified against:** dsh `0.2.0-rc.2`, Node 24. Preview-era warning applies: `--dump-config` diffing is the regression rail per version bump.
+- **Certified against:** dsh `0.2.0-rc.2`, Node 24. Preview-era warning applies: `--dump-config` diffing is the regression rail per version bump. Spike artifacts in `temp/dsh-spike/` are git-ignored and ephemeral by design; the verified facts above live in this doc, not in those scripts. Gate 2 rebuilds a minimal overlay by hand from `listCatalog()` output; the reusable generator script lands at gate 3.
 
 ## Unit 2 (this repo): gateway + exported API
 
@@ -65,8 +65,16 @@ Two repos because the gateway and pipeline ARE this extension (one pipeline, one
 - Surface: `POST /v1/chat/completions` and nothing else; 404 elsewhere. `GET /v1/models` stays unbuilt until a real consumer exists: dsh's catalog is written by the generator from `listCatalog()` in-process, and the spike confirmed the harness never probes the endpoint.
 - Auth: random bearer token minted per activation, loopback bind only (`127.0.0.1`), no CORS, no persisted secret. The token rides the `apiKeyEnv` channel for free and keeps drive-by localhost requests off the registry.
 - Model variants: every registry model serves as base id plus one id per model mode, `<id>--<mode>` (example `GLM-5.3--think`). Mode selection is the model id, replacing Copilot's hidden-options smuggling. Picker output-length has no harness equivalent; the configured budget per model applies.
-- Request path: parse variant → resolve model + mode → neutral core (param layering, `chat_template_kwargs`, OpenRouter suffix, server headers) → existing transport/retry/SSE → re-emit SSE with usage → `usageStore` record tagged source `harness`. Title-generation and compaction calls are ordinary traffic through the same metering.
-- Cancellation: client disconnect aborts the upstream request (AbortSignal, per repo law). Errors map to OpenAI-shaped error envelopes using the shared error envelope.
+- Request path: parse variant → resolve model + mode → neutral core (param layering, `chat_template_kwargs`, OpenRouter suffix, server headers) → existing transport/retry/SSE → `usageStore` record tagged source `harness`. Title-generation and compaction calls are ordinary traffic through the same metering.
+- Streaming: the upstream ALWAYS streams (`stream: true` forced on the outbound, `stream_options.include_usage` set). If the caller's request has `stream: false` (dsh title-gen may opt out for short completions), the gateway buffers the upstream SSE and returns a single `chat.completion` JSON object. One upstream code path, two response shapes gated on the inbound `stream` flag — only the response emitter branches, not the core or the transport.
+- Cancellation: client disconnect aborts the upstream request (AbortSignal, per repo law). Errors map to OpenAI-shaped error envelopes using the shared error envelope. Mapping table:
+  - Backend network timeout / connection refused → `server_error` (HTTP 503, retryable)
+  - Backend 401 / 403 (bad server key) → `server_error` (HTTP 502). Never `authentication_error`: that means the GATEWAY's own token failed, not the backend's key.
+  - Backend 400 (bad request from our params) → `invalid_request_error` (HTTP 400)
+  - Backend 429 (rate limit) → `rate_limit_exceeded` (HTTP 429, retryable)
+  - Backend 5xx → `server_error` (HTTP 502, retryable)
+  - Gateway-level (unknown model id, gateway disabled) → `invalid_request_error` (HTTP 400)
+  - Client-disconnect mid-stream → no error response (connection already closed)
 - The Copilot provider path keeps its exact behavior; the gateway is a second entry adapter, not a rewrite.
 
 ### Request assembly ownership (ruling 6 in code form)
@@ -76,14 +84,16 @@ Two repos because the gateway and pipeline ARE this extension (one pipeline, one
 | dsh | Conversation history, tool definitions and results, title/compaction prompts, streaming flag |
 | Gateway | Model and variant-mode resolution, sampling params from `defaultParams`/mode, `chat_template_kwargs`, output budget (our configured value replaces their echoed `max_tokens`), reasoning dispatch, `reasoning_content` pass-through both directions, backend headers and routing suffixes, retries, error envelope, usage accounting |
 
-Mechanics: the outbound body is built from our config, then the harness's `messages` and `tools` are grafted onto it. Nothing is merged param-wise, because they send no params; if a future version starts sending them, ours still win. Only `tools` and `tool_choice` are honored from their side, since those are the agent's own tools. Personality needs no per-request work: it already lives in the system message via the preset persona splice, so `systemMessagePipeline` (capture and replace) stays a Copilot-path-only mechanism. Changing a personality means re-emitting the overlay and restarting the host, which is the supervisor's job, not the request path's.
+Mechanics: the outbound body is built from our config, then the harness's `messages` and `tools` are grafted onto it. Nothing is merged param-wise, because they send no params; if a future version starts sending them, ours still win. Two fields are honored from the caller's side: `tools` and `tool_choice` (the agent's own tools), and the caller's `max_tokens`. The gateway maps the inbound `max_tokens` to `pickerTokens`, and the existing budget clamp inside `resolveMaxTokensForRequest` preserves the smaller value: a 64-token title-gen stays 64 tokens. Our configured budget is the ceiling, never the floor. Personality needs no per-request work: it already lives in the system message via the preset persona splice, so `systemMessagePipeline` (capture and replace) stays a Copilot-path-only mechanism. Changing a personality means re-emitting the overlay and restarting the host, which is the supervisor's job, not the request path's.
 
-The route profile therefore declares the minimum: `api`, `baseURL`, `apiKeyEnv`, `models`, `defaultContextWindow`, `defaultMaxTokens`, plus two compat flags that describe the transport rather than the model (`supportsUsageInStreaming`, `maxTokensField`). Even those get re-tested in gate 2; the target is an empty `compat` object.
+The route profile declares the minimum: `api`, `baseURL`, `apiKeyEnv`, `models`, `defaultContextWindow`, `defaultMaxTokens`. The `compat` object starts empty (spike proved usage streaming and `max_tokens` work with pi-ai defaults). Add flags only if gate 2 finds a real need.
 
-### Neutral core extraction (prerequisite refactor)
+### Neutral core extraction (DONE 2026-10-03, commit 926a928)
 
-- `buildRequest` keeps its logic, sheds its vscode-typed signature: input becomes `{ modelId, mode, openaiMessages, params, tools, toolChoice }` resolved by thin per-entry adapters. `CancellationToken`/`OutputChannel` usage inside the core narrows to `AbortSignal` + logger.
-- Tripwires: existing wire-format suites (`requestBuilder`, `chatProtocol`, `vllmStream`, `consumeStream`) must stay green without semantic edits.
+- `assembleRequest(input: AssembleRequestInput, config, log)` is the neutral core. `buildRequest` keeps its exact former signature as the Copilot-path entry adapter: converts messages, reads the picker, strips `_conversationId`, reads the `fixEmptyToolParameters` setting, delegates.
+- `AssembleRequestInput` (plain data, no vscode chat types): `modelId`, `selectedMode`, `pickerTokens`, `openaiMessages`, `runtimeOptions`, `conversationId`, `tools` (as `RequestTool[]`, which VS Code's tool type satisfies structurally), `toolModeRequired`, `fixEmptyToolParameters`, `advertisedMaxOutputTokens` (required number).
+- The log sink is `{ appendLine(string) }`, which `vscode.OutputChannel` satisfies structurally. No `AbortSignal` in the core: the abort lives at the gateway's `fetch`, not in assembly.
+- Tripwires stayed green without semantic edits: `requestBuilder`, `chatProtocol`, `vllmStream`, `consumeStream`. Full suite 995 pass, `npm run build` gauntlet green.
 
 ### Exported API (`extension.exports`, v1)
 
@@ -91,15 +101,22 @@ The route profile therefore declares the minimum: `api`, `baseURL`, `apiKeyEnv`,
 interface VllmCopilotApiV1 {
   gateway: {
     status(): { enabled: boolean; running: boolean; url?: string; token?: string };
-    readonly onDidChange: vscode.Event<void>;
   };
   harness: {
-    listCatalog(): GatewayCatalogEntry[]; // id, name, contextWindow, maxTokens, modes, compat hints
+    listCatalog(): GatewayCatalogEntry[];
   };
+}
+
+interface GatewayCatalogEntry {
+  id: string;           // base model id (no mode suffix)
+  name: string;
+  contextWindow: number;
+  maxTokens: number;    // configured output budget
+  modes: string[];      // available mode ids (empty = base only)
 }
 ```
 
-Consumed by the companion via `extensions.getExtension('System-Sciences.vllm-copilot').exports`. Keep it tiny; extend only when the companion actually knocks. `listPersonalities()` is deliberately absent: the Unit 3 generator starts with the default personality, and the method lands with the persona picker that would feed it.
+No `onDidChange` event: the companion owns the spawn lifecycle and calls `status()` when it needs the URL. No EventEmitter to dispose, no firing on settings toggles. `listPersonalities()` is deliberately absent: the Unit 3 generator starts with the default personality, and the method lands with the persona picker that would feed it.
 
 ### Verification gates
 
@@ -142,4 +159,4 @@ This extension: one settings/command pointer "Run a local agent harness" → ins
 - **Preview churn** (dsh semver is decorative until stable): we certify against a pinned range, generate overlays only through `--dump-config`-checked templates, and fail loudly on unknown-row errors rather than guessing.
 - **Support surface for someone else's product:** the companion's job description is adapters plus a health check; dsh-internal bugs get redirected upstream with a repro bundle (their session JSONL plus our gateway log lines).
 - **Node/npx dependency:** documented prerequisite, checked by the supervisor with an actionable error.
-- **Port/token collisions and stray processes:** loopback bind, OS-assigned port, token auth, supervisor owns the process lifecycle and kills on dispose.
+- **Port/token collisions and stray processes:** loopback bind, OS-assigned port, token auth. Supervisor writes `<DSH_HOME>/dsh.pid` on spawn and reaps a stale process (pid alive, parent dead) on next activation. `dispose()` does NOT fire on a hard host crash, so pidfile-reap is the real safety net, not dispose.
