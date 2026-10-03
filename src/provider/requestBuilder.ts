@@ -40,12 +40,51 @@ interface BuildRequestResult {
   serverConfig: ServerConfig;
 }
 
+/** A tool in entry-independent shape. VS Code's `LanguageModelChatTool` satisfies this structurally. */
+export interface RequestTool {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+}
+
+/** Minimal log surface. `vscode.OutputChannel` satisfies this structurally. */
+export interface RequestLog {
+  appendLine(value: string): void;
+}
+
 /**
- * Phase 1 — assemble the vLLM chat request.
- *
- * Converts VS Code messages to OpenAI format, merges config defaults with
- * Copilot's `modelOptions` and the selected model-mode parameters, and resolves
- * the vLLM server model id to call.
+ * Entry-independent input for request assembly (docs/dsh-bridge-plan.md, Unit 2
+ * "neutral core extraction"). Each entry point — the Copilot adapter below, the
+ * harness gateway — resolves its own framework types into this plain struct.
+ * The core never sees vscode chat types.
+ */
+export interface AssembleRequestInput {
+  /** Canonical model id as configured in the registry (no routing suffix). */
+  modelId: string;
+  /** Selected model-mode id, if any (Copilot picker pick or gateway `<id>--<mode>` variant). */
+  selectedMode?: string;
+  /** Output-length picker tokens, Copilot path only — the harness has no picker equivalent. */
+  pickerTokens?: number;
+  /** Messages already converted to the OpenAI wire format. */
+  openaiMessages: OpenAIChatMessage[];
+  /** Runtime sampling options from the caller, WITHOUT the private `_conversationId` key. */
+  runtimeOptions: Record<string, unknown>;
+  /** Stable chat identity (Copilot's `_conversationId`); forwarded only as OpenRouter `session_id`. */
+  conversationId?: unknown;
+  /** Tools offered by the caller, in entry-independent shape. */
+  tools?: readonly RequestTool[];
+  /** True when the caller requires a tool call (Copilot `toolMode === Required`). */
+  toolModeRequired: boolean;
+  /** The `fixEmptyToolParameters` setting, read by the entry adapter that owns the settings source. */
+  fixEmptyToolParameters: boolean;
+  /** Advertised output-budget clamp: `model.maxOutputTokens` on the Copilot path. */
+  advertisedMaxOutputTokens: number;
+}
+
+/**
+ * Phase 1 — assemble the vLLM chat request. Copilot-path entry adapter:
+ * converts the vscode-typed arguments into the neutral {@link AssembleRequestInput}
+ * and delegates to {@link assembleRequest}.
  *
  * Collaborators are explicit: the config (for overrides/params) and an output
  * channel for diagnostics. The provider instance is never passed in.
@@ -57,16 +96,87 @@ export function buildRequest(
   config: VllmConfig,
   output: vscode.OutputChannel,
 ): BuildRequestResult {
-  // Build tools array if requested. VS Code Copilot omits `parameters`
-  // entirely for zero-argument tools — some upstream providers reject those
-  // definitions with a 502. When the global `fixEmptyToolParameters` setting is
-  // enabled (default), inject a minimal empty JSON Schema so every tool has a
-  // `parameters` field.
+  // The global `fixEmptyToolParameters` setting (see assembleRequest) is read
+  // here because this adapter owns the vscode settings source.
   const fixEmptyToolParameters = vscode.workspace
     .getConfiguration('vllm-copilot')
     .get<boolean>('fixEmptyToolParameters', true);
+
+  // Convert VS Code messages to OpenAI format.
+  // NOTE: VS Code Copilot injects all user-authored instruction files into the
+  // system message — .github/copilot-instructions.md, AGENTS.md, and CLAUDE.md
+  // (when their respective settings are enabled). No need to re-read or prepend
+  // them here; the system message arrives complete from VS Code.
+  // NOTE: System message replacements were applied before this method was called,
+  // so the messages parameter already contains transformed system messages.
+  const openaiMessages = convertMessages(messages);
+
+  // Mode + output-length pick, read through the same shared reader the provider
+  // uses for tracking (single parse, audit P1-1). The pick already outranks
+  // mode/defaultParams max_tokens inside resolveMaxTokensForRequest, where the
+  // ceiling clamp also lives: a stale cached schema can never push max_tokens
+  // above what Copilot was told the model can do.
+  const { selectedMode, pickerTokens } = readPickerSelection(options);
+
+  // Copilot carries its stable per-chat identity as private model metadata.
+  // Strip it here so the private `_conversationId` key never reaches the core
+  // or the wire.
+  const runtimeOptions = { ...options.modelOptions };
+  const conversationId = runtimeOptions._conversationId;
+  delete runtimeOptions._conversationId;
+
+  return assembleRequest(
+    {
+      modelId: model.id,
+      selectedMode,
+      pickerTokens,
+      openaiMessages,
+      runtimeOptions,
+      conversationId,
+      tools: options.tools,
+      toolModeRequired: options.toolMode === vscode.LanguageModelChatToolMode.Required,
+      fixEmptyToolParameters,
+      advertisedMaxOutputTokens: model.maxOutputTokens,
+    },
+    config,
+    output
+  );
+}
+
+/**
+ * The neutral request-assembly core. Converts tool definitions to the wire
+ * format, merges config defaults with the caller's runtime options and the
+ * selected model-mode parameters, applies backend-specific body edits, and
+ * resolves the server model id to call.
+ *
+ * Extracted verbatim from the former `buildRequest` monolith (dsh bridge plan,
+ * gate 1: a type-shed, not a rewrite). No vscode chat types cross this
+ * boundary; `log` is the only diagnostic sink.
+ */
+export function assembleRequest(
+  input: AssembleRequestInput,
+  config: VllmConfig,
+  log: RequestLog,
+): BuildRequestResult {
+  const {
+    modelId,
+    selectedMode,
+    pickerTokens,
+    openaiMessages,
+    runtimeOptions,
+    conversationId,
+    toolModeRequired,
+    fixEmptyToolParameters,
+    advertisedMaxOutputTokens,
+  } = input;
+
+  // Build tools array if requested. Callers may omit `parameters` entirely for
+  // zero-argument tools — some upstream providers reject those definitions with
+  // a 502 (VS Code Copilot does exactly this). When `fixEmptyToolParameters` is
+  // enabled (default), inject a minimal empty JSON Schema so every tool has a
+  // `parameters` field.
   let tools: any[] | undefined;
-  const availableTools = options.tools || [];
+  const availableTools = input.tools || [];
   if (availableTools.length > 0) {
     tools = availableTools.map(tool => {
       const fn: Record<string, unknown> = {
@@ -82,47 +192,27 @@ export function buildRequest(
     });
   }
 
-  // Convert VS Code messages to OpenAI format.
-  // NOTE: VS Code Copilot injects all user-authored instruction files into the
-  // system message — .github/copilot-instructions.md, AGENTS.md, and CLAUDE.md
-  // (when their respective settings are enabled). No need to re-read or prepend
-  // them here; the system message arrives complete from VS Code.
-  // NOTE: System message replacements were applied before this method was called,
-  // so the messages parameter already contains transformed system messages.
-  const openaiMessages = convertMessages(messages);
-
   // Resolve the effective request params via the layering chain (highest wins):
-  //   DEFAULT_REQUEST_PARAMS ← (max_tokens + Copilot modelOptions) ← model defaultParams ← selected mode.
+  //   DEFAULT_REQUEST_PARAMS ← (max_tokens + caller modelOptions) ← model defaultParams ← selected mode.
   // max_tokens = output budget only; vLLM enforces prompt+output <= max_model_len server-side.
   const modelOverrides = config.models;
   const servers = config.servers;
-  const override = resolveOverrideForModel(modelOverrides, model.id);
-
-  // Mode + output-length pick, read through the same shared reader the provider
-  // uses for tracking (single parse, audit P1-1). The pick already outranks
-  // mode/defaultParams max_tokens inside resolveMaxTokensForRequest, where the
-  // ceiling clamp also lives: a stale cached schema can never push max_tokens
-  // above what Copilot was told the model can do.
-  const { selectedMode, pickerTokens } = readPickerSelection(options);
+  const override = resolveOverrideForModel(modelOverrides, modelId);
 
   const modeParams = selectedMode && override?.modelModes?.[selectedMode]
     ? override.modelModes[selectedMode]
     : undefined;
 
-  const runtimeOptions = { ...options.modelOptions };
-  const conversationId = runtimeOptions._conversationId;
-  delete runtimeOptions._conversationId;
-
   const mergedOptions: Record<string, unknown> = {
-    // Layered params: defaults ← Copilot modelOptions ← defaultParams ← mode.
+    // Layered params: defaults ← caller modelOptions ← defaultParams ← mode.
     // No max_tokens is seeded into this layering (audit P1-2): the output
     // budget is re-asserted after the spread, so nothing layered before it —
-    // Copilot's UI value included — can reach the wire unclamped.
+    // the caller's UI value included — can reach the wire unclamped.
     ...resolveRequestParams(override, selectedMode, runtimeOptions),
-    // NOTE: tools/tool_choice come last so Copilot's tool definitions always win.
+    // NOTE: tools/tool_choice come last so the caller's tool definitions always win.
     tools,
-    // Enforce tool_choice when Copilot requires the model to call a tool.
-    ...(options.toolMode === vscode.LanguageModelChatToolMode.Required && tools
+    // Enforce tool_choice when the caller requires the model to call a tool.
+    ...(toolModeRequired && tools
       ? { tool_choice: 'required' as const }
       : {}),
   };
@@ -131,13 +221,13 @@ export function buildRequest(
   // (mode > defaultParams, resolved inside resolveMaxTokensForRequest, picker
   // pick outranking both) clamped to the ADVERTISED model.maxOutputTokens, which
   // already embeds the context-window reservation and the server-reported
-  // ceiling via deriveTokenBudget. The wire never exceeds what Copilot was
-  // told. Option A: an up-switch to a larger mode budget takes effect on the
+  // ceiling via deriveTokenBudget. The wire never exceeds what the caller was
+  // advertised. Option A: an up-switch to a larger mode budget takes effect on the
   // NEXT request once metadata re-registers; down-switches are instant.
   mergedOptions.max_tokens = resolveMaxTokensForRequest(
     override,
     selectedMode,
-    model.maxOutputTokens,
+    advertisedMaxOutputTokens,
     pickerTokens,
   );
 
@@ -145,9 +235,9 @@ export function buildRequest(
   // (provider pinning, routing mode, transport config) asks the same question.
   const serverType = resolveServerType(override, servers);
 
-  // Copilot carries its stable per-chat identity as private model metadata.
   // OpenRouter uses session_id for sticky provider routing and cache affinity;
-  // never forward the private `_conversationId` key or send it to other backends.
+  // the private `_conversationId` key was stripped by the entry adapter and is
+  // never sent to other backends.
   if (serverType === 'openrouter' && typeof conversationId === 'string' && conversationId.trim()) {
     mergedOptions.session_id = conversationId.slice(0, 256);
   }
@@ -159,14 +249,14 @@ export function buildRequest(
   const providerTag = serverType === 'openrouter' ? override?.provider : undefined;
   if (providerTag) {
     mergedOptions.provider = { only: [providerTag] };
-    output.appendLine(`[INFO] Model "${model.id}" → OpenRouter provider pinned: "${providerTag}" (provider.only)`);
+    log.appendLine(`[INFO] Model "${modelId}" → OpenRouter provider pinned: "${providerTag}" (provider.only)`);
   }
   if (modeParams) {
-    output.appendLine(`[INFO] Model mode: "${selectedMode}" → ${JSON.stringify(modeParams)}`);
+    log.appendLine(`[INFO] Model mode: "${selectedMode}" → ${JSON.stringify(modeParams)}`);
   } else if (selectedMode) {
-    output.appendLine(`[WARN] Selected mode "${selectedMode}" not found in modelModes for ${model.id} - no mode parameters applied`);
+    log.appendLine(`[WARN] Selected mode "${selectedMode}" not found in modelModes for ${modelId} - no mode parameters applied`);
   } else if (override?.modelModes && Object.keys(override.modelModes).length > 0) {
-    output.appendLine(`[WARN] Model has modelModes configured but none was selected for ${model.id}`);
+    log.appendLine(`[WARN] Model has modelModes configured but none was selected for ${modelId}`);
   }
 
   // Resolve the vLLM server model ID: use vllmModelId from override if set, otherwise fall back to preset id.
@@ -178,13 +268,13 @@ export function buildRequest(
   // id that carries the suffix. Usage/cost tracking keys on `wireModelId` so a
   // routing mode never fragments the dashboard's counters. A pinned provider
   // disables the mode (sorting a single provider is meaningless), so no suffix.
-  const wireModelId = resolveVllmModelId(override) || model.id;
+  const wireModelId = resolveVllmModelId(override) || modelId;
   const isOpenRouter = serverType === 'openrouter';
   const routingMode = override?.routingMode;
   let vllmModelId = wireModelId;
   if (isOpenRouter && !providerTag && routingMode && routingMode !== 'standard') {
     vllmModelId = `${wireModelId}:${routingMode}`;
-    output.appendLine(`[INFO] Model "${model.id}" → OpenRouter routing mode "${routingMode}" (wire id ${vllmModelId})`);
+    log.appendLine(`[INFO] Model "${modelId}" → OpenRouter routing mode "${routingMode}" (wire id ${vllmModelId})`);
   }
 
   // Anthropic prompt caching (OpenRouter): Claude-family models have no
@@ -227,11 +317,11 @@ export function buildRequest(
     // perfectly fine.
     if (!override) {
       throw new Error(
-        `Model "${model.id}" is no longer configured - its model entry was removed from settings. Re-add the model to use it.`
+        `Model "${modelId}" is no longer configured - its model entry was removed from settings. Re-add the model to use it.`
       );
     }
     throw new Error(
-      `Model "${model.id}" references an unknown server - no registry entry matches its "server" ref. Fix the reference or re-add the server.`
+      `Model "${modelId}" references an unknown server - no registry entry matches its "server" ref. Fix the reference or re-add the server.`
     );
   }
   const settings = resolveModelSettings(override);
@@ -245,8 +335,8 @@ export function buildRequest(
   // Log which headers are being sent (keys only, not values) for diagnostics
   const headerKeys = Object.keys(resolved.requestHeaders);
   if (headerKeys.length > 0) {
-    output.appendLine(
-      `[INFO] Model "${model.id}" → requestHeaders sent: ${headerKeys.join(', ')}`
+    log.appendLine(
+      `[INFO] Model "${modelId}" → requestHeaders sent: ${headerKeys.join(', ')}`
     );
   }
 
