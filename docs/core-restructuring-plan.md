@@ -195,7 +195,7 @@ Existing documented asymmetries and owner rulings remain in force. Do not revise
 Find each case in the named tests and retain its assertion; add a missing case in the existing suitable test before moving the owner. Cases are not satisfied by a grep or a total passing-test count.
 
 - Request: mode/default/runtime precedence; length pick above an advertised clamp; configured id versus canonical and suffixed wire ids; caller tools overriding configured tools; zero-argument tool schema injection; Anthropic cache on/off/TTL; Ollama tool-choice stripping; system messages first; protected body keys; headers without value leakage.
-- Discovery: unavailable/unloaded models skipped under the current implementation; recovery republishes them; invalidation during an in-flight pass cannot publish stale metadata; concurrent resolves join; picks survive cache clearing; vector/default/smaller-pick/menu-ceiling distinctions; truthful backend context/output caps. A policy disagreement with an instruction is a stop-and-ask condition, not a reason to change offline behavior in this refactor.
+- Discovery: unavailable/unloaded models skipped — ruled law by the owner 2026-10-03, not an implementation accident to "fix"; recovery republishes them; invalidation during an in-flight pass cannot publish stale metadata; concurrent resolves join; picks survive cache clearing; vector/default/smaller-pick/menu-ceiling distinctions; truthful backend context/output caps. Any future policy disagreement is a stop-and-ask condition, never a reason to change offline behavior inside this refactor.
 - Execution: normal response; empty stop -> empty assistant nudge; vLLM colon stop -> accumulating assistant prefill and continuation flags; non-vLLM colon -> no retry; valid tool-only stop -> no retry; reasoning-as-text -> no replay; genuine thinking -> existing retry eligibility; early mid-stream error -> identical-request retry; visible text/tool output -> no replay; exhausted budget -> accurate actual attempts and sticky-output diagnostics.
 - Stream: split raw think tags; split tool name/arguments and fallback ids; duplicate final tool ids; malformed/truncated arguments; `length`, `content_filter`, missing finish and usage-only chunks; cumulative usage emitted many times -> one final report/record per normally completed attempt; stream throw -> no newly invented completion record.
 - Cancellation/error: pre-aborted input; abort before headers and during a pending body read; initial-response versus inactivity timeout; consumer closing the iterator -> transport cleanup; all subscriptions/timers/readers released; quiet user cancellation; bare graceful `TypeError: terminated` versus a socket-kill cause; transport failure -> picker invalidation, HTTP rejection -> not transport invalidation.
@@ -209,7 +209,7 @@ Execute the phases in order. Every implementation phase ends with its focused te
 
 Record revision/dirty diff, Node/npm versions, and `npm run build` result. Read the source checkpoints and map the required cases to actual tests or missing fixtures. Read the boundary rules in [.dependency-cruiser.cjs](../.dependency-cruiser.cjs) and [.dependency-cruiser.consumers.cjs](../.dependency-cruiser.consumers.cjs). Do not start moving code in this phase.
 
-DONE: the handoff identifies each missing required case, pre-existing failures, relevant manual checks, the exact phase-2 test command, and the owner's ruling on the Folder Proposal — phase 2 creates the `src/core` tree it names, so an unresolved layout is a stop condition, not a license to invent directories. Owner confirmation is required for any conflict between current behavior and a standing instruction.
+DONE: the handoff identifies each missing required case, pre-existing failures, relevant manual checks, and the exact phase-2 test command, and confirms both standing rulings are recorded: the Folder Proposal approval (2026-10-03, which phase 2's `src/core` creation depends on) and the picker offline policy (skip, not OFFLINE rows; 2026-10-03). Owner confirmation is required for any conflict between current behavior and a standing instruction.
 
 ### Phase 2: Configuration, Assembly And Error Boundary
 
@@ -285,7 +285,7 @@ These are local proof artifacts, not a new published version. Do not infer stand
 
 ## Folder Proposal
 
-Proposed ownership layout, for owner acceptance before directory moves. The source checkpoints above refer to current paths; this tree names destinations, not files already created. Keep existing basenames where they still describe the implementation, and create a directory only when extracted files actually need it.
+Ownership layout, approved by the owner 2026-10-03. The source checkpoints above refer to current paths; this tree names destinations, not files already created. Keep existing basenames where they still describe the implementation, and create a directory only when extracted files actually need it.
 
 ```text
 src/
