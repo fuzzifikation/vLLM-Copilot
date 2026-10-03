@@ -1,0 +1,21 @@
+{
+  // Node-only declaration proof for the core package (Phase 8). Extends the
+  // root config — inherited strictness included — but limits the program to
+  // src/core, replaces the ambient types with Node alone (no `vscode`, no
+  // editor/harness types may resolve), and emits declarations only into
+  // ignored scratch. Declared in the real build pipeline as `core:decl`;
+  // scripts/core-proof.mjs consumes these declarations with the compiled
+  // out/core JS. skipLibCheck stays OFF: the core's own dependency
+  // declarations must be sound.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src/core",
+    "outDir": "temp/core-decl",
+    "types": ["node"],
+    "skipLibCheck": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "sourceMap": false
+  },
+  "include": ["src/core/**/*"]
+}

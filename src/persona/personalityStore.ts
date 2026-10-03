@@ -13,16 +13,17 @@ import * as path from 'path';
 import type * as vscode from 'vscode';
 import {
   discoverPersonalities as coreDiscover,
+  normalizeModelEntry,
   resolveModelReplacements as coreResolve,
   syncBundledPersonalities as coreSync,
+  type ModelConfig,
   type PersonalityDirs,
   type ResolvedReplacements,
-} from '../core/persona/store.js';
+} from '../core/index.js';
 import { resolveWorkspaceRelativePath } from '../state/config.js';
-import { normalizeModelEntry, type ModelConfig } from '../core/config/config.js';
 import { readModels, writeModels } from '../state/configStore.js';
 
-export type { PersonalityEntry, ResolvedReplacements } from '../core/persona/store.js';
+export type { PersonalityEntry, ResolvedReplacements } from '../core/index.js';
 
 /** Subdirectory of global storage that holds user personalities. */
 const PERSONALITIES_DIR = 'personalities';

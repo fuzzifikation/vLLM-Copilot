@@ -10,10 +10,12 @@
  * overrides + a limits probe and returns the picker entries.
  */
 import type * as vscode from 'vscode';
-import { describeModels } from '../core/catalog/describe.js';
-import type { ModelConfig } from '../core/config/config.js';
-import type { ServerEntry } from '../core/config/serverRegistry.js';
-import type { RequestLog } from '../core/shared/trace.js';
+import {
+  describeModels,
+  type ModelConfig,
+  type RequestLog,
+  type ServerEntry,
+} from '../core/index.js';
 import { buildModelInfo } from './modelInfo.js';
 import type { ProviderClient } from './contracts.js';
 

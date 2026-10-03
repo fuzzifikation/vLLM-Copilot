@@ -7,12 +7,14 @@
 import * as vscode from 'vscode';
 import { convertMessages } from './messageConverter.js';
 import { readPickerSelection } from '../state/config.js';
+// The public core entry is the adapter-facing contract — the barrel has real
+// production consumers, not just the isolated Node proof.
 import {
   assembleRequest,
   type AssembleRequestInput,
   type BuildRequestResult,
-} from '../core/request/assemble.js';
-import type { VllmConfig } from '../core/config/config.js';
+  type VllmConfig,
+} from '../core/index.js';
 
 /**
  * Assemble the vLLM chat request for one Copilot response call.
