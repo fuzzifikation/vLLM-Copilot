@@ -10,12 +10,13 @@
  */
 
 import * as vscode from 'vscode';
-import type { ServerType } from '../state/config.js';
-import { normalizeServerUrl, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders, isUsableServerUrl, resolveVllmModelId, resolveConfigId, toPublicModelConfig, buildModelId } from '../state/config.js';
+import type { ServerType } from '../core/config/serverCore.js';
+import { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders, isUsableServerUrl } from '../core/config/serverCore.js';
+import { mergeAuthHeaders, resolveVllmModelId, resolveConfigId, toPublicModelConfig, buildModelId } from '../core/config/config.js';
 import { replaceModelConfig, readModels, readServers, writeServers, type IdentifiedModelConfig } from '../state/configStore.js';
-import type { ServerEntry } from '../state/serverRegistry.js';
-import { entryMatchesConnection, firstEntryById, generateServerId, resolveServer } from '../state/serverRegistry.js';
-import { describeError } from '../provider/messageConverter.js';
+import type { ServerEntry } from '../core/config/serverRegistry.js';
+import { entryMatchesConnection, firstEntryById, generateServerId, resolveServer } from '../core/config/serverRegistry.js';
+import { describeError } from '../core/shared/errors.js';
 import { ensureByokUtilityDefault } from './byok.js';
 import { presetBlobUrl } from './presets.js';
 import type { AutoConfigResult } from './hfDiscovery.js';

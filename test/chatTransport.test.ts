@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { ChatTransport } from '../src/provider/chatTransport.js';
-import type { ServerType } from '../src/state/config.js';
-import type { OpenAIChatMessage, VllmChatOptions } from '../src/types.js';
+import type { ServerType } from '../src/core/config/serverCore.js';
+import type { OpenAIChatMessage, VllmChatOptions } from '../src/core/types.js';
 
 /**
  * Wire-format canary (formerly chatProtocol.test.ts). The body builder,

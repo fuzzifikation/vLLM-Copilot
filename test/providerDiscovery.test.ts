@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { VllmChatModelProvider } from '../src/provider/provider.js';
 import type { ProviderClient } from '../src/provider/contracts.js';
-import type { VllmConfig } from '../src/state/config.js';
+import type { VllmConfig } from '../src/core/config/config.js';
 
 /**
  * Direct tests for the provider's class-owned discovery shell —

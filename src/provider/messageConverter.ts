@@ -9,13 +9,19 @@
 import * as vscode from 'vscode';
 import { jsonrepair } from 'jsonrepair';
 import { parse as parsePartialJson, disableErrorLogging } from 'best-effort-json-parser';
-import { collectErrorMessages } from '../shared/errorEnvelope.js';
+import { collectErrorMessages } from '../core/shared/errorEnvelope.js';
+import {
+  iterateCauses,
+  isTransportFailureText,
+  isTlsCertificateError,
+  STREAM_TIMEOUT_PREFIX,
+} from '../core/shared/errors.js';
 import type {
   FinalizedToolCall,
   OpenAIChatMessage,
   OpenAIToolCall,
   OpenAIContentPart,
-} from '../types.js';
+} from '../core/types.js';
 
 // best-effort-json-parser logs parse errors to console by default; silence it so
 // our own [WARN] log is the single source of truth for unparseable args.
@@ -253,61 +259,11 @@ export function parseToolCallArgs(toolCall: FinalizedToolCall): object | null {
   return null; // unparseable — the caller warns and falls back to {}
 }
 
-/**
- * Walk an error's `cause` chain, yielding each cause value in order.
- * Caps traversal depth to guard against cyclic/self-referential chains.
- * Shared by every error classifier in this file and in the provider
- * (postStream, streamOrchestrator) — that cross-module reuse pays the export.
- */
-export function* iterateCauses(err: unknown, maxDepth = 5): Generator<unknown> {
-  let cause = (err as { cause?: unknown } | null | undefined)?.cause;
-  let depth = 0;
-  while (cause && depth < maxDepth) {
-    yield cause;
-    cause = (cause as { cause?: unknown }).cause;
-    depth++;
-  }
-}
-
-/**
- * Compact one-line description of an error that unwraps its `cause` chain.
- *
- * Node's global `fetch` (undici) throws `TypeError: fetch failed` and buries the
- * real reason in `err.cause` — e.g. a TLS failure behind a corporate MITM proxy
- * (`UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, `SELF_SIGNED_CERT_IN_CHAIN`), a refused
- * connection (`ECONNREFUSED`), DNS failure (`ENOTFOUND`), or a proxy `407`.
- * Logging only `err.message` hides all of that, so this appends each cause
- * (with its `.code` when present) to keep one-liner log entries diagnosable.
- */
-export function describeError(err: unknown): string {
-  if (typeof err === 'string') return err;
-  if (!(err instanceof Error)) return String(err);
-
-  const format = (e: Error): string => {
-    const code = (e as { code?: unknown }).code;
-    return `${e.name}: ${e.message}${code ? ` [${String(code)}]` : ''}`;
-  };
-
-  const parts = [format(err)];
-  for (const cause of iterateCauses(err)) {
-    parts.push(cause instanceof Error ? format(cause) : String(cause));
-  }
-  return parts.join(' ← caused by: ');
-}
-
-/**
- * The transport-failure text rule (audit P2-4): the server was never reached.
- * ONE membership check over a flattened error-chain text (name + message +
- * causes, see {@link iterateCauses}) - the orchestrator decides cache
- * invalidation with it and {@link formatError} chooses the "Cannot connect"
- * copy with it. Two implementations here would drift into each other: error
- * copy claiming connectivity while the stale model list survives, or inverse.
- */
-export function isTransportFailureText(combinedChainText: string): boolean {
-  return combinedChainText.includes('ECONNREFUSED')
-    || combinedChainText.includes('fetch failed')
-    || combinedChainText.includes('ENOTFOUND');
-}
+// Error vocabulary (iterateCauses, describeError, isTransportFailureText,
+// isTlsCertificateError, STREAM_TIMEOUT_PREFIX) lives in
+// core/shared/errors.ts — neutral transport/protocol facts shared with the
+// orchestrator, transport and reader. This file keeps only the editor-facing
+// classification below, whose copy names VS Code commands and settings.
 
 /**
  * Format an error for user-facing display. Maps common network/server failures
@@ -431,38 +387,6 @@ export function formatError(err: unknown): string {
  */
 export const TLS_CERT_SUGGESTION =
   `This may be a certificate issue - the server's certificate could be expired, self-signed, or trusted differently by your OS than by VS Code. Run "Diagnose Connection" to confirm. If the certificate is valid and trusted by your OS, you can also try setting "http.systemCertificatesNode": true in your user settings and reload the window (Developer: Reload Window).`;
-
-/** Error fragments that indicate a TLS certificate verification failure. */
-const TLS_ERROR_PATTERNS = [
-  // OpenSSL / undici error codes (uppercase)
-  'UNABLE_TO_GET_ISSUER_CERT',
-  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
-  'SELF_SIGNED_CERT',
-  'CERT_HAS_EXPIRED',
-  'CERTIFICATE_VERIFY_FAILED',
-  'ERR_CERT',
-  'DEPTH_ZERO_SELF_SIGNED_CERT',
-  // Common human-readable undici/Node messages (lowercase)
-  'unable to verify the first certificate',
-  'unable to get local issuer certificate',
-  'self-signed certificate',
-  'self signed certificate',
-  'certificate has expired',
-];
-
-/** True when an error message indicates a TLS certificate verification failure. */
-export function isTlsCertificateError(msg: string): boolean {
-  return TLS_ERROR_PATTERNS.some((p) => msg.includes(p));
-}
-
-/**
- * The single owner of the stream-inactivity marker. Producers (chatTransport's
- * pre-body abort, streamReader's body-race reject) interpolate it; matchers
- * (streamReader's rethrow branch, this classifier) compare against it. One
- * vocabulary, one owner: an edited literal here used to silently un-wire the
- * classifier from its own timeouts.
- */
-export const STREAM_TIMEOUT_PREFIX = 'Stream inactivity timeout';
 
 /**
  * Classify a single error message against known patterns.

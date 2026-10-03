@@ -1,13 +1,13 @@
 import * as vscode from 'vscode';
-import { resolveOverrideForModel, resolveModelSettings, type VllmConfig } from '../state/config.js';
+import { resolveOverrideForModel, resolveModelSettings, type VllmConfig } from '../core/config/config.js';
 import type { FileLogger } from '../shared/logger.js';
-import type { OpenAIChatMessage } from '../types.js';
+import type { OpenAIChatMessage } from '../core/types.js';
 import type { ProviderClient, StreamOutcome } from './contracts.js';
 import { buildRequest } from './requestBuilder.js';
 import { consumeStream } from './consumeStream.js';
 import { reportPostStreamDiagnostics, handleResponseError } from './postStream.js';
 import type { SystemMessagePipeline } from './systemMessagePipeline.js';
-import { isTransportFailureText, iterateCauses } from './messageConverter.js';
+import { isTransportFailureText, iterateCauses } from '../core/shared/errors.js';
 
 /**
  * True when the request failed at the transport layer: the server never

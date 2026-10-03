@@ -13,7 +13,7 @@ const createOutcome = (): StreamOutcome => ({
   sawRawThinkTags: false,
 });
 import { getLastRequest } from '../src/usage/usageStore.js';
-import type { StreamEvent } from '../src/types.js';
+import type { StreamEvent } from '../src/core/types.js';
 
 /**
  * Direct tests for the extracted stream consumer (`consumeStream.ts`).

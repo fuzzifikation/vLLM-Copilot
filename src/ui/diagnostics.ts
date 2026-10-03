@@ -24,8 +24,10 @@
 import * as vscode from 'vscode';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { describeError, TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
-import { getConfig, buildEndpoint, resolveServerConfig } from '../state/config.js';
+import { describeError } from '../core/shared/errors.js';
+import { TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
+import { getConfig } from '../state/config.js';
+import { buildEndpoint, resolveServerConfig } from '../core/config/config.js';
 
 const execFileAsync = promisify(execFile);
 

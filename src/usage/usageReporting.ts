@@ -7,7 +7,7 @@
  */
 
 import * as vscode from 'vscode';
-import type { WireUsage } from '../types.js';
+import type { WireUsage } from '../core/types.js';
 import { formatCostFine } from './usageStore.js';
 
 /**

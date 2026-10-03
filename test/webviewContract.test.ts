@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { KNOWN_SERVER_TYPES } from '../src/state/config.js';
+import { KNOWN_SERVER_TYPES } from '../src/core/config/serverCore.js';
 
 /**
  * Tripwire for the untyped webview <-> host message contract.

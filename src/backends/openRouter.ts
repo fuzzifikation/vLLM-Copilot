@@ -32,12 +32,12 @@
  * - Reasoning is toggled via `reasoning: { enabled, effort }` (Chat Completions).
  */
 
-import { buildEndpoint, isOpenRouterUrl, sanitizeRequestHeaders } from '../state/config.js';
-import type { ModelConfig } from '../state/config.js';
+import { buildEndpoint, type ModelConfig } from '../core/config/config.js';
+import { isOpenRouterUrl, sanitizeRequestHeaders } from '../core/config/serverCore.js';
 import { readServers } from '../state/configStore.js';
 import { buildRequestHeaders, fetchWithRetry, transportErrorCode } from '../shared/fetchRetry.js';
-import { buildOutputLengthLadder, OUTPUT_TOKEN_CAP, OUTPUT_TOKEN_FACTOR } from '../shared/tokenBudget.js';
-import type { RuntimeModelLimits } from '../types.js';
+import { buildOutputLengthLadder, OUTPUT_TOKEN_CAP, OUTPUT_TOKEN_FACTOR } from '../core/shared/tokenBudget.js';
+import type { RuntimeModelLimits } from '../core/types.js';
 
 /**
  * A context-window resolve failure that retrying can never fix — the model

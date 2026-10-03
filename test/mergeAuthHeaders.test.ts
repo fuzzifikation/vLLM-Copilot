@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeAuthHeaders } from '../src/state/config.js';
+import { mergeAuthHeaders } from '../src/core/config/config.js';
 
 /**
  * Tests for the header-merge helper behind the "Update Auth" command.

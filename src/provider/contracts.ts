@@ -1,7 +1,8 @@
 import type * as vscode from 'vscode';
-import type { VllmConfig, ServerType } from '../state/config.js';
-import type { OpenAIChatMessage, StreamEvent, VllmChatOptions, RuntimeModelLimits } from '../types.js';
-import type { ServerConfig } from './requestBuilder.js';
+import type { VllmConfig } from '../core/config/config.js';
+import type { ServerType } from '../core/config/serverCore.js';
+import type { OpenAIChatMessage, StreamEvent, VllmChatOptions, RuntimeModelLimits } from '../core/types.js';
+import type { ServerConfig } from '../core/request/assemble.js';
 
 /**
  * Narrow client surface the provider needs. Structural — `VllmClient` satisfies

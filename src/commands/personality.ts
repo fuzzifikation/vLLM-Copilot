@@ -8,10 +8,11 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider/provider.js';
-import { getConfig, findModelConfigIndex, pathsEquivalent, resolveConfigId, resolveServerConfig } from '../state/config.js';
+import { getConfig } from '../state/config.js';
+import { findModelConfigIndex, pathsEquivalent, resolveConfigId, resolveServerConfig } from '../core/config/config.js';
 import { patchModelConfig, readModels } from '../state/configStore.js';
 import { discoverPersonalities, resolveModelReplacements } from '../persona/personalityStore.js';
-import { describeError } from '../provider/messageConverter.js';
+import { describeError } from '../core/shared/errors.js';
 
 /**
  * A personality option in the Set Model Personality quick pick (step 2/2).

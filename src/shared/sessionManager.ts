@@ -2,7 +2,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { stripJsonc } from './jsonc.js';
+import { stripJsonc } from '../core/shared/jsonc.js';
 
 /**
  * Wipes Copilot/VS Code session residue for selected workspaces.

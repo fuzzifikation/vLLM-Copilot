@@ -15,7 +15,8 @@
  */
 
 import * as vscode from 'vscode';
-import { buildEndpoint, normalizeServerUrl, sanitizeRequestHeaders, type ServerType } from '../state/config.js';
+import { buildEndpoint } from '../core/config/config.js';
+import { normalizeServerUrl, sanitizeRequestHeaders, type ServerType } from '../core/config/serverCore.js';
 import { buildRequestHeaders, transportErrorCode } from '../shared/fetchRetry.js';
 import { listServerModels, resolveRuntimeLimits, type ServerModelEntry } from '../backends/runtimeLimits.js';
 import {

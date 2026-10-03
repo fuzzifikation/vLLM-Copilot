@@ -9,9 +9,9 @@
 
 import * as vscode from 'vscode';
 import { processSSEChunk, finalizePendingToolCalls, type PendingToolCall } from './sseParser.js';
-import { STREAM_TIMEOUT_PREFIX } from './messageConverter.js';
+import { STREAM_TIMEOUT_PREFIX } from '../core/shared/errors.js';
 import { createParser, type EventSourceMessage } from 'eventsource-parser';
-import type { StreamEvent } from '../types.js';
+import type { StreamEvent } from '../core/types.js';
 import type { FileLogger } from '../shared/logger.js';
 
 interface StreamReaderOptions {

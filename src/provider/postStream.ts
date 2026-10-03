@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { formatError, iterateCauses } from './messageConverter.js';
+import { formatError } from './messageConverter.js';
+import { iterateCauses } from '../core/shared/errors.js';
 import type { StreamOutcome } from './contracts.js';
 
 /** Emit a diagnostic to the Output channel only. */

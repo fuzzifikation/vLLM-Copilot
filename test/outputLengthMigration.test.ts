@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as vscode from 'vscode';
 import { maybeOfferOutputLengthMigration } from '../src/migrations/outputLengthMigration.js';
-import type { ModelConfig } from '../src/state/config.js';
+import type { ModelConfig } from '../src/core/config/config.js';
 import type { ModelPreset } from '../src/commands/presets.js';
 
 /**

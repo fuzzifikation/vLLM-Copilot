@@ -5,9 +5,10 @@
  */
 
 import * as vscode from 'vscode';
-import { buildModelId, normalizeServerUrl } from '../state/config.js';
+import { buildModelId } from '../core/config/config.js';
+import { normalizeServerUrl } from '../core/config/serverCore.js';
 import type { IdentifiedModelConfig } from '../state/configStore.js';
-import { describeError } from '../provider/messageConverter.js';
+import { describeError } from '../core/shared/errors.js';
 import { promptForServerAuth } from './serverAuth.js';
 import {
   OPENROUTER_API_BASE,

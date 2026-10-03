@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
-import type { ModelConfig } from '../state/config.js';
-import { resolveConfigId, resolveVllmModelId, findModelConfigIndex } from '../state/config.js';
+import type { ModelConfig } from '../core/config/config.js';
+import { resolveConfigId, resolveVllmModelId, findModelConfigIndex } from '../core/config/config.js';
 import { replaceModelConfig, readModels, readServers, type IdentifiedModelConfig } from '../state/configStore.js';
-import { resolveServer } from '../state/serverRegistry.js';
+import { resolveServer } from '../core/config/serverRegistry.js';
 import { resolveModelConfigForAddSafely } from './hfDiscovery.js';
 import { assembleAddedModelConfig, confirmAndSaveAddedModel, type ClearCacheProvider } from './addServerCore.js';
 

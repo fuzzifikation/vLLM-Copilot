@@ -1,8 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import * as vscode from 'vscode';
-import { resolveServerType, resolveModelSettings, resolveMaxTokensForRequest, buildModelId, toPublicModelConfig, validateConfig, type ModelConfig } from '../src/state/config.js';
+import { resolveServerType, resolveModelSettings, resolveMaxTokensForRequest, buildModelId, toPublicModelConfig, type ModelConfig } from '../src/core/config/config.js';
+import { validateConfig } from '../src/state/config.js';
 import { buildAuthHeaders } from '../src/commands/serverAuth.js';
-import type { ServerEntry } from '../src/state/serverRegistry.js';
+import type { ServerEntry } from '../src/core/config/serverRegistry.js';
 
 // ── resolveMaxTokensForRequest ──────────────────────────────────────────
 

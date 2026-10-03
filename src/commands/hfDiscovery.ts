@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
-import type { ModelConfig, ServerType } from '../state/config.js';
-import { buildEndpoint } from '../state/config.js';
-import { describeError } from '../provider/messageConverter.js';
+import type { ModelConfig } from '../core/config/config.js';
+import type { ServerType } from '../core/config/serverCore.js';
+import { buildEndpoint } from '../core/config/config.js';
+import { describeError } from '../core/shared/errors.js';
 import { MissingContextWindowError, resolveRuntimeLimits } from '../backends/runtimeLimits.js';
 import {
   buildOutputLengthLadder,
@@ -10,7 +11,7 @@ import {
   OUTPUT_TOKEN_CAP,
   OUTPUT_TOKEN_FACTOR,
   type OutputBudgetValue,
-} from '../shared/tokenBudget.js';
+} from '../core/shared/tokenBudget.js';
 import { autoConfigureOpenRouterModel } from '../backends/openRouter.js';
 import { fetchRemotePreset } from './presetRemote.js';
 import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig, presetBlobUrl } from './presets.js';

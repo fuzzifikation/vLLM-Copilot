@@ -8,12 +8,14 @@
  */
 
 import * as vscode from 'vscode';
-import type { ServerType } from '../state/config.js';
-import { buildEndpoint, normalizeServerUrl, buildModelId, isOpenRouterUrl } from '../state/config.js';
+import type { ServerType } from '../core/config/serverCore.js';
+import { buildEndpoint, buildModelId } from '../core/config/config.js';
+import { normalizeServerUrl, isOpenRouterUrl } from '../core/config/serverCore.js';
 import { readModels, readServers, writeServers, type IdentifiedModelConfig } from '../state/configStore.js';
-import { firstEntryById, resolveServer } from '../state/serverRegistry.js';
-import type { VllmModel } from '../types.js';
-import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
+import { firstEntryById, resolveServer } from '../core/config/serverRegistry.js';
+import type { VllmModel } from '../core/types.js';
+import { isTlsCertificateError, describeError } from '../core/shared/errors.js';
+import { TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
 import { detectServerType } from '../backends/runtimeLimits.js';
 import { promptForServerAuth } from './serverAuth.js';
 import { fetchWithTimeout, resolveModelConfigForAddSafely } from './hfDiscovery.js';

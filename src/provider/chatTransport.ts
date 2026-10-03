@@ -1,12 +1,13 @@
 import type * as vscode from 'vscode';
-import { buildEndpoint, DEFAULT_MODEL_SETTINGS, type ServerType } from '../state/config.js';
-import { serverErrorMessage } from '../shared/errorEnvelope.js';
+import { buildEndpoint, DEFAULT_MODEL_SETTINGS } from '../core/config/config.js';
+import type { ServerType } from '../core/config/serverCore.js';
+import { serverErrorMessage } from '../core/shared/errorEnvelope.js';
 import { buildRequestHeaders, fetchWithRetry } from '../shared/fetchRetry.js';
-import { STREAM_TIMEOUT_PREFIX } from './messageConverter.js';
+import { STREAM_TIMEOUT_PREFIX } from '../core/shared/errors.js';
 import type { FileLogger } from '../shared/logger.js';
 import { readSseStream } from './streamReader.js';
-import type { OpenAIChatMessage, StreamEvent, VllmChatOptions } from '../types.js';
-import type { ServerConfig } from './requestBuilder.js';
+import type { OpenAIChatMessage, StreamEvent, VllmChatOptions } from '../core/types.js';
+import type { ServerConfig } from '../core/request/assemble.js';
 
 const PROTECTED_BODY_KEYS = new Set(['model', 'messages', 'stream', 'stream_options']);
 

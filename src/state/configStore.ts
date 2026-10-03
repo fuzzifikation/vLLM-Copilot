@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import type { ModelConfig } from './config.js';
-import { findModelConfigIndex, normalizeModelEntry, resolveConfigId } from './config.js';
-import type { ServerEntry } from './serverRegistry.js';
+import type { ModelConfig } from '../core/config/config.js';
+import { findModelConfigIndex, normalizeModelEntry, resolveConfigId } from '../core/config/config.js';
+import type { ServerEntry } from '../core/config/serverRegistry.js';
 
 /**
  * The settings layer a write to `key` must land in for the write to be VISIBLE.

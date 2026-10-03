@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveTokenBudget, fitOutputBudgetToWindow } from '../src/shared/tokenBudget.js';
+import { deriveTokenBudget, fitOutputBudgetToWindow } from '../src/core/shared/tokenBudget.js';
 
 describe('deriveTokenBudget', () => {
   it('uses server max_model_len when present, global config for output', () => {

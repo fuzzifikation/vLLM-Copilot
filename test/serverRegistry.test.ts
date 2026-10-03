@@ -5,8 +5,8 @@ import {
   entryMatchesConnection,
   dedupeServerIds,
   type ServerEntry,
-} from '../src/state/serverRegistry.js';
-import { resolveServerConfig, type ModelConfig } from '../src/state/config.js';
+} from '../src/core/config/serverRegistry.js';
+import { resolveServerConfig, type ModelConfig } from '../src/core/config/config.js';
 
 // ── resolveServer ───────────────────────────────────────────────────────
 

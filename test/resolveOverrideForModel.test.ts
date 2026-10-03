@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOverrideForModel } from '../src/state/config.js';
-import type { ModelConfig } from '../src/state/config.js';
+import { resolveOverrideForModel } from '../src/core/config/config.js';
+import type { ModelConfig } from '../src/core/config/config.js';
 
 describe('resolveOverrideForModel', () => {
   it('matches an override by its explicit id', () => {

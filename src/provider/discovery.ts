@@ -7,11 +7,11 @@ import {
   resolveConfiguredMaxTokens,
   resolveConfigId,
   type ModelConfig,
-} from '../state/config.js';
-import type { ServerEntry } from '../state/serverRegistry.js';
+} from '../core/config/config.js';
+import type { ServerEntry } from '../core/config/serverRegistry.js';
 import { buildModelInfo } from './modelInfo.js';
-import { deriveTokenBudget, resolveOutputLengthVector } from '../shared/tokenBudget.js';
-import { describeError } from './messageConverter.js';
+import { deriveTokenBudget, resolveOutputLengthVector } from '../core/shared/tokenBudget.js';
+import { describeError } from '../core/shared/errors.js';
 import type { ProviderClient } from './contracts.js';
 
 /**

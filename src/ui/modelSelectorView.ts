@@ -75,7 +75,8 @@ import type {
   OpenRouterModelData,
   OpenRouterModelEndpoint,
 } from '../backends/openRouter.js';
-import { buildModelId, isOpenRouterUrl, normalizeServerUrl, resolveConfigId, resolveVllmModelId, sanitizeRequestHeaders, type ModelConfig } from '../state/config.js';
+import { buildModelId, resolveConfigId, resolveVllmModelId, type ModelConfig } from '../core/config/config.js';
+import { isOpenRouterUrl, normalizeServerUrl, sanitizeRequestHeaders } from '../core/config/serverCore.js';
 import { readModels, readServers, type IdentifiedModelConfig } from '../state/configStore.js';
 import { confirmAndSaveAddedModel, handleDuplicateModelGate } from '../commands/addServerCore.js';
 

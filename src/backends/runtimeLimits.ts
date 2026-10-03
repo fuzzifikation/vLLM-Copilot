@@ -1,10 +1,11 @@
-import { buildEndpoint, KNOWN_SERVER_TYPES, type ServerType } from '../state/config.js';
-import { isValidContextWindow } from '../shared/tokenBudget.js';
+import { buildEndpoint } from '../core/config/config.js';
+import { KNOWN_SERVER_TYPES, type ServerType } from '../core/config/serverCore.js';
+import { isValidContextWindow } from '../core/shared/tokenBudget.js';
 import { buildRequestHeaders, fetchWithRetry } from '../shared/fetchRetry.js';
-import { describeError } from '../provider/messageConverter.js';
+import { describeError } from '../core/shared/errors.js';
 import { resolveOpenRouterRuntimeLimits, fetchOpenRouterCatalog } from './openRouter.js';
-import { isOpenRouterUrl } from '../state/serverCore.js';
-import type { LmStudioModel, RuntimeModelLimits, VllmModel } from '../types.js';
+import { isOpenRouterUrl } from '../core/config/serverCore.js';
+import type { LmStudioModel, RuntimeModelLimits, VllmModel } from '../core/types.js';
 
 const METADATA_TIMEOUT_MS = 10000;
 

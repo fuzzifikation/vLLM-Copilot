@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as vscode from 'vscode';
 import { replaceModelConfig, patchModelConfig, readModels, readServers, writeModels, writeServers, type IdentifiedModelConfig, type ModelIdentity } from '../src/state/configStore.js';
-import { ModelConfig } from '../src/state/config.js';
+import { ModelConfig } from '../src/core/config/config.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 /** A ModelConfig with the required fields filled in (models reference registry entries by `server` id). */

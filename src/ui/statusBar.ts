@@ -32,8 +32,9 @@
  */
 
 import * as vscode from 'vscode';
-import { findModelConfig, normalizeServerUrl, type ModelConfig } from '../state/config.js';
-import { isOpenRouterUrl } from '../state/serverCore.js';
+import { findModelConfig, type ModelConfig } from '../core/config/config.js';
+import { normalizeServerUrl } from '../core/config/serverCore.js';
+import { isOpenRouterUrl } from '../core/config/serverCore.js';
 import { readModels, readServers } from '../state/configStore.js';
 import {
   findModelCost, formatCostFine, getLatestRequest, onUsageStoreDidChange,

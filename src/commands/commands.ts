@@ -15,14 +15,14 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider/provider.js';
-import { resolveConfigId, normalizeServerUrl, resolveVllmModelId, sanitizeRequestHeaders, mergeAuthHeaders, sameHeaders, findModelConfigIndex } from '../state/config.js';
-import { firstEntryById } from '../state/serverRegistry.js';
+import { resolveConfigId, resolveVllmModelId, mergeAuthHeaders, findModelConfigIndex } from '../core/config/config.js';
+import { firstEntryById } from '../core/config/serverRegistry.js';
 import { patchModelConfig, readModels, readServers, writeModels, writeServers } from '../state/configStore.js';
 import { promptForServerAuth } from './serverAuth.js';
 import { refreshEngineHeaders } from '../ui/vllmMetrics.js';
 import { updateDeepDiveTitle } from '../ui/deepDiveView.js';
 import { resetUsage, getServersWithUsage } from '../usage/usageStore.js';
-import { isOpenRouterUrl } from '../state/config.js';
+import { normalizeServerUrl, sanitizeRequestHeaders, sameHeaders, isOpenRouterUrl } from '../core/config/serverCore.js';
 
 /**
  * Run a settings write so a rejection never escapes as VS Code's anonymous

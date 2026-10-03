@@ -2,7 +2,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { personalityTemplate, ServerSettingsViewProvider } from '../src/ui/serverSettingsView.js';
-import { ModelConfig } from '../src/state/config.js';
+import { ModelConfig } from '../src/core/config/config.js';
 import { resetOpenRouterCaches } from '../src/backends/openRouter.js';
 import { clearRuntimeLimitsCache } from '../src/backends/runtimeLimits.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';

@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
-import { getConfig, type ServerType, type VllmConfig } from '../state/config.js';
+import { getConfig } from '../state/config.js';
+import type { VllmConfig } from '../core/config/config.js';
+import type { ServerType } from '../core/config/serverCore.js';
 import type { FileLogger } from '../shared/logger.js';
 import { ChatTransport } from './chatTransport.js';
-import type { ServerConfig } from './requestBuilder.js';
+import type { ServerConfig } from '../core/request/assemble.js';
 import { clearRuntimeLimitsCache, resolveRuntimeLimits } from '../backends/runtimeLimits.js';
-import type { OpenAIChatMessage, RuntimeModelLimits, StreamEvent, VllmChatOptions } from '../types.js';
+import type { OpenAIChatMessage, RuntimeModelLimits, StreamEvent, VllmChatOptions } from '../core/types.js';
 
 /**
  * Provider-facing facade and single owner of the configuration cache.

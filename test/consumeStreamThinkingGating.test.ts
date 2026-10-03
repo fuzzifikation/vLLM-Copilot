@@ -12,7 +12,7 @@ vi.mock('vscode', async (importOriginal) => {
 });
 
 import type { StreamOutcome } from '../src/provider/contracts.js';
-import type { StreamEvent } from '../src/types.js';
+import type { StreamEvent } from '../src/core/types.js';
 
 async function* streamOf(events: StreamEvent[]): AsyncGenerator<StreamEvent> {
   for (const e of events) yield e;

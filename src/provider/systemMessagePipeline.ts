@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { resolveOverrideForModel, resolveWorkspaceRelativePath, type VllmConfig } from '../state/config.js';
+import { resolveWorkspaceRelativePath } from '../state/config.js';
+import { resolveOverrideForModel, type VllmConfig } from '../core/config/config.js';
 import { messageToText } from './messageConverter.js';
 import {
   loadPromptReplacements,

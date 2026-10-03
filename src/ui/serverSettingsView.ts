@@ -6,9 +6,11 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { getConfig, findModelConfigIndex, toPublicModelConfig, normalizeServerUrl, resolveConfigId, resolveVllmModelId, KNOWN_SERVER_TYPES, type ModelConfig, type ServerType } from '../state/config.js';
+import { getConfig } from '../state/config.js';
+import { findModelConfigIndex, toPublicModelConfig, resolveConfigId, resolveVllmModelId, type ModelConfig } from '../core/config/config.js';
+import { normalizeServerUrl, KNOWN_SERVER_TYPES, type ServerType } from '../core/config/serverCore.js';
 import { patchModelConfig, readModels, readServers, writeServers, type ModelIdentity } from '../state/configStore.js';
-import { firstEntryById } from '../state/serverRegistry.js';
+import { firstEntryById } from '../core/config/serverRegistry.js';
 import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from '../backends/openRouter.js';
 import { getMetricsEngine } from './vllmMetrics.js';
 

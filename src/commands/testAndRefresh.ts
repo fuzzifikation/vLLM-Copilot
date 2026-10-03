@@ -7,12 +7,13 @@
 
 import * as vscode from 'vscode';
 import type { VllmChatModelProvider } from '../provider/provider.js';
-import { getConfig, buildEndpoint, findModelConfigIndex, resolveConfigId, resolveServerConfig, resolveVllmModelId, resolveServerType } from '../state/config.js';
-import type { ModelConfig } from '../state/config.js';
+import { getConfig } from '../state/config.js';
+import { buildEndpoint, findModelConfigIndex, resolveConfigId, resolveServerConfig, resolveVllmModelId, resolveServerType, type ModelConfig } from '../core/config/config.js';
 import { patchModelConfig, readModels } from '../state/configStore.js';
-import { describeError, isTlsCertificateError, TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
+import { isTlsCertificateError, describeError } from '../core/shared/errors.js';
+import { TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
 import { clearRuntimeLimitsCache, listServerModels, MissingContextWindowError, resolveRuntimeLimits, ServerProbeError, type ServerModelEntry } from '../backends/runtimeLimits.js';
-import { isValidContextWindow } from '../shared/tokenBudget.js';
+import { isValidContextWindow } from '../core/shared/tokenBudget.js';
 import { runDiagnostics, formatReport } from '../ui/diagnostics.js';
 import { resetOpenRouterCaches } from '../backends/openRouter.js';
 

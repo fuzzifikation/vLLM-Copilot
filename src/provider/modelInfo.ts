@@ -5,9 +5,9 @@
  */
 
 import * as vscode from 'vscode';
-import { deriveTokenBudget, resolveOutputBudgetScalar, resolveOutputLengthVector, type TokenBudget } from '../shared/tokenBudget.js';
+import { deriveTokenBudget, resolveOutputBudgetScalar, resolveOutputLengthVector, type TokenBudget } from '../core/shared/tokenBudget.js';
 import { formatCostRate } from '../usage/usageStore.js';
-import { type ModelConfig } from '../state/config.js';
+import { type ModelConfig } from '../core/config/config.js';
 
 /**
  * Result of {@link extractFamilyWithSource}.
@@ -118,7 +118,7 @@ function buildPickerBanners(
   supportsInfoText: boolean,
   effectiveOutputTokens?: number,
   /** Resolved backend type of the model's server (defaults to 'vllm'). */
-  serverType: import('../state/config.js').ServerType = 'vllm',
+  serverType: import('../core/config/serverCore.js').ServerType = 'vllm',
 ): { warningText?: Record<string, string>; infoText?: Record<string, string> } {
   const warningText: Record<string, string> = {};
   const infoText: Record<string, string> = {};
@@ -324,7 +324,7 @@ export function buildModelInfo(
   serverModel: { id: string; max_model_len: number },
   override: Partial<ModelConfig> | undefined,
   config: { maxOutputTokens: number },
-  serverType: import('../state/config.js').ServerType,
+  serverType: import('../core/config/serverCore.js').ServerType,
   /**
    * Server-reported output ceiling (e.g. OpenRouter per-request completion
    * limit). Clamps the derived output budget; undefined leaves it unchanged.

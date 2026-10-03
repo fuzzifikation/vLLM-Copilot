@@ -12,7 +12,7 @@
 import * as vscode from 'vscode';
 import { getMetricsEngine } from './vllmMetrics.js';
 import type { ServerRawData, ServerMetrics } from './vllmMetrics.js';
-import { normalizeServerUrl, sanitizeRequestHeaders, type ServerType } from '../state/config.js';
+import { normalizeServerUrl, sanitizeRequestHeaders, type ServerType } from '../core/config/serverCore.js';
 import { readServers } from '../state/configStore.js';
 
 interface ReadyMessage {

@@ -4,7 +4,9 @@
  */
 
 import * as vscode from 'vscode';
-import { getConfig, resolveModelSettings, normalizeServerUrl, findModelConfig, resolveVllmModelId, type ModelConfig, type ServerType } from '../state/config.js';
+import { getConfig } from '../state/config.js';
+import { resolveModelSettings, findModelConfig, resolveVllmModelId, type ModelConfig } from '../core/config/config.js';
+import { normalizeServerUrl, type ServerType } from '../core/config/serverCore.js';
 import { readModels, readServers } from '../state/configStore.js';
 import { ServerMetrics, getMetricsEngine, emptyMetrics, getPollSettingMs } from './vllmMetrics.js';
 import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from '../backends/openRouter.js';
@@ -14,8 +16,8 @@ import {
   getModelStartedAt,
   type UsageCounts, type CostRates, type LastRequestData,
 } from '../usage/usageStore.js';
-import { firstEntryById } from '../state/serverRegistry.js';
-import { isValidContextWindow } from '../shared/tokenBudget.js';
+import { firstEntryById } from '../core/config/serverRegistry.js';
+import { isValidContextWindow } from '../core/shared/tokenBudget.js';
 
 // ─── Tree Items ──────────────────────────────────────────────────────
 

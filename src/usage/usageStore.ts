@@ -52,8 +52,8 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import type { WireMetrics } from '../types.js';
-import { findModelConfig, type ModelConfig } from '../state/config.js';
+import type { WireMetrics } from '../core/types.js';
+import { findModelConfig, type ModelConfig } from '../core/config/config.js';
 import { readServers } from '../state/configStore.js';
 
 // ─── Last request ─────────────────────────────────────────────────────────

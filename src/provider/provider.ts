@@ -4,8 +4,9 @@ import { SystemMessagePipeline } from './systemMessagePipeline.js';
 import { discoverModels, type DiscoveryLogSink } from './discovery.js';
 import { runChatResponse } from './streamOrchestrator.js';
 import type { ProviderClient } from './contracts.js';
-import { resolveOverrideForModel, resolveModelSettings, readPickerSelection, resolveServerConfig, type ModelConfig } from '../state/config.js';
-import type { ServerEntry } from '../state/serverRegistry.js';
+import { readPickerSelection } from '../state/config.js';
+import { resolveOverrideForModel, resolveModelSettings, resolveServerConfig, type ModelConfig } from '../core/config/config.js';
+import type { ServerEntry } from '../core/config/serverRegistry.js';
 import type { FileLogger } from '../shared/logger.js';
 import { messageToText } from './messageConverter.js';
 

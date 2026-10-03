@@ -34,7 +34,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { loadPersonalityMeta, clearPersonalityCache, COMMON_REPLACEMENTS_FILENAME } from './promptReplacer.js';
-import { normalizeModelEntry, resolveWorkspaceRelativePath, pathsEquivalent, type ModelConfig } from '../state/config.js';
+import { resolveWorkspaceRelativePath } from '../state/config.js';
+import { normalizeModelEntry, pathsEquivalent, type ModelConfig } from '../core/config/config.js';
 import { readModels, writeModels } from '../state/configStore.js';
 
 export interface PersonalityEntry {

@@ -2,9 +2,9 @@ import * as vscode from 'vscode';
 import type { FileLogger } from '../shared/logger.js';
 import { reportTokenUsage, logTokenUsage } from '../usage/usageReporting.js';
 import { recordRequest, type LastRequestData } from '../usage/usageStore.js';
-import type { WireMetrics } from '../types.js';
+import type { WireMetrics } from '../core/types.js';
 import { parseToolCallArgs } from './messageConverter.js';
-import type { StreamEvent, WireUsage } from '../types.js';
+import type { StreamEvent, WireUsage } from '../core/types.js';
 import type { StreamOutcome } from './contracts.js';
 
 /**

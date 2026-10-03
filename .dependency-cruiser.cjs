@@ -16,7 +16,7 @@ module.exports = {
       name: 'no-circular',
       severity: 'error',
       comment:
-        'Circular VALUE imports mean the runtime graph lies. Type-only edges do not exist at runtime (e.g. serverRegistry imports ServerType from config.ts, config imports its functions back - one of those edges is erased at compile time). src/types.ts is the sanctioned seam for shared wire types.',
+        'Circular VALUE imports mean the runtime graph lies. Type-only edges do not exist at runtime (e.g. serverRegistry imports ServerType from serverCore.ts, serverCore would import its functions back - one of those edges is erased at compile time). src/core/types.ts is the sanctioned seam for shared wire types.',
       from: {},
       to: { circular: true },
     },
@@ -24,9 +24,28 @@ module.exports = {
       name: 'types-ts-stays-pure',
       severity: 'error',
       comment:
-        'src/types.ts holds wire-format types and SSE events ONLY (repo convention). No runtime imports — it exists to break cycles, not to join them.',
-      from: { path: '^src/types\\.ts$' },
+        'src/core/types.ts holds wire-format types and SSE events ONLY (repo convention). No runtime imports — it exists to break cycles, not to join them.',
+      from: { path: '^src/core/types\\.ts$' },
       to: { pathNot: ['\\.json$'] },
+    },
+    {
+      name: 'core-no-host',
+      severity: 'error',
+      comment:
+        'src/core/ is the Node-only product boundary (docs/core-restructuring-plan.md): no runtime imports back into host source (state/, provider/, ui/, commands/, migrations/, persona/, usage/, backends/, shared/, extension.ts). The type-only variant lives in .dependency-cruiser.consumers.cjs — both must fire together.',
+      from: { path: '^src/core/' },
+      to: { path: '^src/(?!core/)' },
+    },
+    {
+      name: 'core-no-undeclared-deps',
+      severity: 'error',
+      comment:
+        'Core may import only its declared runtime deps (eventsource-parser, jsonrepair, best-effort-json-parser). This also owns the editor-package ban: `vscode` resolves to node_modules/@types/vscode as npm-dev (verified 2026-10-03 — a `^vscode$` path rule can never match it). The phase-8 proof installs the packed core outside this repo, where an undeclared bare import that works here detonates for every consumer.',
+      from: { path: '^src/core/' },
+      to: {
+        dependencyTypes: ['npm', 'npm-dev', 'npm-optional', 'npm-peer', 'npm-no-pkg', 'npm-unknown'],
+        pathNot: 'node_modules[/\\\\](eventsource-parser|jsonrepair|best-effort-json-parser)[/\\\\]',
+      },
     },
     {
       name: 'state-layer-no-ui-or-commands',

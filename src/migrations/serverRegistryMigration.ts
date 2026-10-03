@@ -14,7 +14,7 @@
  */
 
 import * as vscode from 'vscode';
-import type { ModelConfig } from '../state/config.js';
+import type { ModelConfig } from '../core/config/config.js';
 import { readModels, readServers, writeModels, writeServers } from '../state/configStore.js';
 import { planRegistryMigration, type LegacyModelConfig } from './registryMigration.js';
 

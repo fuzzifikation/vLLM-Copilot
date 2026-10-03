@@ -9,7 +9,7 @@ import {
   type PresetConfig,
 } from '../src/commands/presets.js';
 import { parseHeadersInput } from '../src/commands/serverAuth.js';
-import type { ModelConfig } from '../src/state/config.js';
+import type { ModelConfig } from '../src/core/config/config.js';
 
 /**
  * Preset parsing and matching (commands/presets.ts) plus the header-input parser

@@ -5,7 +5,7 @@
  * (request-body construction) as the only change surface.
  */
 
-import { describeError } from '../provider/messageConverter.js';
+import { describeError } from '../core/shared/errors.js';
 
 const DEFAULT_RETRY_DELAY_MS = 1500;
 const MAX_RETRY_AFTER_MS = 10_000;

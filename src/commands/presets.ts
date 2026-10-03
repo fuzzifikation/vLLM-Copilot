@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import type { ModelConfig } from '../state/config.js';
-import { stripJsonc } from '../shared/jsonc.js';
+import type { ModelConfig } from '../core/config/config.js';
+import { stripJsonc } from '../core/shared/jsonc.js';
 import { jsonrepair } from 'jsonrepair';
 
 // ---- Local preset loading ----

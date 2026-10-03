@@ -12,12 +12,12 @@ import {
   normalizeServerUrl,
   sanitizeRequestHeaders,
   sameHeaders,
-} from '../state/config.js';
+} from '../core/config/serverCore.js';
 import {
   type ServerEntry,
   entryMatchesConnection,
   generateServerId,
-} from '../state/serverRegistry.js';
+} from '../core/config/serverRegistry.js';
 
 /**
  * The pre-migration model shape: server facts inline on the model. This is the
@@ -25,7 +25,8 @@ import {
  * the sweep nothing else may. `Omit<ModelConfig, ...>` keeps the shared model
  * fields in lockstep with the live type.
  */
-import type { ModelConfig, ServerType } from '../state/config.js';
+import type { ModelConfig } from '../core/config/config.js';
+import type { ServerType } from '../core/config/serverCore.js';
 
 export type LegacyModelConfig = Omit<ModelConfig, 'server'> & {
   serverUrl?: string;

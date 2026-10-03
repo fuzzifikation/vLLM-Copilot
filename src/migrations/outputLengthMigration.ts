@@ -25,9 +25,9 @@
  */
 
 import * as vscode from 'vscode';
-import type { ModelConfig } from '../state/config.js';
-import { findModelConfigIndex, resolveConfigId, resolveVllmModelId } from '../state/config.js';
-import { resolveOutputLengthVector } from '../shared/tokenBudget.js';
+import type { ModelConfig } from '../core/config/config.js';
+import { findModelConfigIndex, resolveConfigId, resolveVllmModelId } from '../core/config/config.js';
+import { resolveOutputLengthVector } from '../core/shared/tokenBudget.js';
 import { loadModelPresets, findPresetForModel, type ModelPreset } from '../commands/presets.js';
 import { patchModelConfig, readModels } from '../state/configStore.js';
 
