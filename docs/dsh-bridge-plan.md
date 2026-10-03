@@ -106,6 +106,7 @@ Consumed by the companion via `extensions.getExtension('System-Sciences.vllm-cop
 1. Core extraction: full suite green, `npm run build` gauntlet.
 2. Gateway: point the spike's dsh boot at it with a REAL local server, complete an agent turn with a tool call; check the usage dashboard shows the spend.
 3. API: the spike's generator script consumes `listCatalog()` output to write the overlay (script stands in for the companion until that repo exists).
+4. VSCodium: fresh VSCodium install of this extension from Open VSX, gateway enabled, agent turn through the gateway with no Copilot anywhere in the box; dashboard and usage ledger must work, activation must be clean (see "VSCodium, no-Copilot editors").
 
 ## Competitive snapshot (verified 2026-10-01 against marketplace listings)
 
@@ -116,6 +117,15 @@ Consumed by the companion via `extensions.getExtension('System-Sciences.vllm-cop
 - `shengsuan-cloud.cline-shengsuan` "DSH Cline" (101k, 3.4★): DSH kernel with Cline-style UX behind an SSYCloud reseller account. Commercial funnel, and mass-demand proof despite login walls.
 
 The gap: all five end onboarding at "configure model credentials yourself". None offers a vLLM-first, zero-credential first run. Our registry translated into a ready dsh deployment is the unclaimed entry point; the client window itself is commoditized, which is why the client is Unit 4 and the bridge is Units 2-3.
+
+## VSCodium, no-Copilot editors (researched 2026-10-03)
+
+The harness path has zero Copilot dependencies by construction, so a no-Copilot editor runs the full stack: dsh (own Node process, own web UI), companion (supervisor + generator, plain core APIs), gateway (loopback HTTP). In VSCodium the harness is not an add-on to Copilot, it replaces the entire agent story there.
+
+- **Gallery law:** VSCodium ships pointed at Open VSX; the Microsoft Marketplace ToS forbids use by non-VS-Code products. This extension is already published on Open VSX (as `System-Sciences.vllm-copilot`), which means VSCodium users already run it, currently on a stale version. Durable duty: every release of this extension AND the companion publishes to Open VSX too (`ovsx publish`, or CI trusted publishing so no token is hoarded), and the `System-Sciences` namespace gets verified to clear the unverified-publisher warning.
+- **No-Copilot inventory (grepped 2026-10-03):** the extension's entire Copilot surface is `vscode.lm.registerLanguageModelChatProvider` and `vscode.lm.registerTool`, both core APIs that register harmlessly when no chat consumer exists, plus session-cleanup paths pointing at `GitHub.copilot-chat/*` storage dirs that report empty when absent. Dashboard, Model Settings, registry, usage, and the gateway are pure core API and fully functional without Copilot. What stays MS-only: the Copilot chat picker, the Agents window, the Copilot CLI.
+- **Optional chat picker for VSCodium users:** Copilot Chat is now open source (`microsoft/vscode` `extensions/copilot`, MIT) and VSCodium documents a manual sideload via a custom `product.json` (`trustedExtensionAuthAccess`, `defaultChatAgent`, see VSCodium `docs/ext-github-copilot.md`). Our registered provider should surface in that picker because the `chatProvider` contract is core, but this is unverified and is not a support duty: document the link, add nothing.
+- **Positioning:** the five marketplace competitors all assume VS Code and die at "configure your API key". "Agent harness for editors without Copilot" is an unserved search shape that only this stack can fill.
 
 ## Unit 3 (new repo): companion extension
 
