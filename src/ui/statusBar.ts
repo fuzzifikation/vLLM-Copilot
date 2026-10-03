@@ -37,9 +37,10 @@ import { normalizeServerUrl } from '../core/config/serverCore.js';
 import { isOpenRouterUrl } from '../core/config/serverCore.js';
 import { readModels, readServers } from '../state/configStore.js';
 import {
-  findModelCost, formatCostFine, getLatestRequest, onUsageStoreDidChange,
+  findModelCost, getLatestRequest, onUsageStoreDidChange,
   type LastRequestData, type UsageCounts,
 } from '../usage/usageStore.js';
+import { formatCostFine } from '../core/usage/money.js';
 import { computeCost, fmtCount, fmtMs, fmtTokPerSec, shortUrl } from './dashboard.js';
 
 /** Toggle key; the module renders nothing while it is off. */

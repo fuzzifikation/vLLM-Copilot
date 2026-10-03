@@ -8,7 +8,7 @@
 
 import * as vscode from 'vscode';
 import type { WireUsage } from '../core/types.js';
-import { formatCostFine } from './usageStore.js';
+import { formatCostFine } from '../core/usage/money.js';
 
 /**
  * Report token usage to VS Code via LanguageModelDataPart with MIME type 'usage'.

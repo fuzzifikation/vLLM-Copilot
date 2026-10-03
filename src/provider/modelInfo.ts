@@ -10,7 +10,7 @@
 
 import * as vscode from 'vscode';
 import type { ModelDescriptor } from '../core/catalog/describe.js';
-import { formatCostRate } from '../usage/usageStore.js';
+import { formatCostRate } from '../core/usage/money.js';
 
 /**
  * True when `current` (a VS Code version string such as `1.135.0` or

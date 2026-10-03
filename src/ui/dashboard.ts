@@ -12,10 +12,11 @@ import { ServerMetrics, getMetricsEngine, emptyMetrics, getPollSettingMs } from 
 import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from '../core/backends/openRouter.js';
 import {
   getLastRequest, getServerUsage, getServerCost, hasServerUsage, onUsageStoreDidChange,
-  findModelCost, formatCost, formatCostFine, formatCostRate, formatCostSummary, emptyCounts,
+  findModelCost, emptyCounts,
   getModelStartedAt,
   type UsageCounts, type CostRates, type LastRequestData,
 } from '../usage/usageStore.js';
+import { formatCost, formatCostFine, formatCostRate, formatCostSummary } from '../core/usage/money.js';
 import { firstEntryById } from '../core/config/serverRegistry.js';
 import { isValidContextWindow } from '../core/shared/tokenBudget.js';
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildModelInfo as projectDescriptor } from '../src/provider/modelInfo.js';
 import { describeModel } from '../src/core/catalog/describe.js';
-import { formatCostRate } from '../src/usage/usageStore.js';
+import { formatCostRate } from '../src/core/usage/money.js';
 
 /**
  * Phase-4 seam: the model FACTS are computed by core `describeModel`, the
