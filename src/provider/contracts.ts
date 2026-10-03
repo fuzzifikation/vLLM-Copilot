@@ -1,4 +1,3 @@
-import type * as vscode from 'vscode';
 import type { VllmConfig } from '../core/config/config.js';
 import type { ServerType } from '../core/config/serverCore.js';
 import type { OpenAIChatMessage, StreamEvent, VllmChatOptions, RuntimeModelLimits } from '../core/types.js';
@@ -41,53 +40,23 @@ export interface ProviderClient {
     /** Manual fallback for metadata-stripping gateways (`ModelConfig.contextWindow`). */
     configuredContextWindow?: number
   ): Promise<RuntimeModelLimits>;
+  /**
+   * `signal` is caller-owned: the Copilot boundary converts its cancellation
+   * token once per operation and passes the derived signal down; the client
+   * forwards it to the transport without subscribing or converting.
+   */
   chatCompletionStream(
     model: string,
     messages: OpenAIChatMessage[],
     options: VllmChatOptions,
-    token: vscode.CancellationToken,
+    signal: AbortSignal,
     serverConfig?: ServerConfig
   ): AsyncGenerator<StreamEvent>;
 }
 
 /**
- * Mutable accounting for a single streamed response, shared across the phases
- * of the provider's `provideLanguageModelChatResponse`. `consumeStream` updates
- * it as chunks arrive so that the post-stream diagnostics and the error handler
- * can both reason about exactly what reached the user — even when the stream
- * throws partway through. Owner: `streamOrchestrator` (create/reset live
- * there); the rest of the pipeline only reads and writes fields.
+ * Mutable accounting for a single streamed response. The type lives with the
+ * execution core (`core/request/execute.ts`), which writes it as chunks pass;
+ * re-exported here so the provider pipeline keeps importing from one contract.
  */
-export interface StreamOutcome {
-  /** At least one text content part was reported to the user. */
-  hadContent: boolean;
-  /** At least one tool call was reported to the user. */
-  hadToolCalls: boolean;
-  /** At least one reasoning/thinking part was reported. */
-  hadReasoning: boolean;
-  /**
-   * Reasoning was reported as PLAIN TEXT because this VS Code build has no
-   * `LanguageModelThinkingPart`, so it is real answer content the user can see
-   * and cannot be discarded. Distinct from `hadReasoning`, which is true either
-   * way and is therefore not enough to decide whether a turn can be replayed.
-   */
-  hadVisibleReasoning: boolean;
-  /** Raw `<thinking>` tags leaked into content (server is missing a `--reasoning-parser`). */
-  sawRawThinkTags: boolean;
-  /** The server's `finish_reason` for the turn, once known. */
-  finishReason?: string;
-  /** Time-to-first-token, in ms since the request started. */
-  firstTokenTime?: number;
-  /** Full accumulated text content for this turn (used as assistant prefill/continuation on retry). */
-  contentBuffer?: string;
-  /**
-   * Sticky across auto-continue resets: ANY attempt of this request streamed
-   * visible output to the user — content, a tool call, or reasoning they
-   * watched. Per-attempt fields reset between retries; this bit survives so
-   * post-stream diagnostics can never report "the model returned no output"
-   * over output the user already saw (CR-38). It gates only the chat warning;
-   * the retry decision reads the fresh per-attempt fields, so a
-   * reasoning-then-empty turn is still nudged.
-   */
-  everStreamed?: boolean;
-}
+export type { StreamOutcome } from '../core/request/execute.js';

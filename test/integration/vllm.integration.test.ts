@@ -67,12 +67,11 @@ d('vLLM integration', () => {
 
   it('streams a short completion end-to-end', async () => {
     const events: any[] = [];
-    const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any;
     for await (const e of client.chatCompletionStream(
       modelId,
       [{ role: 'user', content: 'Say only the word "ok" and nothing else.' }],
       { max_tokens: 16, temperature: 0 },
-      token,
+      new AbortController().signal,
       SERVER_CONFIG,
     )) {
       events.push(e);
@@ -90,12 +89,7 @@ d('vLLM integration', () => {
   }, 60_000);
 
   it('honors abort signal mid-stream', async () => {
-    const listeners: Array<() => void> = [];
-    let cancelled = false;
-    const token: any = {
-      get isCancellationRequested() { return cancelled; },
-      onCancellationRequested: (cb: () => void) => { listeners.push(cb); return { dispose: () => {} }; },
-    };
+    const controller = new AbortController();
 
     const promise = (async () => {
       const events: any[] = [];
@@ -103,13 +97,12 @@ d('vLLM integration', () => {
         modelId,
         [{ role: 'user', content: 'Write a long essay about the history of compilers.' }],
         { max_tokens: 1024, temperature: 0 },
-        token,
+        controller.signal,
         SERVER_CONFIG,
       )) {
         events.push(e);
         if (events.length === 2) {
-          cancelled = true;
-          listeners.forEach(cb => cb());
+          controller.abort('User cancelled');
         }
       }
       return events;

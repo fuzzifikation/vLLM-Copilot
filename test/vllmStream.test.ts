@@ -46,7 +46,7 @@ describe('VllmClient.chatCompletionStream', () => {
 
     const client = new VllmClient(makeOutput());
     const events: any[] = [];
-    for await (const e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
+    for await (const e of client.chatCompletionStream('m', [], {}, new AbortController().signal)) {
       events.push(e);
     }
 
@@ -67,7 +67,7 @@ describe('VllmClient.chatCompletionStream', () => {
 
     const client = new VllmClient(makeOutput());
     const events: any[] = [];
-    for await (const e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
+    for await (const e of client.chatCompletionStream('m', [], {}, new AbortController().signal)) {
       events.push(e);
     }
 
@@ -89,7 +89,7 @@ describe('VllmClient.chatCompletionStream', () => {
 
     const client = new VllmClient(makeOutput());
     let text = '';
-    for await (const e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
+    for await (const e of client.chatCompletionStream('m', [], {}, new AbortController().signal)) {
       text += e.content;
     }
     expect(text).toBe('AB');
@@ -112,7 +112,7 @@ describe('VllmClient.chatCompletionStream', () => {
     const client = new VllmClient(makeOutput());
     let text = '';
     let finish: string | undefined;
-    for await (const e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
+    for await (const e of client.chatCompletionStream('m', [], {}, new AbortController().signal)) {
       text += e.content;
       if (e.finishReason) finish = e.finishReason;
     }
@@ -131,7 +131,7 @@ describe('VllmClient.chatCompletionStream', () => {
 
     const client = new VllmClient(makeOutput());
     const usages: any[] = [];
-    for await (const e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
+    for await (const e of client.chatCompletionStream('m', [], {}, new AbortController().signal)) {
       if (e.usage) usages.push(e.usage);
     }
     expect(usages).toHaveLength(1);
@@ -149,7 +149,7 @@ describe('VllmClient.chatCompletionStream', () => {
 
     const client = new VllmClient(makeOutput());
     let text = '';
-    for await (const e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
+    for await (const e of client.chatCompletionStream('m', [], {}, new AbortController().signal)) {
       text += e.content;
     }
     expect(text).toBe('ok');
@@ -164,7 +164,7 @@ describe('VllmClient.chatCompletionStream', () => {
 
     const client = new VllmClient(makeOutput());
     const run = async () => {
-      for await (const _e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
+      for await (const _e of client.chatCompletionStream('m', [], {}, new AbortController().signal)) {
         // drain
       }
     };
@@ -191,7 +191,7 @@ describe('VllmClient.chatCompletionStream', () => {
     const client = new VllmClient(makeOutput());
     let caught: unknown;
     try {
-      for await (const _e of client.chatCompletionStream('m', [], {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any)) {
+      for await (const _e of client.chatCompletionStream('m', [], {}, new AbortController().signal)) {
         // drain
       }
     } catch (err) {

@@ -1,14 +1,13 @@
 /**
  * Pure conversion between VS Code chat message types and OpenAI chat-completions format,
- * plus error formatting and tool-call arg parsing.
+ * plus editor-facing error formatting. Tool-call arg repair lives in core stream
+ * processing (core/request/sseParser.ts).
  *
  * Imports `vscode` for `instanceof` checks against its concrete part classes. Tests stub
  * `vscode` via vitest module aliasing (see test/__mocks__/vscode.ts).
  */
 
 import * as vscode from 'vscode';
-import { jsonrepair } from 'jsonrepair';
-import { parse as parsePartialJson, disableErrorLogging } from 'best-effort-json-parser';
 import { collectErrorMessages } from '../core/shared/errorEnvelope.js';
 import {
   iterateCauses,
@@ -17,15 +16,10 @@ import {
   STREAM_TIMEOUT_PREFIX,
 } from '../core/shared/errors.js';
 import type {
-  FinalizedToolCall,
   OpenAIChatMessage,
   OpenAIToolCall,
   OpenAIContentPart,
 } from '../core/types.js';
-
-// best-effort-json-parser logs parse errors to console by default; silence it so
-// our own [WARN] log is the single source of truth for unparseable args.
-disableErrorLogging();
 
 /**
  * Extract a textual representation of a chat message for token counting.
@@ -207,56 +201,6 @@ function extractToolResultContent(part: vscode.LanguageModelToolResultPart): str
     })
     .filter(s => s !== '')
     .join('\n');
-}
-
-/**
- * Parse tool call arguments with JSON repair fallback.
- *
- * Three tiers, each more lenient than the last:
- *   1. `JSON.parse` — strict. Handles the normal case (complete, valid JSON).
- *   2. `jsonrepair` — repairs malformed-but-complete JSON (missing quotes,
- *      trailing commas, etc.).
- *   3. `parsePartialJson` (best-effort-json-parser) — recovers *truncated* JSON,
- *      e.g. when `finish_reason: 'length'` cuts a tool call mid-string-value
- *      (`{"path":"foo.ts","content":"def hello():\n    print(`). This is the case
- *      jsonrepair throws on (it can only close structures, not open strings).
- *      Adopted from Copilot's BYOK path, which uses the same library for the
- *      same reason.
- *
- * Returns `null` only when args are present but *completely* unparseable so the
- * caller can fall back to `{}` (matching BYOK). Returns `{}` for empty/absent
- * args (legitimate empty-call case).
- */
-export function parseToolCallArgs(toolCall: FinalizedToolCall): object | null {
-  if (!toolCall.arguments || toolCall.arguments === '{}') return {};
-
-  try {
-    const parsed = JSON.parse(toolCall.arguments);
-    if (typeof parsed === 'object' && !Array.isArray(parsed) && parsed !== null) return parsed;
-  } catch {
-    // fall through to repair
-  }
-
-  try {
-    const repaired = jsonrepair(toolCall.arguments.trim());
-    const parsed = JSON.parse(repaired);
-    if (typeof parsed === 'object' && !Array.isArray(parsed) && parsed !== null) return parsed;
-  } catch {
-    // fall through to partial-parse
-  }
-
-  // Third tier: recover truncated JSON. parsePartialJson closes open strings,
-  // arrays, and objects — the one case jsonrepair can't handle (it throws on
-  // an unterminated string value). This preserves the partial content the model
-  // produced before being cut off by maxOutputTokens.
-  try {
-    const partial = parsePartialJson(toolCall.arguments);
-    if (typeof partial === 'object' && !Array.isArray(partial) && partial !== null) return partial;
-  } catch {
-    // fall through to unparseable
-  }
-
-  return null; // unparseable — the caller warns and falls back to {}
 }
 
 // Error vocabulary (iterateCauses, describeError, isTransportFailureText,

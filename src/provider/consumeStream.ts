@@ -1,44 +1,39 @@
 import * as vscode from 'vscode';
 import type { FileLogger } from '../shared/logger.js';
 import { reportTokenUsage, logTokenUsage } from '../usage/usageReporting.js';
-import { recordRequest, type LastRequestData } from '../usage/usageStore.js';
-import type { WireMetrics } from '../core/types.js';
-import { parseToolCallArgs } from './messageConverter.js';
-import type { StreamEvent, WireUsage } from '../core/types.js';
+import { recordRequest } from '../usage/usageStore.js';
+import { parseToolCallArgs } from '../core/request/sseParser.js';
+import { isAttemptCompletionEvent, type ExecutionEvent } from '../core/request/execute.js';
 import type { StreamOutcome } from './contracts.js';
 
 /**
- * Matches raw reasoning tags (`</thinking>`, `<thinking>`, etc.) that
- * leak into the content stream when vLLM has no matching `--reasoning-parser`.
- */
-const RAW_THINK_TAG = /<\/?think(?:ing)?>/i;
-
-/**
- * Phase 2 — consume the vLLM stream, reporting parts as they arrive.
+ * Copilot consumer of the execution core's events (`executeChatRequest`).
+ * The core owns the retry loop and the neutral observations (timing, content
+ * buffer, think-tag detection, tool-call id dedup) — this file owns the
+ * editor vocabulary: reporting response parts, presenting tool-argument
+ * repair, and handing attempt-completion data to usage reporting/recording in
+ * the established order: report usage, log stream finish, log tokens, record
+ * the request.
  *
- * Mutates `outcome` in place (rather than returning it) so that a mid-stream
- * throw still leaves the caller's error handler with an accurate picture of
- * what was already emitted to the user.
+ * Cancellation is the core's job (it stops pulling from the transport and
+ * still completes the record for a quiet cancel after usage was seen), so
+ * there is no token check in this loop — events keep flowing until the
+ * executor finishes.
  *
- * Collaborators are explicit: the output channel, the optional file logger, and
- * the outcome accumulator. The provider instance is never passed in.
+ * `outcome` is the core-shared accumulator, passed for the finish-reason
+ * lookup in the stream-finish log; the provider's error handler and
+ * post-stream diagnostics read the same object. Mutated in place so a
+ * mid-stream throw still leaves the caller's error handler an accurate
+ * picture of what reached the user.
  */
 export async function consumeStream(
-  stream: AsyncIterable<StreamEvent>,
+  events: AsyncIterable<ExecutionEvent>,
   model: vscode.LanguageModelChatInformation,
   progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-  token: vscode.CancellationToken,
-  startTime: number,
   outcome: StreamOutcome,
-  serverUrl: string,
-  wireModelId: string,
   output: vscode.OutputChannel,
   fileLogger?: FileLogger,
-  contextWindow?: number,
 ): Promise<void> {
-  // Track reported tool calls to avoid duplicates
-  const reportedToolCallIds = new Set<string>();
-
   // Look up LanguageModelThinkingPart once before the loop, not on every chunk.
   // It is proposal-only in TYPES (absent from stable @types/vscode), so it is
   // reached via `any`. VS Code 1.137 exposes the class ungated at runtime; the
@@ -52,25 +47,27 @@ export async function consumeStream(
     output.appendLine('[WARN] LanguageModelThinkingPart unavailable in this VS Code build - reasoning content will be shown as plain text');
   }
 
-  // Defer usage reporting to end of stream. Some vLLM servers (e.g. with
-  // --enable-force-include-usage) send usage on every chunk, not just the final
-  // one. Reporting per-chunk floods the Output channel with thousands of
-  // [TOKENS] lines. We store the latest usage and report it exactly once after
-  // the loop — the final chunk always has the correct cumulative stats.
-  let pendingUsage: WireUsage | undefined;
-  let pendingMetrics: WireMetrics | undefined;
-  // Trailing characters of the last content chunk, for split-tag detection.
-  let thinkWindow = '';
+  for await (const event of events) {
+    if (isAttemptCompletionEvent(event)) {
+      // Usage is reported exactly once per attempt with the final cumulative
+      // stats (the core collapsed any per-chunk usage to its last sighting).
+      const { usage, lastRequest, elapsedMs } = event.attemptCompletion;
+      reportTokenUsage(progress, usage);
+      fileLogger?.logStreamFinish(outcome.finishReason || 'unknown', usage);
+      logTokenUsage(output, model.id, usage, elapsedMs, outcome.firstTokenTime);
 
-  for await (const event of stream) {
-    if (token.isCancellationRequested) {
-      break;
+      // Record last request + accumulate cumulative usage for the dashboard.
+      // `recordRequest` both stores the server's last request AND sums it into
+      // the all-time/today counters, then fires the change event so the
+      // dashboard re-renders immediately (no poll-interval lag). The core
+      // built the record; the id in it is the CANONICAL wire id (base slug,
+      // no OpenRouter routing suffix) — what the usage/cost lookups key on.
+      recordRequest(lastRequest);
+      continue;
     }
 
     // Handle reasoning/thinking tokens (deep thinking models like QwQ, DeepSeek R1)
     if (event.reasoning_content) {
-      if (outcome.firstTokenTime === undefined) outcome.firstTokenTime = Date.now() - startTime;
-      outcome.hadReasoning = true;
       if (ThinkingPart) {
         progress.report(new ThinkingPart(event.reasoning_content));
       } else {
@@ -86,133 +83,26 @@ export async function consumeStream(
 
     // Handle text content
     if (event.content) {
-      if (outcome.firstTokenTime === undefined) outcome.firstTokenTime = Date.now() - startTime;
-      outcome.hadContent = true;
-      outcome.contentBuffer = (outcome.contentBuffer ?? '') + event.content;
-      // Detect raw thinking tags leaking into content. When vLLM is started without
-      // a matching --reasoning-parser, the model's <thinking>...</thinking> markers arrive
-      // as plain content instead of the `reasoning` field, then VS Code strips them.
-      if (!outcome.sawRawThinkTags) {
-        // Sliding tail window: a <thinking> tag straddling two network chunks
-        // must not silently defeat the missing-parser diagnostic (CR-20).
-        // '</thinking>' is the longest needle at 11 chars; 16 carried chars
-        // cover any split point.
-        const probe = thinkWindow + event.content;
-        if (RAW_THINK_TAG.test(probe)) outcome.sawRawThinkTags = true;
-        thinkWindow = probe.slice(-16);
-      }
       progress.report(new vscode.LanguageModelTextPart(event.content));
     }
 
-    // Handle finalized tool calls
-    if (event.finishedToolCalls.length > 0) {
-      // A tool call is the model's first output just as much as text is; without
-      // this stamp a pure tool-call turn reported TTFT as null (CR-19).
-      if (outcome.firstTokenTime === undefined) outcome.firstTokenTime = Date.now() - startTime;
-      for (const tc of event.finishedToolCalls) {
-        // tc.name is guaranteed: finalizePendingToolCalls (the sole producer)
-        // drops name-less entries. Only the id-dedup is a real guard here.
-        if (!reportedToolCallIds.has(tc.id)) {
-          const parsedArgs = parseToolCallArgs(tc);
-          // If args couldn't be repaired, fall back to {} — matching VS Code BYOK's
-          // behavior. Dropping the call entirely makes it look like the model stopped
-          // without doing anything (the "stream just stopped" symptom). Surfacing it
-          // with {} lets Copilot invoke the tool, which fails downstream with a clear
-          // error rather than vanishing silently.
-          const args = parsedArgs ?? {};
-          outcome.hadToolCalls = true;
-          if (parsedArgs === null) {
-            output.appendLine(
-              `[WARN] Tool call ${tc.id} (${tc.name}): args unparseable, falling back to {} - raw: ${tc.arguments.substring(0, 200)}`
-            );
-          }
-          progress.report(
-            new vscode.LanguageModelToolCallPart(tc.id, tc.name, args)
-          );
-          reportedToolCallIds.add(tc.id);
-        }
+    // Handle finalized tool calls (deduplicated by the executor)
+    for (const tc of event.finishedToolCalls) {
+      const parsedArgs = parseToolCallArgs(tc);
+      // If args couldn't be repaired, fall back to {} — matching VS Code BYOK's
+      // behavior. Dropping the call entirely makes it look like the model stopped
+      // without doing anything (the "stream just stopped" symptom). Surfacing it
+      // with {} lets Copilot invoke the tool, which fails downstream with a clear
+      // error rather than vanishing silently.
+      const args = parsedArgs ?? {};
+      if (parsedArgs === null) {
+        output.appendLine(
+          `[WARN] Tool call ${tc.id} (${tc.name}): args unparseable, falling back to {} - raw: ${tc.arguments.substring(0, 200)}`
+        );
       }
-    }
-
-    // Defer usage reporting to after the loop — see pendingUsage comment above.
-    if (event.usage) {
-      pendingUsage = sanitizeUsage(event.usage);
-    }
-    if (event.metrics) {
-      pendingMetrics = event.metrics;
-    }
-
-    if (event.finishReason) {
-      outcome.finishReason = event.finishReason;
+      progress.report(
+        new vscode.LanguageModelToolCallPart(tc.id, tc.name, args)
+      );
     }
   }
-
-  // Report token usage exactly once with the final cumulative stats.
-  if (pendingUsage) {
-    const totalElapsedMs = Date.now() - startTime;
-    reportTokenUsage(progress, pendingUsage);
-    fileLogger?.logStreamFinish(outcome.finishReason || 'unknown', pendingUsage);
-    logTokenUsage(output, model.id, pendingUsage, totalElapsedMs, outcome.firstTokenTime);
-
-    // Record last request + accumulate cumulative usage for the dashboard.
-    // `recordRequest` both stores the server's last request AND sums it into
-    // the all-time/today counters, then fires the change event so the
-    // dashboard re-renders immediately (no poll-interval lag).
-    // The id recorded is the CANONICAL wire id (`wireModelId` — base slug, no
-    // OpenRouter routing suffix), which is what the dashboard's usage/cost
-    // lookups key on. The suffixed wire id is only ever the on-the-wire model
-    // for the request; tracking it here would fragment the counters.
-    const hasCacheDetails = !!pendingUsage.prompt_tokens_details;
-    const hasMetrics = !!pendingMetrics;
-    const lastRequestData: LastRequestData = {
-      serverUrl,
-      modelId: wireModelId,
-      timestamp: Date.now(),
-      promptTokens: pendingUsage.prompt_tokens,
-      completionTokens: pendingUsage.completion_tokens,
-      totalTokens: pendingUsage.total_tokens,
-      cachedTokens: pendingUsage.prompt_tokens_details?.cached_tokens,
-      createdCacheTokens: pendingUsage.prompt_tokens_details?.created_cache_tokens,
-      reasoningTokens: pendingUsage.completion_tokens_details?.reasoning_tokens,
-      actualCost: pendingUsage.cost ?? undefined,
-      usedByok: pendingUsage.usedByok === true ? true : undefined,
-      metrics: pendingMetrics,
-      hasMetrics,
-      hasCacheDetails,
-      maxModelLen: contextWindow ?? ((model.maxInputTokens || 0) + (model.maxOutputTokens || 0)),
-      maxOutputTokens: model.maxOutputTokens || 0,
-      firstTokenTimeMs: outcome.firstTokenTime ?? null,
-      totalTimeMs: totalElapsedMs,
-    };
-    recordRequest(lastRequestData);
-  }
-}
-
-/**
- * Third-party servers do not get to poison the persisted counters: clamp every
- * usage number to a finite non-negative value at the single capture point. A
- * lying `completion_tokens: "500"` string would string-concat into the
- * all-time totals forever (0 + "500" = "0500"); NaN/null would crash the
- * reporting lines AFTER the full answer already streamed. Garbage reads as 0.
- * `cost` is clamped here too, not just in usageStore's accumulateCost: the raw
- * value also flows through `lastRequest` into the dashboard's `formatAmount`
- * (`.toFixed`) and `logTokenUsage`, paths the accumulation guard never covers.
- * A lying relay's `"cost": "0.00002"` would throw AFTER the answer completed
- * and permanently poison the dashboard's Last Request node.
- */
-function sanitizeUsage(u: WireUsage): WireUsage {
-  const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
-  const nums = (d: Record<string, number> | undefined): Record<string, number> | undefined =>
-    d && typeof d === 'object'
-      ? Object.fromEntries(Object.entries(d).map(([k, v]) => [k, n(v)]))
-      : undefined;
-  return {
-    ...u,
-    prompt_tokens: n(u.prompt_tokens),
-    completion_tokens: n(u.completion_tokens),
-    total_tokens: n(u.total_tokens),
-    prompt_tokens_details: nums(u.prompt_tokens_details),
-    completion_tokens_details: nums(u.completion_tokens_details),
-    cost: typeof u.cost === 'number' && Number.isFinite(u.cost) && u.cost >= 0 ? u.cost : undefined,
-  };
 }

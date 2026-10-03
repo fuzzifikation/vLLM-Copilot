@@ -91,14 +91,18 @@ function setupProvider(
   return { provider, captured, spy };
 }
 
-async function run(provider: VllmChatModelProvider, progress: { report: ReturnType<typeof vi.fn> }) {
+async function run(
+  provider: VllmChatModelProvider,
+  progress: { report: ReturnType<typeof vi.fn> },
+  token: unknown = makeToken(),
+) {
   const messages = [{ content: [] }];
   await provider.provideLanguageModelChatResponse(
     { id: 'm', maxOutputTokens: 100 } as any,
     messages as any,
     {} as any,
     progress as any,
-    makeToken(),
+    token as any,
   );
 }
 
@@ -116,6 +120,51 @@ function lastMessage(c: Captured) {
 }
 
 describe('provideLanguageModelChatResponse auto-continue', () => {
+  it('converts the Copilot token to an AbortSignal at the boundary, reason "User cancelled"', async () => {
+    // The token→signal conversion moved from the VllmClient facade to
+    // runChatResponse (once per operation, under the retry loop). Pin: an
+    // already-cancelled token reaches the transport as an ALREADY-ABORTED
+    // signal (VS Code fires the event synchronously on subscribe — the
+    // explicit isCancellationRequested check reproduces that), with the exact
+    // 'User cancelled' reason messageConverter pattern-matches, and nothing
+    // is reported.
+    const { provider, spy } = setupProvider([[ev({ content: 'hi', finishReason: 'stop' })]]);
+    const progress = { report: vi.fn() };
+    const cancelled = { isCancellationRequested: true, onCancellationRequested: () => ({ dispose() {} }) };
+
+    await run(provider, progress, cancelled);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const signal = (spy.mock.calls[0] as unknown[])[3] as AbortSignal;
+    expect(signal.aborted).toBe(true);
+    expect(String(signal.reason)).toBe('User cancelled');
+    expect(progress.report).not.toHaveBeenCalled();
+  });
+
+  it('aborts the transport signal when the token is cancelled mid-stream', async () => {
+    // Subscription wiring pin: cancelling the token DURING the run must abort
+    // the same signal object the transport received, dropping later events.
+    let fireCancel: (() => void) | undefined;
+    const token = {
+      isCancellationRequested: false,
+      onCancellationRequested: (cb: () => void) => { fireCancel = cb; return { dispose() {} }; },
+    };
+    const { provider } = setupProvider([
+      () => ({
+        async *[Symbol.asyncIterator]() {
+          yield ev({ content: 'first ' });
+          fireCancel!();
+          yield ev({ content: 'second' });
+        },
+      }),
+    ]);
+    const progress = { report: vi.fn() };
+
+    await run(provider, progress, token);
+
+    expect(reportedText(progress)).toBe('first ');
+  });
+
   it('does not retry a normal response', async () => {
     const { provider, spy } = setupProvider([
       [ev({ content: 'Hello world', finishReason: null as any }), ev({ finishReason: 'stop' })],

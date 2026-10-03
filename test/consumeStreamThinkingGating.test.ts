@@ -11,22 +11,12 @@ vi.mock('vscode', async (importOriginal) => {
   return { ...mod, LanguageModelThinkingPart: undefined };
 });
 
-import type { StreamOutcome } from '../src/provider/contracts.js';
+import { createExecutionState, executeChatRequest, type ExecutionInput } from '../src/core/request/execute.js';
 import type { StreamEvent } from '../src/core/types.js';
 
-async function* streamOf(events: StreamEvent[]): AsyncGenerator<StreamEvent> {
-  for (const e of events) yield e;
-}
 function ev(p: Partial<StreamEvent>): StreamEvent {
   return { content: '', finishedToolCalls: [], ...p } as StreamEvent;
 }
-const createOutcome = (): StreamOutcome => ({
-  hadContent: false,
-  hadToolCalls: false,
-  hadReasoning: false,
-  hadVisibleReasoning: false,
-  sawRawThinkTags: false,
-});
 
 describe('consumeStream with LanguageModelThinkingPart gated off', () => {
   it('reports reasoning as a plain text part and warns once instead of throwing', async () => {
@@ -36,19 +26,33 @@ describe('consumeStream with LanguageModelThinkingPart gated off', () => {
 
     const progress = { report: vi.fn() };
     const output = { appendLine: vi.fn() } as any;
-    const outcome = createOutcome();
+    const state = createExecutionState(Date.now());
+
+    const transport = {
+      chatCompletionStream: async function* () {
+        yield ev({ reasoning_content: 'thinking...' });
+        yield ev({ content: 'answer' });
+      },
+    };
+    const input: ExecutionInput = {
+      transport, modelId: 'm', vllmModelId: 'm', openaiMessages: [], mergedOptions: {},
+      serverConfig: { serverUrl: 'http://host', serverType: 'vllm', requestHeaders: {} } as any,
+      maxRetries: 0, signal: new AbortController().signal, log: output,
+      limits: { wireModelId: 'm', maxInputTokens: 1000, maxOutputTokens: 100 },
+    };
 
     await consumeStream(
-      streamOf([ev({ reasoning_content: 'thinking...' }), ev({ content: 'answer' })]),
+      executeChatRequest(input, state),
       { id: 'm', maxInputTokens: 1000, maxOutputTokens: 100 } as any,
       progress,
-      { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) } as any,
-      Date.now(), outcome, 'http://host', 'm', output,
+      state.outcome,
+      output,
     );
 
     expect(progress.report).toHaveBeenCalledWith(new LanguageModelTextPart('thinking...'));
     expect(progress.report).toHaveBeenCalledWith(new LanguageModelTextPart('answer'));
-    expect(outcome.hadReasoning).toBe(true);
+    expect(state.outcome.hadReasoning).toBe(true);
+    expect(state.outcome.hadVisibleReasoning).toBe(true);
     expect(output.appendLine).toHaveBeenCalledTimes(1);
     expect(output.appendLine).toHaveBeenCalledWith(expect.stringContaining('unavailable in this VS Code build'));
   });

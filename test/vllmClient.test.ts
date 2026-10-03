@@ -32,32 +32,23 @@ describe('chatCompletionStream facade delegation', () => {
   // prototype spy silently swallows the timeout suite's real transport.
   afterEach(() => vi.restoreAllMocks());
 
-  it('threads model, messages, options and the full serverConfig into ChatTransport.stream, converting the CancellationToken to an AbortSignal', async () => {
-    let seenSignal: AbortSignal | undefined;
+  it('threads model, messages, options, the caller signal and the full serverConfig into ChatTransport.stream', async () => {
     const streamSpy = vi.spyOn(ChatTransport.prototype, 'stream').mockImplementation(
-      async function* (_m, _msgs, _opts, signal) { seenSignal = signal; }
+      async function* () { /* empty stream */ }
     );
     const client = new VllmClient(makeOutput());
-    let fireCancel: (() => void) | undefined;
-    const token = {
-      isCancellationRequested: false,
-      onCancellationRequested: (cb: () => void) => { fireCancel = cb; return { dispose: () => { } }; },
-    } as any;
+    const controller = new AbortController();
     const serverConfig = { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'ollama' } as const;
     // Consume the generator to completion so the facade's timeout machinery
     // unwinds cleanly (a half-iterated generator leaks a rejection into the
     // next test in this file).
-    for await (const _ of client.chatCompletionStream('m', [] as any, { tool_choice: 'auto' } as any, token, serverConfig)) { /* empty stream */ }
+    for await (const _ of client.chatCompletionStream('m', [] as any, { tool_choice: 'auto' } as any, controller.signal, serverConfig)) { /* drain */ }
     expect(streamSpy).toHaveBeenCalledWith(
-      'm', [], expect.objectContaining({ tool_choice: 'auto' }), expect.any(AbortSignal), serverConfig,
+      'm', [], expect.objectContaining({ tool_choice: 'auto' }), controller.signal, serverConfig,
     );
-    // The facade owns the token→signal conversion: cancelling the token must
-    // abort the signal the core transport sees, with the exact
-    // 'User cancelled' reason preserved (messageConverter matches it).
-    expect(seenSignal?.aborted).toBe(false);
-    fireCancel!();
-    expect(seenSignal?.aborted).toBe(true);
-    expect(seenSignal?.reason).toBe('User cancelled');
+    // The facade is byte-for-byte passthrough: the CALLER's exact signal object
+    // reaches the transport (the Copilot boundary in streamOrchestrator owns
+    // the token→signal conversion — pinned in providerAutoContinue.test).
   });
 });
 
@@ -82,9 +73,8 @@ describe('chatCompletionStream initial request timeout', () => {
         })
     );
     const client = new VllmClient(makeOutput());
-    const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) };
     const gen = client.chatCompletionStream(
-      'm', [], {} as any, token as any,
+      'm', [], {} as any, new AbortController().signal,
       { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'vllm' },
     );
     const nextPromise = gen.next();
@@ -117,9 +107,8 @@ describe('chatCompletionStream initial request timeout', () => {
         })
     );
     const client = new VllmClient(makeOutput());
-    const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) };
     const gen = client.chatCompletionStream(
-      'm', [], {} as any, token as any,
+      'm', [], {} as any, new AbortController().signal,
       { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 3000, serverType: 'vllm' },
     );
     const nextPromise = gen.next();
@@ -149,9 +138,8 @@ describe('chatCompletionStream initial request timeout', () => {
         })
     );
     const client = new VllmClient(makeOutput());
-    const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) };
     const gen = client.chatCompletionStream(
-      'm', [], {} as any, token as any,
+      'm', [], {} as any, new AbortController().signal,
       { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 0, serverType: 'vllm' },
     );
     const nextPromise = gen.next(); // start the generator (fetch is invoked, request stays pending)

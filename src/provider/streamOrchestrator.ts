@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
 import { resolveOverrideForModel, resolveModelSettings, type VllmConfig } from '../core/config/config.js';
 import type { FileLogger } from '../shared/logger.js';
-import type { OpenAIChatMessage } from '../core/types.js';
-import type { ProviderClient, StreamOutcome } from './contracts.js';
+import type { ProviderClient } from './contracts.js';
 import { buildRequest } from './requestBuilder.js';
 import { consumeStream } from './consumeStream.js';
+import { createExecutionState, executeChatRequest } from '../core/request/execute.js';
 import { reportPostStreamDiagnostics, handleResponseError } from './postStream.js';
 import type { SystemMessagePipeline } from './systemMessagePipeline.js';
 import { isTransportFailureText, iterateCauses } from '../core/shared/errors.js';
@@ -25,39 +25,6 @@ function isTransportFailure(err: unknown): boolean {
     .map(c => (c instanceof Error ? `${c.name} ${c.message}` : String(c)))
     .join(' ');
   return isTransportFailureText(combined);
-}
-
-/**
- * Fresh outcome for the start of a request/attempt. FULL-zero literal: every
- * mutable field is listed, so `resetOutcome` can reuse it — a literal that
- * omitted finishReason/firstTokenTime would leak a stale finish_reason across
- * auto-continue attempts.
- */
-function createOutcome(): StreamOutcome {
-  return {
-    hadContent: false,
-    hadToolCalls: false,
-    hadReasoning: false,
-    hadVisibleReasoning: false,
-    sawRawThinkTags: false,
-    finishReason: undefined,
-    firstTokenTime: undefined,
-    contentBuffer: undefined,
-    everStreamed: false,
-  };
-}
-
-/**
- * Reset all per-attempt fields on the outcome object for a retry. `everStreamed`
- * is STICKY across the whole request (CR-38): once any attempt has put visible
- * output on the user's screen — answer, tool call, or a thinking block they
- * watched — post-stream diagnostics must not later claim the model "returned no
- * output". The reset final attempt still judges itself for the retry decision:
- * `shouldRetry` reads the fresh fields, so reasoning-then-empty keeps nudging.
- */
-function resetOutcome(outcome: StreamOutcome): void {
-  const everStreamed = outcome.everStreamed || outcome.hadContent || outcome.hadToolCalls || outcome.hadReasoning;
-  Object.assign(outcome, createOutcome(), { everStreamed });
 }
 
 /**
@@ -83,19 +50,19 @@ export interface ChatDeps {
 /**
  * Handle chat requests by forwarding to the vLLM server and streaming back.
  *
- * Orchestrates phases for each attempt, with bounded auto-retry for incomplete
- * responses and replayable early stream failures:
+ * Orchestrates the Copilot-facing phases:
  *   1. {@link buildRequest} — assemble the vLLM request (messages + sampling params)
- *   2. {@link consumeStream} — stream the response, reporting parts as they arrive
- *   3. {@link reportPostStreamDiagnostics} — surface truncation / empty-response issues
- *   4. {@link handleResponseError} — classify and report any failure
+ *   2. core {@link executeChatRequest} — bounded retry loop + observations
+ *   3. {@link consumeStream} — report parts, hand completion data to usage paths
+ *   4. {@link reportPostStreamDiagnostics} — surface truncation / empty-response issues
+ *   5. {@link handleResponseError} — classify and report any failure
  *
- * Auto-continue: an empty response is re-asked with an empty assistant prefill;
- * a vLLM response ending in a colon continues the text already streamed; and an
- * explicit mid-stream server error before answer text or a tool call reaches
- * Copilot replays the identical request. Retries stop before answer/tool output
- * can be duplicated. All attempts share one progress reporter, so Copilot sees a
- * single seamless stream.
+ * Auto-continue lives in the core: an empty response is re-asked with an empty
+ * assistant prefill; a vLLM response ending in a colon continues the text
+ * already streamed; and an explicit mid-stream server error before answer text
+ * or a tool call reaches Copilot replays the identical request. Retries stop
+ * before answer/tool output can be duplicated. All attempts share one progress
+ * reporter, so Copilot sees a single seamless stream.
  */
 export async function runChatResponse(
   deps: ChatDeps,
@@ -106,8 +73,20 @@ export async function runChatResponse(
   token: vscode.CancellationToken
 ): Promise<void> {
   const { client, output, fileLogger, systemMessages, contextWindow } = deps;
-  const startTime = Date.now();
-  const outcome = createOutcome();
+  const state = createExecutionState(Date.now());
+  const outcome = state.outcome;
+
+  // Copilot boundary: convert the cancellation token to a plain AbortSignal
+  // ONCE per operation (the core loop retries underneath this consumer). The
+  // 'User cancelled' abort reason is preserved verbatim (messageConverter
+  // error classification pattern-matches it), and an already-cancelled token
+  // aborts immediately — VS Code's event fires synchronously on subscribe for
+  // cancelled tokens; the explicit `isCancellationRequested` check reproduces
+  // that. The token itself still gates the quiet-cancel paths below.
+  const controller = new AbortController();
+  const cancel = () => controller.abort('User cancelled');
+  const subscription = token.onCancellationRequested(cancel);
+  if (token.isCancellationRequested) cancel();
 
   try {
     // Load config + run the system-message pipeline INSIDE the try so a rejected
@@ -129,162 +108,38 @@ export async function runChatResponse(
     const { vllmModelId, wireModelId, openaiMessages, mergedOptions, serverConfig } =
       buildRequest(model, processedMessages, options, config, output);
 
-    // Auto-continue retry loop: initial attempt + up to maxRetries retries.
-    //
-    // Three distinct triggers:
-    //   0. Mid-stream server error with nothing streamed (provider died after
-    //      the 200, e.g. OpenRouter failover exhaustion): replay the SAME
-    //      request shape — a fresh request re-enters the server's routing.
-    //   The other two, each with its OWN request shape:
-    //   1. Empty response (model emitted only reasoning, then stopped): re-ask with an
-    //      empty assistant prefill under the DEFAULT chat-template flags. vLLM starts a
-    //      fresh assistant turn — a harmless "nudge", since nothing reached Copilot yet.
-    //   2. Truncated mid-sentence (content ends with ':'): genuinely CONTINUE the text
-    //      already streamed. This needs vLLM's continuation mode
-    //      (continue_final_message=true, add_generation_prompt=false) so the model resumes
-    //      the open assistant message and returns only NEW tokens. Without it, vLLM closes
-    //      the prefill as a finished turn and regenerates — duplicating what Copilot saw.
-    let prefillIndex = -1;       // index of the trailing assistant prefill message, once added
-    let assistantPrefill = '';   // text to continue; empty string keeps us in nudge mode
-    let attemptCount = 0;        // actual number of attempts made (for accurate diagnostics)
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      attemptCount++;
-      // Per-attempt timing: consumeStream computes TTFT and total time relative to
-      // this timestamp. A retried request must record only the FINAL attempt's
-      // duration (the one whose output the user actually saw) — using the request-wide
-      // startTime would make totalTimeMs span all attempts while firstTokenTime was the
-      // last attempt's, producing a garbage "Generation (measured)" row. The
-      // request-wide `startTime` still drives overall post-stream diagnostics.
-      const attemptStartTime = Date.now();
-      // Continuation mode (continue_final_message) is a vLLM-only feature. The
-      // secondary backends' chat protocol strips those flags but KEEPS the assistant
-      // prefill — so a colon-continuation would send the partial text as a COMPLETE
-      // assistant turn and the server would regenerate from scratch, making the user see
-      // the partial text twice. Non-vLLM backends always retry in nudge mode.
-      const continuing = assistantPrefill.length > 0 && serverConfig.serverType === 'vllm';
-      const requestOptions = continuing
-        ? { ...mergedOptions, continue_final_message: true, add_generation_prompt: false }
-        : mergedOptions;
-
-      const stream = client.chatCompletionStream(
+    // Execution (retry loop + observations) lives in the neutral core; this
+    // consumer only reports what the core hands over. `openaiMessages` stays
+    // caller-owned — the core mutates a trailing assistant prefill slot in
+    // place, exactly as the old in-place loop did.
+    const events = executeChatRequest(
+      {
+        transport: client,
+        modelId: model.id,
         vllmModelId,
         openaiMessages,
-        requestOptions,
-        token,
-        serverConfig
-      );
-      try {
-        await consumeStream(
-          stream,
-          model,
-          progress,
-          token,
-          attemptStartTime,
-          outcome,
-          serverConfig.serverUrl,
+        mergedOptions,
+        serverConfig,
+        maxRetries,
+        signal: controller.signal,
+        log: output,
+        limits: {
           wireModelId,
-          output,
-          fileLogger,
           contextWindow,
-        );
-      } catch (err) {
-        // Mid-stream server error — the provider died after the HTTP 200 was
-        // already committed (e.g. OpenRouter's "JSON error injected into SSE
-        // stream" when an upstream endpoint crashes, load-sheds, or times out
-        // — these can arrive even BEFORE the first token). When nothing
-        // reached Copilot this attempt, the turn is fully replayable and a
-        // fresh request re-enters the server's routing, so retry within the
-        // same auto-continue budget. Once content or a tool call was reported,
-        // a retry would duplicate or disconnect output (continuation mode is
-        // vLLM-only) — rethrow and let handleResponseError report the partial
-        // turn like before. `hadVisibleReasoning` joins them because a VS Code
-        // build without LanguageModelThinkingPart reports reasoning as TEXT,
-        // which is visible output that a replay would duplicate; reasoning
-        // rendered as a real thinking part is still discardable and retries,
-        // matching the empty-response nudge, which tolerates
-        // shown-then-discarded thinking.
-        const midStream = err instanceof Error && err.message.startsWith('Server error (mid-stream)');
-        if (
-          !midStream
-          || outcome.hadContent
-          || outcome.hadToolCalls
-          || outcome.hadVisibleReasoning
-          || token.isCancellationRequested
-          || attempt >= maxRetries
-        ) {
-          throw err;
-        }
-        resetOutcome(outcome);
-        output.appendLine(
-          `[INFO] ${model.id}: server error mid-stream with no output - retrying (attempt ${attempt + 1}/${maxRetries + 1})`
-        );
-        continue;
-      }
-
-      // Retry when the model stopped (finish_reason: stop) either with no content at all,
-      // or mid-sentence on a trailing colon. Use the full buffer (not the last chunk) so a
-      // trailing whitespace-only chunk can't hide the colon.
-      //
-      // `!outcome.hadToolCalls` guards the empty branch: a pure tool-call turn
-      // (no text content, but a finalized tool call) is a COMPLETE turn, not a
-      // failed one — `finish_reason: 'stop'` after a tool call is the OpenAI/vLLM
-      // convention for "done, here's my tool call." Retrying would re-ask the
-      // model after it already took a valid action. The colon branch is already
-      // gated by `hadContent`, so `hadToolCalls` only matters for the empty case.
-      //
-      // `hadVisibleReasoning` closes the same hole the mid-stream gate closes:
-      // on a VS Code build with no thinking part, reasoning is reported as
-      // ordinary text, so `hadContent` is still false while the user is already
-      // looking at it. Without this, a reasoning-only stop re-asks the model and
-      // prints the same reasoning a second time. The empty-response nudge and
-      // the colon continuation both assume the user has seen nothing, which is
-      // only true for a genuine thinking part.
-      if (token.isCancellationRequested) break;
-      const endsWithColon = !!outcome.contentBuffer && outcome.contentBuffer.trimEnd().endsWith(':');
-      // Colon-continuation retries are vLLM-only. Without vLLM's
-      // continue_final_message the server cannot resume an open assistant turn —
-      // for secondary backends a colon retry would drop the already-streamed text,
-      // nudge with an empty assistant message, and produce a disjoint fresh answer
-      // (or a reject). Empty-response nudges are backend-agnostic and stay.
-      const shouldRetry = (!outcome.hadContent || (endsWithColon && serverConfig.serverType === 'vllm'))
-        && !outcome.hadToolCalls
-        && !outcome.hadVisibleReasoning
-        && outcome.finishReason === 'stop'
-        && attempt < maxRetries;
-      if (!shouldRetry) break;
-
-      // Grow the prefill: a colon-truncated reply continues from everything streamed so far.
-      // Only for vLLM (true continuation mode). For secondary backends the partial text
-      // must NOT be replayed as a completed assistant turn — the chat protocol strips the
-      // continuation flags there, so the server would regenerate and duplicate output.
-      // An empty response contributes nothing, keeping assistantPrefill empty (nudge mode).
-      if (outcome.hadContent && serverConfig.serverType === 'vllm') {
-        assistantPrefill += outcome.contentBuffer ?? '';
-      }
-      const prefillMessage: OpenAIChatMessage = { role: 'assistant', content: assistantPrefill };
-      if (prefillIndex === -1) {
-        openaiMessages.push(prefillMessage);
-        prefillIndex = openaiMessages.length - 1;
-      } else {
-        openaiMessages[prefillIndex] = prefillMessage;
-      }
-
-      const reason = outcome.hadContent
-        ? 'response ended with colon (incomplete sentence)'
-        : 'empty response';
-      const mode = assistantPrefill.length > 0 ? 'continuation' : 'prefill';
-      resetOutcome(outcome);
-      output.appendLine(
-        `[INFO] ${model.id}: ${reason} - retrying with assistant ${mode} (attempt ${attempt + 1}/${maxRetries + 1})`
-      );
-    }
+          maxInputTokens: model.maxInputTokens || 0,
+          maxOutputTokens: model.maxOutputTokens || 0,
+        },
+      },
+      state,
+    );
+    await consumeStream(events, model, progress, outcome, output, fileLogger);
 
     // A user cancellation is a quiet stop (Copilot already shows the stopped
     // state) — do NOT run post-stream diagnostics. Without this gate, cancelling
     // before the first content token would fire the spurious "model returned no
     // output" warning, contradicting handleResponseError's quiet-cancel contract.
     if (!token.isCancellationRequested) {
-      reportPostStreamDiagnostics(model, options, outcome, startTime, progress, attemptCount, output);
+      reportPostStreamDiagnostics(model, options, outcome, state.requestStartTime, progress, state.attemptCount, output);
     }
   } catch (err) {
     handleResponseError(err, model, outcome, token, progress, output);
@@ -294,5 +149,7 @@ export async function runChatResponse(
       // model (and siblings on the same dead server) until it is back.
       deps.onTransportFailure?.();
     }
+  } finally {
+    subscription.dispose();
   }
 }

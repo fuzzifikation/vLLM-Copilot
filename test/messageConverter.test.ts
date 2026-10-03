@@ -3,8 +3,9 @@ import * as vscode from 'vscode';
 import {
   messageToText,
   convertMessages,
-  parseToolCallArgs,
 } from '../src/provider/messageConverter.js';
+// Tool-arg repair moved into core stream processing (Phase 6).
+import { parseToolCallArgs } from '../src/core/request/sseParser.js';
 
 // Helpers to build messages with the mocked vscode classes.
 function userMsg(content: any[]): vscode.LanguageModelChatRequestMessage {

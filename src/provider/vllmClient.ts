@@ -53,29 +53,17 @@ export class VllmClient {
   }
 
   /**
-   * Copilot boundary: this facade owns the `vscode.CancellationToken`
-   * subscription and converts it to a plain `AbortSignal` for the core
-   * transport. The 'User cancelled' abort reason is preserved verbatim
-   * (messageConverter error classification pattern-matches it), and an
-   * already-cancelled token aborts immediately — VS Code's event fires
-   * synchronously on subscribe for cancelled tokens; the explicit
-   * `isCancellationRequested` check reproduces that.
+   * Byte-for-byte passthrough into the core transport. The cancellation
+   * signal is CALLER-OWNED: the Copilot boundary (streamOrchestrator) converts
+   * its token once per operation, so the facade neither subscribes nor converts.
    */
   async *chatCompletionStream(
     model: string,
     messages: OpenAIChatMessage[],
     options: VllmChatOptions,
-    token: vscode.CancellationToken,
+    signal: AbortSignal,
     serverConfig?: ServerConfig,
   ): AsyncGenerator<StreamEvent> {
-    const controller = new AbortController();
-    const cancel = () => controller.abort('User cancelled');
-    const subscription = token.onCancellationRequested(cancel);
-    if (token.isCancellationRequested) cancel();
-    try {
-      yield* this.chatTransport.stream(model, messages, options, controller.signal, serverConfig);
-    } finally {
-      subscription.dispose();
-    }
+    yield* this.chatTransport.stream(model, messages, options, signal, serverConfig);
   }
 }
