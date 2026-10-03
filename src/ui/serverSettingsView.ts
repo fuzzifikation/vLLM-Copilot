@@ -20,7 +20,7 @@ import {
   getGlobalPersonalitiesDir,
   getBundledPersonalitiesDir,
 } from '../persona/personalityStore.js';
-import { loadPersonalityMeta, loadPromptReplacements, COMMON_REPLACEMENTS_FILENAME } from '../persona/promptReplacer.js';
+import { loadPersonalityMeta, loadPromptReplacements, COMMON_REPLACEMENTS_FILENAME } from '../core/persona/promptReplacer.js';
 
 // Ordered by frequency of use: common sampling → length → penalties → output control → niche.
 const KNOWN_PARAMS: Record<string, { label: string; type: 'number' | 'string' | 'json'; options?: string[] }> = {

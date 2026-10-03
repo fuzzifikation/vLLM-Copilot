@@ -1,69 +1,41 @@
+/**
+ * Instance-owned system-message pipeline: prompt replacement + capture —
+ * the Copilot host half. The rule loading/resolution lives in
+ * `core/persona`, and the capture merge/atomic-write queue lives in
+ * `core/persona/capture`. This class owns only what speaks Copilot's
+ * vocabulary: reading the `systemMessageCapture` setting, extracting text
+ * from `LanguageModelChatRequestMessage`s, wrapping transformed text back
+ * into new editor message objects, and resolving the capture file path from
+ * the workspace root.
+ *
+ * The provider owns one pipeline instance. Collaborators are explicit: an
+ * output channel for logging and a capture writer for persistence. The
+ * pipeline never sees the provider.
+ */
 import * as vscode from 'vscode';
-import * as fs from 'fs/promises';
 import * as path from 'path';
-import { resolveWorkspaceRelativePath } from '../state/config.js';
 import { resolveOverrideForModel, type VllmConfig } from '../core/config/config.js';
 import { messageToText } from './messageConverter.js';
 import {
   loadPromptReplacements,
   applyPromptReplacements,
   type PromptReplacement,
-} from '../persona/promptReplacer.js';
+} from '../core/persona/promptReplacer.js';
+import {
+  CaptureQueue,
+  type CaptureEntry,
+  type CaptureWriter,
+} from '../core/persona/capture.js';
 import { resolveModelReplacements } from '../persona/personalityStore.js';
+import { resolveWorkspaceRelativePath } from '../state/config.js';
 
-/**
- * Capture entry for a single system message, written to .vllm/system-messages.json.
- */
-interface CaptureEntry {
-  receivedContent: string;
-  deliveredContent: string;
-  rulesApplied: string[];
-}
+export type { CaptureEntry, CaptureWriter } from '../core/persona/capture.js';
 
-/**
- * Shape guard for entries read back from the capture file. The file is
- * user-editable and written by earlier versions, so members must be validated
- * before any `.receivedContent` access — a malformed member (null, {}, partial)
- * would otherwise throw in the merge or silently persist.
- */
-function isCaptureEntry(e: unknown): e is CaptureEntry {
-  if (typeof e !== 'object' || e === null) return false;
-  const entry = e as Record<string, unknown>;
-  return (
-    typeof entry.receivedContent === 'string' &&
-    typeof entry.deliveredContent === 'string' &&
-    Array.isArray(entry.rulesApplied) &&
-    entry.rulesApplied.every(r => typeof r === 'string')
-  );
-}
-
-/**
- * Persistence boundary for captured system messages. {@link SystemMessagePipeline}
- * collects capture entries during transformation and hands them to this writer.
- * Production default is the constructor's own disk writer; tests inject
- * a mock to observe the collected entries without touching the file system.
- */
-export type CaptureWriter = (entries: CaptureEntry[]) => Promise<void>;
-
-/**
- * Instance-owned system-message pipeline: prompt replacement + capture.
- *
- * The provider owns one pipeline instance. The write queue is instance-owned
- * (not module-global) for two reasons: concurrent writes from one pipeline are
- * serialized, and provider instances never share mutable module state (a
- * module-global queue would couple instances and silently change ownership).
- * The queue serializes writes within a single pipeline only — it does NOT
- * coordinate two pipelines writing the same file (production creates a single
- * provider, so cross-pipeline writes never occur today).
- *
- * Collaborators are explicit: an output channel for logging and a capture
- * writer for persistence. The pipeline never sees the provider.
- */
 export class SystemMessagePipeline {
-  /** Promise chain that serializes concurrent writes to system-messages.json. Always resolves. */
-  #writeQueue: Promise<void> = Promise.resolve();
-
   private readonly captureWriter: CaptureWriter;
+
+  /** Core merge/atomic-write queue (instance-owned, serialized). */
+  private readonly captureQueue = new CaptureQueue();
 
   constructor(
     private readonly output: vscode.OutputChannel,
@@ -216,73 +188,14 @@ export class SystemMessagePipeline {
   }
 
   /**
-   * Read existing capture file, merge new entries, write back.
+   * Read existing capture file, merge new entries, write back — core
+   * {@link CaptureQueue} semantics over the caller's explicit target path.
    * Serialized via the promise queue so concurrent writes never race.
    */
   async enqueueWrite(
     targetPath: string,
     newEntries: CaptureEntry[]
   ): Promise<void> {
-    // Chain this write after the previous one, then await it so the caller (and
-    // tests) observe completion. The queue always resolves — errors are logged.
-    const previous = this.#writeQueue;
-    this.#writeQueue = previous.then(async () => {
-      await fs.mkdir(path.dirname(targetPath), { recursive: true });
-
-      // Read existing entries
-      let allEntries: CaptureEntry[] = [];
-      try {
-        const existing = await fs.readFile(targetPath, 'utf-8');
-        const parsed = JSON.parse(existing);
-        if (Array.isArray(parsed)) {
-          // The file is user-editable and best-effort, so a valid JSON array may
-          // still contain malformed members (null, {}, partial objects). Accessing
-          // .receivedContent on those would throw (wedging every future write) or
-          // silently persist an invalid entry, so shape-validate before merging.
-          const valid = parsed.filter(isCaptureEntry);
-          if (valid.length !== parsed.length) {
-            this.output.appendLine(
-              `[WARN] ${targetPath} had ${parsed.length - valid.length} malformed capture entr(y/ies), dropped`
-            );
-          }
-          allEntries = valid;
-        } else {
-          this.output.appendLine(`[WARN] ${targetPath} is not a JSON array, starting fresh`);
-        }
-      } catch (err) {
-        if (!(err instanceof Error && 'code' in err && (err as any).code === 'ENOENT')) {
-          this.output.appendLine(`[WARN] Failed to read ${targetPath}, starting fresh: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-
-      // Merge: new entries overwrite existing ones with the same receivedContent.
-      const existingIndex = new Map<string, number>();
-      allEntries.forEach((e, i) => existingIndex.set(e.receivedContent, i));
-
-      let newCount = 0;
-      let updatedCount = 0;
-      for (const entry of newEntries) {
-        const idx = existingIndex.get(entry.receivedContent);
-        if (idx !== undefined) {
-          allEntries[idx] = entry;
-          updatedCount++;
-        } else {
-          allEntries.push(entry);
-          newCount++;
-        }
-      }
-
-      // Write atomically: write to a temp file, then rename over the target so a
-      // crash or disk failure mid-write can't leave truncated JSON in place. The
-      // previous file survives until the rename completes.
-      const tmpPath = `${targetPath}.tmp`;
-      await fs.writeFile(tmpPath, JSON.stringify(allEntries, null, 2), 'utf-8');
-      await fs.rename(tmpPath, targetPath);
-      this.output.appendLine(`[DIAG] Captured ${newCount} new, updated ${updatedCount} existing system message(s) → ${targetPath}`);
-    }).catch(err => {
-      // Swallow errors so the queue always resolves — a write failure shouldn't block future writes
-      this.output.appendLine(`[WARN] Failed to write capture file: ${err instanceof Error ? err.message : String(err)}`);
-    });
-    await this.#writeQueue;
+    await this.captureQueue.enqueueWrite(targetPath, newEntries, this.output);
   }
 }
