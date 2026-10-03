@@ -17,8 +17,9 @@
 import * as vscode from 'vscode';
 import { buildEndpoint } from '../core/config/config.js';
 import { normalizeServerUrl, sanitizeRequestHeaders, type ServerType } from '../core/config/serverCore.js';
-import { buildRequestHeaders, transportErrorCode } from '../shared/fetchRetry.js';
-import { listServerModels, resolveRuntimeLimits, type ServerModelEntry } from '../backends/runtimeLimits.js';
+import { buildRequestHeaders, transportErrorCode } from '../core/shared/fetchRetry.js';
+import { listServerModels, resolveRuntimeLimits, type ServerModelEntry } from '../core/backends/runtimeLimits.js';
+import { readServers } from '../state/configStore.js';
 import {
   probeOpenRouterKey,
   fetchOpenRouterCredits,
@@ -31,7 +32,7 @@ import {
   type OpenRouterCredits,
   type OpenRouterModelData,
   type OpenRouterModelEndpoint,
-} from '../backends/openRouter.js';
+} from '../core/backends/openRouter.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -814,7 +815,7 @@ class ServerMetricsEngine {
       // in-flight dedup, TTL, and failure backoff. A missing or empty list
       // yields no row — the dashboard hides pricing rather than fabricating it.
       if (this.serverType === 'openrouter' && aggregated.online && this.modelIds.length > 0) {
-        const settled = await Promise.allSettled(this.modelIds.map((id) => getOpenRouterModelEndpointsCached(id)));
+        const settled = await Promise.allSettled(this.modelIds.map((id) => getOpenRouterModelEndpointsCached(id, readServers())));
         const providersByModel: Record<string, OpenRouterModelEndpoint[]> = {};
         for (let i = 0; i < this.modelIds.length; i++) {
           const s = settled[i];

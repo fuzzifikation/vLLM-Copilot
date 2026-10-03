@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fetchWithRetry } from '../src/shared/fetchRetry.js';
+import { fetchWithRetry } from '../src/core/shared/fetchRetry.js';
 
 /**
  * fetchWithRetry retry classification. Regression tests for the real Node/undici

@@ -22,7 +22,7 @@ import {
   openRouterInfoDetailLines,
   type OpenRouterModelData,
   type OpenRouterModelInfo,
-} from '../backends/openRouter.js';
+} from '../core/backends/openRouter.js';
 import {
   completeDuplicateGate,
   confirmAndSaveAddedModel,

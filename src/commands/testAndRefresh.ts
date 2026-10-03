@@ -12,10 +12,10 @@ import { buildEndpoint, findModelConfigIndex, resolveConfigId, resolveServerConf
 import { patchModelConfig, readModels } from '../state/configStore.js';
 import { isTlsCertificateError, describeError } from '../core/shared/errors.js';
 import { TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
-import { clearRuntimeLimitsCache, listServerModels, MissingContextWindowError, resolveRuntimeLimits, ServerProbeError, type ServerModelEntry } from '../backends/runtimeLimits.js';
+import { clearRuntimeLimitsCache, listServerModels, MissingContextWindowError, resolveRuntimeLimits, ServerProbeError, type ServerModelEntry } from '../core/backends/runtimeLimits.js';
 import { isValidContextWindow } from '../core/shared/tokenBudget.js';
 import { runDiagnostics, formatReport } from '../ui/diagnostics.js';
-import { resetOpenRouterCaches } from '../backends/openRouter.js';
+import { resetOpenRouterCaches } from '../core/backends/openRouter.js';
 
 /**
  * Result of testing a single unique server (grouped by URL + auth).

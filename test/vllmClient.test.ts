@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { VllmClient } from '../src/provider/vllmClient.js';
-import { ChatTransport } from '../src/provider/chatTransport.js';
+import { ChatTransport } from '../src/core/request/chatTransport.js';
 import * as configModule from '../src/state/config.js';
 import type { VllmConfig } from '../src/core/config/config.js';
 
@@ -32,20 +32,32 @@ describe('chatCompletionStream facade delegation', () => {
   // prototype spy silently swallows the timeout suite's real transport.
   afterEach(() => vi.restoreAllMocks());
 
-  it('threads model, messages, options, token and the full serverConfig into ChatTransport.stream', async () => {
+  it('threads model, messages, options and the full serverConfig into ChatTransport.stream, converting the CancellationToken to an AbortSignal', async () => {
+    let seenSignal: AbortSignal | undefined;
     const streamSpy = vi.spyOn(ChatTransport.prototype, 'stream').mockImplementation(
-      async function* () {}
+      async function* (_m, _msgs, _opts, signal) { seenSignal = signal; }
     );
     const client = new VllmClient(makeOutput());
-    const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) } as any;
+    let fireCancel: (() => void) | undefined;
+    const token = {
+      isCancellationRequested: false,
+      onCancellationRequested: (cb: () => void) => { fireCancel = cb; return { dispose: () => { } }; },
+    } as any;
     const serverConfig = { serverUrl: 'http://test', requestHeaders: {}, streamInactivityTimeout: 0, initialResponseTimeoutMs: 60000, serverType: 'ollama' } as const;
     // Consume the generator to completion so the facade's timeout machinery
     // unwinds cleanly (a half-iterated generator leaks a rejection into the
     // next test in this file).
     for await (const _ of client.chatCompletionStream('m', [] as any, { tool_choice: 'auto' } as any, token, serverConfig)) { /* empty stream */ }
     expect(streamSpy).toHaveBeenCalledWith(
-      'm', [], expect.objectContaining({ tool_choice: 'auto' }), token, serverConfig,
+      'm', [], expect.objectContaining({ tool_choice: 'auto' }), expect.any(AbortSignal), serverConfig,
     );
+    // The facade owns the token→signal conversion: cancelling the token must
+    // abort the signal the core transport sees, with the exact
+    // 'User cancelled' reason preserved (messageConverter matches it).
+    expect(seenSignal?.aborted).toBe(false);
+    fireCancel!();
+    expect(seenSignal?.aborted).toBe(true);
+    expect(seenSignal?.reason).toBe('User cancelled');
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { ChatTransport } from '../src/provider/chatTransport.js';
+import { ChatTransport } from '../src/core/request/chatTransport.js';
 import type { ServerType } from '../src/core/config/serverCore.js';
 import type { OpenAIChatMessage, VllmChatOptions } from '../src/core/types.js';
 
@@ -16,10 +16,7 @@ import type { OpenAIChatMessage, VllmChatOptions } from '../src/core/types.js';
 
 const USER: OpenAIChatMessage[] = [{ role: 'user', content: 'hello' }];
 
-const token = {
-  isCancellationRequested: false,
-  onCancellationRequested: () => ({ dispose: () => {} }),
-} as any;
+const signal = new AbortController().signal;
 
 function serverConfig(serverType: ServerType = 'vllm') {
   return {
@@ -45,7 +42,7 @@ async function drain(
     'test-model',
     messages as OpenAIChatMessage[],
     options as VllmChatOptions,
-    token,
+    signal,
     serverConfig(serverType),
   )) { /* drain */ }
   return output;
@@ -184,7 +181,7 @@ describe('request body — protected keys', () => {
     const transport = new ChatTransport(output);
     const call = async () => {
       for await (const _ of transport.stream(
-        'test-model', USER, { tool_choice: 'auto' } as VllmChatOptions, token, serverConfig('ollama'),
+        'test-model', USER, { tool_choice: 'auto' } as VllmChatOptions, signal, serverConfig('ollama'),
       )) { /* drain */ }
     };
     await call();

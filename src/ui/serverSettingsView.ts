@@ -11,7 +11,7 @@ import { findModelConfigIndex, toPublicModelConfig, resolveConfigId, resolveVllm
 import { normalizeServerUrl, KNOWN_SERVER_TYPES, type ServerType } from '../core/config/serverCore.js';
 import { patchModelConfig, readModels, readServers, writeServers, type ModelIdentity } from '../state/configStore.js';
 import { firstEntryById } from '../core/config/serverRegistry.js';
-import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from '../backends/openRouter.js';
+import { getOpenRouterModelEndpointsCached, type OpenRouterModelEndpoint } from '../core/backends/openRouter.js';
 import { getMetricsEngine } from './vllmMetrics.js';
 
 import {
@@ -547,7 +547,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
     }
     const providersByModel: Record<string, OpenRouterModelEndpoint[]> = {};
     if (openRouterWireIds.length > 0) {
-      const settled = await Promise.allSettled(openRouterWireIds.map((wireId) => getOpenRouterModelEndpointsCached(wireId)));
+      const settled = await Promise.allSettled(openRouterWireIds.map((wireId) => getOpenRouterModelEndpointsCached(wireId, readServers())));
       for (let i = 0; i < openRouterWireIds.length; i++) {
         const s = settled[i];
         if (s.status !== 'fulfilled') {

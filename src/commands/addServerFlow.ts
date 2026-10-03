@@ -16,7 +16,7 @@ import { firstEntryById, resolveServer } from '../core/config/serverRegistry.js'
 import type { VllmModel } from '../core/types.js';
 import { isTlsCertificateError, describeError } from '../core/shared/errors.js';
 import { TLS_CERT_SUGGESTION } from '../provider/messageConverter.js';
-import { detectServerType } from '../backends/runtimeLimits.js';
+import { detectServerType } from '../core/backends/runtimeLimits.js';
 import { promptForServerAuth } from './serverAuth.js';
 import { fetchWithTimeout, resolveModelConfigForAddSafely } from './hfDiscovery.js';
 import { runOpenRouterAddFlow } from './openRouterAddFlow.js';

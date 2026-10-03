@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { registerTestAndRefreshModelsCommand } from '../src/commands/testAndRefresh.js';
-import { clearRuntimeLimitsCache } from '../src/backends/runtimeLimits.js';
+import { clearRuntimeLimitsCache } from '../src/core/backends/runtimeLimits.js';
 
 /**
  * Test & Refresh pins for the hidden `contextWindow` repair flow. Real stack,

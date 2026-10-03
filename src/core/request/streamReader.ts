@@ -7,20 +7,19 @@
  * and tool call accumulation on top.
  */
 
-import * as vscode from 'vscode';
 import { processSSEChunk, finalizePendingToolCalls, type PendingToolCall } from './sseParser.js';
-import { STREAM_TIMEOUT_PREFIX } from '../core/shared/errors.js';
+import { STREAM_TIMEOUT_PREFIX } from '../shared/errors.js';
 import { createParser, type EventSourceMessage } from 'eventsource-parser';
-import type { StreamEvent } from '../core/types.js';
-import type { FileLogger } from '../shared/logger.js';
+import type { StreamEvent } from '../types.js';
+import type { RequestLog, RequestTrace } from '../shared/trace.js';
 
 interface StreamReaderOptions {
   /** Inactivity timeout in ms. 0 = disabled (wait indefinitely). */
   inactivityMs: number;
-  /** File logger for stream chunk logging. Optional. */
-  fileLogger?: FileLogger;
-  /** Output channel for user-visible SSE parse warnings. Optional. */
-  output?: vscode.OutputChannel;
+  /** Structural trace sink for stream chunk logging (host owns it). Optional. */
+  trace?: RequestTrace;
+  /** Line log for user-visible SSE parse warnings. Optional. */
+  output?: RequestLog;
 }
 
 /**
@@ -43,15 +42,15 @@ function normalizeSSE(text: string): string {
  * by generator pauses (yields) during tool execution, which can last minutes.
  *
  * @param reader - ReadableStream reader (from response.body.getReader())
- * @param token - Cancellation token
+ * @param signal - Abort signal (caller-owned; aborted on user cancel)
  * @param options - StreamReader options
  */
 export async function* readSseStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-  token: vscode.CancellationToken,
+  signal: AbortSignal,
   options: StreamReaderOptions
 ): AsyncGenerator<StreamEvent> {
-  const { inactivityMs, fileLogger, output } = options;
+  const { inactivityMs, trace, output } = options;
   const pendingToolCalls = new Map<number, PendingToolCall>();
   let contentChunks = 0;
 
@@ -61,9 +60,11 @@ export async function* readSseStream(
   // reader is released and the underlying source is told to stop producing
   // data. This also works as a cleanup in the finally block regardless of
   // whether the reader is already closed or errored.
-  const disposeCancel = token.onCancellationRequested(() => {
+  const onAbort = () => {
     reader.cancel(new Error('Request cancelled by user')).catch(() => {});
-  });
+  };
+  if (signal.aborted) onAbort();
+  else signal.addEventListener('abort', onAbort, { once: true });
 
   // ── SSE parsing via eventsource-parser ─────────────────────────────
   // eventsource-parser handles all SSE protocol mechanics: chunk boundaries,
@@ -106,7 +107,7 @@ export async function* readSseStream(
 
       if (event.content || event.reasoning_content || event.finishedToolCalls.length > 0) {
         contentChunks++;
-        fileLogger?.logStreamChunk(contentChunks, event.content, event.finishedToolCalls, event.reasoning_content);
+        trace?.logStreamChunk(contentChunks, event.content, event.finishedToolCalls, event.reasoning_content);
       }
     },
     onError: (err) => {
@@ -139,7 +140,7 @@ export async function* readSseStream(
     const decoder = new TextDecoder();
 
     while (true) {
-      if (token.isCancellationRequested) {
+      if (signal.aborted) {
         break;
       }
 
@@ -183,7 +184,7 @@ export async function* readSseStream(
           value = result.value;
         }
       } catch (err) {
-        // The cancellation token triggers reader.cancel() above. Per the WHATWG
+        // The abort signal triggers reader.cancel() above. Per the WHATWG
         // Streams spec, cancel() FULFILLS a pending read() with { done: true }
         // — it does NOT reject (only abort() does), so the loop normally exits
         // via the done path, not here. A rejection arriving with cancellation
@@ -191,7 +192,7 @@ export async function* readSseStream(
         // tear down quietly via break instead of propagating to the provider.
         // (Do not "fix" this by switching to abort() — it would start rejecting
         // politely-closed reads.)
-        if (token.isCancellationRequested) break;
+        if (signal.aborted) break;
         // Re-throw inactivity timeouts directly — they already have a descriptive message.
         if (err instanceof Error && err.message.startsWith(STREAM_TIMEOUT_PREFIX)) {
           throw err;
@@ -258,7 +259,7 @@ export async function* readSseStream(
       };
     }
   } finally {
-    disposeCancel.dispose();
-    reader.cancel().catch(() => {});
+    signal.removeEventListener('abort', onAbort);
+    reader.cancel().catch(() => { });
   }
 }

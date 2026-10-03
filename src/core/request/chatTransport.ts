@@ -1,13 +1,12 @@
-import type * as vscode from 'vscode';
-import { buildEndpoint, DEFAULT_MODEL_SETTINGS } from '../core/config/config.js';
-import type { ServerType } from '../core/config/serverCore.js';
-import { serverErrorMessage } from '../core/shared/errorEnvelope.js';
+import { buildEndpoint, DEFAULT_MODEL_SETTINGS } from '../config/config.js';
+import type { ServerType } from '../config/serverCore.js';
+import { serverErrorMessage } from '../shared/errorEnvelope.js';
 import { buildRequestHeaders, fetchWithRetry } from '../shared/fetchRetry.js';
-import { STREAM_TIMEOUT_PREFIX } from '../core/shared/errors.js';
-import type { FileLogger } from '../shared/logger.js';
+import { STREAM_TIMEOUT_PREFIX } from '../shared/errors.js';
+import type { RequestLog, RequestTrace } from '../shared/trace.js';
 import { readSseStream } from './streamReader.js';
-import type { OpenAIChatMessage, StreamEvent, VllmChatOptions } from '../core/types.js';
-import type { ServerConfig } from '../core/request/assemble.js';
+import type { OpenAIChatMessage, StreamEvent, VllmChatOptions } from '../types.js';
+import type { ServerConfig } from './assemble.js';
 
 const PROTECTED_BODY_KEYS = new Set(['model', 'messages', 'stream', 'stream_options']);
 
@@ -110,15 +109,21 @@ export class ChatTransport {
   private warnedOllamaToolChoice = false;
 
   constructor(
-    private output: vscode.OutputChannel,
-    private fileLogger?: FileLogger,
+    private output: RequestLog,
+    private trace?: RequestTrace,
   ) {}
 
+  /**
+   * Stream a chat completion. The caller owns `signal` — the Copilot boundary
+   * (VllmClient) converts its CancellationToken to an AbortSignal at the
+   * facade, preserving the 'User cancelled' abort reason. This transport owns
+   * its local timeout controllers and read cleanup only.
+   */
   async *stream(
     model: string,
     messages: OpenAIChatMessage[],
     options: VllmChatOptions,
-    token: vscode.CancellationToken,
+    signal: AbortSignal,
     serverConfig?: ServerConfig,
   ): AsyncGenerator<StreamEvent> {
     const url = buildEndpoint(serverConfig?.serverUrl ?? '', 'v1/chat/completions');
@@ -141,12 +146,16 @@ export class ChatTransport {
     // uses, CR-22 case-fold included. A hand-rolled spread here used to log a
     // duplicate content-type header the wire never actually sent.
     const wireHeaders = buildRequestHeaders({ 'Content-Type': 'application/json' }, serverConfig?.requestHeaders ?? {});
-    this.fileLogger?.logRequest('POST', url, wireHeaders, body);
+    this.trace?.logRequest('POST', url, wireHeaders, body);
 
     const controller = new AbortController();
-    const onCancellation = token.onCancellationRequested(() => {
-      controller.abort('User cancelled');
-    });
+    // Forward the caller's cancellation with its reason intact (the facade
+    // aborts with 'User cancelled'; messageConverter pattern-matches that).
+    // Subscribing to an already-aborted token used to fire immediately —
+    // reproduce that by checking `aborted` before subscribing.
+    const onCallerAbort = () => controller.abort(signal.reason);
+    if (signal.aborted) onCallerAbort();
+    else signal.addEventListener('abort', onCallerAbort, { once: true });
     const inactivityMs = serverConfig?.streamInactivityTimeout ?? DEFAULT_MODEL_SETTINGS.streamInactivityTimeout;
     const initialResponseMs = serverConfig?.initialResponseTimeoutMs ?? DEFAULT_MODEL_SETTINGS.initialResponseTimeoutMs;
     let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
@@ -187,20 +196,20 @@ export class ChatTransport {
       await checkResponseContentType(response);
       clearTimeout(inactivityTimer);
 
-      yield* readSseStream(response.body.getReader(), token, {
+      yield* readSseStream(response.body.getReader(), signal, {
         inactivityMs,
-        fileLogger: this.fileLogger,
+        trace: this.trace,
         output: this.output,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const status = message.match(/HTTP\s+(\d+)/)?.[1];
-      this.fileLogger?.logError('POST', url, status ? parseInt(status, 10) : 0, message);
+      this.trace?.logError('POST', url, status ? parseInt(status, 10) : 0, message);
       throw error;
     } finally {
       clearTimeout(initialResponseTimer);
       clearTimeout(inactivityTimer);
-      onCancellation.dispose();
+      signal.removeEventListener('abort', onCallerAbort);
     }
   }
 

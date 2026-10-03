@@ -65,15 +65,14 @@ Copilot → provider/provider.ts (VllmChatModelProvider) → provider/vllmClient
 | Path | Responsibility |
 |---|---|
 | `src/extension.ts` | Activation, command registration, lifecycle |
-| `src/types.ts` | Shared wire-format types & SSE events only. No business logic. |
-| `src/provider/` | Request path: `provider.ts` (`LanguageModelChatProvider` impl, streams to Copilot), `vllmClient.ts` (HTTP client, config cache owner), `requestBuilder.ts`/`chatTransport.ts`, `streamOrchestrator.ts`/`consumeStream.ts`, `streamReader.ts` + `sseParser.ts` (SSE), `messageConverter.ts` (VS Code ↔ OpenAI/vLLM formats), `modelInfo.ts` (picker info + family detection), `systemMessagePipeline.ts` (personality/capture), `discovery.ts`, `postStream.ts` |
-| `src/state/` | `config.ts` (types `VllmConfig`/`ModelConfig`, validation, resolution helpers), `configStore.ts` (the sole settings.json writer), `serverCore.ts` + `serverRegistry.ts` (registry entries, URL/identity rules) |
+| `src/core/` | Host-neutral core — no `vscode` import, no settings reads, no host paths (enforced by `core-no-host` + `core-no-undeclared-deps` in both cruiser configs): `types.ts` (wire-format types & SSE events only), `shared/` (errors, error envelope, token budget, fetch retry, JSONC, `trace.ts` logging hooks), `config/` (`config.ts` pure policy/validation, `serverCore.ts`/`serverRegistry.ts` URL/identity rules), `request/` (`assemble.ts` neutral request assembly, `chatTransport.ts`, `streamReader.ts` + `sseParser.ts` SSE), `backends/` (OpenRouter catalog/aliases/endpoints, runtime limits) |
+| `src/provider/` | Copilot request path: `provider.ts` (`LanguageModelChatProvider` impl, streams to Copilot), `vllmClient.ts` (facade, config cache owner, CancellationToken→AbortSignal boundary), `requestBuilder.ts` (`buildRequest` adapter over core `assembleRequest`), `streamOrchestrator.ts`/`consumeStream.ts`, `messageConverter.ts` (VS Code ↔ OpenAI/vLLM formats), `modelInfo.ts` (picker info + family detection), `systemMessagePipeline.ts` (personality/capture), `discovery.ts`, `postStream.ts` |
+| `src/state/` | `config.ts` (the vscode settings reader, composite `validateConfig`, picker selection, path-root adapter), `configStore.ts` (the sole settings.json writer) |
 | `src/commands/` | User-facing commands: add server/model flows, auto-configure + HF discovery, auth rotation, presets (bundled + remote), personalities, Test & Refresh |
 | `src/migrations/` | One-shot config migrations at activation (registry migration, output-length offer) |
-| `src/backends/` | Backend specifics: OpenRouter catalog/aliases, runtime limits (per-backend context windows) |
 | `src/ui/` | Dashboard tree, Deep-Dive + Server Settings webviews, Connection Diagnostics |
 | `src/usage/` | Usage store (`usage.json` persistence) + usage reporting to Copilot |
-| `src/shared/` | File logger, fetch retry, token budget, session manager, error envelope, config-schema tool |
+| `src/shared/` | Host utilities: file logger, session manager, config-schema tool |
 
 ### Key patterns:
 - **Config ownership:** `VllmClient` owns the config cache. Everyone reads through it. Single source of truth — adding a second cache causes stale reads.

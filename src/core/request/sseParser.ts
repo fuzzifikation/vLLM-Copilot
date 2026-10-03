@@ -6,8 +6,8 @@
  * into structured StreamEvents, including incremental tool call accumulation.
  */
 
-import { serverErrorMessage } from '../core/shared/errorEnvelope.js';
-import type { StreamEvent, FinalizedToolCall, WireChunk, WireUsage } from '../core/types.js';
+import { serverErrorMessage } from '../shared/errorEnvelope.js';
+import type { StreamEvent, FinalizedToolCall, WireChunk, WireUsage } from '../types.js';
 
 export type PendingToolCall = { id: string; name: string; args: string };
 

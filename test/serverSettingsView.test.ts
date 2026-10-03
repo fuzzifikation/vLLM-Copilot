@@ -3,8 +3,8 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { personalityTemplate, ServerSettingsViewProvider } from '../src/ui/serverSettingsView.js';
 import { ModelConfig } from '../src/core/config/config.js';
-import { resetOpenRouterCaches } from '../src/backends/openRouter.js';
-import { clearRuntimeLimitsCache } from '../src/backends/runtimeLimits.js';
+import { resetOpenRouterCaches } from '../src/core/backends/openRouter.js';
+import { clearRuntimeLimitsCache } from '../src/core/backends/runtimeLimits.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 describe('ServerSettingsViewProvider', () => {

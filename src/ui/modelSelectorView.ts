@@ -69,12 +69,12 @@ import {
   parseEndpointPricingOverrides,
   perMillion,
   worstCasePricing,
-} from '../backends/openRouter.js';
+} from '../core/backends/openRouter.js';
 import type {
   OpenRouterBenchmarkRow,
   OpenRouterModelData,
   OpenRouterModelEndpoint,
-} from '../backends/openRouter.js';
+} from '../core/backends/openRouter.js';
 import { buildModelId, resolveConfigId, resolveVllmModelId, type ModelConfig } from '../core/config/config.js';
 import { isOpenRouterUrl, normalizeServerUrl, sanitizeRequestHeaders } from '../core/config/serverCore.js';
 import { readModels, readServers, type IdentifiedModelConfig } from '../state/configStore.js';
@@ -422,7 +422,7 @@ function openModelSelector(context: vscode.ExtensionContext, output: vscode.Outp
     }
     let endpoints: SelectorEndpoint[] = [];
     try {
-      endpoints = (await getOpenRouterModelEndpointsCached(wireId))
+      endpoints = (await getOpenRouterModelEndpointsCached(wireId, readServers()))
         .filter((ep) => ep.status === undefined || ep.status >= 0)
         .map(toSelectorEndpoint)
         .filter((e): e is SelectorEndpoint => e !== undefined);
@@ -764,7 +764,7 @@ async function buildSelectorRows(
       const v = variants[index++];
       let eps: OpenRouterModelEndpoint[] = [];
       try {
-        eps = await getOpenRouterModelEndpointsCached(v.id);
+        eps = await getOpenRouterModelEndpointsCached(v.id, readServers());
       } catch {
         eps = []; // a failed provider lookup just yields no endpoints for it
       }

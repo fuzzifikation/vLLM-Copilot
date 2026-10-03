@@ -3,9 +3,9 @@ import { getConfig } from '../state/config.js';
 import type { VllmConfig } from '../core/config/config.js';
 import type { ServerType } from '../core/config/serverCore.js';
 import type { FileLogger } from '../shared/logger.js';
-import { ChatTransport } from './chatTransport.js';
+import { ChatTransport } from '../core/request/chatTransport.js';
 import type { ServerConfig } from '../core/request/assemble.js';
-import { clearRuntimeLimitsCache, resolveRuntimeLimits } from '../backends/runtimeLimits.js';
+import { clearRuntimeLimitsCache, resolveRuntimeLimits } from '../core/backends/runtimeLimits.js';
 import type { OpenAIChatMessage, RuntimeModelLimits, StreamEvent, VllmChatOptions } from '../core/types.js';
 
 /**
@@ -52,6 +52,15 @@ export class VllmClient {
     return resolveRuntimeLimits(serverType, serverUrl, requestHeaders, vllmModelId, configuredContextWindow);
   }
 
+  /**
+   * Copilot boundary: this facade owns the `vscode.CancellationToken`
+   * subscription and converts it to a plain `AbortSignal` for the core
+   * transport. The 'User cancelled' abort reason is preserved verbatim
+   * (messageConverter error classification pattern-matches it), and an
+   * already-cancelled token aborts immediately — VS Code's event fires
+   * synchronously on subscribe for cancelled tokens; the explicit
+   * `isCancellationRequested` check reproduces that.
+   */
   async *chatCompletionStream(
     model: string,
     messages: OpenAIChatMessage[],
@@ -59,6 +68,14 @@ export class VllmClient {
     token: vscode.CancellationToken,
     serverConfig?: ServerConfig,
   ): AsyncGenerator<StreamEvent> {
-    yield* this.chatTransport.stream(model, messages, options, token, serverConfig);
+    const controller = new AbortController();
+    const cancel = () => controller.abort('User cancelled');
+    const subscription = token.onCancellationRequested(cancel);
+    if (token.isCancellationRequested) cancel();
+    try {
+      yield* this.chatTransport.stream(model, messages, options, controller.signal, serverConfig);
+    } finally {
+      subscription.dispose();
+    }
   }
 }

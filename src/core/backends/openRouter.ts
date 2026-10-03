@@ -32,12 +32,12 @@
  * - Reasoning is toggled via `reasoning: { enabled, effort }` (Chat Completions).
  */
 
-import { buildEndpoint, type ModelConfig } from '../core/config/config.js';
-import { isOpenRouterUrl, sanitizeRequestHeaders } from '../core/config/serverCore.js';
-import { readServers } from '../state/configStore.js';
+import { buildEndpoint, type ModelConfig } from '../config/config.js';
+import { isOpenRouterUrl, sanitizeRequestHeaders } from '../config/serverCore.js';
+import type { ServerEntry } from '../config/serverRegistry.js';
 import { buildRequestHeaders, fetchWithRetry, transportErrorCode } from '../shared/fetchRetry.js';
-import { buildOutputLengthLadder, OUTPUT_TOKEN_CAP, OUTPUT_TOKEN_FACTOR } from '../core/shared/tokenBudget.js';
-import type { RuntimeModelLimits } from '../core/types.js';
+import { buildOutputLengthLadder, OUTPUT_TOKEN_CAP, OUTPUT_TOKEN_FACTOR } from '../shared/tokenBudget.js';
+import type { RuntimeModelLimits } from '../types.js';
 
 /**
  * A context-window resolve failure that retrying can never fix — the model
@@ -748,10 +748,11 @@ function p50FromStats(value: unknown): number | undefined {
  * requests"), and any valid OR key sees the same global stats. Every consumer
  * of the shared provider-list cache therefore fetches through this one rule —
  * a per-caller split would let an unauthenticated fetch poison the cache and
- * blank the stats columns for the others.
+ * blank the stats columns for the others. The registry is SUPPLIED by the
+ * host as data (host-neutral core: this module reads no settings).
  */
-function openRouterStatsHeaders(): Record<string, string> {
-  const entry = readServers().find(
+function openRouterStatsHeaders(servers: readonly ServerEntry[]): Record<string, string> {
+  const entry = servers.find(
     (s) => s.serverType === 'openrouter' || isOpenRouterUrl(s.serverUrl),
   );
   return sanitizeRequestHeaders(entry?.requestHeaders ?? {});
@@ -767,11 +768,13 @@ function openRouterStatsHeaders(): Record<string, string> {
  * Returns the endpoints with `tag`/`provider_name` (plus optional quantization,
  * pricing, caps, status, and 30-min perf stats) preserved as reported. The list
  * itself is public; the request carries the first configured OR entry's auth
- * (see {@link openRouterStatsHeaders}) so the latency/throughput stats are
- * populated. Throws on HTTP/network failure and on malformed payloads.
+ * (see {@link openRouterStatsHeaders}, over the host-supplied registry) so the
+ * latency/throughput stats are populated. Throws on HTTP/network failure and on
+ * malformed payloads.
  */
 async function fetchOpenRouterModelEndpoints(
   requestedId: string,
+  servers: readonly ServerEntry[],
   timeoutMs: number = METADATA_TIMEOUT_MS,
 ): Promise<OpenRouterModelEndpoint[]> {
   // The id is `author/slug` — the `/` is a PATH SEPARATOR and must stay literal:
@@ -786,7 +789,7 @@ async function fetchOpenRouterModelEndpoints(
     const response = await fetchWithRetry(
       url,
       { method: 'GET', signal: AbortSignal.timeout(timeoutMs) },
-      openRouterStatsHeaders(),
+      openRouterStatsHeaders(servers),
     );
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} ${response.statusText} from ${url}`);
@@ -881,9 +884,14 @@ const PROVIDER_LIST_RETRY_MS = 60_000;
  * The fetch is aborted after the 2s display bound. On a fetch failure with a
  * stale cached value, the stale list is returned (stale data beats nothing); it
  * throws only when there is no cached value to fall back on.
+ *
+ * `servers` is the host's current registry (used only for the authenticated
+ * stats-header rule); auth rotation goes through {@link resetOpenRouterCaches},
+ * so the cache never outlives its headers.
  */
 export async function getOpenRouterModelEndpointsCached(
   wireId: string,
+  servers: readonly ServerEntry[],
 ): Promise<OpenRouterModelEndpoint[]> {
   const cached = providerListCache.get(wireId);
   if (cached && Date.now() - cached.fetchedAt < PROVIDER_LIST_CACHE_TTL_MS) return cached.providers;
@@ -893,7 +901,7 @@ export async function getOpenRouterModelEndpointsCached(
   const inflight = providerListInflight.get(wireId);
   if (inflight) return inflight;
 
-  const promise = fetchOpenRouterModelEndpoints(wireId, PROVIDER_LIST_FETCH_TIMEOUT_MS)
+  const promise = fetchOpenRouterModelEndpoints(wireId, servers, PROVIDER_LIST_FETCH_TIMEOUT_MS)
     .then((providers) => {
       if (providers.length > 0) {
         providerListCache.set(wireId, { providers, fetchedAt: Date.now() });

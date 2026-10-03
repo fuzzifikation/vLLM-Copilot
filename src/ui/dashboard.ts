@@ -9,7 +9,7 @@ import { resolveModelSettings, findModelConfig, resolveVllmModelId, type ModelCo
 import { normalizeServerUrl, type ServerType } from '../core/config/serverCore.js';
 import { readModels, readServers } from '../state/configStore.js';
 import { ServerMetrics, getMetricsEngine, emptyMetrics, getPollSettingMs } from './vllmMetrics.js';
-import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from '../backends/openRouter.js';
+import { perMillion, formatUsdRate, type OpenRouterAccount, type OpenRouterCredits, type OpenRouterModelEndpoint } from '../core/backends/openRouter.js';
 import {
   getLastRequest, getServerUsage, getServerCost, hasServerUsage, onUsageStoreDidChange,
   findModelCost, formatCost, formatCostFine, formatCostRate, formatCostSummary, emptyCounts,

@@ -13,7 +13,7 @@ import { setSessionManagerOutput } from './shared/sessionManager.js';
 import { syncBundledPersonalities, migratePersonalityPathRefs } from './persona/personalityStore.js';
 import { readServers, writeServers } from './state/configStore.js';
 import { dedupeServerIds } from './core/config/serverRegistry.js';
-import { resetOpenRouterCaches } from './backends/openRouter.js';
+import { resetOpenRouterCaches } from './core/backends/openRouter.js';
 import { registerSetPollIntervalCommand } from './ui/vllmMetrics.js';
 import {
   registerUpdateServerAuthCommand,

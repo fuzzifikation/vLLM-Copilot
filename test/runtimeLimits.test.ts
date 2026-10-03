@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { clearRuntimeLimitsCache, detectServerType, listServerModels, resolveRuntimeLimits } from '../src/backends/runtimeLimits.js';
-import { resetOpenRouterCaches } from '../src/backends/openRouter.js';
+import { clearRuntimeLimitsCache, detectServerType, listServerModels, resolveRuntimeLimits } from '../src/core/backends/runtimeLimits.js';
+import { resetOpenRouterCaches } from '../src/core/backends/openRouter.js';
 
 // The resolver's short-TTL memo (and the OpenRouter catalog memo behind the
 // openrouter case) must never survive a test boundary: each test stubs its

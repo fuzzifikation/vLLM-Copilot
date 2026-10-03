@@ -3,7 +3,7 @@ import type { ModelConfig } from '../core/config/config.js';
 import type { ServerType } from '../core/config/serverCore.js';
 import { buildEndpoint } from '../core/config/config.js';
 import { describeError } from '../core/shared/errors.js';
-import { MissingContextWindowError, resolveRuntimeLimits } from '../backends/runtimeLimits.js';
+import { MissingContextWindowError, resolveRuntimeLimits } from '../core/backends/runtimeLimits.js';
 import {
   buildOutputLengthLadder,
   fitOutputBudgetToWindow,
@@ -12,7 +12,7 @@ import {
   OUTPUT_TOKEN_FACTOR,
   type OutputBudgetValue,
 } from '../core/shared/tokenBudget.js';
-import { autoConfigureOpenRouterModel } from '../backends/openRouter.js';
+import { autoConfigureOpenRouterModel } from '../core/backends/openRouter.js';
 import { fetchRemotePreset } from './presetRemote.js';
 import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig, presetBlobUrl } from './presets.js';
 

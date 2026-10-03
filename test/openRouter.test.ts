@@ -10,7 +10,7 @@ import {
   getOpenRouterModelEndpointsCached,
   type OpenRouterModelData,
   type OpenRouterModelInfo,
-} from '../src/backends/openRouter.js';
+} from '../src/core/backends/openRouter.js';
 
 /**
  * `parseOpenRouterModelRef`, `normalizeOpenRouterModel` and
@@ -650,7 +650,7 @@ describe('fetchOpenRouterModelEndpoints (pricing whitelist)', () => {
         }],
       },
     }), { status: 200, headers: { 'content-type': 'application/json' } })));
-    const eps = await getOpenRouterModelEndpointsCached('anthropic/claude-tripwire-4.6');
+    const eps = await getOpenRouterModelEndpointsCached('anthropic/claude-tripwire-4.6', []);
     expect(eps).toHaveLength(1);
     expect(eps[0].pricing).toMatchObject({
       prompt: '0.000003',

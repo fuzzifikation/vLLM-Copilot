@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { resolveModelConfigForAddSafely } from '../src/commands/hfDiscovery.js';
-import { clearRuntimeLimitsCache } from '../src/backends/runtimeLimits.js';
+import { clearRuntimeLimitsCache } from '../src/core/backends/runtimeLimits.js';
 
 /**
  * HuggingFace auto-discovery pins. `autoConfigureModel` and the preset resolver

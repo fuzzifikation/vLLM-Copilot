@@ -21,6 +21,7 @@ import {
   type VllmConfig,
 } from '../config/config.js';
 import type { ServerType } from '../config/serverCore.js';
+import type { RequestLog } from '../shared/trace.js';
 import type { OpenAIChatMessage } from '../types.js';
 
 /**
@@ -54,11 +55,6 @@ export interface RequestTool {
   name: string;
   description?: string;
   inputSchema?: unknown;
-}
-
-/** Minimal log surface. `vscode.OutputChannel` satisfies this structurally. */
-export interface RequestLog {
-  appendLine(value: string): void;
 }
 
 /**
