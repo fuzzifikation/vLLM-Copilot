@@ -1,6 +1,39 @@
 import { describe, it, expect } from 'vitest';
-import { buildModelInfo } from '../src/provider/modelInfo.js';
+import { buildModelInfo as projectDescriptor } from '../src/provider/modelInfo.js';
+import { describeModel } from '../src/core/catalog/describe.js';
 import { formatCostRate } from '../src/usage/usageStore.js';
+
+/**
+ * Phase-4 seam: the model FACTS are computed by core `describeModel`, the
+ * picker copy by the host projection. This wrapper keeps the former
+ * positional test surface - the effective pick rides in as `selectedLength`
+ * and the menu ceiling is DERIVED from the facts (it used to be injected),
+ * which is what discovery always did anyway.
+ */
+function buildModelInfo(
+  serverModel: { id: string; max_model_len: number },
+  override: any,
+  _config: { maxOutputTokens: number },
+  serverType: any,
+  reportedMaxOutputTokens?: number,
+  onFamilyFallback?: (family: string, modelId: string) => void,
+  effectiveOutputTokens?: number,
+  _outputMenuCeiling?: number,
+): any {
+  // `config` (the former settings stand-in) is gone: describeModel derives
+  // the model settings from the override, exactly like discovery does.
+  void 0;
+  const descriptor = describeModel({
+    wireId: serverModel.id,
+    contextWindow: serverModel.max_model_len,
+    serverType,
+    override,
+    reportedMaxOutputTokens,
+    selectedLength: effectiveOutputTokens,
+  });
+  if (descriptor.familyFromFallback) onFamilyFallback?.(descriptor.family, descriptor.wireId);
+  return projectDescriptor(descriptor);
+}
 
 describe('buildModelInfo picker id derivation', () => {
   it('uses an explicit id as the picker id', () => {

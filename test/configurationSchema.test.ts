@@ -1,33 +1,35 @@
 import { describe, it, expect } from 'vitest';
 import { buildModelInfo } from '../src/provider/modelInfo.js';
+import { describeModel } from '../src/core/catalog/describe.js';
 
 // A generous ceiling so mode-only fixtures are never filtered — the length
 // dropdown is emitted ONLY when a vector is declared, so these stay clean.
 const CEIL = 65536;
 
 /**
- * `buildConfigurationSchema` and `resolveOutputLengthOptions` are
- * module-private (U9 demotion): the schema is exercised through its only
- * production caller. The ceiling rides in as `outputMenuCeiling` — the same
- * pre-pick ceiling discovery passes — and the context window is huge so the
- * budget derivation never interferes with the menu under test.
+ * `buildConfigurationSchema` is module-private (U9 demotion): the schema is
+ * exercised through its only production caller. Since the Phase-4 split the
+ * menu ceiling is DERIVED by core `describeModel` from the facts (vector max
+ * under the window + server-reported clamps), not injected — so a test that
+ * wants a specific ceiling expresses it as the server-reported output
+ * ceiling, which feeds the same derivation discovery runs. The context
+ * window is huge so the budget derivation never interferes with the menu.
  */
 function buildConfigurationSchema(
   override: Record<string, unknown>,
-  ceiling: number = CEIL,
+  reportedMaxOutputTokens?: number,
 ): { properties: Record<string, any> } | undefined {
   const id = String(override.id ?? 'test/model');
-  const info = buildModelInfo(
-    { id, max_model_len: 1_000_000 },
-    { id, vllmModelId: id, server: 'srv', ...override } as any,
-    { maxOutputTokens: 4096 },
-    'vllm',
-    undefined,
-    undefined,
-    undefined,
-    ceiling,
-  ) as { configurationSchema?: { properties: Record<string, any> } };
-  return info.configurationSchema;
+  const descriptor = describeModel({
+    wireId: id,
+    contextWindow: 1_000_000,
+    serverType: 'vllm',
+    override: { id, vllmModelId: id, server: 'srv', ...override } as any,
+    reportedMaxOutputTokens,
+  });
+  return (buildModelInfo(descriptor) as {
+    configurationSchema?: { properties: Record<string, any> };
+  }).configurationSchema;
 }
 
 describe('buildConfigurationSchema', () => {
@@ -99,9 +101,11 @@ describe('buildConfigurationSchema', () => {
 
 describe('output-length menu (resolveOutputLengthOptions, via the schema)', () => {
   // Menu shape is read off the rendered property: enum = values,
-  // enumItemLabels = labels, default = first surviving value.
-  const menu = (maxOutputTokens: unknown, ceiling?: number) =>
-    buildConfigurationSchema({ id: 'some/model', maxOutputTokens }, ceiling)
+  // enumItemLabels = labels, default = first surviving value. The second
+  // argument is the server-reported output ceiling — the derivation input
+  // that prunes the menu (see the helper doc above).
+  const menu = (maxOutputTokens: unknown, reportedCeiling?: number) =>
+    buildConfigurationSchema({ id: 'some/model', maxOutputTokens }, reportedCeiling)
       ?.properties?.maxOutputTokens as { enum: number[]; enumItemLabels: string[]; default: number } | undefined;
 
   it('returns undefined without an explicit vector (no derived ladder)', () => {
@@ -117,7 +121,8 @@ describe('output-length menu (resolveOutputLengthOptions, via the schema)', () =
   });
 
   it('drops entries above the ceiling, promoting the next survivor to default', () => {
-    // Head (131072) exceeds a 65536 ceiling → dropped, 65536 becomes default.
+    // Head (131072) exceeds the 65536 ceiling (server-reported) → dropped,
+    // 65536 becomes default.
     const r = menu([131072, 65536, 32768], 65536);
     expect(r!.enum).toEqual([65536, 32768]);
     expect(r!.default).toBe(65536);
@@ -140,12 +145,8 @@ describe('output-length menu (resolveOutputLengthOptions, via the schema)', () =
 
   it('caps the menu at 8 entries', () => {
     const nine = [9, 8, 7, 6, 5, 4, 3, 2, 1].map(n => n * 1024);
-    const r = menu(nine, 100 * 1024);
+    const r = menu(nine);
     expect(r!.enum).toHaveLength(8);
     expect(r!.enumItemLabels).toHaveLength(8);
-  });
-
-  it('returns undefined for a non-finite ceiling', () => {
-    expect(menu([8192, 4096], Number.NaN)).toBeUndefined();
   });
 });

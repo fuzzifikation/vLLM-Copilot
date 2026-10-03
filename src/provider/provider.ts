@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { VllmClient } from './vllmClient.js';
 import { SystemMessagePipeline } from './systemMessagePipeline.js';
-import { discoverModels, type DiscoveryLogSink } from './discovery.js';
+import { discoverModels } from './discovery.js';
+import type { RequestLog } from '../core/shared/trace.js';
 import { runChatResponse } from './streamOrchestrator.js';
 import type { ProviderClient } from './contracts.js';
 import { readPickerSelection } from '../state/config.js';
@@ -295,7 +296,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
    * logging). A changed failure reason, a new failure, or the recovery
    * summary all differ from the previous pass and still log.
    */
-  private discoveryChannel(collector: Set<string>): DiscoveryLogSink {
+  private discoveryChannel(collector: Set<string>): RequestLog {
     const previous = this.lastDiscoveryLines;
     return {
       appendLine: (value: string) => {
