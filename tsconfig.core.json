@@ -1,12 +1,21 @@
 {
   // Node-only declaration proof for the core package (Phase 8). Extends the
   // root config — inherited strictness included — but limits the program to
-  // src/core, replaces the ambient types with Node alone (no `vscode`, no
-  // editor/harness types may resolve), and emits declarations only into
-  // ignored scratch. Declared in the real build pipeline as `core:decl`;
-  // scripts/core-proof.mjs consumes these declarations with the compiled
-  // out/core JS. skipLibCheck stays OFF: the core's own dependency
-  // declarations must be sound.
+  // src/core, replaces the ambient types with Node alone, and emits
+  // declarations only into ignored scratch. Declared in the real build
+  // pipeline as `core:decl`; scripts/core-proof.mjs consumes these
+  // declarations with the compiled out/core JS. skipLibCheck stays OFF: the
+  // core's own dependency declarations must be sound.
+  //
+  // Isolation truth (probed 2026-10-04, TS 6): "types": ["node"] gates GLOBAL
+  // ambient type packages only — a literal `import 'vscode'` inside core would
+  // still resolve via the repo's @types/vscode fallback, and `paths` cannot
+  // block it (a matched-but-failed substitution falls through to node
+  // resolution). What actually keeps the core host-free: the core-no-host
+  // dependency-cruiser gate (precise, fired-against with a poisoned import),
+  // and the packed consumer in scripts/core-proof.mjs — it installs WITHOUT
+  // @types/vscode, so a vscode leak through the public entry fails its
+  // type-check (TS2307) and its run.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "rootDir": "src/core",

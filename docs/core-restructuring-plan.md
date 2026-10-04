@@ -1,6 +1,6 @@
 # Reusable Core Restructuring Plan
 
-**Status:** Proposed implementation plan, 2026-10-03. No restructuring is authorized by this document alone. The owner's priority is a reusable core without deterioration of the existing VS Code + Copilot extension. The [dsh bridge](./dsh-bridge-plan.md) is a later consumer, not the driver of the core's contracts.
+**Status:** Executed through Phase 8 (2026-10-04). The host-neutral core, public entry, Node-only declaration gate and isolated packed-consumer proof are in the build; behavior is preserved. Phase 9 editor acceptance (live VS Code + Copilot, real backend) is owner-performed and NOT yet claimed complete — an automated pass is not acceptance. The [Folder Proposal](#folder-proposal) is a separate, not-yet-executed relocation. The owner's priority is a reusable core without deterioration of the existing VS Code + Copilot extension. The [dsh bridge](./dsh-bridge-plan.md) is a later consumer, not the driver of the core's contracts.
 
 ## Intent
 

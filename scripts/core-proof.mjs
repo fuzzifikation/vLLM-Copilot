@@ -110,6 +110,12 @@ try {
   copyDeclarations();
 
   // ── 2. Dependencies: every bare import must be declared at the root ──────
+  // Line-anchored scan: tsc EMITS EVERY import on one line — multi-line source
+  // imports are collapsed at emit (verified 2026-10-04 across all of out/, and
+  // type-only names are stripped from the list entirely) — so the emit this
+  // script scans can only carry statement-per-line imports. If a future
+  // compiler changes that, a missed specifier fails LOUDLY: the consumer
+  // cannot install or resolve the undeclared package.
   const bare = new Set();
   for (const rel of walk(join(stage, 'core'))) {
     if (!rel.endsWith('.js')) continue;
@@ -280,11 +286,15 @@ const log: RequestLog = { appendLine: () => {} };
 
 // ── Loopback mock backend ────────────────────────────────────────────────────
 type ResponseSpec = { status?: number; json?: unknown; sse?: string; slow?: boolean };
+interface OpenSlow {
+  res: http.ServerResponse;
+  closed: boolean;
+}
 interface Backend {
   base: string;
   requests: any[];
   queue: ResponseSpec[];
-  open: http.ServerResponse[];
+  open: OpenSlow[];
   close(): Promise<void>;
 }
 async function startBackend(): Promise<Backend> {
@@ -310,7 +320,14 @@ async function startBackend(): Promise<Backend> {
         }
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         if (spec.slow) {
-          backend.open.push(res);
+          const openEntry: OpenSlow = { res, closed: false };
+          // res.close is the connection-teardown signal. req.close is NOT:
+          // probed 2026-10-04 — it fired +26ms (request body complete), 220ms
+          // BEFORE a client abort, and res.close arrived with the abort.
+          // Watching req.close would make the teardown assertion pass while
+          // nothing was torn down.
+          res.on('close', () => { openEntry.closed = true; });
+          backend.open.push(openEntry);
           res.write('data: ' + JSON.stringify(chunk({ content: 'partial answer that never finishes' })) + '\\n\\n');
           return;
         }
@@ -324,7 +341,7 @@ async function startBackend(): Promise<Backend> {
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
   backend.base = 'http://127.0.0.1:' + String((server.address() as AddressInfo).port);
   backend.close = async () => {
-    for (const res of backend.open) res.destroy();
+    for (const entry of backend.open) entry.res.destroy();
     await new Promise<void>((done) => server.close(() => done()));
   };
   return backend;
@@ -339,24 +356,40 @@ function sse(...objs: unknown[]): string {
 }
 
 // ── Drain helper: collect events, optional early stop ───────────────────────
+// The completion array is CALLER-OWNED on purpose: when the generator throws
+// mid-drain, the completions collected so far stay visible — the stream-error
+// case must be able to SEE a premature completion, not just miss a variable.
 async function drain(
   gen: AsyncGenerator<ExecutionEvent>,
+  completions: AttemptCompletionEvent[],
   onEvent?: (ev: ExecutionEvent) => boolean
-): Promise<{ events: ExecutionEvent[]; completions: AttemptCompletionEvent[] }> {
+): Promise<ExecutionEvent[]> {
   const events: ExecutionEvent[] = [];
-  const completions: AttemptCompletionEvent[] = [];
   for await (const ev of gen) {
     events.push(ev);
     if (isAttemptCompletionEvent(ev)) completions.push(ev);
     if (onEvent && onEvent(ev)) break;
   }
-  return { events, completions };
+  return events;
+}
+
+/** Poll a predicate until true or the budget runs out. */
+async function waitFor(pred: () => boolean, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (pred()) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return pred();
 }
 
 const backend = await startBackend();
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'core-proof-run-'));
 try {
-  const models: ModelConfig[] = [{ id: 'proof', vllmModelId: WIRE_ID, server: 'srv', maxOutputTokens: 1024 }];
+  // Vector-form output menu: the descriptor's advertised budget must be the
+  // SELECTED length (1024), not the config head (4096) — that difference is
+  // what makes the catalog-to-wire budget assertion discriminating below.
+  const models: ModelConfig[] = [{ id: 'proof', vllmModelId: WIRE_ID, server: 'srv', maxOutputTokens: [4096, 1024] }];
   const servers: ServerEntry[] = [{ id: 'srv', serverUrl: backend.base, serverType: 'vllm', requestHeaders: {} }];
 
   // 1. Catalog limits through the public entry — served window, no invention.
@@ -367,11 +400,18 @@ try {
   const probe: ModelLimitsResolver = {
     getModelContextWindow: (t, u, h, m: string, c) => resolveRuntimeLimits(t, u, h, m, c),
   };
-  const descriptors = await describeModels(models, servers, probe, log);
+  const descriptors = await describeModels(
+    models, servers, probe, log, undefined, undefined, new Map<string, number>([['proof', 1024]])
+  );
   assert.equal(descriptors.length, 1);
   assert.equal(descriptors[0].contextWindow, CONTEXT_WINDOW);
   assert.equal(descriptors[0].wireId, WIRE_ID);
-  console.log('ok  catalog limits (listServerModels / resolveRuntimeLimits / describeModels)');
+  // Catalog budget facts: the 1024 pick wins over the 4096 vector head, the
+  // menu ceiling stays at the head, and both rungs survive it.
+  assert.equal(descriptors[0].maxOutputTokens, 1024, 'the selected length is the advertised output budget');
+  assert.equal(descriptors[0].outputMenuCeiling, 4096);
+  assert.deepEqual(descriptors[0].outputLengthValues, [4096, 1024]);
+  console.log('ok  catalog limits (list / resolve / describe, picked budget wins over vector head)');
 
   // 2. Personality fixture: resolve -> load -> apply, all via the entry.
   const fixturePath = path.join(scratch, 'proof-persona.json');
@@ -401,9 +441,13 @@ try {
     toolModeRequired: false,
     fixEmptyToolParameters: true,
     tools: [{ name: 'noop' }],
-    advertisedMaxOutputTokens: 1024,
+    advertisedMaxOutputTokens: descriptors[0].maxOutputTokens,
   };
   const assembled = assembleRequest(asmInput, config, log);
+  // Catalog-to-wire agreement: the advertised budget IS the descriptor's
+  // (the 1024 pick), and the assembled wire budget equals it — never the
+  // 4096 vector head the config alone would give.
+  assert.equal(assembled.mergedOptions.max_tokens, descriptors[0].maxOutputTokens);
   assert.equal(assembled.mergedOptions.max_tokens, 1024);
   assert.deepEqual((assembled.mergedOptions.tools as any[])[0].function.parameters, { type: 'object', properties: {} });
   console.log('ok  request assembly (budget, empty-tool parameters, wire id)');
@@ -433,34 +477,36 @@ try {
     maxRetries,
     signal,
     log,
-    limits: { wireModelId: assembled.wireModelId, contextWindow: CONTEXT_WINDOW, maxInputTokens: 0, maxOutputTokens: 1024 },
+    limits: { wireModelId: assembled.wireModelId, contextWindow: descriptors[0].contextWindow, maxInputTokens: 0, maxOutputTokens: descriptors[0].maxOutputTokens },
   });
 
   backend.queue.push({ sse: happySse });
   const state1 = createExecutionState(Date.now());
-  const run1 = await drain(executeChatRequest(makeInput(asmInput.openaiMessages.slice(), new AbortController().signal, 0), state1));
+  const completions1: AttemptCompletionEvent[] = [];
+  const events1 = await drain(executeChatRequest(makeInput(asmInput.openaiMessages.slice(), new AbortController().signal, 0), state1), completions1);
   assert.equal(state1.attemptCount, 1);
-  assert.equal(run1.completions.length, 1, 'exactly one completion event per successful request');
-  const text = run1.events.filter((e) => !isAttemptCompletionEvent(e) && e.content).map((e) => (e as { content: string }).content).join('');
+  assert.equal(completions1.length, 1, 'exactly one completion event per successful request');
+  const text = events1.filter((e) => !isAttemptCompletionEvent(e) && e.content).map((e) => (e as { content: string }).content).join('');
   assert.equal(text, 'Hello from the mock.');
-  const reasoning = run1.events.filter((e) => !isAttemptCompletionEvent(e) && e.reasoning_content).map((e) => (e as { reasoning_content: string }).reasoning_content).join('');
+  const reasoning = events1.filter((e) => !isAttemptCompletionEvent(e) && e.reasoning_content).map((e) => (e as { reasoning_content: string }).reasoning_content).join('');
   assert.equal(reasoning, 'thinking about it');
-  const toolCalls = run1.events.flatMap((e) => (isAttemptCompletionEvent(e) ? [] : e.finishedToolCalls));
+  const toolCalls = events1.flatMap((e) => (isAttemptCompletionEvent(e) ? [] : e.finishedToolCalls));
   assert.equal(toolCalls.length, 1);
   assert.deepEqual(toolCalls[0], { id: 'call_1', name: 'read_file', arguments: '{"path":"src/app.ts"}' });
-  const comp = run1.completions[0].attemptCompletion;
+  const comp = completions1[0].attemptCompletion;
   assert.equal(comp.usage.cost, 0.0042);
   assert.equal(comp.lastRequest.actualCost, 0.0042);
   assert.equal(comp.lastRequest.promptTokens, 10);
   assert.equal(comp.lastRequest.completionTokens, 5);
   assert.equal(comp.lastRequest.reasoningTokens, 2);
   assert.equal(comp.lastRequest.modelId, WIRE_ID);
+  assert.equal(comp.lastRequest.maxOutputTokens, descriptors[0].maxOutputTokens);
   // What the wire actually carried:
   const wire = backend.requests[0];
   assert.equal(wire.model, WIRE_ID);
   assert.equal(wire.stream, true);
   assert.deepEqual(wire.stream_options, { include_usage: true });
-  assert.equal(wire.max_tokens, 1024);
+  assert.equal(wire.max_tokens, descriptors[0].maxOutputTokens, 'the wire budget equals the discovered budget');
   assert.deepEqual(wire.tools[0].function.parameters, { type: 'object', properties: {} });
   assert.equal(wire.messages[0].role, 'system');
   console.log('ok  one tool turn with reasoning + text (wire body asserted server-side)');
@@ -499,51 +545,90 @@ try {
   );
   backend.queue.push({ sse: emptyStop }, { sse: finalAnswer });
   const state2 = createExecutionState(Date.now());
-  const run2 = await drain(executeChatRequest(makeInput(asmInput.openaiMessages.slice(), new AbortController().signal, 1), state2));
+  const completions2: AttemptCompletionEvent[] = [];
+  // The CALLER's own array goes in (no .slice()): a consumer reusing its
+  // conversation history must never find synthetic retry prefills in it.
+  await drain(executeChatRequest(makeInput(asmInput.openaiMessages, new AbortController().signal, 1), state2), completions2);
   assert.equal(state2.attemptCount, 2);
-  assert.equal(run2.completions.length, 1, 'the retried-away attempt records nothing twice');
-  assert.equal(run2.completions[0].attemptCompletion.usage.prompt_tokens, 7);
+  assert.equal(completions2.length, 1, 'the retried-away attempt records nothing twice');
+  assert.equal(completions2[0].attemptCompletion.usage.prompt_tokens, 7);
+  assert.equal(asmInput.openaiMessages.length, 2, 'caller history is never mutated by retries');
+  assert.deepEqual(asmInput.openaiMessages[1], { role: 'user', content: 'hi' });
   const retriedBody = backend.requests[backend.requests.length - 1];
-  assert.equal(retriedBody.messages.length, asmInput.openaiMessages.length + 1);
-  assert.deepEqual(retriedBody.messages[retriedBody.messages.length - 1], { role: 'assistant', content: '' });
+  assert.equal(retriedBody.messages.length, 3);
+  assert.deepEqual(retriedBody.messages[2], { role: 'assistant', content: '' });
   console.log('ok  retry (empty-answer nudge, single completion event)');
 
-  // 7. Cancellation: abort after the first delta — no completion, no re-ask.
+  // 7. Cancellation: abort a STALLED stream such that the abort must unblock
+  // an ALREADY-PENDING read. Two escape routes are closed on purpose:
+  //  - Breaking the loop would close the suspended generator through its
+  //    finally-cleanup, releasing the read on its own — never testing abort.
+  //  - Aborting synchronously inside the event body flips the flag while the
+  //    generator is yield-suspended; streamReader's loop-top signal.aborted
+  //    check would then exit BEFORE issuing read() — testing a flag poll,
+  //    not an unblock.
+  // So: schedule the abort on the NEXT MACROTASK and keep awaiting. The loop
+  // immediately requests the next event, driving the generator until
+  // reader.read() is pending (the mock sends nothing more); only then does
+  // the timer fire, so the exit path IS reader.cancel() fulfilling the
+  // pending read with done.
   // maxRetries is 1 on purpose: a spurious second POST would hit the empty
   // queue and the mock would fail the proof.
   backend.queue.push({ slow: true });
   const ac = new AbortController();
   const state3 = createExecutionState(Date.now());
-  const run3 = await drain(
-    executeChatRequest(makeInput(asmInput.openaiMessages.slice(), ac.signal, 1), state3),
-    (ev) => {
-      if (!isAttemptCompletionEvent(ev) && ev.content) {
-        ac.abort('User cancelled');
-        return true;
+  const completions3: AttemptCompletionEvent[] = [];
+  let abortScheduled = false;
+  const consumed = (async () => {
+    for await (const ev of executeChatRequest(makeInput(asmInput.openaiMessages.slice(), ac.signal, 1), state3)) {
+      if (isAttemptCompletionEvent(ev)) completions3.push(ev);
+      else if (ev.content && !abortScheduled) {
+        abortScheduled = true;
+        setTimeout(() => ac.abort('User cancelled'), 0);
       }
-      return false;
     }
-  );
-  assert.equal(run3.completions.length, 0, 'a cancelled stream never invents a completion record');
+  })();
+  const promptness = await Promise.race([
+    consumed.then(() => 'done' as const),
+    new Promise<'stuck'>((resolveStuck) => { setTimeout(() => resolveStuck('stuck'), 5000).unref(); }),
+  ]);
+  assert.equal(promptness, 'done', 'aborting a stalled stream must fulfill the pending read promptly');
+  assert.ok(abortScheduled, 'the abort must be scheduled while the consumer still awaits the next event');
+  assert.equal(completions3.length, 0, 'a cancelled stream never invents a completion record');
   assert.equal(state3.attemptCount, 1);
   assert.equal(backend.queue.length, 0);
-  console.log('ok  cancellation (mid-stream abort, no completion, no re-ask)');
+  // Cleanup is asserted where it is observable: the aborted client must have
+  // closed the connection as far as the SERVER can see (res.close — proven
+  // teardown signal, see the mock), not just in our own generator's finally.
+  assert.ok(await waitFor(() => backend.open.every((o) => o.closed), 2000), 'cancelling must close the server-side connection');
+  console.log('ok  cancellation (abort fulfills the pending read, connection torn down, no completion, no re-ask)');
 
-  // 8. Stream error: the server aborts mid-stream — the error propagates and
-  // NO completion record is invented.
-  backend.queue.push({ sse: sse(chunk({ role: 'assistant' }), { error: { message: 'kaboom' } }) });
+  // 8. Stream error AFTER usage was already reported by the wire: the error
+  // must propagate AND no completion record may be invented. The usage chunk
+  // first is the point — without it, "no record" would be trivially true for
+  // ANY implementation, including one that wrongly persists pending usage on
+  // failure. With it, the assertion distinguishes "skips the record on
+  // throw" from "had nothing to record".
+  backend.queue.push({
+    sse: sse(
+      chunk({ role: 'assistant' }),
+      chunk({}, null, { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 }),
+      { error: { message: 'kaboom' } }
+    ),
+  });
   const state4 = createExecutionState(Date.now());
   let streamError: unknown;
-  let partial: AttemptCompletionEvent[] = [];
+  // Caller-owned array again: a completion emitted BEFORE the throw would be
+  // sitting here when the catch runs — this assertion can actually see one.
+  const completions4: AttemptCompletionEvent[] = [];
   try {
-    const run4 = await drain(executeChatRequest(makeInput(asmInput.openaiMessages.slice(), new AbortController().signal, 0), state4));
-    partial = run4.completions;
+    await drain(executeChatRequest(makeInput(asmInput.openaiMessages.slice(), new AbortController().signal, 0), state4), completions4);
   } catch (err) {
     streamError = err;
   }
   assert.ok(streamError, 'a mid-stream server error must throw');
   assert.match(String(streamError), /kaboom/);
-  assert.equal(partial.length, 0);
+  assert.equal(completions4.length, 0);
   console.log('ok  stream error (propagates, no invented completion record)');
 
   console.log('CORE PROOF OK');
