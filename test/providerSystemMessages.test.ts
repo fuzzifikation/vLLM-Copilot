@@ -124,4 +124,28 @@ describe('enqueueWrite (system message capture)', () => {
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('keeps one entry per receivedContent even when one batch repeats it', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vllm-capture-'));
+    try {
+      const target = path.join(dir, 'system-messages.json');
+      const pipeline = makePipeline();
+
+      // The Copilot pipeline pre-dedupes its batch; the CORE must not rely
+      // on that courtesy: a standalone caller passing the same text twice
+      // gets one entry (last write wins — the same overwrite rule as a
+      // cross-batch duplicate).
+      await pipeline.enqueueWrite(target, [
+        entry('dup', 'dup v1', ['r1']),
+        entry('dup', 'dup v2', ['r2']),
+        entry('other', 'other'),
+      ]);
+
+      const stored = JSON.parse(await fs.readFile(target, 'utf-8'));
+      expect(stored).toHaveLength(2);
+      expect(stored.find((e: any) => e.receivedContent === 'dup')).toEqual(entry('dup', 'dup v2', ['r2']));
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
 });

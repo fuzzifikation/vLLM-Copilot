@@ -104,6 +104,11 @@ export class CaptureQueue {
           updatedCount++;
         } else {
           allEntries.push(entry);
+          // Index the appended entry too: without this, two identical texts
+          // WITHIN one batch both miss the index and both persist. The
+          // Copilot pipeline pre-dedupes its batch, but the core invariant
+          // is "one entry per receivedContent" and the core enforces it.
+          existingIndex.set(entry.receivedContent, allEntries.length - 1);
           newCount++;
         }
       }

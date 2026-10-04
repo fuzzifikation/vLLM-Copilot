@@ -36,6 +36,7 @@
 import {
   resolveConfiguredMaxTokens,
   resolveConfigId,
+  normalizePickerTokens,
   resolveModelSettings,
   resolveServerConfig,
   resolveServerType,
@@ -200,9 +201,15 @@ export function describeModel(input: DescribeModelInput): ModelDescriptor {
   // The output-length pick IS the advertised output budget: VS Code derives
   // the prompt budget as window - output, so a shorter pick genuinely grows
   // prompt headroom. min() keeps a persisted pick above a since-shrunken
-  // ceiling clamped to what the model can promise.
-  const effectiveOutputTokens = input.selectedLength !== undefined
-    ? Math.min(input.selectedLength, outputMenuCeiling)
+  // ceiling clamped to what the model can promise. The pick goes through the
+  // SAME normalizePickerTokens the request path uses (the one output-length
+  // floor): a fractional pick means the same integer here and on the wire,
+  // and a non-finite one means "no pick" here exactly as resolveMaxTokensForRequest
+  // treats it — a standalone consumer can never mint a descriptor the wire
+  // would contradict.
+  const pickedLength = normalizePickerTokens(input.selectedLength);
+  const effectiveOutputTokens = pickedLength !== undefined
+    ? Math.min(pickedLength, outputMenuCeiling)
     : legacyMaxOutput;
   const budget = deriveTokenBudget(
     contextWindow,

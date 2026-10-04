@@ -103,6 +103,58 @@ describe('consumeStream', () => {
     expect(toolParts).toHaveLength(1); // deduplicated by the executor
   });
 
+  it('filters duplicate tool calls without discarding the event that carried them', async () => {
+    const { progress, output } = setup();
+    const state = createExecutionState(Date.now());
+    const tc = { id: 'c1', name: 'f', arguments: '{}' } as any;
+
+    await run(
+      [ev({ finishedToolCalls: [tc] }), ev({ content: 'after the dup', reasoning_content: 'r', finishedToolCalls: [tc] })],
+      progress, output, state,
+    );
+
+    // The baseline consumer reported per FIELD, so the executor dedups per
+    // tool call: text and reasoning riding an all-duplicate tool batch must
+    // still reach the user — only the duplicate call itself disappears.
+    expect(progress.report).toHaveBeenCalledWith(new vscode.LanguageModelTextPart('after the dup'));
+    expect(progress.report).toHaveBeenCalledWith(new vscode.LanguageModelThinkingPart('r'));
+    expect(state.outcome.contentBuffer).toBe('after the dup');
+    const toolParts = progress.report.mock.calls.filter(c => c[0] instanceof vscode.LanguageModelToolCallPart);
+    expect(toolParts).toHaveLength(1);
+  });
+
+  it('retry prefills live on a copy — the caller message array is never mutated', async () => {
+    const { progress, output } = setup();
+    const state = createExecutionState(Date.now());
+    const caller = [{ role: 'user' as const, content: 'hi' }];
+    const bodies: any[][] = [];
+    const transport = {
+      chatCompletionStream: async function* (_m: string, msgs: any[], _o: any, _s: AbortSignal) {
+        bodies.push(msgs.map((msg) => ({ ...msg })));
+        // Attempt 1: empty stop (the nudge trigger). Attempt 2: a real answer.
+        const events = bodies.length === 1 ? [ev({ finishReason: 'stop' })] : [ev({ content: 'ok', finishReason: 'stop' })];
+        for (const e of events) yield e;
+      },
+    };
+    const input: ExecutionInput = {
+      transport, modelId: 'm', vllmModelId: 'm', openaiMessages: caller, mergedOptions: {},
+      serverConfig, maxRetries: 1, signal: new AbortController().signal, log: output,
+      limits: { wireModelId: 'm', maxInputTokens: 1000, maxOutputTokens: 100 },
+    };
+
+    await consumeStream(executeChatRequest(input, state), model, progress, state.outcome, output);
+
+    expect(state.attemptCount).toBe(2); // the empty stop triggered the nudge
+    // Plan Phase 6: caller-owned history is cloned once at entry — the second
+    // attempt carries the prefill, the caller's array never sees it.
+    expect(caller).toEqual([{ role: 'user', content: 'hi' }]);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toEqual([
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: '' },
+    ]);
+  });
+
   it('falls back to {} and warns when tool arguments are unparseable', async () => {
     const { progress, output } = setup();
     const state = createExecutionState(Date.now());

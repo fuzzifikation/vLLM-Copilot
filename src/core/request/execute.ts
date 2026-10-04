@@ -28,8 +28,10 @@
  *      in nudge mode.
  * All retry eligibility is judged from what the CONSUMER has made visible
  * (`hadContent`/`hadToolCalls`/`hadVisibleReasoning` on the shared outcome),
- * never from what the server merely emitted. The caller owns `openaiMessages`
- * and may see the trailing prefill slot mutated in place, as before.
+ * never from what the server merely emitted. `openaiMessages` is COPIED once
+ * at entry: the caller's array is never mutated — the per-attempt prefill
+ * slot lives on the copy (plan Phase 6: clone caller-owned history, retain
+ * the mutation semantics internally).
  */
 import type { OpenAIChatMessage, StreamEvent, WireMetrics, WireUsage } from '../types.js';
 import type { ServerConfig } from './assemble.js';
@@ -144,9 +146,9 @@ export interface ExecutionInput {
   /** Wire id SENT for this request (may carry an OpenRouter routing suffix). */
   vllmModelId: string;
   /**
-   * Caller-owned message array. The executor mutates ONLY a trailing
-   * assistant prefill slot it appends (auto-continue), as the provider loop
-   * has always done.
+   * Caller-owned message history. COPIED once at executor entry — the
+   * caller's array is never mutated. Per-attempt assistant prefills
+   * (auto-continue) are appended/replaced on the copy only.
    */
   openaiMessages: OpenAIChatMessage[];
   mergedOptions: Record<string, unknown>;
@@ -236,7 +238,12 @@ export async function* executeChatRequest(
   input: ExecutionInput,
   state: ExecutionState,
 ): AsyncGenerator<ExecutionEvent> {
-  const { transport, modelId, vllmModelId, openaiMessages, mergedOptions, serverConfig, maxRetries, signal, log, limits } = input;
+  const { transport, modelId, vllmModelId, mergedOptions, serverConfig, maxRetries, signal, log, limits } = input;
+  // One clone at the boundary (plan Phase 6): a standalone consumer that
+  // reuses its conversation array never sees synthetic retry prefills.
+  // Copilot is unaffected — its array is freshly converted per turn, and
+  // nothing in the provider reads it back after execution starts.
+  const openaiMessages = [...input.openaiMessages];
   const outcome = state.outcome;
 
   let prefillIndex = -1;       // index of the trailing assistant prefill message, once added
@@ -302,10 +309,12 @@ export async function* executeChatRequest(
         }
 
         // Handle finalized tool calls — per-attempt id dedup lives HERE, so
-        // the consumer never sees a duplicate and never re-reports it. Usage,
-        // metrics and finishReason on an all-duplicate event still pass
-        // through the bookkeeping below; only the tool calls are dropped.
-        let toYield: StreamEvent | undefined = event;
+        // the consumer never sees a duplicate and never re-reports it. Only
+        // the DUPLICATE tool calls are dropped: the event itself always
+        // passes, so text/reasoning riding along with an all-duplicate batch
+        // still reaches the consumer (the baseline consumer filtered per tool
+        // call in its own loop, never whole events).
+        let toYield: StreamEvent = event;
         if (event.finishedToolCalls.length > 0) {
           // A tool call is the model's first output just as much as text is; without
           // this stamp a pure tool-call turn reported TTFT as null (CR-19).
@@ -318,10 +327,9 @@ export async function* executeChatRequest(
             outcome.hadToolCalls = true;
             return true;
           });
-          if (fresh.length === 0) toYield = undefined;
-          else if (fresh.length < event.finishedToolCalls.length) toYield = { ...event, finishedToolCalls: fresh };
+          if (fresh.length < event.finishedToolCalls.length) toYield = { ...event, finishedToolCalls: fresh };
         }
-        if (toYield) yield toYield;
+        yield toYield;
 
         if (event.usage) pendingUsage = sanitizeUsage(event.usage);
         if (event.metrics) pendingMetrics = event.metrics;

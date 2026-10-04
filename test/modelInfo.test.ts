@@ -295,3 +295,26 @@ describe('buildModelInfo picker price (detail + tooltip)', () => {
     expect(info.detail).toBeUndefined();
   });
 });
+
+// The public catalog boundary must apply the SAME pick normalization the
+// request path uses (normalizePickerTokens) — advertising and wire can never
+// disagree about what a pick means, and a garbage pick must poison nothing.
+describe('describeModel selected-length normalization', () => {
+  const vector = { id: 'p', server: 'srv', maxOutputTokens: [4096, 2048, 1024] } as any;
+  const describeWith = (selectedLength: number) =>
+    describeModel({ wireId: 'm', contextWindow: 32768, serverType: 'vllm', override: vector, selectedLength });
+
+  it('floors a fractional pick so catalog and wire agree', () => {
+    const d = describeWith(1024.7);
+    expect(d.effectiveOutputTokens).toBe(1024);
+    expect(d.maxOutputTokens).toBe(1024);
+  });
+
+  it('treats a non-finite pick as no pick, exactly like the request path', () => {
+    const d = describeWith(NaN);
+    // No pick => the legacy chain advertises the vector head; nothing NaN.
+    expect(d.effectiveOutputTokens).toBe(4096);
+    expect(d.maxOutputTokens).toBe(4096);
+    expect(Number.isFinite(d.maxInputTokens)).toBe(true);
+  });
+});
