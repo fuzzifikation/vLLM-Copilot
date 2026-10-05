@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildModelInfo as projectDescriptor } from '../src/provider/modelInfo.js';
+import { buildModelInfo as projectDescriptor } from '../src/vscode/copilot/modelInfo.js';
 import { describeModel } from '../src/core/catalog/describe.js';
 import { formatCostRate } from '../src/core/usage/money.js';
 

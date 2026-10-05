@@ -3,13 +3,13 @@ import * as vscode from 'vscode';
 import {
   confirmAndSaveAddedModel,
   ensureServerEntry,
-} from '../src/commands/addServerCore.js';
+} from '../src/vscode/commands/addServerCore.js';
 import {
   registerAddServerModelCommand,
   registerAddServerCommand,
-} from '../src/commands/addServerFlow.js';
-import * as configStore from '../src/state/configStore.js';
-import * as hfDiscovery from '../src/commands/hfDiscovery.js';
+} from '../src/vscode/commands/addServerFlow.js';
+import * as configStore from '../src/vscode/state/configStore.js';
+import * as hfDiscovery from '../src/vscode/commands/hfDiscovery.js';
 
 /**
  * Direct tests for the Add-server flow module. The wizard is driven through the

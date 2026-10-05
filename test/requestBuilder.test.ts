@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { buildRequest } from '../src/provider/requestBuilder.js';
+import { buildRequest } from '../src/vscode/copilot/requestBuilder.js';
 
 /**
  * Direct tests for the extracted request builder (`requestBuilder.ts`).

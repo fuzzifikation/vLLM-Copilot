@@ -92,7 +92,7 @@ The round trip required for acceptance has been run and passed: local wrote toke
 
 ## 6. The LM tool (`vllm-copilot_model_schema`) reuse and changes
 
-Inspected `src/shared/configSchemaTool.ts`. It is a clean fetch-the-schema tool: registration via `contributes.languageModelTools` + `vscode.lm.registerTool`, a `section` input (`all` | `schema` | `guide`), cancellation discipline, never-fail fallback to the guide alone.
+Inspected `src/vscode/copilot/configSchemaTool.ts`. It is a clean fetch-the-schema tool: registration via `contributes.languageModelTools` + `vscode.lm.registerTool`, a `section` input (`all` | `schema` | `guide`), cancellation discipline, never-fail fallback to the guide alone.
 
 | Part | Fate |
 |---|---|

@@ -30,7 +30,7 @@ Two buckets:
 
 ## Parameter Exposure: What Is Actually Missing
 
-The old "12 remaining parameters" table was fiction. Since `defaultParams` and `modelModes` pass any request-body key through verbatim (only `model`, `messages`, `stream`, `stream_options` are rejected, see `src/shared/configSchemaTool.ts`), every send-only parameter is **already user-sendable today**: `logit_bias`, `stop_token_ids`, `allowed_token_ids`, `include_stop_str_in_output`, `spaces_between_special_tokens`, `extra_args`, `routed_experts_prompt_start`, and even `logprobs` / `prompt_logprobs` (the server returns them, the extension just ignores them). Exposing them as named settings fields would be ceremony.
+The old "12 remaining parameters" table was fiction. Since `defaultParams` and `modelModes` pass any request-body key through verbatim (only `model`, `messages`, `stream`, `stream_options` are rejected, see `src/vscode/copilot/configSchemaTool.ts`), every send-only parameter is **already user-sendable today**: `logit_bias`, `stop_token_ids`, `allowed_token_ids`, `include_stop_str_in_output`, `spaces_between_special_tokens`, `extra_args`, `routed_experts_prompt_start`, and even `logprobs` / `prompt_logprobs` (the server returns them, the extension just ignores them). Exposing them as named settings fields would be ceremony.
 
 The real gaps are all on the **response side**, where passthrough cannot help:
 

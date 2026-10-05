@@ -102,7 +102,7 @@ Historical thinking-preservation evidence is recorded in `docs/`; the upstream-b
 
 ## Where Copilot Stores Sessions (Disk Layout)
 
-**Re-verified 2026-09-26** against a running VS Code 1.139.1 + Copilot Chat 0.67.0, by reading the live `workbench.desktop.main.js`, the Copilot extension bundle, and the on-disk databases. The layout below is what the **Clean Copilot Sessions** command in `src/shared/sessionManager.ts` acts on. The previous version of this section described the 1.13x layout and is wrong about where the conversation text lives.
+**Re-verified 2026-09-26** against a running VS Code 1.139.1 + Copilot Chat 0.67.0, by reading the live `workbench.desktop.main.js`, the Copilot extension bundle, and the on-disk databases. The layout below is what the **Clean Copilot Sessions** command in `src/vscode/copilot/sessionManager.ts` acts on. The previous version of this section described the 1.13x layout and is wrong about where the conversation text lives.
 
 ### Where the conversation text actually is
 
@@ -221,7 +221,7 @@ The remaining nine (`chat.terminalSessions`, `agentSessions.state.cache`, `memen
 
 ### Auto-Continue: Recovering Incomplete or Replayable Responses
 
-Local/self-hosted reasoning models sometimes stop (`finish_reason: stop`) without delivering a usable answer, while remote providers can fail after committing HTTP 200 but before answer text or a tool call reaches Copilot. The provider recovers automatically inside a single `provideLanguageModelChatResponse` call - all attempts share one `progress` reporter, so Copilot sees one seamless stream. Controlled by `vllm-copilot.autoContinueRetries` (default `1`, `0` disables) and implemented in `src/provider/streamOrchestrator.ts`.
+Local/self-hosted reasoning models sometimes stop (`finish_reason: stop`) without delivering a usable answer, while remote providers can fail after committing HTTP 200 but before answer text or a tool call reaches Copilot. The provider recovers automatically inside a single `provideLanguageModelChatResponse` call - all attempts share one `progress` reporter, so Copilot sees one seamless stream. Controlled by `vllm-copilot.autoContinueRetries` (default `1`, `0` disables) and implemented in `src/vscode/copilot/streamOrchestrator.ts`.
 
 Three distinct failure shapes share that retry budget:
 

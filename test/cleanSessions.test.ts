@@ -12,8 +12,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 
-import { registerCleanSessionsCommand } from '../src/commands/cleanSessions.js';
-import { AGENT_TABLES_BY_SESSION_ID, clean, discoverWorkspaces, maintainAgentStore, normalizeCwd, setSessionManagerOutput } from '../src/shared/sessionManager.js';
+import { registerCleanSessionsCommand } from '../src/vscode/commands/cleanSessions.js';
+import { AGENT_TABLES_BY_SESSION_ID, clean, discoverWorkspaces, maintainAgentStore, normalizeCwd, setSessionManagerOutput } from '../src/vscode/copilot/sessionManager.js';
 
 vi.mock('fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('fs/promises')>();
@@ -1300,13 +1300,13 @@ describe('the catalog wipe leaves no recoverable text behind', () => {
 describe('normalizeCwd separator folding', () => {
   it('never merges a backslash name with a slash name on a POSIX filesystem', async () => {
     if (process.platform === 'win32') return; // win32 folds both to the same dir
-    const { normalizeCwd } = await import('../src/shared/sessionManager.js');
+    const { normalizeCwd } = await import('../src/vscode/copilot/sessionManager.js');
     expect(normalizeCwd('/repo\\old')).not.toBe(normalizeCwd('/repo/old'));
   });
 
   it('still joins a Windows path to its stored catalog form', async () => {
     if (process.platform !== 'win32') return;
-    const { normalizeCwd } = await import('../src/shared/sessionManager.js');
+    const { normalizeCwd } = await import('../src/vscode/copilot/sessionManager.js');
     expect(normalizeCwd('g:\\JitterPaper')).toBe(normalizeCwd('g:/JitterPaper'));
   });
 });

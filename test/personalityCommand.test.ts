@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { registerSetModelPersonalityCommand } from '../src/commands/personality.js';
-import * as configStore from '../src/state/configStore.js';
+import { registerSetModelPersonalityCommand } from '../src/vscode/commands/personality.js';
+import * as configStore from '../src/vscode/state/configStore.js';
 import type { ModelConfig } from '../src/core/config/config.js';
 
 /**

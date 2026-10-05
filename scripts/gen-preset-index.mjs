@@ -20,7 +20,7 @@ const INDEX_FILE = 'index.json';
 const SCHEMA_VERSION = 1;
 
 /**
- * Mirror of PRESET_CONFIG_KEYS in src/commands/presets.ts (this script is
+ * Mirror of PRESET_CONFIG_KEYS in src/vscode/commands/presets.ts (this script is
  * dependency-free Node and cannot import the TypeScript module). A Vitest
  * sync test (test/genPresetIndex.test.ts) fails if the two ever diverge.
  * Without this check the generator could publish an index advertising a
@@ -42,7 +42,7 @@ export const PRESET_CONFIG_KEYS = new Set([
 
 /**
  * Strip `//` comments, quote-aware. The runtime counterpart is `stripJsonc` in
- * src/shared/jsonc.ts, and the two are deliberately NOT identical: the runtime
+ * src/core/shared/jsonc.ts, and the two are deliberately NOT identical: the runtime
  * one also handles block comments and trailing commas, because it must read
  * user-editable files such as `.code-workspace`, while this generator is
  * dependency-free Node and mirrors only what shipped presets may contain.

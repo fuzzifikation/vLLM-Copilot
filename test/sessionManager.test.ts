@@ -12,7 +12,7 @@ import {
   setSessionManagerOutput,
   unhandledSessionKeyedTables,
   userDataRootFromGlobalStorage,
-} from '../src/shared/sessionManager.js';
+} from '../src/vscode/copilot/sessionManager.js';
 
 describe('userDataRootFromGlobalStorage', () => {
   it('derives the active user-data root without assuming a VS Code product name', () => {

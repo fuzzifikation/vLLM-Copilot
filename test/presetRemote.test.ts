@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { fetchRemotePreset } from '../src/commands/presetRemote.js';
+import { fetchRemotePreset } from '../src/vscode/commands/presetRemote.js';
 
 /**
  * Tests for the live remote preset lookup (src/presetRemote.ts). fetch is

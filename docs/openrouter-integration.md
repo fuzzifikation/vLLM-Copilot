@@ -72,16 +72,16 @@ Model Selector (webview, opened from an OR server row)
 |---|---|
 | `src/backends/openRouter.ts` | OpenRouter control plane: input parsing, catalog metadata resolution/normalization, provider endpoints (incl. perf stats + auth for them), account/credits probes. The ONLY vendor-specific module. |
 | `src/backends/runtimeLimits.ts` | `resolveRuntimeLimits()` dispatch - the OpenRouter arm calls into `openRouter.ts`; `detectServerType()` recognizes `openrouter.ai` hosts. |
-| `src/provider/requestBuilder.ts` | Applies the pinned `provider: { only: [tag] }` and the routing-mode suffix (`:nitro`/`:exacto`) to the wire id at request time. |
-| `src/ui/vllmMetrics.ts` | Metrics engine - resolves per-model context + output ceiling from the relay catalog, caches per-provider `/endpoints` lists and per-model context/output per session. |
-| `src/ui/dashboard.ts` | Relay tree: Account node + one node per model; per-provider limits, pricing, cost, the symmetric Attention icon, and the Model Selector entry point on OpenRouter rows. |
-| `src/ui/serverSettingsView.ts` | Fetches per-model provider lists (lazily, on open) and posts them to the Model Settings webview. |
-| `src/ui/modelSelectorView.ts` | Model Selector extension side: benchmarks/catalog/endpoints fan-out (endpoints only for benchmark-scored ids; every other text variant gets its catalog list-price row, upgraded by a lazy on-select endpoints request), benchmark join on `canonical_slug`, per-provider rate + tier conversion, configured-model marks, "Use this model now" (Auto/Exact routing → shared add tail on the opener entry). |
+| `src/vscode/copilot/requestBuilder.ts` | Applies the pinned `provider: { only: [tag] }` and the routing-mode suffix (`:nitro`/`:exacto`) to the wire id at request time. |
+| `src/vscode/ui/vllmMetrics.ts` | Metrics engine - resolves per-model context + output ceiling from the relay catalog, caches per-provider `/endpoints` lists and per-model context/output per session. |
+| `src/vscode/ui/dashboard.ts` | Relay tree: Account node + one node per model; per-provider limits, pricing, cost, the symmetric Attention icon, and the Model Selector entry point on OpenRouter rows. |
+| `src/vscode/ui/serverSettingsView.ts` | Fetches per-model provider lists (lazily, on open) and posts them to the Model Settings webview. |
+| `src/vscode/ui/modelSelectorView.ts` | Model Selector extension side: benchmarks/catalog/endpoints fan-out (endpoints only for benchmark-scored ids; every other text variant gets its catalog list-price row, upgraded by a lazy on-select endpoints request), benchmark join on `canonical_slug`, per-provider rate + tier conversion, configured-model marks, "Use this model now" (Auto/Exact routing → shared add tail on the opener entry). |
 | `resources/modelSelector.js` / `.css` | Model Selector webview side: client-side cost re-derivation, Pareto scan, chart + 13-column table (multi-provider models collapse to one summary row, providers as children), keyboard row selection, calculation + disclaimer modals. |
 | `resources/webview-search.js` | Shared model-list matcher (substring + subsequence): the Model Selector filter box and, through a Searcher adapter, the Model Settings dropdown's Choices.js instance - one function, both lists. |
 | `resources/serverSettings.js` | Provider dropdown - shows each provider's context window, output cap, and per-1M pricing. |
-| `src/provider/messageConverter.ts` | Error formatting - the single path that surfaces all OpenRouter failures (code + formatted message). |
-| `src/usage/usageStore.ts` | Token/cost tracker - prefers actual `usage.cost` for OpenRouter; `usedByok` is OpenRouter's upstream-key BYOK, distinct from VS Code's `isBYOK`. |
+| `src/vscode/copilot/messageConverter.ts` | Error formatting - the single path that surfaces all OpenRouter failures (code + formatted message). |
+| `src/vscode/state/usageStore.ts` | Token/cost tracker - prefers actual `usage.cost` for OpenRouter; `usedByok` is OpenRouter's upstream-key BYOK, distinct from VS Code's `isBYOK`. |
 | `scripts/openrouter-cost.mjs` | Catalog-level cost-ranking preview (calibration tool for the selector's usage profile; no provider fan-out - see its header for the honest scope). |
 
 ---

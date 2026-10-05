@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { personalityTemplate, ServerSettingsViewProvider } from '../src/ui/serverSettingsView.js';
+import { personalityTemplate, ServerSettingsViewProvider } from '../src/vscode/ui/serverSettingsView.js';
 import { ModelConfig } from '../src/core/config/config.js';
 import { resetOpenRouterCaches } from '../src/core/backends/openRouter.js';
 import { clearRuntimeLimitsCache } from '../src/core/backends/runtimeLimits.js';

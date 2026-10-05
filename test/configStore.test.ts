@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as vscode from 'vscode';
-import { replaceModelConfig, patchModelConfig, readModels, readServers, writeModels, writeServers, type IdentifiedModelConfig, type ModelIdentity } from '../src/state/configStore.js';
+import { replaceModelConfig, patchModelConfig, readModels, readServers, writeModels, writeServers, type IdentifiedModelConfig, type ModelIdentity } from '../src/vscode/state/configStore.js';
 import { ModelConfig } from '../src/core/config/config.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 

@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import {
   messageToText,
   convertMessages,
-} from '../src/provider/messageConverter.js';
+} from '../src/vscode/copilot/messageConverter.js';
 // Tool-arg repair moved into core stream processing (Phase 6).
 import { parseToolCallArgs } from '../src/core/request/sseParser.js';
 

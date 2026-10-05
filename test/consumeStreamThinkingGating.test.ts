@@ -20,7 +20,7 @@ function ev(p: Partial<StreamEvent>): StreamEvent {
 
 describe('consumeStream with LanguageModelThinkingPart gated off', () => {
   it('reports reasoning as a plain text part and warns once instead of throwing', async () => {
-    const { consumeStream } = await import('../src/provider/consumeStream.js');
+    const { consumeStream } = await import('../src/vscode/copilot/consumeStream.js');
     const { LanguageModelTextPart, LanguageModelThinkingPart } = await import('vscode');
     expect(LanguageModelThinkingPart).toBeUndefined();
 

@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as vscode from 'vscode';
-import { maybeOfferOutputLengthMigration } from '../src/migrations/outputLengthMigration.js';
+import { maybeOfferOutputLengthMigration } from '../src/vscode/migrations/outputLengthMigration.js';
 import type { ModelConfig } from '../src/core/config/config.js';
-import type { ModelPreset } from '../src/commands/presets.js';
+import type { ModelPreset } from '../src/vscode/commands/presets.js';
 
 /**
  * Tests for the one-time Output length menu migration
@@ -21,8 +21,8 @@ import type { ModelPreset } from '../src/commands/presets.js';
 
 const presetStub = vi.hoisted(() => ({ list: [] as unknown[] }));
 
-vi.mock('../src/commands/presets.js', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../src/commands/presets.js')>();
+vi.mock('../src/vscode/commands/presets.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../src/vscode/commands/presets.js')>();
   return { ...real, loadModelPresets: () => Promise.resolve(presetStub.list as never) };
 });
 

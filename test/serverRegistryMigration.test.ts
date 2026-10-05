@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as vscode from 'vscode';
-import { maybeRunServerRegistryMigration } from '../src/migrations/serverRegistryMigration.js';
-import type { LegacyModelConfig } from '../src/migrations/registryMigration.js';
+import { maybeRunServerRegistryMigration } from '../src/vscode/migrations/serverRegistryMigration.js';
+import type { LegacyModelConfig } from '../src/vscode/migrations/registryMigration.js';
 
 const FLAG = 'vllmCopilot.serverRegistryMigration.v1';
 

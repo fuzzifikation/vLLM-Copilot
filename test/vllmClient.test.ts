@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { VllmClient } from '../src/provider/vllmClient.js';
+import { VllmClient } from '../src/vscode/copilot/vllmClient.js';
 import { ChatTransport } from '../src/core/request/chatTransport.js';
-import * as configModule from '../src/state/config.js';
+import * as configModule from '../src/vscode/state/config.js';
 import type { VllmConfig } from '../src/core/config/config.js';
 
 /**

@@ -7,8 +7,8 @@ import {
   parsePresetFile,
   PRESET_CONFIG_KEYS,
   type PresetConfig,
-} from '../src/commands/presets.js';
-import { parseHeadersInput } from '../src/commands/serverAuth.js';
+} from '../src/vscode/commands/presets.js';
+import { parseHeadersInput } from '../src/vscode/commands/serverAuth.js';
 import type { ModelConfig } from '../src/core/config/config.js';
 
 /**

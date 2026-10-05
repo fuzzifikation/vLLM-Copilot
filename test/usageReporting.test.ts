@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as vscode from 'vscode';
-import { reportTokenUsage } from '../src/usage/usageReporting.js';
+import { reportTokenUsage } from '../src/vscode/state/usageReporting.js';
 
 // Drive the wire shape through its only real consumer: a fake Copilot progress
 // sink. (The standalone part-builder was absorbed into reportTokenUsage.)

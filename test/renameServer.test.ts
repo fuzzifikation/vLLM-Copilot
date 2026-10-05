@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { ConfigurationTarget } from 'vscode';
-import { registerRenameServerCommand } from '../src/commands/commands.js';
+import { registerRenameServerCommand } from '../src/vscode/commands/commands.js';
 
 /**
  * Tests for the "Rename Server" command.

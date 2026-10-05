@@ -1,20 +1,20 @@
 import * as vscode from 'vscode';
-import { VllmChatModelProvider } from './provider/provider.js';
-import { getConfig, validateConfig } from './state/config.js';
-import { FileLogger, registerOpenLogFileCommand, registerClearLogFilesCommand } from './shared/logger.js';
-import { registerAddServerModelCommand, registerAddServerCommand } from './commands/addServerFlow.js';
-import { registerAutoConfigureModelCommand } from './commands/autoConfigureFlow.js';
+import { VllmChatModelProvider } from './vscode/copilot/provider.js';
+import { getConfig, validateConfig } from './vscode/state/config.js';
+import { FileLogger, registerOpenLogFileCommand, registerClearLogFilesCommand } from './vscode/logging/logger.js';
+import { registerAddServerModelCommand, registerAddServerCommand } from './vscode/commands/addServerFlow.js';
+import { registerAutoConfigureModelCommand } from './vscode/commands/autoConfigureFlow.js';
 import {
   registerConfigureUtilityModelCommand,
   ensureByokUtilityDefault,
   ensureAgentHostModelsEnabled,
-} from './commands/byok.js';
-import { setSessionManagerOutput } from './shared/sessionManager.js';
-import { syncBundledPersonalities, migratePersonalityPathRefs } from './persona/personalityStore.js';
-import { readServers, writeServers } from './state/configStore.js';
+} from './vscode/commands/byok.js';
+import { setSessionManagerOutput } from './vscode/copilot/sessionManager.js';
+import { syncBundledPersonalities, migratePersonalityPathRefs } from './vscode/state/personalityStore.js';
+import { readServers, writeServers } from './vscode/state/configStore.js';
 import { dedupeServerIds } from './core/config/serverRegistry.js';
 import { resetOpenRouterCaches } from './core/backends/openRouter.js';
-import { registerSetPollIntervalCommand } from './ui/vllmMetrics.js';
+import { registerSetPollIntervalCommand } from './vscode/ui/vllmMetrics.js';
 import {
   registerUpdateServerAuthCommand,
   registerRenameServerCommand,
@@ -24,21 +24,21 @@ import {
   registerRemoveModelCommand,
   registerResetUsageCommand,
   registerConfigureCostCommand,
-} from './commands/commands.js';
-import { registerCleanSessionsCommand } from './commands/cleanSessions.js';
-import { registerTestAndRefreshModelsCommand } from './commands/testAndRefresh.js';
-import { registerSetModelPersonalityCommand } from './commands/personality.js';
-import { registerDiagnoseConnectionCommand } from './ui/diagnostics.js';
-import { setExtensionVersion } from './ui/diagnostics.js';
-import { initUsageStore } from './usage/usageStore.js';
-import { maybeOfferOutputLengthMigration } from './migrations/outputLengthMigration.js';
-import { maybeRunServerRegistryMigration } from './migrations/serverRegistryMigration.js';
-import { DashboardTreeProvider, DashboardDndController, registerOpenDashboardWebCommand } from './ui/dashboard.js';
-import { registerStatusBar } from './ui/statusBar.js';
-import { ServerSettingsViewProvider } from './ui/serverSettingsView.js';
-import { registerOpenDeepDiveCommand } from './ui/deepDiveView.js';
-import { registerOpenModelSelectorCommand } from './ui/modelSelectorView.js';
-import { registerConfigSchemaTool } from './shared/configSchemaTool.js';
+} from './vscode/commands/commands.js';
+import { registerCleanSessionsCommand } from './vscode/commands/cleanSessions.js';
+import { registerTestAndRefreshModelsCommand } from './vscode/commands/testAndRefresh.js';
+import { registerSetModelPersonalityCommand } from './vscode/commands/personality.js';
+import { registerDiagnoseConnectionCommand } from './vscode/ui/diagnostics.js';
+import { setExtensionVersion } from './vscode/ui/diagnostics.js';
+import { initUsageStore } from './vscode/state/usageStore.js';
+import { maybeOfferOutputLengthMigration } from './vscode/migrations/outputLengthMigration.js';
+import { maybeRunServerRegistryMigration } from './vscode/migrations/serverRegistryMigration.js';
+import { DashboardTreeProvider, DashboardDndController, registerOpenDashboardWebCommand } from './vscode/ui/dashboard.js';
+import { registerStatusBar } from './vscode/ui/statusBar.js';
+import { ServerSettingsViewProvider } from './vscode/ui/serverSettingsView.js';
+import { registerOpenDeepDiveCommand } from './vscode/ui/deepDiveView.js';
+import { registerOpenModelSelectorCommand } from './vscode/ui/modelSelectorView.js';
+import { registerConfigSchemaTool } from './vscode/copilot/configSchemaTool.js';
 
 const VENDOR_ID = 'vllm-copilot';
 let provider: VllmChatModelProvider | undefined;

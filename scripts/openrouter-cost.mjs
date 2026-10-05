@@ -9,7 +9,7 @@
  * intelligence indices, joined on the catalog slug).
  *
  * Scope, honestly stated (the shipped selector lives in
- * src/ui/modelSelectorView.ts + resources/modelSelector.js): this script
+ * src/vscode/ui/modelSelectorView.ts + resources/modelSelector.js): this script
  * reads ONLY the catalog - one price per model, no per-provider endpoint
  * fan-out, no long-context tier or time-of-day overrides (the catalog's
  * `pricing.overrides` is ignored, so a time-priced model's base rate here

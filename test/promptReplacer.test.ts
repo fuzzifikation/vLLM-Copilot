@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'node:fs/promises';
-import { applyPromptReplacements, loadPromptReplacements } from '../src/core/persona/promptReplacer.js';
+import { applyPromptReplacements, loadPromptReplacements } from '../src/core/personality/promptReplacer.js';
 
 describe('applyPromptReplacements', () => {
   it('returns the text unchanged when there are no rules', () => {

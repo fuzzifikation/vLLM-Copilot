@@ -54,7 +54,7 @@
 This is a **VS Code Language Model Chat Provider extension** that routes Copilot requests through a local vLLM server. Data flow:
 
 ```
-Copilot → provider/provider.ts (VllmChatModelProvider) → provider/vllmClient.ts → vLLM server
+Copilot → vscode/copilot/provider.ts (VllmChatModelProvider) → vscode/copilot/vllmClient.ts → core execute/transport → vLLM server
 ```
 
 ### Extension placement invariant
@@ -65,18 +65,17 @@ Copilot → provider/provider.ts (VllmChatModelProvider) → provider/vllmClient
 | Path | Responsibility |
 |---|---|
 | `src/extension.ts` | Activation, command registration, lifecycle |
-| `src/core/` | Host-neutral core — no `vscode` import, no settings reads, no host paths (enforced by `core-no-host` + `core-no-undeclared-deps` in both cruiser configs): `types.ts` (wire-format types & SSE events only), `shared/` (errors, error envelope, token budget, fetch retry, JSONC, `trace.ts` logging hooks), `config/` (`config.ts` pure policy/validation, `serverCore.ts`/`serverRegistry.ts` URL/identity rules), `request/` (`assemble.ts` neutral request assembly, `chatTransport.ts`, `streamReader.ts` + `sseParser.ts` SSE), `backends/` (OpenRouter catalog/aliases/endpoints, runtime limits) |
-| `src/provider/` | Copilot request path: `provider.ts` (`LanguageModelChatProvider` impl, streams to Copilot), `vllmClient.ts` (facade, config cache owner, CancellationToken→AbortSignal boundary), `requestBuilder.ts` (`buildRequest` adapter over core `assembleRequest`), `streamOrchestrator.ts`/`consumeStream.ts`, `messageConverter.ts` (VS Code ↔ OpenAI/vLLM formats), `modelInfo.ts` (picker info + family detection), `systemMessagePipeline.ts` (personality/capture), `discovery.ts`, `postStream.ts` |
-| `src/state/` | `config.ts` (the vscode settings reader, composite `validateConfig`, picker selection, path-root adapter), `configStore.ts` (the sole settings.json writer) |
-| `src/commands/` | User-facing commands: add server/model flows, auto-configure + HF discovery, auth rotation, presets (bundled + remote), personalities, Test & Refresh |
-| `src/migrations/` | One-shot config migrations at activation (registry migration, output-length offer) |
-| `src/ui/` | Dashboard tree, Deep-Dive + Server Settings webviews, Connection Diagnostics |
-| `src/usage/` | Usage store (`usage.json` persistence) + usage reporting to Copilot |
-| `src/shared/` | Host utilities: file logger, session manager, config-schema tool |
+| `src/core/` | Host-neutral core — no `vscode` import, no settings reads, no host paths (enforced by `core-no-host` + `core-no-undeclared-deps` in both cruiser configs; public barrel `index.ts` is consumed by the host adapters): `types.ts` (wire-format types & SSE events only), `shared/` (errors, error envelope, token budget, fetch retry, JSONC, `trace.ts` logging hooks), `config/` (`config.ts` pure policy/validation, `serverCore.ts`/`serverRegistry.ts` URL/identity rules), `catalog/` (neutral descriptors, limits), `request/` (`assemble.ts` neutral request assembly, `chatTransport.ts`, `streamReader.ts` + `sseParser.ts` SSE, `execute.ts` retry loop + events), `backends/` (OpenRouter catalog/aliases/endpoints, runtime limits), `personality/` (rules/transform/capture), `usage/` (ledger, record, money) |
+| `src/vscode/copilot/` | Copilot request path: `provider.ts` (`LanguageModelChatProvider` impl, streams to Copilot), `vllmClient.ts` (facade, config cache owner, CancellationToken→AbortSignal boundary), `requestBuilder.ts` (`buildRequest` adapter over core `assembleRequest`), `streamOrchestrator.ts`/`consumeStream.ts`, `messageConverter.ts` (VS Code ↔ OpenAI/vLLM formats), `modelInfo.ts` (picker info + family detection), `systemMessagePipeline.ts` (personality/capture), `discovery.ts`, `postStream.ts`, `sessionManager.ts` (Copilot session janitor), `configSchemaTool.ts` (LM tool) |
+| `src/vscode/state/` | `config.ts` (the vscode settings reader, composite `validateConfig`, picker selection, path-root adapter), `configStore.ts` (the sole settings.json writer), `usageStore.ts`/`usageReporting.ts` (usage.json persistence + Copilot accounting), `personalityStore.ts` (personality selection over core persona) |
+| `src/vscode/commands/` | User-facing commands: add server/model flows, auto-configure + HF discovery, auth rotation, presets (bundled + remote), personalities, Test & Refresh |
+| `src/vscode/migrations/` | One-shot config migrations at activation (registry migration, output-length offer) |
+| `src/vscode/ui/` | Dashboard tree, Deep-Dive + Server Settings webviews, Connection Diagnostics |
+| `src/vscode/logging/` | `logger.ts` — editor-owned file/output logging (`[INFO]`/`[WARN]`/`[ERROR]`) |
 
 ### Key patterns:
 - **Config ownership:** `VllmClient` owns the config cache. Everyone reads through it. Single source of truth — adding a second cache causes stale reads.
-- **Types in `types.ts`** exist only to break circular imports. No logic lives there.
+- **Types in `src/core/types.ts`** exist only to break circular imports. No logic lives there.
 - **Model overrides** (`model-configs/`) let users customize server models (modes, capabilities, token limits).
 - **ESM throughout.** All imports use `.js` extensions per TypeScript 5+ ESM rules.
 

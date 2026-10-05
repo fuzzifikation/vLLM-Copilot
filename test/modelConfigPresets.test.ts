@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { parsePresetFile, parsePresetRawJson, PRESET_CONFIG_KEYS } from '../src/commands/presets.js';
+import { parsePresetFile, parsePresetRawJson, PRESET_CONFIG_KEYS } from '../src/vscode/commands/presets.js';
 
 /**
  * Guards the shipped model-configs/ presets: every JSON must parse through the

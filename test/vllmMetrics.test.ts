@@ -7,7 +7,7 @@
  * runtime resolver — kept display-only.
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { getMetricsEngine, type ServerMetrics } from '../src/ui/vllmMetrics.js';
+import { getMetricsEngine, type ServerMetrics } from '../src/vscode/ui/vllmMetrics.js';
 import { resetOpenRouterCaches } from '../src/core/backends/openRouter.js';
 
 /** The engine surface as production hands it out - the class itself is module-private. */

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { reportPostStreamDiagnostics, handleResponseError } from '../src/provider/postStream.js';
-import type { StreamOutcome } from '../src/provider/contracts.js';
+import { reportPostStreamDiagnostics, handleResponseError } from '../src/vscode/copilot/postStream.js';
+import type { StreamOutcome } from '../src/vscode/copilot/contracts.js';
 
 // Mirror of the orchestrator's private factory (U2: createOutcome moved into
 // streamOrchestrator.ts; the interface in contracts.ts is the public seam).

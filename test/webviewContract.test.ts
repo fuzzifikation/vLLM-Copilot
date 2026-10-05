@@ -46,8 +46,8 @@ const POSTED_RE = /postMessage\(\{\s*type:\s*'([\w-]+)'/g;
 const LISTENED_RE = /data\.type === '([\w-]+)'/g;
 
 const pairs = [
-  { name: 'Model Settings', webview: 'resources/serverSettings.js', host: 'src/ui/serverSettingsView.ts' },
-  { name: 'Deep Dive', webview: 'resources/deepDive.js', host: 'src/ui/deepDiveView.ts' },
+  { name: 'Model Settings', webview: 'resources/serverSettings.js', host: 'src/vscode/ui/serverSettingsView.ts' },
+  { name: 'Deep Dive', webview: 'resources/deepDive.js', host: 'src/vscode/ui/deepDiveView.ts' },
 ];
 
 for (const pair of pairs) {

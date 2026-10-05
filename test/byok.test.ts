@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { ensureByokUtilityDefault, ensureAgentHostModelsEnabled } from '../src/commands/byok.js';
+import { ensureByokUtilityDefault, ensureAgentHostModelsEnabled } from '../src/vscode/commands/byok.js';
 
 /**
  * Direct tests for the BYOK utility-model module. The chat-config write is

@@ -14,7 +14,9 @@
 //                  files do not match the graph; the number is a smoke alarm,
 //                  never a refactoring plan)
 //   CONDUCTANCE    per-file cut/(volume) - the "least outside surface" number
-//   TOOLS          src/shared/ toolbox profile: stateless + loosely
+//   TOOLS          src/shared/ toolbox profile (directory dissolved by the
+//                  2026-10-04 vscode/ relocation - profile stays for a toolbox
+//                  that may return): stateless + loosely
 //                  self-coupled + >= 4 consumer files => cut-heavy by design;
 //                  general helpers inside stay put (common-helpers exception,
 //                  user ruling 2026-09-04; see the TOOLS block for the law)

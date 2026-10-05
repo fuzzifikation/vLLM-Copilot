@@ -102,7 +102,7 @@ This fixed a **pre-existing bug**: the Last Request node was previously written 
 | Concern | File |
 |---|---|
 | Store (last request + accumulation + persistence + cost math) | `src/usageStore.ts` |
-| Ingestion point | `src/provider/consumeStream.ts` |
+| Ingestion point | `src/vscode/copilot/consumeStream.ts` |
 | Dashboard tree (Last Request, Token Usage and Cost, Reset, Set Cost) | `src/dashboard.ts` |
 | Set Cost / Reset commands | `src/commands.ts` |
 | Config schema (`cost` field) | `src/config.ts`, `package.json` |

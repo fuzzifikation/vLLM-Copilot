@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { runOpenRouterAddFlow } from '../src/commands/openRouterAddFlow.js';
-import * as configStore from '../src/state/configStore.js';
+import { runOpenRouterAddFlow } from '../src/vscode/commands/openRouterAddFlow.js';
+import * as configStore from '../src/vscode/state/configStore.js';
 import { resetOpenRouterCaches } from '../src/core/backends/openRouter.js';
 
 // The catalog memo is module-level: a success fetched by one test would

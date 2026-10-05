@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { consumeStream } from '../src/provider/consumeStream.js';
+import { consumeStream } from '../src/vscode/copilot/consumeStream.js';
 import {
   createExecutionState,
   executeChatRequest,
   type ExecutionInput,
   type ExecutionState,
 } from '../src/core/request/execute.js';
-import { getLastRequest } from '../src/usage/usageStore.js';
+import { getLastRequest } from '../src/vscode/state/usageStore.js';
 import type { StreamEvent } from '../src/core/types.js';
 
 /**

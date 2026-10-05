@@ -32,7 +32,7 @@ module.exports = {
       name: 'core-no-host',
       severity: 'error',
       comment:
-        'src/core/ is the Node-only product boundary (docs/core-restructuring-plan.md): no runtime imports back into host source (state/, provider/, ui/, commands/, migrations/, persona/, usage/, backends/, shared/, extension.ts). The type-only variant lives in .dependency-cruiser.consumers.cjs — both must fire together.',
+        'src/core/ is the Node-only product boundary (docs/core-restructuring-plan.md): no runtime imports back into host source (vscode/copilot/, vscode/state/, vscode/ui/, vscode/commands/, vscode/migrations/, vscode/logging/, extension.ts). The type-only variant lives in .dependency-cruiser.consumers.cjs — both must fire together.',
       from: { path: '^src/core/' },
       to: { path: '^src/(?!core/)' },
     },
@@ -51,23 +51,23 @@ module.exports = {
       name: 'state-layer-no-ui-or-commands',
       severity: 'error',
       comment:
-        'The state layer (src/state/: configStore, serverRegistry, serverCore, config) and the boot migrations (src/migrations/) are read by everyone and depend on nobody above them - no commands, no UI, no provider, no usage, no persona, no backends, not even the file logger. If this fires, the state layer grew a reach into a layer above it - inversion, fix by moving the consumer logic down (a pure connection fact belongs in serverCore). KNOWN EXCEPTION: migrations/outputLengthMigration -> commands/presets is logged as P5-2 in docs/complexity-audit.md (keep/defer); it is allowed below and dies when that finding executes.',
+        'The state layer (src/vscode/state/: config, configStore, usage and personality wrappers) and the boot migrations (src/vscode/migrations/) are read by everyone and depend on nobody above them - no commands, no UI, no copilot pipeline, not even the file logger. If this fires, the state layer grew a reach into a layer above it - inversion, fix by moving the consumer logic down (a pure connection fact belongs in core serverCore). KNOWN EXCEPTION: migrations/outputLengthMigration -> commands/presets is logged as P5-2 in docs/complexity-audit.md (keep/defer); it is allowed below and dies when that finding executes.',
       from: {
-        path: '^src/(state|migrations)/[^/]+\\.ts$',
+        path: '^src/vscode/(state|migrations)/[^/]+\\.ts$',
       },
       to: {
-        path: '^src/(commands/|ui/|usage/|persona/|provider/|backends/|shared/logger)',
-        pathNot: ['^src/commands/presets\\.(ts|js)$'],
+        path: '^src/vscode/(commands/|ui/|copilot/|logging/)',
+        pathNot: ['^src/vscode/commands/presets\\.(ts|js)$'],
       },
     },
     {
-      name: 'provider-no-ui',
+      name: 'copilot-no-ui',
       severity: 'error',
       comment:
-        'The request pipeline (src/provider/) must never reach into dashboard/webview/metrics/diagnostics UI surfaces or command modules. It may read state (src/state/) and record usage (src/usage/) - those are data, not views.',
-      from: { path: '^src/provider/[^/]+\\.ts$' },
+        'The request pipeline (src/vscode/copilot/) must never reach into dashboard/webview/metrics/diagnostics UI surfaces or command modules. It may read state (src/vscode/state/) - that is data, not views.',
+      from: { path: '^src/vscode/copilot/[^/]+\\.ts$' },
       to: {
-        path: '^src/(ui|commands)/',
+        path: '^src/vscode/(ui|commands)/',
       },
     },
   ],

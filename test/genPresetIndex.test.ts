@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PRESET_CONFIG_KEYS as RUNTIME_KEYS, parsePresetRawJson } from '../src/commands/presets.js';
+import { PRESET_CONFIG_KEYS as RUNTIME_KEYS, parsePresetRawJson } from '../src/vscode/commands/presets.js';
 import { buildIndex, stripComments as genStrip, PRESET_CONFIG_KEYS as GEN_KEYS } from '../scripts/gen-preset-index.mjs';
 
 /**

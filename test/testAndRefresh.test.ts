@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { registerTestAndRefreshModelsCommand } from '../src/commands/testAndRefresh.js';
+import { registerTestAndRefreshModelsCommand } from '../src/vscode/commands/testAndRefresh.js';
 import { clearRuntimeLimitsCache } from '../src/core/backends/runtimeLimits.js';
 
 /**

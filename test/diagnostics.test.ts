@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { formatReport } from '../src/ui/diagnostics.js';
-import type { DiagnosticReport } from '../src/ui/diagnostics.js';
+import { formatReport } from '../src/vscode/ui/diagnostics.js';
+import type { DiagnosticReport } from '../src/vscode/ui/diagnostics.js';
 
 /**
  * formatReport tests — focused on the "Transport comparison" block, which must

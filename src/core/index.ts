@@ -105,12 +105,12 @@ export type { RequestLog, RequestTrace } from './shared/trace.js';
 export { describeError, iterateCauses, isTransportFailureText } from './shared/errors.js';
 
 // ─── Personalities: prompt rules, resolution, capture ────────────────────
-export type { ApplyResult, PersonalityMeta, PromptReplacement } from './persona/promptReplacer.js';
-export { applyPromptReplacements, clearPersonalityCache, loadPromptReplacements } from './persona/promptReplacer.js';
-export type { PersonalityDirs, PersonalityEntry, ResolvedReplacements, ResolveReplacementsOptions } from './persona/store.js';
-export { discoverPersonalities, resolveModelReplacements, syncBundledPersonalities } from './persona/store.js';
-export type { CaptureEntry } from './persona/capture.js';
-export { CaptureQueue, isCaptureEntry } from './persona/capture.js';
+export type { ApplyResult, PersonalityMeta, PromptReplacement } from './personality/promptReplacer.js';
+export { applyPromptReplacements, clearPersonalityCache, loadPromptReplacements } from './personality/promptReplacer.js';
+export type { PersonalityDirs, PersonalityEntry, ResolvedReplacements, ResolveReplacementsOptions } from './personality/store.js';
+export { discoverPersonalities, resolveModelReplacements, syncBundledPersonalities } from './personality/store.js';
+export type { CaptureEntry } from './personality/capture.js';
+export { CaptureQueue, isCaptureEntry } from './personality/capture.js';
 
 // ─── Accounting: ledger, records, money ──────────────────────────────────
 export type {

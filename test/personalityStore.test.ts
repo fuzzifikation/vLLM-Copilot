@@ -14,7 +14,7 @@ import {
   syncBundledPersonalities,
   resolveModelReplacements,
   migratePersonalityPathRefs,
-} from '../src/persona/personalityStore.js';
+} from '../src/vscode/state/personalityStore.js';
 
 const fsMock = vi.hoisted(() => {
   const files = new Map<string, string>();

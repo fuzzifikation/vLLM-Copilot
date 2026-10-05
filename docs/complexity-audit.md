@@ -848,7 +848,8 @@ Four npm scripts, all read-only, all safe to run anytime:
   legitimate shape - helpers consumed everywhere and rarely calling each
   other are a TOOLBOX, not a misplaced cluster. The exemption is earned
   mechanically, never claimed: `src/shared/` only (the declared toolbox
-  directory), stateless (no top-level `let`/`var`), loosely self-coupled
+  directory — dissolved by the 2026-10-04 `vscode/` relocation; the exemption
+  stays law should a declared toolbox ever return), stateless (no top-level `let`/`var`), loosely self-coupled
   (internal call edges <= function count), and >= 4 distinct consumer
   files. Qualified files print `[TOOLS]`, their conductance is annotated
   not nagged, and a MOVE_GAIN on one of their helpers with >= 2 consumers
@@ -1093,7 +1094,7 @@ The three older standing items were ruled at fix-pass 6 (2026-09-03):
   meta rule kept verbatim).
 - **P19-3**: `parsePresetRawJson` is the test-facing parse boundary (canary
   tests rerouted). The comment stripper is no longer private to that module:
-  `stripJsonc` in `src/shared/jsonc.ts` is the single implementation, shared
+  `stripJsonc` in `src/core/shared/jsonc.ts` is the single implementation, shared
   with the session janitor, which must read user-editable `.code-workspace`
   files. The generator's `//`-only mirror in `scripts/gen-preset-index.mjs`
   stays, because that script is dependency-free and cannot import TypeScript;

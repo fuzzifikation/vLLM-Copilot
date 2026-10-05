@@ -78,10 +78,10 @@ Post-stream diagnostics receive the actual attempt count, so the failure message
 
 ## Implementation
 
-- **Retry loop:** `runChatResponse` in `src/provider/streamOrchestrator.ts` - a `for` loop from `attempt = 0` to `attempt <= maxRetries`. Iteration 0 is the normal request. Empty/continuation retries update the assistant prefill before the next attempt; an early server-error retry keeps the request unchanged. Every retry resets the per-attempt `StreamOutcome` while preserving the request-wide fact that output was previously visible.
-- **Continuation flags:** vLLM-only; injected into the request body in `streamOrchestrator.ts` (`continue_final_message: true`, `add_generation_prompt: false`) and stripped for non-vLLM backends in `src/provider/chatProtocol.ts`.
-- **Config:** `autoContinueRetries` on `ModelConfig` in `src/state/config.ts`, resolved by `resolveModelSettings()` against `DEFAULT_MODEL_SETTINGS.autoContinueRetries` (default `1`), floored and validated (finite integer ≥ 0). Schema declared per-model in `package.json` and `schemas/vllm-copilot-models.schema.json`.
-- **Diagnostics:** `reportPostStreamDiagnostics` in `src/provider/postStream.ts` receives `actualAttempts` to fold attempt counts into user-facing hints.
+- **Retry loop:** `runChatResponse` in `src/vscode/copilot/streamOrchestrator.ts` - a `for` loop from `attempt = 0` to `attempt <= maxRetries`. Iteration 0 is the normal request. Empty/continuation retries update the assistant prefill before the next attempt; an early server-error retry keeps the request unchanged. Every retry resets the per-attempt `StreamOutcome` while preserving the request-wide fact that output was previously visible.
+- **Continuation flags:** vLLM-only; injected into the request options in `streamOrchestrator.ts` (`continue_final_message: true`, `add_generation_prompt: false`) and stripped for non-vLLM backends in `src/core/request/chatTransport.ts`.
+- **Config:** `autoContinueRetries` on `ModelConfig` in `src/vscode/state/config.ts`, resolved by `resolveModelSettings()` against `DEFAULT_MODEL_SETTINGS.autoContinueRetries` (default `1`), floored and validated (finite integer ≥ 0). Schema declared per-model in `package.json` and `schemas/vllm-copilot-models.schema.json`.
+- **Diagnostics:** `reportPostStreamDiagnostics` in `src/vscode/copilot/postStream.ts` receives `actualAttempts` to fold attempt counts into user-facing hints.
 - **Tests:** `test/providerAutoContinue.test.ts` covers empty-prefill nudges, vLLM colon continuation, non-vLLM colon no-ops, retry-disabled behavior, same-shape mid-stream replay before committed output, and no replay after answer text.
 
 ---

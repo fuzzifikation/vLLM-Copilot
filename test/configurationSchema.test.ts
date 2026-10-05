@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildModelInfo } from '../src/provider/modelInfo.js';
+import { buildModelInfo } from '../src/vscode/copilot/modelInfo.js';
 import { describeModel } from '../src/core/catalog/describe.js';
 
 // A generous ceiling so mode-only fixtures are never filtered — the length

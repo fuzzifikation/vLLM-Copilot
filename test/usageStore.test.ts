@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type * as vscode from 'vscode';
-import type { LastRequestData } from '../src/usage/usageStore.js';
+import type { LastRequestData } from '../src/vscode/state/usageStore.js';
 
 // R7-P14-1: the store exposes NO production reset hook. Fresh module state
 // comes from vi.resetModules() + a dynamic re-import - literally what a
@@ -53,11 +53,11 @@ const output = { appendLine: vi.fn() } as any;
 const flushWrites = (m: ReturnType<typeof makeMemento>, n: number) =>
   vi.waitFor(() => expect(m.writes).toBeGreaterThanOrEqual(n));
 
-type UsageStore = typeof import('../src/usage/usageStore.js');
+type UsageStore = typeof import('../src/vscode/state/usageStore.js');
 let S: UsageStore;
 async function freshStore(): Promise<void> {
   vi.resetModules();
-  S = await import('../src/usage/usageStore.js');
+  S = await import('../src/vscode/state/usageStore.js');
 }
 
 describe('recordRequest — last request + accumulation', () => {

@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'node:fs/promises';
-import { SystemMessagePipeline } from '../src/provider/systemMessagePipeline.js';
+import { SystemMessagePipeline } from '../src/vscode/copilot/systemMessagePipeline.js';
 
 /**
  * Direct tests for the extracted system-message pipeline

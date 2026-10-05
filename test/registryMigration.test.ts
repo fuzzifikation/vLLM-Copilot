@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planRegistryMigration, type LegacyModelConfig } from '../src/migrations/registryMigration.js';
+import { planRegistryMigration, type LegacyModelConfig } from '../src/vscode/migrations/registryMigration.js';
 
 const DEFAULT_TEST_SERVER_URL = 'http://localhost:8000';
 

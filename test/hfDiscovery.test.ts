@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { resolveModelConfigForAddSafely } from '../src/commands/hfDiscovery.js';
+import { resolveModelConfigForAddSafely } from '../src/vscode/commands/hfDiscovery.js';
 import { clearRuntimeLimitsCache } from '../src/core/backends/runtimeLimits.js';
 
 /**

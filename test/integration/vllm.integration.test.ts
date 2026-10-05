@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { VllmClient } from '../../src/provider/vllmClient.js';
-import * as configModule from '../../src/state/config.js';
+import { VllmClient } from '../../src/vscode/copilot/vllmClient.js';
+import * as configModule from '../../src/vscode/state/config.js';
 
 /**
  * Integration tests that hit a real vLLM-compatible server.

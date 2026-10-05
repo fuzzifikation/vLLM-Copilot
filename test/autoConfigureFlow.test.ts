@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import {
   registerAutoConfigureModelCommand,
-} from '../src/commands/autoConfigureFlow.js';
-import * as configStore from '../src/state/configStore.js';
-import * as hfDiscovery from '../src/commands/hfDiscovery.js';
+} from '../src/vscode/commands/autoConfigureFlow.js';
+import * as configStore from '../src/vscode/state/configStore.js';
+import * as hfDiscovery from '../src/vscode/commands/hfDiscovery.js';
 
 /**
  * Direct tests for the auto-configure flow module: the re-configure command

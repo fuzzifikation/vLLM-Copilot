@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { registerRemoveModelCommand } from '../src/commands/commands.js';
+import { registerRemoveModelCommand } from '../src/vscode/commands/commands.js';
 import type { ModelConfig } from '../src/core/config/config.js';
 
 /**

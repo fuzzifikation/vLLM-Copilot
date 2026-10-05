@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { VllmClient } from '../src/provider/vllmClient.js';
+import { VllmClient } from '../src/vscode/copilot/vllmClient.js';
 
 function makeOutput(): any { return { appendLine: () => {} }; }
 
