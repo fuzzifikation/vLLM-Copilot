@@ -1,4 +1,6 @@
 out/
+out-e2e/
+.vscode-test/
 node_modules/
 coverage/
 .tools/

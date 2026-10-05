@@ -34,6 +34,11 @@ docs/
 # Test files
 test/
 vitest.config.ts
+# Extension-host E2E harness (Spike A): compiled scenarios, runner config and
+# the downloaded throwaway VS Code live in the repo but must never ship.
+out-e2e/
+.vscode-test.mjs
+.vscode-test/
 
 # Coverage reports (dev only)
 coverage/

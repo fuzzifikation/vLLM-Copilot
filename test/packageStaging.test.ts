@@ -45,6 +45,18 @@ describe('dual-license invariants', () => {
     expect(read('.vscodeignore')).toMatch(/^licenses\/$/m);
   });
 
+  it('keeps the extension-host E2E harness out of the shipped extension', () => {
+    // Real leak, caught 2026-10-05: the first packaged build after adding
+    // test/e2e carried five out-e2e/ files into the VSIX (130 -> 135 entries),
+    // and no existing check noticed — the staging test verifies required
+    // content, never forbidden content. Harness code, mocha scenarios and a
+    // downloaded VS Code must never reach a user's machine.
+    const ignore = read('.vscodeignore');
+    expect(ignore).toMatch(/^out-e2e\/$/m);
+    expect(ignore).toMatch(/^\.vscode-test\/$/m);
+    expect(ignore).toMatch(/^\.vscode-test\.mjs$/m);
+  });
+
   it('packages through the staging wrapper from the build', () => {
     const scripts = JSON.parse(read('package.json')).scripts;
     expect(scripts['package:vsix']).toContain('package-vsix.mjs');

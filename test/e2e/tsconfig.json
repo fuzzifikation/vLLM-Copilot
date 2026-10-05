@@ -1,0 +1,20 @@
+{
+  // Spike A (docs/automated-user-testing.md): extension-host E2E tests. Compiled
+  // separately from the vitest tree — these run INSIDE a real VS Code via
+  // @vscode/test-cli against the real `vscode` module, so they must NOT be
+  // type-checked against test/__mocks__/vscode.ts (test/tsconfig.json) nor
+  // picked up by vitest (which only globs test/**/*.test.ts).
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../../out-e2e",
+    "types": ["node", "vscode", "mocha"],
+    // Repo-native ESM (inherits module Node16). The test-cli runner loads ESM
+    // test files through Node's require(esm) path — verified working 2026-10-05.
+    // No CJS downgrade needed: the "describe is not defined" scare was the
+    // runner's default tdd ui, fixed by mocha.ui:'bdd' in .vscode-test.mjs.
+    "noEmit": false,
+    "sourceMap": true
+  },
+  "include": ["./**/*.ts"]
+}

@@ -20,6 +20,6 @@
     }
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules", "out", "../out"]
+  "exclude": ["node_modules", "out", "../out", "e2e"]
 }
 
