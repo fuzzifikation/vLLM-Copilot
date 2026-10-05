@@ -31,6 +31,7 @@ import { registerSetModelPersonalityCommand } from './vscode/commands/personalit
 import { registerDiagnoseConnectionCommand } from './vscode/ui/diagnostics.js';
 import { setExtensionVersion } from './vscode/ui/diagnostics.js';
 import { initUsageStore } from './vscode/state/usageStore.js';
+import { EXTERNAL_USAGE_API_VERSION, initExternalUsage, recordExternalRequests, watchUsageResets } from './vscode/state/externalUsage.js';
 import { maybeOfferOutputLengthMigration } from './vscode/migrations/outputLengthMigration.js';
 import { maybeRunServerRegistryMigration } from './vscode/migrations/serverRegistryMigration.js';
 import { DashboardTreeProvider, DashboardDndController, registerOpenDashboardWebCommand } from './vscode/ui/dashboard.js';
@@ -96,6 +97,16 @@ export async function activate(context: vscode.ExtensionContext) {
     // and the change event is live for the dashboard. Awaited: the load may
     // read the shared usage.json from disk before the first request records.
     context.subscriptions.push(await initUsageStore(context, outputChannel));
+
+    // The published handoff for usage that completed outside this extension
+    // (the DeepSeek Harness bridge). This extension owns usage.json, so it also
+    // owns dedup and the reset barrier: a second writer would have to
+    // reproduce the delta merge and get the races wrong.
+    await initExternalUsage(context, {
+      info: message => outputChannel.appendLine(message),
+      warn: message => outputChannel.appendLine(`[WARN] ${message}`),
+    });
+    context.subscriptions.push(watchUsageResets());
 
     // Initialize file logger
     fileLogger = new FileLogger(context, outputChannel);
@@ -329,6 +340,17 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider('vllm-copilot.serverSettings', serverSettingsView)
     );
+
+    // Published API. Companion extensions reach this through
+    // `extensions.getExtension('system-sciences.vllm-copilot').exports`;
+    // everything else stays private, because the only safe way to consume the
+    // ledger is through the code that owns it.
+    return {
+      dshBridge: {
+        apiVersion: EXTERNAL_USAGE_API_VERSION,
+        recordExternalRequests: recordExternalRequests,
+      },
+    };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     const reason = err instanceof Error && err.stack ? err.stack : detail;
@@ -343,6 +365,9 @@ export async function activate(context: vscode.ExtensionContext) {
     ).then(selection => {
       if (selection === 'Open Output') outputChannel.show();
     });
+    // Activation failed, so there is no API to hand out. A companion reading
+    // `exports` gets undefined and degrades to its own "owner unavailable" path.
+    return undefined;
   }
 }
 

@@ -364,7 +364,23 @@ export class UsageLedger {
    */
   recordRequest(data: LastRequestData): void {
     this.lastRequest.set(data.serverUrl, data);
+    this.accumulateRequest(data);
+  }
 
+  /**
+   * Fold a completed request into the counters WITHOUT replacing the Last
+   * Request capture. Traffic that arrives from outside this extension's own
+   * completion path carries no editor-side metrics (no per-request timing
+   * probe, no cache-details capability from our own capability check), and
+   * letting it overwrite a richer capture would blank panels the user reads.
+   * The counters are what the dashboard's totals and cost rows need, so that
+   * is exactly what this folds in.
+   */
+  recordExternalRequest(data: LastRequestData): void {
+    this.accumulateRequest(data);
+  }
+
+  private accumulateRequest(data: LastRequestData): void {
     const counts: UsageCounts = {
       prompt: data.promptTokens,
       completion: data.completionTokens,

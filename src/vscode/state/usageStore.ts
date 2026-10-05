@@ -53,6 +53,16 @@ const emitter = new vscode.EventEmitter<void>();
 /** Fired after any store mutation (record or reset) — the dashboard re-renders. */
 export const onUsageStoreDidChange: vscode.Event<void> = emitter.event;
 
+const resetEmitter = new vscode.EventEmitter<'all' | { serverUrl: string }>();
+
+/**
+ * Fired after a reset, with its scope. A reset means more than zeroed
+ * counters: totals cleared at time T imply that traffic completed before T must
+ * not be folded in afterwards, or a user who clears their dashboard watches the
+ * old numbers crawl back. External ingestion listens and refuses older records.
+ */
+export const onUsageDidReset: vscode.Event<'all' | { serverUrl: string }> = resetEmitter.event;
+
 const STORAGE_KEY = 'vllm-copilot.usage.v1';
 
 /**
@@ -103,6 +113,14 @@ export function recordRequest(data: LastRequestData): void {
   ledger.recordRequest(data);
 }
 
+/**
+ * Fold an externally completed request into the counters, leaving the Last
+ * Request capture alone. See `UsageLedger.recordExternalRequest`.
+ */
+export function recordExternalRequest(data: LastRequestData): void {
+  ledger.recordExternalRequest(data);
+}
+
 /** Last request for a server, or undefined if none recorded this activation. */
 export function getLastRequest(serverUrl: string): LastRequestData | undefined {
   return ledger.getLastRequest(serverUrl);
@@ -150,6 +168,7 @@ export function getModelStartedAt(serverUrl: string, modelId: string): number | 
  */
 export function resetUsage(scope: 'all' | { serverUrl: string }): void {
   ledger.reset(scope);
+  resetEmitter.fire(scope);
 }
 
 // ─── Cost derivation (render-time, never stored) ──────────────────────────
