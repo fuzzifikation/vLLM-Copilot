@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.37.0
+Code restructuring that prepares the extension for dsh integration: the model request machinery (config resolution, request assembly, transport, personalities, usage accounting) now lives in a host-neutral core other tools can reuse without the editor. Nothing user-facing changed; behavior, features and defaults match v1.36.16.
+
 ## v1.36.16
 A new status bar chip shows the last reply's model, cost and speed. Idea from [@quanghona](https://github.com/quanghona) on GitHub. 
 Also: Clean Copilot Sessions improved.
