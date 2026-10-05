@@ -7,7 +7,7 @@
  * may legitimately no-op on other surfaces), CLI-scoped rules have an ALL-FIRE
  * contract: every one of them must match the known CLI prompt exactly once.
  * A rule that stopped matching means the checked-in anchor reference went stale
- * — regenerate it per docs/custom-system-prompt.md ("CLI prompt drift").
+ * — regenerate it with `npm run extract:cli-reference` after a capture ("CLI prompt drift").
  *
  * The live half (detecting Microsoft changing the prompt upstream) is manual:
  * `npm run check:cli-rules` against a fresh systemMessageCapture.

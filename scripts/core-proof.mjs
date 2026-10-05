@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Isolated packed-consumer proof for the public core entry (restructuring plan, Phase 8).
+ * Isolated packed-consumer proof for the public core entry.
  *
  * The claim this proves, in one line: the compiled core is a self-contained Node
  * package. Not "the repo's tests alias vscode so nothing looks broken" — a REAL
@@ -15,7 +15,7 @@
  *   core:decl    -> temp/core-decl (Node-only declarations, skipLibCheck off)
  *   core:proof   -> THIS SCRIPT  (stage, pack, install, check, run)
  *
- * Staging rules (docs/core-restructuring-plan.md, Phase 8):
+ * Staging rules (frozen from the completed core restructuring, 2026-10-05; git history holds the plan):
  * 1. The staged package is the compiled core JS plus the INDEPENDENTLY checked
  *    declarations, ESM, public `index` export only.
  * 2. Dependencies: derived, not hardcoded — every bare import the staged JS

@@ -68,7 +68,7 @@ All prompts import these shared components (single source of truth):
 | Title generation | "You are an expert in crafting ultra-compact titles..." | ~1KB | [title.tsx](https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/extension/prompts/node/panel/title.tsx) |
 | Git branch | "You are an expert in crafting pithy branch names..." | ~1KB | [gitBranch.tsx](https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/extension/prompts/node/panel/gitBranch.tsx) |
 
-See [custom-system-prompt.md](./custom-system-prompt.md) for the full design doc and the message types found in source.
+Additional prompt types found in the VS Code source that may route through the extension (fingerprints from source; observed routing unconfirmed): Search "You are a VS Code search expert...", Terminal "You are a programmer who specializes in using the command line...", Explain "You are a world-class coding tutor...", Inline chat "You are an AI programming assistant...", Patch healing "You are an expert in file editing...". All live under `extensions/copilot/src/extension/prompts/node/` (panel/, inline/) plus `tools/node/applyPatchTool.tsx`. The capture + position-preserving replacement pipeline that consumes these fingerprints is documented in the [Manual](manual.md) (Personalities & system prompts) and the [Configuration Reference](configuration-reference.md).
 
 ## Historical Thinking Preservation
 

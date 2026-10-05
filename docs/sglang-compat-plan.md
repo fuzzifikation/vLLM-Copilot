@@ -148,7 +148,7 @@ The classic router is the one case that cannot be rescued. Same policy as every 
 - No functional change required; context-length errors already match. Verify the budget messaging names "sglang" where a backend name leaks.
 
 ### Docs
-- `docs/configuration-reference.md`, `README.md`, `docs/usage.md`, `CHANGELOG.md`. Default port note (30000), `--enable-metrics` note, classic-router limitation.
+- `docs/configuration-reference.md`, `README.md`, `CHANGELOG.md`. Default port note (30000), `--enable-metrics` note, classic-router limitation.
 
 ## 7. Focused Tests
 

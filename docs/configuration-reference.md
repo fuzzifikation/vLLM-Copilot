@@ -387,7 +387,7 @@ Each server entry carries its own `requestHeaders`; they are never shared. The s
 
 ## System Message Replacements
 
-After capturing system messages (see [Custom System Prompt](./custom-system-prompt.md)), create a JSON file of find/replace rules. Each rule is an exact substring match applied sequentially - empty `replace` removes the matched text. `include` entries splice another file's rules in at their position:
+After capturing system messages (see [Personalities & system prompts](./manual.md#personalities--system-prompts) in the Manual), create a JSON file of find/replace rules. Each rule is an exact substring match applied sequentially - empty `replace` removes the matched text. `include` entries splice another file's rules in at their position:
 
 ```json
 {

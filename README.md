@@ -187,7 +187,7 @@ The live observability that makes it worthwhile for teams. A native sidebar (no 
 - **Expandable metrics**: context window, vLLM version, KV cache usage & hit rate, TTFT, output and prefill speed (tok/s)
 - **MTP / speculative decoding**: acceptance rate, draft depth, proposal count (when active)
 - **Last Request Details**: per-server node with the most recent request's tokens (input, output, cached, reasoning), timing (TTFT, queue time, generation time), and throughput. Updated immediately after every prompt, not on the poll interval. The Output channel shows the same exact counts after every request: input/output, cached tokens (prefix cache hit %), cache creation tokens, output throughput (tok/s), and speculative-decoding stats.
-- **Token Usage and Cost**: a model-first tree, one entry per model carrying the price on the collapsed line (`$11.51 today and $31.13 total`), expanding to **Today** and **Overall** token rows. Sub-cent costs keep fine precision; **OpenRouter models use their actual reported cost** (`usage.cost`), never summed with rates. **Reset Usage** is a right-click action. See [usage.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/usage.md) for the design.
+- **Token Usage and Cost**: a model-first tree, one entry per model carrying the price on the collapsed line (`$11.51 today and $31.13 total`), expanding to **Today** and **Overall** token rows. Sub-cent costs keep fine precision; **OpenRouter models use their actual reported cost** (`usage.cost`), never summed with rates. **Reset Usage** is a right-click action.
 - Right-click a **vLLM** server for the **Deep-Dive** webview.
 
 </td>

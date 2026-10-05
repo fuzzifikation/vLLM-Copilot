@@ -155,7 +155,7 @@ Model modes are **named configurations** for a model that you switch between fro
 }
 ```
 
-The **Add or Reconfigure Server/Model** command auto-generates modes from bundled presets (`model-configs/`) or HuggingFace data. Model-specific recommendations (e.g. Qwen sampling parameters): **[Model Modes & inference parameters](modelmodes.md)**.
+The **Add or Reconfigure Server/Model** command auto-generates modes from bundled presets (`model-configs/`) or HuggingFace data. Per-model sampling recommendations (official vendor parameters like the Qwen sets) ship inside the bundled presets themselves - see [`model-configs/README.md`](../model-configs/README.md).
 
 Output **length** is deliberately not a mode knob. Models and presets whose `maxOutputTokens` is an **array** get a second, independent **"Output Length"** dropdown next to the mode picker; the user's pick overrides any `max_tokens` set in modes or `defaultParams` (always clamped to the model's ceiling). The pick is also what the extension **advertises** to Copilot as the output budget - and since Copilot derives the prompt budget as (context − output), **a shorter pick hands the freed tokens to your prompt**: more headroom for long conversations when you don't need a 64K answer. A **shorter** pick lands on the very next response's `max_tokens` instantly; a **longer** pick lands once Copilot's context display re-resolves on the first request after the change (the extension re-publishes model metadata then - the same mechanism, and the same one-request lag, mode switches use). The wire never exceeds the advertised output budget: Copilot sizes the prompt against it, so promising more could overflow the context window (or hard-fail on providers that validate it). If you pinned `maxInputTokens` explicitly, you own the split and the trade-off does not apply. Modes describe behavior - thinking depth, sampling - not response size.
 
@@ -198,7 +198,7 @@ The bundled presets are: **Raw (Model Natural)** (strips the boilerplate, no per
 
 Personality files carry the voice; the boilerplate stripping (safety rules, "your name is GitHub Copilot") lives in one shared file that each personality pulls in through an `{ "include": "prompt-replacements-common.json" }` entry at the end of its rules - that file sits right next to the presets. An include is always a path: a file saved into the `personalities/` folder can use that same bare filename (the shared file lives there too), anywhere else give it an absolute path or keep a copy of the shared file next to yours. **Default** stays completely untouched. When a personality is set, one repair fixes all personalities.
 
-**Bring your own:** **+ New** opens a personality template in an unsaved editor - save it wherever you want (your folder, `.vllm/`, a repo). Save it into the shared personalities folder instead - its exact path is printed in the template - and it joins every model's dropdown. **Load** attaches any replacements JSON to the model; edits you save to that file apply on the next request, no re-attach. Keep or delete the `include` line in your file to decide whether the shared boilerplate removals run for you. Bundled filenames are extension-owned and re-copied at every start, so customize by making your own file, not by editing a preset. Details: **[Custom System Prompt / Personality Presets](custom-system-prompt.md)**.
+**Bring your own:** **+ New** opens a personality template in an unsaved editor - save it wherever you want (your folder, `.vllm/`, a repo). Save it into the shared personalities folder instead - its exact path is printed in the template - and it joins every model's dropdown. **Load** attaches any replacements JSON to the model; edits you save to that file apply on the next request, no re-attach. Keep or delete the `include` line in your file to decide whether the shared boilerplate removals run for you. Bundled filenames are extension-owned and re-copied at every start, so customize by making your own file, not by editing a preset. The rule-file syntax and `include` splicing are in the [Configuration Reference](configuration-reference.md).
 
 ### Hidden system instructions (capture & replace)
 
@@ -275,10 +275,8 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 | Doc | Covers |
 |-----|--------|
 | [Configuration Reference](configuration-reference.md) | Every model entry field, defaults, full parameter table, JSON syntax, troubleshooting, known limitations. |
-| [Model Modes](modelmodes.md) | Inference parameter recommendations and model-mode usage. |
-| [Token & Cost Usage Tracker](usage.md) | Usage/cost data model, persistence, retention, reset behavior. |
+| [Model config presets](../model-configs/README.md) | Bundled per-model configs: official sampling parameters, modes, budgets; syntax for copy-paste overrides. |
 | [Using OpenRouter](openrouter.md) | OpenRouter setup, URL table, manual config, attribution headers. |
-| [Custom System Prompt / Personality Presets](custom-system-prompt.md) | System-prompt capture & replace pipeline. |
 | [Auto-Continue](auto-continue.md) | Incomplete-response and early-server-error retries - request shapes, config, and limitations. |
 | [Agents window](agents-window.md) | Using vLLM models in the VS Code "Open in Agents" window (Agent Host BYOK). |
 | [Copilot integration](copilot-integration.md) | How the extension plugs into Copilot, sessions, tool calls. |

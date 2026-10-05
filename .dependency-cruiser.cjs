@@ -32,7 +32,7 @@ module.exports = {
       name: 'core-no-host',
       severity: 'error',
       comment:
-        'src/core/ is the Node-only product boundary (docs/core-restructuring-plan.md): no runtime imports back into host source (vscode/copilot/, vscode/state/, vscode/ui/, vscode/commands/, vscode/migrations/, vscode/logging/, extension.ts). The type-only variant lives in .dependency-cruiser.consumers.cjs — both must fire together.',
+        'src/core/ is the Node-only product boundary (core restructuring, complete 2026-10-05): no runtime imports back into host source (vscode/copilot/, vscode/state/, vscode/ui/, vscode/commands/, vscode/migrations/, vscode/logging/, extension.ts). The type-only variant lives in .dependency-cruiser.consumers.cjs — both must fire together.',
       from: { path: '^src/core/' },
       to: { path: '^src/(?!core/)' },
     },

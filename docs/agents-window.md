@@ -51,7 +51,7 @@ applies there as well: the model gets your persona's voice, the safety block is
 replaced by the user-owned security protocol (risks are surfaced to you, you
 decide), and the "Co-authored-by: Copilot" commit trailer instruction is
 removed. **Default** (no personality) leaves that prompt untouched, as always.
-See [Personalities](./custom-system-prompt.md) for the replacement mechanics.
+See [Personalities & system prompts](./manual.md#personalities--system-prompts) in the Manual for the replacement mechanics.
 
 ## Fine print
 

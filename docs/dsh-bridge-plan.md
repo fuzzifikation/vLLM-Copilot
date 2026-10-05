@@ -2,7 +2,7 @@
 
 **Status:** Ruled plan (owner decisions below are standing law for this feature). Adapter contract spike-verified 2026-10-03 against dsh `0.2.0-rc.2` (dsh-llm `LlmAdapter`); pi-ai HTTP wire facts archived from the 2026-10-01 spike.
 **Supersedes:** the free-form bridge entry that lived in [feature-ideas.md](./feature-ideas.md).
-**Prerequisite:** complete the [reusable core restructuring](./core-restructuring-plan.md) first. That plan owns this repo's extraction and Copilot preservation gates; this document owns the later dsh integration.
+**Prerequisite:** the reusable core restructuring. **Met 2026-10-05** - the plan completed with owner Phase-9 acceptance (its history lives in git; the host-neutral core ships in v1.37.0). This document owns the dsh integration.
 
 ## Intent
 
@@ -97,7 +97,7 @@ These facts describe dsh's behavior through the pi-ai openai-completions adapter
 
 ## Unit 2 (this repo): harness-independent core + adapter contract
 
-Follow the [reusable core restructuring plan](./core-restructuring-plan.md) in full before building the companion. It owns the dependency boundary, extraction sequence, configuration/cache/writer ownership, catalog and budget contract, shared request execution/retries, personalities, accounting, package proof, and Copilot/editor acceptance. There is deliberately no second extraction recipe here.
+The reusable core restructuring plan is complete (2026-10-05, shipped in v1.37.0; git history holds the plan). Its boundaries are enforced, not remembered: the dependency-cruiser gates pin the host-neutral core, `npm run core:proof` proves the packed consumer, and `copilot-instructions.md` carries the ownership rules (config cache, sole settings writer, catalog/budget contract). The companion builds on that surface; there is deliberately no second extraction recipe here.
 
 The target is one reusable implementation with framework adapters: VS Code + Copilot, editor services without Copilot, and standalone Node.js consumers. The existing HTTP gateway proposal stays retired; no gateway listener, SSE re-emission, or model-mode id encoding is needed to establish the core boundary.
 
