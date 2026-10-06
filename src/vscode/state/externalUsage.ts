@@ -113,6 +113,17 @@ export function noteUsageReset(scope: 'all' | { serverUrl: string }): void {
   persist();
 }
 
+/**
+ * Await every queued seen-id write. `deactivate()` calls this: a settled id
+ * that never reached the file is a forgotten id, and a forgotten id accepts
+ * the record again on the next replay — double-counted money, the one
+ * failure mode this module exists to prevent. Awaiting an already-drained
+ * chain is free.
+ */
+export async function flushExternalUsageWrites(): Promise<void> {
+  await writeChain;
+}
+
 /** Subscribe the barrier to the store's own reset event. Returns a disposable. */
 export function watchUsageResets(): { dispose(): void } {
   return onUsageDidReset(noteUsageReset);

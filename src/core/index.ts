@@ -17,8 +17,11 @@
  * change for staged consumers (the dsh bridge pins the extension version in
  * its staging stamps), so it must ride an extension version bump — the
  * bridge's `bridge:check` rail then catches it at pin time instead of the
- * user catching it at harness boot. The compiled `out/core` ships its `.d.ts`
- * tree beside the JS, so consumers compile against these declarations
+ * user catching it at harness boot. The rail enforcing that discipline is
+ * `docs/core-api.txt` (`npm run core:api`, run inside `build`): move this
+ * surface and the build names your export until you re-snapshot it in the
+ * same unit as the bump. The compiled `out/core` ships its `.d.ts` tree
+ * beside the JS, so consumers compile against these declarations
  * instead of duck-typing guesses.
  */
 

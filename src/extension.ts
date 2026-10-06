@@ -31,7 +31,7 @@ import { registerSetModelPersonalityCommand } from './vscode/commands/personalit
 import { registerDiagnoseConnectionCommand } from './vscode/ui/diagnostics.js';
 import { setExtensionVersion } from './vscode/ui/diagnostics.js';
 import { initUsageStore } from './vscode/state/usageStore.js';
-import { EXTERNAL_USAGE_API_VERSION, initExternalUsage, recordExternalRequests, watchUsageResets } from './vscode/state/externalUsage.js';
+import { EXTERNAL_USAGE_API_VERSION, flushExternalUsageWrites, initExternalUsage, recordExternalRequests, watchUsageResets } from './vscode/state/externalUsage.js';
 import { maybeOfferOutputLengthMigration } from './vscode/migrations/outputLengthMigration.js';
 import { maybeRunServerRegistryMigration } from './vscode/migrations/serverRegistryMigration.js';
 import { DashboardTreeProvider, DashboardDndController, registerOpenDashboardWebCommand } from './vscode/ui/dashboard.js';
@@ -376,4 +376,7 @@ export async function deactivate() {
   // tears down the extension host. Fire-and-forget would drop the tail of the log.
   // Optional-chain: activation may have thrown before fileLogger was assigned.
   await fileLogger?.close();
+  // Same law for the external-usage seen ids: an unwritten id is a forgotten
+  // id, and a forgotten id double counts on the caller's next replay.
+  await flushExternalUsageWrites();
 }

@@ -27,6 +27,10 @@
  *  - No cache layer here: `listServerModels` and the resolvers share the
  *    core's short-TTL memo with in-flight dedupe, and a failed probe is never
  *    cached past the TTL. Consumers never need a clear call.
+ *  - On OpenRouter the verdict is CATALOG MEMBERSHIP ONLY — the catalog is
+ *    global and public, so entry credentials are never probed here. "served"
+ *    says the model exists on OpenRouter, not that this entry's key works;
+ *    only the request path answers that.
  */
 import { resolveConfigId, resolveServerConfig, resolveServerType, resolveVllmModelId } from '../config/config.js';
 import type { ModelConfig } from '../config/config.js';

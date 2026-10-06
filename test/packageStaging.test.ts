@@ -63,6 +63,20 @@ describe('dual-license invariants', () => {
     expect(scripts.build).toContain('package:vsix');
   });
 
+  it('ships the core declarations and emits them inside the prepublish path', () => {
+    // The staged core's typed surface depends on TWO build facts, and each can
+    // die silently: (a) the gitignore-style `*.ts` rule above also matches
+    // `.d.ts`, so the negation is the only reason out/core/*.d.ts ships —
+    // dropping it un-types the bridge's staged copy with every test still
+    // green; (b) `vscode:prepublish` reruns `compile`, whose rmSync wipes
+    // out/, so `core:decl` must run INSIDE compile or packaging ships JS with
+    // no declarations. Pin both.
+    const ignore = read('.vscodeignore');
+    expect(ignore).toMatch(/^!out\/core\/\*\*\/\*\.d\.ts$/m);
+    const scripts = JSON.parse(read('package.json')).scripts;
+    expect(scripts.compile).toContain('core:decl');
+  });
+
   it('refuses to overwrite an edited root license during packaging', () => {
     const root = mkdtempSync(join(tmpdir(), 'vllm-license-draft-'));
     const sourceLicense = 'Business Source License 1.1\n';

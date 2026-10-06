@@ -650,6 +650,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "node -e \"const fs=require('fs');fs.rmSync('out',{recursive:true,force:true})\" && tsc -p ./ && npm run core:decl",
     "core:decl": "tsc -p tsconfig.core.json",
+    "core:api": "node scripts/core-api-surface.mjs",
     "core:proof": "node scripts/core-proof.mjs",
     "watch": "tsc -watch -p ./",
     "test": "vitest run",
@@ -672,7 +673,7 @@
     "dep:graph": "node scripts/dep-graph.mjs",
     "rent": "node scripts/rent-census.mjs",
     "cluster": "node scripts/cluster-census.mjs",
-    "build": "npm run license:check && npm run license:notices:check && npm run validate-webview-js && npm run compile && npm run dep:check && npm run rent -- --fail-on=dead && npm run test:typecheck && npm test && npm run core:proof && npm run package:vsix",
+    "build": "npm run license:check && npm run license:notices:check && npm run validate-webview-js && npm run compile && npm run core:api && npm run dep:check && npm run rent -- --fail-on=dead && npm run test:typecheck && npm test && npm run core:proof && npm run package:vsix",
     "package:vsix": "node scripts/package-vsix.mjs"
   },
   "devDependencies": {
