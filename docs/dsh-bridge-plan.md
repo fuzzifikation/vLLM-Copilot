@@ -171,3 +171,10 @@ Answer to the bridge's `docs/vllm-copilot-integration.md` wishlist. Standing rul
 - **P3 DONE via option 2 — `buildDisplayKeys(models)` in core** (display name else wire id, ` (2)` suffixes in list order, keyed by config id). Option 1 (guarantee `displayName` uniqueness in settings) rejected: existing users' settings are not unique and a migration to enforce it churns persisted data to fix a display problem the helper already solves.
 - **P4 DONE — `ingestExternalUsage(records, state)` in core (`usage/ingest.ts`).** Pure plan: dedupe by recordId, reset barriers, payload accountability, seen-id ring eviction; returns outcome + validated requests + next state. `vscode/state/externalUsage.ts` is now transport glue (file I/O, live-ledger application, reset subscription), so the bridge's e2e stand-in can wrap the real function. The dshBridge handshake (`apiVersion` 1) is byte-identical. Release prerequisite stands: no released build carries this until 1.37.1 ships.
 - **P5 REJECTED (personality winner helper):** "one personality per session, the default model's file wins" is a harness constraint, not a model fact — the editor applies personalities per model per request and has no winner rule to share. Core holds facts, consumers hold postures; the rule stays in the bridge. **SKIPPED (capability array):** by the doc's own advice — the dshBridge surface is unchanged here, so there is no real second capability to encode; do it the day one exists.
+
+**Bridge adoption (2026-10-06, local, unshipped):** `G:\dsh-vllm-bridge` is
+migrated — `catalog.ts` deleted, `coreCatalog`/`resolveServedModels` wired,
+display keys honored, and the e2e ledger double wraps the real
+`ingestExternalUsage`. The dev loop closes without any tag or publish via
+`scripts/stage-core.mjs --dir ..\vLLM-Copilot-public`. Status per item lives
+in the bridge's own `docs/vllm-copilot-integration.md` (Adoption status).
