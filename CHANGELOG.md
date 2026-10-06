@@ -1,14 +1,15 @@
 # Changelog
 
 ## v1.37.1
-Make the companion (DeepSeek Harness Bridge) integration honest and type-safe: shared answers, shared rules, and a core API its consumers can compile against instead of guess at. Nothing changes for editor-only users.
+One reason to install this: VS Code hides your Model Mode and Output Length menus in Agent Host sessions, and this release makes sure you hear the why from us instead of from a bug report. Nothing else about how the extension behaves changed.
 
 ### Added
 
-- **Typed staged core.** The packaged core now ships its TypeScript declarations next to the compiled JS, so companion tools compile against the real API — model-list records are records, not guesses.
-- **Served-model verdict.** One core answer per configured model — served, absent (with reason), or unknown when the server could not be asked — so the harness offers exactly what the model picker knows instead of probing on its own. An unreachable server is never read as "serves nothing".
-- **Display-safe model keys.** A shared rule for deriving a unique, hostname-free display key from the registry (name, else wire id, collision-suffixed), replacing per-companion reimplementations.
-- **External usage ingest as core logic.** The dedupe, reset-barrier and accountability decisions of the companion handoff moved into the core, so a companion's tests can wrap the real contract instead of mirroring it.
+- **A one-time note about Agent Host sessions.** Such a session shows your models without their menus, and the notice says so in one line with a pointer to the report. It appears only while Agent Host model access is on, and never repeats.
+
+### Known Issue
+
+- **Model Mode and Output Length disappear in Agent Host sessions (VS Code bug, not ours).** A chat running on an Agent Host session — the Copilot CLI harness, including a Local chat that reopening the conversation moved onto it — shows your models without the **Model Mode** and **Output Length** submenus, without their model icon, and without the price line. VS Code substitutes its own entry for the model there and leaves our settings menus out of it. What you configured is still sent with every request; to change it use **Manage Models…**, or start a new chat to get the normal entry back. Reported upstream as [microsoft/vscode#340138](https://github.com/microsoft/vscode/issues/340138). Until Microsoft fixes it there, there is nothing this extension can do.
 
 ## v1.37.0
 Code restructuring that prepares the extension for dsh integration: the model request machinery (config resolution, request assembly, transport, personalities, usage accounting) now lives in a host-neutral core other tools can reuse without the editor. Nothing user-facing changed; behavior, features and defaults match v1.36.16.

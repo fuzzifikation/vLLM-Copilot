@@ -82,6 +82,7 @@ If you want to support this work: [![Sponsor via PayPal](https://img.shields.io/
 - [Features](#features)
 - [Servers & backends](#servers--backends)
 - [Commands](#commands)
+- [Known Issues](#known-issues)
 - [Development](#development)
 - [Support](#support)
 
@@ -376,6 +377,12 @@ Right-click a **vLLM** server node → **vLLM Deep-Dive** opens a per-server web
 | **Diagnose Connection** | Deep TLS/proxy/DNS/cert diagnostic report |
 
 The full command list, including auth rotation, model/server removal, log tools, and session cleanup: [Manual → Commands](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md#commands).
+
+---
+
+## Known Issues
+
+**Agent Host sessions hide the model menus.** When a chat runs on an Agent Host session (the Copilot CLI harness — including a Local chat that restoring the conversation moved onto it), the picker shows VS Code's own copy of your models instead of the one this extension published. That copy keeps the token budgets and capabilities but drops the **Model Mode** and **Output Length** submenus, the model icon and the price line. Your saved values are still applied to every request — change them under **Manage Models…**, or start a new chat to get the full entry back. Upstream: [microsoft/vscode#340138](https://github.com/microsoft/vscode/issues/340138).
 
 ---
 

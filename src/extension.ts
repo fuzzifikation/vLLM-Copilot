@@ -8,6 +8,7 @@ import {
   registerConfigureUtilityModelCommand,
   ensureByokUtilityDefault,
   ensureAgentHostModelsEnabled,
+  maybeShowAgentHostNotice,
 } from './vscode/commands/byok.js';
 import { setSessionManagerOutput } from './vscode/copilot/sessionManager.js';
 import { syncBundledPersonalities, migratePersonalityPathRefs } from './vscode/state/personalityStore.js';
@@ -277,6 +278,13 @@ export async function activate(context: vscode.ExtensionContext) {
     // Fire-and-forget like the BYOK ensure above; failures land in the Output channel.
     maybeOfferOutputLengthMigration(context, outputChannel).catch(err => {
       outputChannel.appendLine(`[WARN] Output length migration offer failed: ${err}`);
+    });
+
+    // One-time heads-up that Agent Host sessions hide our picker UI (menus,
+    // icon, price line) — VS Code renders its own bridge copy there. Fire-and-
+    // forget like the migration above; it records itself as seen before showing.
+    maybeShowAgentHostNotice(context).catch(err => {
+      outputChannel.appendLine(`[WARN] Agent Host notice failed: ${err}`);
     });
 
     // Expose the model-entry schema to Copilot Chat as an on-demand LM tool so

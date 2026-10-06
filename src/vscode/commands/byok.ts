@@ -121,6 +121,50 @@ export async function ensureAgentHostModelsEnabled(): Promise<void> {
   }
 }
 
+/** globalState key; the notice shows once per install, whatever the outcome. */
+const AGENT_HOST_NOTICE_FLAG = 'vllmCopilot.agentHostByokNotice.v1';
+/** Upstream report for the metadata the Agent Host bridge drops. */
+const AGENT_HOST_BRIDGE_ISSUE_URL = 'https://github.com/microsoft/vscode/issues/340138';
+
+/**
+ * One-time notice about what an Agent Host session does to our picker entries.
+ *
+ * When a chat runs on the Agent Host (the Copilot CLI harness — including a
+ * Local chat that conversation restore re-bound to it), VS Code does not render
+ * the entry this extension published; it renders its own bridged copy of the
+ * model, which carries the token budgets and capabilities but none of the
+ * provider UI: the `configurationSchema` submenus (Model Mode, Output Length),
+ * the status icon, and the price/warning lines all disappear. The saved values
+ * still reach the request, so the model behaves correctly while the menus to
+ * change it are gone — which users reliably read as our bug. Say it once.
+ *
+ * Gated on the bridge actually being on (and on builds that register the
+ * setting), and recorded as seen before the dialog opens: an informational
+ * notice must never nag, not even if the window dies mid-dialog.
+ */
+export async function maybeShowAgentHostNotice(context: vscode.ExtensionContext): Promise<void> {
+  if (context.globalState.get<string>(AGENT_HOST_NOTICE_FLAG)) return;
+  if (
+    vscode.workspace
+      .getConfiguration('chat')
+      .get<boolean>(AGENT_HOST_BYOK_MODELS_SECTION_KEY) !== true
+  ) {
+    return;
+  }
+
+  await context.globalState.update(AGENT_HOST_NOTICE_FLAG, 'seen');
+  const choice = await vscode.window.showInformationMessage(
+    'vLLM-Copilot: chats running on an Agent Host session show VS Code\'s own copy of your models, ' +
+      'which hides Model Mode, Output Length, the model icon and the price line. Saved values still ' +
+      'apply — change them in Manage Models… (upstream: microsoft/vscode#340138).',
+    { title: 'Open upstream issue' },
+    { title: 'Got it', isCloseAffordance: true }
+  );
+  if (choice?.title === 'Open upstream issue') {
+    await vscode.env.openExternal(vscode.Uri.parse(AGENT_HOST_BRIDGE_ISSUE_URL));
+  }
+}
+
 /**
  * Register the "Configure Utility Model" command: choose between using the
  * main agent model, GitHub Copilot, or none for utility flows. Manual
