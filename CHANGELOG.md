@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.37.1
+Make the companion (DeepSeek Harness Bridge) integration honest and type-safe: shared answers, shared rules, and a core API its consumers can compile against instead of guess at. Nothing changes for editor-only users.
+
+### Added
+
+- **Typed staged core.** The packaged core now ships its TypeScript declarations next to the compiled JS, so companion tools compile against the real API — model-list records are records, not guesses.
+- **Served-model verdict.** One core answer per configured model — served, absent (with reason), or unknown when the server could not be asked — so the harness offers exactly what the model picker knows instead of probing on its own. An unreachable server is never read as "serves nothing".
+- **Display-safe model keys.** A shared rule for deriving a unique, hostname-free display key from the registry (name, else wire id, collision-suffixed), replacing per-companion reimplementations.
+- **External usage ingest as core logic.** The dedupe, reset-barrier and accountability decisions of the companion handoff moved into the core, so a companion's tests can wrap the real contract instead of mirroring it.
+
 ## v1.37.0
 Code restructuring that prepares the extension for dsh integration: the model request machinery (config resolution, request assembly, transport, personalities, usage accounting) now lives in a host-neutral core other tools can reuse without the editor. Nothing user-facing changed; behavior, features and defaults match v1.36.16.
 

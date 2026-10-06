@@ -411,6 +411,32 @@ export function buildModelId(serverEntryId: string, vllmModelId: string): string
 }
 
 /**
+ * Display-safe unique keys for a model list — the ONE keying rule for any
+ * surface that must show or key a model without leaking the registry id:
+ * the trimmed `displayName`, else the wire id; a repeated base gets
+ * ` (2)`, ` (3)` … in list order. Generated registry ids embed the server
+ * entry id (`buildModelId`), which is fine in the user's own editor but
+ * puts a private hostname on screen in third-party UIs — these keys never
+ * do. Deterministic for a given list content; a persistence key it is NOT
+ * (the config id owns persistence). Result keyed by config id, entries in
+ * list order; models without any resolvable id are skipped.
+ */
+export function buildDisplayKeys(models: ModelConfig[]): Map<string, string> {
+  const taken = new Set<string>();
+  const keys = new Map<string, string>();
+  for (const model of models) {
+    const configId = resolveConfigId(model);
+    if (!configId) continue;
+    const base = model.displayName?.trim() || resolveVllmModelId(model) || configId;
+    let key = base;
+    for (let n = 2; taken.has(key); n++) key = `${base} (${n})`;
+    taken.add(key);
+    keys.set(configId, key);
+  }
+  return keys;
+}
+
+/**
  * Find the user override that produced a given VS Code model id.
  *
  * `buildModelInfo` sets a model's picker id to the override's required `id`.

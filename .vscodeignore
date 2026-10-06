@@ -21,6 +21,11 @@ node_modules/
 !node_modules/best-effort-json-parser/package.json
 !node_modules/best-effort-json-parser/dist/**/*.js
 out/**/*.map
+# The core's typed public surface ships with the JS: the dsh bridge stages
+# out/core wholesale, and companions compile against these declarations
+# instead of duck-typing. The gitignore-style `*.ts` rule above matches
+# `.d.ts` too, so this negation is load-bearing, not decoration.
+!out/core/**/*.d.ts
 
 # Dev docs (not needed at runtime)
 docs/

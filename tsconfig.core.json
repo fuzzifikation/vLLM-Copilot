@@ -1,11 +1,13 @@
 {
-  // Node-only declaration proof for the core package (Phase 8). Extends the
-  // root config — inherited strictness included — but limits the program to
-  // src/core, replaces the ambient types with Node alone, and emits
-  // declarations only into ignored scratch. Declared in the real build
-  // pipeline as `core:decl`; scripts/core-proof.mjs consumes these
-  // declarations with the compiled out/core JS. skipLibCheck stays OFF: the
-  // core's own dependency declarations must be sound.
+  // Node-only declaration proof for the core package (Phase 8), shipped as the
+  // core's typed public surface. Extends the root config — inherited
+  // strictness included — but limits the program to src/core, replaces the
+  // ambient types with Node alone, and emits declarations ONLY, beside the
+  // compiled JS in out/core: the VSIX ships them, the dsh bridge stages them
+  // with the core it vendors, and scripts/core-proof.mjs consumes exactly the
+  // tree a staged consumer gets. Declared in the real build pipeline inside
+  // `compile` (so vscode:prepublish carries them into packaging). skipLibCheck
+  // stays OFF: the core's own dependency declarations must be sound.
   //
   // Isolation truth (probed 2026-10-04, TS 6): "types": ["node"] gates GLOBAL
   // ambient type packages only — a literal `import 'vscode'` inside core would
@@ -19,7 +21,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "rootDir": "src/core",
-    "outDir": "temp/core-decl",
+    "outDir": "out/core",
     "types": ["node"],
     "skipLibCheck": false,
     "declaration": true,

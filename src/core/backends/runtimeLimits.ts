@@ -337,8 +337,13 @@ export interface ServerModelEntry {
   maxModelLen?: number;
 }
 
-/** Probe failure. `status` is set for HTTP failures so callers can classify
- *  auth (401/403) without parsing the message. */
+/**
+ * Probe failure — THE signal for "the probe could not get an answer".
+ * `status` is set for HTTP failures so callers can classify auth (401/403)
+ * without parsing the message. Consumers classify with
+ * `instanceof ServerProbeError`, never by matching `err.name` — the name
+ * exists for log readability, the class is the contract.
+ */
 export class ServerProbeError extends Error {
   constructor(message: string, readonly status?: number) {
     super(message);
@@ -368,6 +373,14 @@ export class ServerProbeError extends Error {
  *
  * Diagnostics' independent transport probes and the Add flow's classified
  * pick-list are NOT consumers — their independence/failure UX is the point.
+ *
+ * The returned shape is part of the public contract: descriptor RECORDS
+ * ({@link ServerModelEntry}, keyed by `id`), never bare strings — a consumer
+ * that guesses `string[]` compares wire ids against objects, reads every
+ * model as absent, and prunes a healthy catalog. An EMPTY array means the
+ * server answered with nothing, which `resolveServedModels` (catalog/served.ts)
+ * and every pruning consumer must treat as "unknown": "could not ask" is
+ * never "serves nothing".
  */
 export async function listServerModels(
   serverType: ServerType,

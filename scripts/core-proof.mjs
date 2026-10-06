@@ -12,7 +12,7 @@
  *
  * Pipeline contract (all wired into `npm run build`):
  *   compile      -> out/core (the shipped JS tree, no copies)
- *   core:decl    -> temp/core-decl (Node-only declarations, skipLibCheck off)
+ *   compile      -> out/core (JS + Node-only declarations, skipLibCheck off)
  *   core:proof   -> THIS SCRIPT  (stage, pack, install, check, run)
  *
  * Staging rules (frozen from the completed core restructuring, 2026-10-05; git history holds the plan):
@@ -46,7 +46,9 @@ const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 
 const stage = join(root, 'temp', 'core-proof', 'pkg');
 const tgzDir = join(root, 'temp', 'core-proof');
-const declDir = join(root, 'temp', 'core-decl');
+// Declarations are emitted INTO out/core (tsconfig.core.json) so the shipped
+// tree, the bridge's staged copy and this proof all read the same typed
+// surface — there is no second scratch emit to reconcile anymore.
 const jsDir = join(root, 'out', 'core');
 let consumer = '';
 
@@ -84,30 +86,20 @@ function walk(dir, base = dir) {
   return out;
 }
 
-function copyDeclarations() {
-  for (const rel of walk(declDir)) {
-    if (!rel.endsWith('.d.ts')) continue;
-    const dest = join(stage, 'core', rel);
-    mkdirSync(dirname(dest), { recursive: true });
-    cpSync(join(declDir, rel), dest, { force: true });
-  }
-}
-
 try {
   if (!existsSync(join(jsDir, 'index.js'))) {
     fail(`${join(jsDir, 'index.js')} is missing — run \`npm run compile\` before this proof.`);
   }
-  if (!existsSync(join(declDir, 'index.d.ts'))) {
-    fail(`${join(declDir, 'index.d.ts')} is missing — run \`npm run core:decl\` before this proof.`);
+  if (!existsSync(join(jsDir, 'index.d.ts'))) {
+    fail(`${join(jsDir, 'index.d.ts')} is missing — run \`npm run compile\` before this proof.`);
   }
 
-  // ── 1. Stage: compiled core JS + independently checked declarations ──────
+  // ── 1. Stage: compiled core JS + its declarations, exactly the shipped tree ─
   rmSync(stage, { recursive: true, force: true });
   mkdirSync(join(stage, 'core'), { recursive: true });
+  // Declarations sit BESIDE the JS in out/core, so the recursive copy stages
+  // both — this proof consumes the same tree the bridge stages.
   cpSync(jsDir, join(stage, 'core'), { recursive: true });
-  // Declarations sit BESIDE the JS so every relative import in the .d.ts tree
-  // resolves exactly as it did in the declaration-only emit.
-  copyDeclarations();
 
   // ── 2. Dependencies: every bare import must be declared at the root ──────
   // Line-anchored scan: tsc EMITS EVERY import on one line — multi-line source
@@ -253,11 +245,13 @@ import type { AddressInfo } from 'node:net';
 import {
   applyPromptReplacements,
   assembleRequest,
+  buildDisplayKeys,
   ChatTransport,
   createExecutionState,
   describeModels,
   executeChatRequest,
   findModelCost,
+  ingestExternalUsage,
   formatCost,
   formatCostFine,
   formatCostSummary,
@@ -266,10 +260,12 @@ import {
   loadPromptReplacements,
   resolveModelReplacements,
   resolveRuntimeLimits,
+  resolveServedModels,
   UsageLedger,
   type AttemptCompletionEvent,
   type AssembleRequestInput,
   type ExecutionEvent,
+  type ExternalRequestRecord,
   type ExecutionInput,
   type ExecutionTransport,
   type ModelConfig,
@@ -630,6 +626,46 @@ try {
   assert.match(String(streamError), /kaboom/);
   assert.equal(completions4.length, 0);
   console.log('ok  stream error (propagates, no invented completion record)');
+
+  // 9. Companion API (v1.37.1): served verdicts, display keys, external
+  //    ingest plan — asserted from OUTSIDE the repo against the shipped
+  //    declarations, which is the entire point of the typed staged core.
+  const verdicts = await resolveServedModels(
+    [models[0], { id: 'ghost', vllmModelId: 'ghost/model', server: 'srv' }, { id: 'orphan', vllmModelId: WIRE_ID, server: 'no-such-server' }],
+    servers
+  );
+  assert.equal(verdicts.get('proof')?.state, 'served', 'a wire id on the list is served');
+  assert.equal(verdicts.get('ghost')?.state, 'absent', 'a wire id the list lacks is absent');
+  assert.equal(verdicts.get('orphan')?.state, 'absent', 'a dangling server ref is absent, not unknown');
+  const displayKeys = buildDisplayKeys([
+    { id: 'k1', displayName: 'Same', server: 'srv' },
+    { id: 'k2', displayName: 'Same', server: 'srv' },
+    { id: 'k3', vllmModelId: 'wire/three', server: 'srv' },
+  ]);
+  assert.equal(displayKeys.get('k1'), 'Same');
+  assert.equal(displayKeys.get('k2'), 'Same (2)', 'a taken display key is suffixed, never silently reused');
+  assert.equal(displayKeys.get('k3'), 'wire/three', 'no displayName falls back to the wire id');
+  const extRecord = (recordId: string, timestamp: number, overrides?: Partial<ExternalRequestRecord['request']>): ExternalRequestRecord => ({
+    recordId,
+    recordedAt: new Date(timestamp).toISOString(),
+    request: { serverUrl: backend.base, modelId: WIRE_ID, timestamp, promptTokens: 10, completionTokens: 2, totalTokens: 12, ...overrides },
+  });
+  const plan = ingestExternalUsage(
+    [
+      extRecord('p-1', Date.now()),
+      extRecord('p-1', Date.now()),
+      extRecord('p-2', Date.parse('2020-01-01T00:00:00Z')),
+      extRecord('p-3', Date.now(), { promptTokens: -1 }),
+    ],
+    { seenIds: ['old-seen'], barriers: { all: Date.parse('2025-06-01T00:00:00Z') } }
+  );
+  assert.deepEqual(plan.outcome.accepted, ['p-1']);
+  assert.deepEqual(plan.outcome.duplicate, ['p-1'], 'the same id twice in one batch counts once');
+  assert.deepEqual(plan.outcome.preReset, ['p-2'], 'traffic before the barrier stays gone');
+  assert.deepEqual(plan.outcome.rejected, ['p-3'], 'an unaccountable payload is refused, not folded in');
+  assert.equal(plan.requests.length, 1);
+  assert.ok(plan.nextSeenIds.includes('old-seen') && plan.nextSeenIds.includes('p-1'));
+  console.log('ok  companion API (served verdicts, display keys, external ingest plan)');
 
   console.log('CORE PROOF OK');
 } finally {

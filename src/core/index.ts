@@ -11,6 +11,15 @@
  * settings reads, no host paths. Host inputs (URLs, headers, registries,
  * directories, storage paths, log sinks) are arguments. The executable JS is
  * the extension's own compiled `out/core` tree — one source build, no copies.
+ *
+ * THIS EXPORT LIST IS THE PUBLIC API of the core package, same discipline as
+ * any published one: adding, renaming or re-typing an export is a contract
+ * change for staged consumers (the dsh bridge pins the extension version in
+ * its staging stamps), so it must ride an extension version bump — the
+ * bridge's `bridge:check` rail then catches it at pin time instead of the
+ * user catching it at harness boot. The compiled `out/core` ships its `.d.ts`
+ * tree beside the JS, so consumers compile against these declarations
+ * instead of duck-typing guesses.
  */
 
 // ─── Wire vocabulary ─────────────────────────────────────────────────────
@@ -34,6 +43,7 @@ export type {
 // ─── Configuration policy and server registry ────────────────────────────
 export type { ModelConfig, VllmConfig } from './config/config.js';
 export {
+  buildDisplayKeys,
   DEFAULT_MODEL_SETTINGS,
   findModelConfig,
   normalizeModelEntry,
@@ -57,6 +67,10 @@ export { buildOutputLengthLadder, deriveTokenBudget, isValidContextWindow, resol
 // ─── Catalog: discovery facts and neutral descriptors ────────────────────
 export type { DescribeModelInput, ModelDescriptor, ModelLimitsResolver } from './catalog/describe.js';
 export { describeModel, describeModels } from './catalog/describe.js';
+// The served-model VERDICT (served / absent / unknown) — the answer only; each
+// consumer keeps its own reaction (see the module header).
+export type { ModelServedState, ModelServedVerdict } from './catalog/served.js';
+export { resolveServedModels } from './catalog/served.js';
 export type { ServerModelEntry } from './backends/runtimeLimits.js';
 export {
   MissingContextWindowError,
@@ -124,5 +138,14 @@ export type {
 } from './usage/ledger.js';
 export { UsageLedger, emptyCounts, findModelCost, mergePersisted, parsePersisted } from './usage/ledger.js';
 export type { LastRequestData } from './usage/record.js';
+// The external-usage handoff plan (dedupe, reset barriers, accountability) —
+// pure decisions; the host owns files and the live ledger.
+export type {
+  ExternalIngestPlan,
+  ExternalRequestOutcome,
+  ExternalRequestRecord,
+  ExternalUsageState,
+} from './usage/ingest.js';
+export { ingestExternalUsage } from './usage/ingest.js';
 export type { CostRates } from './usage/money.js';
 export { formatCost, formatCostFine, formatCostRate, formatCostSummary } from './usage/money.js';
