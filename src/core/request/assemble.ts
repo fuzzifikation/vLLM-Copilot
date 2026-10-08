@@ -58,8 +58,8 @@ export interface RequestTool {
 }
 
 /**
- * Entry-independent input for request assembly (docs/dsh-bridge-plan.md, Unit 2
- * "neutral core extraction"). Each entry point — the Copilot adapter below, the
+ * Entry-independent input for request assembly (dsh-vllm-bridge repo,
+ * docs/dsh-bridge-plan.md, Unit 2 "neutral core extraction"). Each entry point — the Copilot adapter below, the
  * harness gateway — resolves its own framework types into this plain struct.
  * The core never sees vscode chat types.
  */

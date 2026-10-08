@@ -3,7 +3,7 @@
 # canonical printer output, sorted). Drift fails `npm run build`: an export
 # added, renamed or re-typed is a contract change for staged consumers and
 # must ride an extension version bump in the same unit. Re-run --update only
-# as the acknowledgment step of that discipline (docs/dsh-bridge-plan.md).
+# as the acknowledgment step of that discipline (dsh-vllm-bridge repo, docs/dsh-bridge-plan.md).
 
 ## ApplyResult
   interface ApplyResult {

@@ -101,7 +101,7 @@ Copilot glue we don't own.
 
 - **Browser-hosted VS Code** (`code-server`, `serve-web`, vscode.dev): Copilot
   does not run on non-Microsoft products or in web hosts — already field-
-  documented in [dsh-bridge-plan](./dsh-bridge-plan.md) (VSCodium no-Copilot
+  documented in dsh-bridge-plan (`dsh-vllm-bridge` repo, docs/) — VSCodium no-Copilot
   research). The one surface we most need to test is absent. Dead end.
 - **Remote tunnels as the remote control**: `code tunnel` mirrors the desktop
   into a browser; automating that browser automates VS Code by telephone.

@@ -32,7 +32,7 @@
  *
  * Updating the snapshot IS the acknowledgment step of the API discipline:
  * run --update only when the move is intentional, and let it ride a version
- * bump in the same unit (docs/dsh-bridge-plan.md, Companion API rulings).
+ * bump in the same unit (dsh-vllm-bridge repo, docs/dsh-bridge-plan.md, Companion API rulings).
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -100,7 +100,7 @@ function serialize(blocks) {
     '# canonical printer output, sorted). Drift fails `npm run build`: an export',
     '# added, renamed or re-typed is a contract change for staged consumers and',
     '# must ride an extension version bump in the same unit. Re-run --update only',
-    '# as the acknowledgment step of that discipline (docs/dsh-bridge-plan.md).',
+    '# as the acknowledgment step of that discipline (dsh-vllm-bridge repo, docs/dsh-bridge-plan.md).',
     '',
   ];
   for (const name of [...blocks.keys()].sort()) {

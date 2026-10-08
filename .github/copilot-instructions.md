@@ -11,6 +11,15 @@
 
 ## This Repository: vLLM-Copilot
 
+### Scope law (owner ruling 2026-10-08): one thing, done for years
+
+This repository is a vLLM-Copilot extension — **that and only that**: vLLM (and OpenRouter) models, inside GitHub Copilot, in VS Code — kept working while upstream moves the floor under us. A tidy repository that aims to do one thing.
+
+- **This is the test for every proposal:** does it make *Copilot with a vLLM server* better or keep it working? If the sentence can't be completed, the idea belongs to another product — the DSH bridge (`dsh-vllm-bridge`) and the Unified Mixers gateway (`unifiedmixers/gateway`) have their own repos, ledgers, and plans.
+- **No plans of other products rest here, not even as copies.** Cross-repo references cite the owning repo by name; `docs/` holds documents about this one job, nothing else (verified by sweep 2026-10-08: all 17 docs serve the extension).
+- **The host-neutral core layout stays** because it earns its rent *inside* this mission (clean seams, testability); the bridge consuming that boundary does not justify it, and nothing else may consume it by default.
+- When Microsoft reshapes Copilot again, the response lives here: provider facts get re-verified, the picker policy adapts, the wire format holds. Surviving Copilot churn is the mission, not a side effect.
+
 ### Architecture: Server Registry, Models Reference It
 - **Servers are registry entries.** The top-level `vllm-copilot.servers` setting is an explicit lookup table of server entries (`id`, `serverUrl`, optional `requestHeaders`, `serverType`, `displayName`). Each model entry in `vllm-copilot.models` has a required `id` and `server` (the registry entry's id) — models never carry URLs, auth headers, server types, or server labels.
 - **The global settings are the `servers` registry plus the standalone toggles/diagnostics keys** (`enableFileLogging`, `logBodyLimit`, `systemMessageCapture`, `fixEmptyToolParameters`, `dashboard.pollIntervalMs`). Everything else lives inside a `servers` entry or a `models` entry.

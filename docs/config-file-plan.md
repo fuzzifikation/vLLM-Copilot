@@ -1,6 +1,6 @@
 # Config File Plan: Optional Local Config File
 
-Status: BRIDGE PROVEN 2026-09-25. No production file backend yet; the optional backend is now unblocked to be built. Deferred behind the [dsh bridge](./dsh-bridge-plan.md) per owner prioritization (2026-10-05): the bridge stays the next build.
+Status: BRIDGE PROVEN 2026-09-25. No production file backend yet; the optional backend is now unblocked to be built. Deferred behind the dsh bridge (plan: `docs/dsh-bridge-plan.md` in the `dsh-vllm-bridge` repo) per owner prioritization (2026-10-05): the bridge stays the next build.
 Date: 2026-09-25. v5, updated after the local-write to WSL-read/write to automatic-local-observation round trip was verified on a real local Windows host with WSL.
 
 ## 0. Ruling ledger (owner decisions, 2026-09-25)
