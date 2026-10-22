@@ -162,7 +162,8 @@ try {
 
   // ── 4. npm pack + packed-list inspection ─────────────────────────────────
   const packJson = JSON.parse(npm(['pack', '--json', '--pack-destination', tgzDir], stage));
-  const packed = packJson[0];
+  // npm <=11 prints an array of pack results; npm 12+ prints an object keyed by package name.
+  const packed = Array.isArray(packJson) ? packJson[0] : Object.values(packJson)[0];
   const packedFiles = packed.files.map((f) => f.path);
   for (const required of ['core/index.js', 'core/index.d.ts', 'core/config/config.js', 'LICENSE', 'THIRD-PARTY-NOTICES.txt', 'package.json']) {
     if (!packedFiles.includes(required)) fail(`packed tarball is missing ${required}`);

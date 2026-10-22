@@ -564,6 +564,31 @@ describe('ServerSettingsViewProvider', () => {
   });
 
   describe('refreshWebview', () => {
+    it('labels an exact saved preset match without claiming edited modes came from it', async () => {
+      mockContext.extensionUri = { fsPath: 'extension' };
+      const modes = { Think: { temperature: 1 } };
+      vi.spyOn(vscode.workspace.fs, 'readDirectory').mockResolvedValue([['Qwen-preset.json', vscode.FileType.File]]);
+      vi.spyOn(vscode.workspace.fs, 'readFile').mockResolvedValue(new TextEncoder().encode(JSON.stringify({
+        presetVersion: 1, match: ['Qwen3.8-Flash-Next'], config: { modelModes: modes },
+      })));
+      const postMessage = vi.fn().mockResolvedValue(true);
+      (provider as any).view = { webview: { postMessage } };
+      (provider as any).isWebviewReady = true;
+      mockContext.globalStorageUri = { fsPath: 'global-storage' };
+      vscode.workspace._mockConfig = {
+        get: (key: string) => key === 'models' ? [
+          { id: 'preset', vllmModelId: 'Qwen3.8-Flash-Next', server: 'srv', modelModes: modes },
+          { id: 'custom', vllmModelId: 'Qwen3.8-Flash-Next', server: 'srv', modelModes: { Think: { temperature: 0.3 } } },
+        ] : key === 'servers' ? [{ id: 'srv', serverUrl: 'http://preset-test:8000' }] : undefined,
+        update: vi.fn(),
+      };
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ data: [] })));
+      await (provider as any).refreshWebview();
+      expect(lastDataPayload(postMessage).modeSourcesByModel).toEqual({
+        srv: { preset: 'Saved modes match preset: Qwen-preset.json' },
+      });
+    });
+
     it('uses trusted headers with a canonical URL but strips them from webview state', async () => {
       const postMessage = vi.fn().mockResolvedValue(true);
       (provider as any).view = { webview: { postMessage } };

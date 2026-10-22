@@ -380,35 +380,26 @@ function normalizeOpenRouterModel(
     supports(data, 'reasoning_effort');
   const reasoningCfg = data.reasoning;
   const reasoningMandatory = reasoningCfg?.mandatory === true;
-  const supportsMaxTokens = reasoningCfg?.supports_max_tokens === true;
   let modelModes: Record<string, Record<string, unknown>> | undefined;
   let defaultMode: string | undefined;
 
   if (reasoningSupported) {
     modelModes = {};
 
-    if (supportsMaxTokens) {
-      // Anthropic-style reasoning: the budget is set via `reasoning.max_tokens`,
-      // not an effort level, and there's no per-effort mapping. A single "Think"
-      // mode (reasoning on) + "No Think" (when disableable) is the honest shape.
-      modelModes['Think'] = { reasoning: { enabled: true } };
-    } else {
-      // Effort ladder from supported_efforts (API ships no order — the
-      // highest-effort defaultMode fallback below relies on catalog ordering,
-      // which is a contract this module does not get); skipping 'none'. Elements
-      // are validated, not trusted: an empty-string or null entry would turn
-      // thinkModeLabel's `effort[0].toUpperCase()` into a TypeError, which the
-      // metrics engine files under TRANSIENT — the model would then be retried
-      // forever in silence instead of reported (CR-55). Fall back to a single
-      // 'high' when the API omits the allowlist OR the usable list is empty.
-      const ladder = (reasoningCfg?.supported_efforts ?? []).filter(
+    // Explicit efforts remain selectable even when a reasoning token budget is
+    // supported too. A null allowlist accepts all gateway efforts; an omitted
+    // or empty list does not establish effort selection (OpenRouter docs).
+    const ladder = reasoningCfg?.supported_efforts === null
+      ? ['max', 'xhigh', 'high', 'medium', 'low', 'minimal']
+      : (reasoningCfg?.supported_efforts ?? []).filter(
         (e): e is string => typeof e === 'string' && e !== '' && e !== 'none'
       );
-      const efforts = ladder.length > 0 ? ladder : ['high'];
-      for (const effort of efforts) {
-        const label = thinkModeLabel(effort);
-        modelModes[label] = { reasoning: { enabled: true, effort } };
+    if (ladder.length > 0) {
+      for (const effort of ladder) {
+        modelModes[thinkModeLabel(effort)] = { reasoning: { enabled: true, effort } };
       }
+    } else {
+      modelModes['Think'] = { reasoning: { enabled: true } };
     }
 
     if (!reasoningMandatory) {

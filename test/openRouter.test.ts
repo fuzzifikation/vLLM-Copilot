@@ -255,17 +255,17 @@ describe('normalizeOpenRouterModel', () => {
       'x',
     );
     expect(optional.modelModes).toEqual({
-      'Think (High)': { reasoning: { enabled: true, effort: 'high' } },
+      'Think': { reasoning: { enabled: true } },
       'No Think': { reasoning: { enabled: false } },
     });
-    expect(optional.defaultMode).toBe('Think (High)');
+    expect(optional.defaultMode).toBe('Think');
 
     const mandatory = normalizeModelViaCatalog(
       { ...base, supported_parameters: ['reasoning'], reasoning: { mandatory: true } },
       'x',
     );
     expect(mandatory.modelModes).toEqual({
-      'Think (High)': { reasoning: { enabled: true, effort: 'high' } },
+      'Think': { reasoning: { enabled: true } },
     });
     expect('No Think' in (mandatory.modelModes ?? {})).toBe(false);
   });
@@ -307,12 +307,12 @@ describe('normalizeOpenRouterModel', () => {
     expect(info.defaultMode).toBe('No Think');
   });
 
-  it('uses a single Think mode for Anthropic-style max_tokens reasoning (no effort ladder)', () => {
+  it('uses a single Think mode for token-budget reasoning without effort metadata', () => {
     const info = normalizeModelViaCatalog(
       {
         ...base,
         supported_parameters: ['reasoning'],
-        reasoning: { mandatory: false, supports_max_tokens: true, supported_efforts: ['high'] },
+        reasoning: { mandatory: false, supports_max_tokens: true },
       },
       'x',
     );
@@ -361,7 +361,7 @@ describe('normalizeOpenRouterModel', () => {
     expect(info.defaultMode).toBe('Think (High)');
   });
 
-  it('falls back to a single high effort when supported_efforts is empty or all-none', () => {
+  it('uses a toggle without inventing effort when supported_efforts is empty or all-none', () => {
     // An empty or all-'none' ladder is contradictory metadata — treat like missing.
     for (const supported_efforts of [[], ['none']]) {
       const info = normalizeModelViaCatalog(
@@ -373,10 +373,10 @@ describe('normalizeOpenRouterModel', () => {
         'x',
       );
       expect(info.modelModes).toEqual({
-        'Think (High)': { reasoning: { enabled: true, effort: 'high' } },
+        'Think': { reasoning: { enabled: true } },
         'No Think': { reasoning: { enabled: false } },
       });
-      expect(info.defaultMode).toBe('Think (High)');
+      expect(info.defaultMode).toBe('Think');
     }
   });
 
@@ -667,5 +667,26 @@ describe('fetchOpenRouterModelEndpoints (pricing whitelist)', () => {
     });
     // No time windows: the worst-case marker stays absent (absence IS the signal).
     expect(eps[0].pricing?.worst_case).toBeUndefined();
+  });
+});
+
+
+describe('OpenRouter reasoning capability combinations', () => {
+  it('preserves explicit efforts when token budgets are also supported', () => {
+    const info = normalizeModelViaCatalog({
+      id: 'qwen/test', context_length: 262144,
+      reasoning: { supports_max_tokens: true, supported_efforts: ['xhigh', 'medium', 'low'], default_effort: 'medium' },
+    }, 'qwen/test');
+    expect(Object.keys(info.modelModes!)).toEqual(['Think (Xhigh)', 'Think (Medium)', 'Think (Low)', 'No Think']);
+    expect(info.modelModes!['Think (Medium)']).toEqual({ reasoning: { enabled: true, effort: 'medium' } });
+    expect(info.defaultMode).toBe('Think (Medium)');
+  });
+
+  it('treats a null effort allowlist as all gateway efforts', () => {
+    const info = normalizeModelViaCatalog({ id: 'qwen/test', context_length: 262144,
+      reasoning: { supports_max_tokens: true, supported_efforts: null, mandatory: true },
+    }, 'qwen/test');
+    expect(Object.values(info.modelModes!).map(mode => (mode.reasoning as any).effort))
+      .toEqual(['max', 'xhigh', 'high', 'medium', 'low', 'minimal']);
   });
 });

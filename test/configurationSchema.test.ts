@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildModelInfo } from '../src/vscode/copilot/modelInfo.js';
+import { buildRequest } from '../src/vscode/copilot/requestBuilder.js';
+import { readPickerSelection } from '../src/vscode/state/config.js';
 import { describeModel } from '../src/core/catalog/describe.js';
 
 // A generous ceiling so mode-only fixtures are never filtered — the length
@@ -43,8 +45,9 @@ describe('buildConfigurationSchema', () => {
 
     expect(schema).toBeDefined();
     const prop = schema!.properties.reasoningEffort as any;
-    expect(prop.enum).toEqual(['Think', 'No Think']);
-    expect(prop.default).toBe('Think');
+    expect(prop.enum).toEqual(['high', 'none']);
+    expect(prop.enumItemLabels).toEqual(['Think', 'No Think']);
+    expect(prop.default).toBe('high');
     // A model with modes but a scalar budget gets NO length dropdown.
     expect(schema!.properties.maxOutputTokens).toBeUndefined();
   });
@@ -63,8 +66,9 @@ describe('buildConfigurationSchema', () => {
 
       expect(schema).toBeDefined();
       const prop = schema!.properties.reasoningEffort as any;
-      expect(prop.enum).toEqual(['Think general', 'Think coding', 'No Think instruct']);
-      expect(prop.default).toBe('Think general');
+      expect(prop.enum).toEqual(['high', 'medium', 'none']);
+      expect(prop.enumItemLabels).toEqual(['Think general', 'Think coding', 'No Think instruct']);
+      expect(prop.default).toBe('high');
     });
 
     it('a vector-form maxOutputTokens alone yields a length-only schema', () => {
@@ -148,5 +152,83 @@ describe('output-length menu (resolveOutputLengthOptions, via the schema)', () =
     const r = menu(nine);
     expect(r!.enum).toHaveLength(8);
     expect(r!.enumItemLabels).toHaveLength(8);
+  });
+});
+
+
+describe('Copilot SDK reasoning effort bridge', () => {
+  const allowed = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+  const modelModes = {
+    'Think (Deep)': { reasoning_effort: 'xhigh', temperature: 1, max_tokens: 80 },
+    'Think (Balanced)': { reasoning_effort: 'medium', temperature: 1, max_tokens: 60 },
+    'No Think': { chat_template_kwargs: { enable_thinking: false }, temperature: 0.7, max_tokens: 40 },
+  };
+  const override = { id: 'qwen', vllmModelId: 'Qwen3.8-Flash-Next', server: 'srv', modelModes, defaultMode: 'Think (Deep)' };
+  const model = buildModelInfo(describeModel({
+    wireId: 'qwen', contextWindow: 1_000_000, serverType: 'vllm', override,
+  }));
+  const schema = (model as any).configurationSchema.properties.reasoningEffort;
+
+  it('keeps every Qwen preset through the SDK standard-effort filter', () => {
+    expect(schema.enum.filter((value: string) => allowed.has(value))).toEqual(['xhigh', 'medium', 'none']);
+    expect(schema.enumItemLabels).toEqual(Object.keys(modelModes));
+    expect(schema.default).toBe('xhigh');
+  });
+
+  for (const [index, [name, params]] of Object.entries(modelModes).entries()) {
+    it(`round-trips ${name} into request parameters, token budgets and provider tracking`, () => {
+      const effort = ['xhigh', 'medium', 'none'][index];
+      for (const selection of [effort, name]) {
+        const options = { modelOptions: {}, tools: [], modelConfiguration: { reasoningEffort: selection } };
+        expect(readPickerSelection(options, model).selectedMode).toBe(name);
+        const request = buildRequest(model, [], options as any, {
+          models: [override], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }],
+        }, { appendLine() {} } as any);
+        expect(request.mergedOptions).toMatchObject(params);
+      }
+    });
+  }
+
+  it('keeps colliding names and arbitrary custom modes distinct', () => {
+    const names = ['high', 'Think', 'Think general', 'Custom A', 'Custom B', 'Custom C', 'Custom D', 'Custom E', 'Extra'];
+    const schema = buildConfigurationSchema({ modelModes: Object.fromEntries(names.map(name => [name, {}])) })!;
+    const prop = schema.properties.reasoningEffort;
+    expect(new Set(prop.enum).size).toBe(names.length);
+    expect(prop.enum.slice(0, 8).every((value: string) => allowed.has(value))).toBe(true);
+    // More modes than standard SDK slots remain available in Local chat.
+    expect(prop.enum[8]).toBe('Extra');
+    const info = { configurationSchema: schema };
+    for (const [index, name] of names.entries()) {
+      expect(readPickerSelection({ modelConfiguration: { reasoningEffort: prop.enum[index] } }, info).selectedMode).toBe(name);
+      expect(readPickerSelection({ modelConfiguration: { reasoningEffort: name } }, info).selectedMode).toBe(name);
+    }
+  });
+});
+
+
+describe('OpenRouter SDK effort semantics', () => {
+  it('uses nested backend efforts even when display names disagree', () => {
+    const modelModes = {
+      'Think (Max)': { reasoning: { enabled: true, effort: 'max' } },
+      'Think (Minimal)': { reasoning: { enabled: true, effort: 'minimal' } },
+      'Think (High)': { reasoning: { enabled: true, effort: 'low' } },
+      Disabled: { reasoning: { enabled: false } },
+    };
+    const prop = buildConfigurationSchema({ modelModes })!.properties.reasoningEffort;
+    expect(prop.enum).toEqual(['max', 'minimal', 'low', 'none']);
+    const info = { configurationSchema: { properties: { reasoningEffort: prop } } };
+    for (const [index, name] of Object.keys(modelModes).entries()) {
+      expect(readPickerSelection({ modelConfiguration: { reasoningEffort: prop.enum[index] } }, info).selectedMode).toBe(name);
+    }
+  });
+
+  it('explains the SDK alias for provider-controlled reasoning without adding an effort', () => {
+    const prop = buildConfigurationSchema({ modelModes: {
+      Think: { reasoning: { enabled: true } },
+      'No Think': { reasoning: { enabled: false } },
+    } })!.properties.reasoningEffort;
+    expect(prop.enum).toEqual(['high', 'none']);
+    expect(prop.enumDescriptions[0]).toContain('backend defaults');
+    expect(prop.enumDescriptions[0]).toContain('does not select High effort');
   });
 });

@@ -130,8 +130,8 @@ const NEW_PICKER_GUIDE_URL = 'https://github.com/fuzzifikation/vLLM-Copilot#new-
 /**
  * One-time explainer for Copilot's redesigned model picker, stripped to the
  * two moves that matter: run the chat on "Local" (an Agent Host session makes
- * VS Code render its own copy of the model, without our Model Mode / Output
- * Length menus) and pick the model under the vLLM-Copilot tab. Everything else
+ * VS Code render its own copy of the model, with standard effort names and
+ * without our Output Length menu) and pick the model under the vLLM-Copilot tab. Everything else
  * — the chips, the anatomy, the picture — is the README's job, reached by
  * "Show Me". Recorded as seen before the dialog opens: an informational notice
  * must never nag, not even if the window dies mid-dialog.

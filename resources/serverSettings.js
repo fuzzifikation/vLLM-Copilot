@@ -89,6 +89,7 @@
       S.selModel = modelExists ? prevModel : e.data.selectedModelId;
       S.knownParams = e.data.knownParams || {};
       S.providersByModel = e.data.providersByModel || {};
+      S.modeSourcesByModel = e.data.modeSourcesByModel || {};
       S.personalities = e.data.personalities || [];
       S.activePersonalities = e.data.activePersonalities || {};
       S.systemMessageCapture = e.data.systemMessageCapture === true;
@@ -733,7 +734,17 @@
   function modesSection(mc) {
     const modes = mc.modelModes || {};
     const modeNames = Object.keys(modes);
-    let h = '<div class="field"><label>defaultMode</label>' +
+    const sv = S.servers.find(server => server.key === S.selServer);
+    const source = (S.modeSourcesByModel || {})[mc.server]?.[mc.id];
+    const discovery = sv?.serverType === 'openrouter'
+      ? 'Discovery: OpenRouter metadata; bundled presets are skipped.'
+      : 'Discovery: matching curated preset, or backend model metadata.';
+    let h = '<div id="modeDiscovery" class="field-hint">Served model ID: <code>' + E(mc.vllmModelId || mc.id || '') + '</code><br>' +
+      E(discovery) + '<br>' + E(source || 'Saved mode source was not recorded; these modes may have been customized.') +
+      '<br>Auto-configure refreshes discovery; renaming the display label does not apply a preset.';
+    const toggle = Object.values(modes).some(params => params.reasoning?.enabled === true && params.reasoning.effort === undefined);
+    if (toggle) h += '<br>Think uses backend defaults or the configured reasoning token budget. The Copilot SDK may label it High; that label does not send High effort.';
+    h += '</div><div class="field"><label>defaultMode</label>' +
       '<select data-f="defaultMode">' +
       '<option value="">(none)</option>' +
       modeNames.map(n => '<option value="' + E(n) + '"' + (mc.defaultMode === n ? ' selected' : '') + '>' + E(n) + '</option>').join('') +

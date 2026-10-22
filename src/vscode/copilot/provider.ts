@@ -411,7 +411,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
     // (and Copilot's context-window bar) reflects the picked output budget. Read
     // before delegating — the request builder reads the same picker state through
     // the same shared reader (single parse, single normalization).
-    const { selectedMode, pickerTokens: selectedLength } = readPickerSelection(options);
+    const { selectedMode, pickerTokens: selectedLength } = readPickerSelection(options, model);
     this.trackConfigSelection(model.id, selectedMode, selectedLength);
 
     await runChatResponse(

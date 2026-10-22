@@ -94,17 +94,25 @@ export function validateConfig(config: VllmConfig): string[] {
  * normalized output-length pick. ONE reader for both consumers (audit P1-1):
  * the provider tracks the selection for metadata re-registration, the request
  * builder uses it for params and the output budget; their private parses had
- * already drifted apart. The `any` read here means a future proposal drop
- * compiles clean and the mode picker fails silently — known, accepted coupling.
+ * already drifted apart. The proposal fields are read at this boundary because
+ * they are absent from the stable VS Code types. The model schema maps SDK
+ * effort values back to the same mode names used by settings and the core.
  * Copilot-shape knowledge: this is why it lives at the host boundary, while
  * the numeric floor rule (`normalizePickerTokens`) stays in the core.
  */
-export function readPickerSelection(options: unknown): { selectedMode?: string; pickerTokens?: number } {
+export function readPickerSelection(options: unknown, model?: unknown): { selectedMode?: string; pickerTokens?: number } {
   const modelConfiguration = (options as { modelConfiguration?: Record<string, unknown> })
     .modelConfiguration;
   const mode = modelConfiguration?.reasoningEffort;
+  const property = (model as { configurationSchema?: { properties: Record<string, unknown> } } | undefined)
+    ?.configurationSchema?.properties.reasoningEffort as {
+    enum?: string[]; enumItemLabels?: string[];
+  } | undefined;
+  const index = typeof mode === 'string' ? property?.enum?.indexOf(mode) ?? -1 : -1;
+  // Local labels saved before the SDK mapping still pass through unchanged.
+  const selected = index >= 0 ? property?.enumItemLabels?.[index] ?? mode : mode;
   return {
-    selectedMode: typeof mode === 'string' ? mode : undefined,
+    selectedMode: typeof selected === 'string' ? selected : undefined,
     pickerTokens: normalizePickerTokens(modelConfiguration?.maxOutputTokens),
   };
 }

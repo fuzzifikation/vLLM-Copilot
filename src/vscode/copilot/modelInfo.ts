@@ -155,12 +155,49 @@ function buildConfigurationSchema(
   const properties: Record<string, unknown> = {};
 
   if (descriptor.modeNames) {
+    // The CLI/SDK bridge filters enum VALUES to standard efforts and discards
+    // custom labels. Keep labels for Local chat and decode the values on return.
+    const efforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+    const names = descriptor.modeNames;
+    // Reserve literal standard names first so saved chats remain unambiguous.
+    const used = new Set(names.filter(name => efforts.includes(name)));
+    const values = names.map(name => efforts.includes(name) ? name : undefined);
+    for (const [index, name] of names.entries()) {
+      if (values[index]) continue;
+      const params = descriptor.override?.modelModes?.[name];
+      const kwargs = params?.chat_template_kwargs as Record<string, unknown> | undefined;
+      const reasoning = params?.reasoning as Record<string, unknown> | undefined;
+      const preferred = reasoning?.enabled === false || kwargs?.enable_thinking === false ? 'none'
+        : reasoning?.effort ?? params?.reasoning_effort ?? kwargs?.reasoning_effort ?? kwargs?.reasoning_strength
+          ?? (/no[ _-]?think/i.test(name) ? 'none'
+            : /xhigh|deep/i.test(name) ? 'xhigh'
+              : /balanced|medium|coding/i.test(name) ? 'medium'
+                : /low|fast/i.test(name) ? 'low'
+                  : /high|general|^think$/i.test(name) ? 'high' : undefined);
+      if (typeof preferred === 'string' && efforts.includes(preferred) && !used.has(preferred)) {
+        values[index] = preferred;
+        used.add(preferred);
+      }
+    }
+    for (const [index, name] of names.entries()) {
+      if (values[index]) continue;
+      // The SDK has eight slots. Additional modes retain their Local values.
+      const value = efforts.find(effort => !used.has(effort)) ?? name;
+      values[index] = value;
+      used.add(value);
+    }
     properties.reasoningEffort = {
       type: 'string',
       title: 'Model Mode',
-      enum: descriptor.modeNames,
+      enum: values,
       enumItemLabels: descriptor.modeNames,
-      default: descriptor.defaultMode,
+      enumDescriptions: names.map(name => {
+        const reasoning = descriptor.override?.modelModes?.[name]?.reasoning as Record<string, unknown> | undefined;
+        return reasoning?.enabled === true && reasoning.effort === undefined
+          ? 'Reasoning enabled using backend defaults or the configured token budget. The SDK label does not select High effort.'
+          : '';
+      }),
+      default: values[names.indexOf(descriptor.defaultMode!)],
       group: 'navigation',
     };
   }

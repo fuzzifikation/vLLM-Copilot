@@ -49,7 +49,7 @@ export function buildRequest(
   // mode/defaultParams max_tokens inside resolveMaxTokensForRequest, where the
   // ceiling clamp also lives: a stale cached schema can never push max_tokens
   // above what Copilot was told the model can do.
-  const { selectedMode, pickerTokens } = readPickerSelection(options);
+  const { selectedMode, pickerTokens } = readPickerSelection(options, model);
 
   // Copilot carries its stable per-chat identity as private model metadata.
   // Strip it here so the private `_conversationId` key never reaches the core

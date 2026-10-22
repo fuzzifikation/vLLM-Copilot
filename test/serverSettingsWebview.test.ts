@@ -23,6 +23,7 @@ function loadWebview(
   initialProvider?: string,
   initialRoutingMode?: string,
   withChoices = true,
+  modeSourcesByModel: Record<string, Record<string, string>> = {},
 ) {
   const dom = new JSDOM(
     '<!doctype html><body>' +
@@ -69,6 +70,7 @@ function loadWebview(
         },
       },
       providersByModel,
+      modeSourcesByModel,
       personalities: [],
       activePersonalities: {},
       systemMessageCapture: false,
@@ -245,5 +247,26 @@ describe('personality dropdown (portable name references)', () => {
     sel.value = ''; // Default (no personality)
     sel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     expect(posted.at(-1)).toEqual({ type: 'applyPersonality', server: 'entry-1', id: 'model-config', clear: true });
+  });
+});
+
+
+describe('mode discovery information', () => {
+  it('shows the served ID, OpenRouter discovery policy and toggle-only SDK meaning', () => {
+    const { dom } = loadWebview({ Think: { reasoning: { enabled: true } }, 'No Think': { reasoning: { enabled: false } } },
+      ['wire-model'], [], {}, 'openrouter');
+    const text = dom.window.document.querySelector('#modeDiscovery')!.textContent!;
+    expect(text).toContain('wire-model');
+    expect(text).toContain('OpenRouter metadata');
+    expect(text).toContain('bundled presets are skipped');
+    expect(text).toContain('backend defaults');
+    expect(text).toContain('High');
+  });
+
+  it('shows a matching preset filename as a match, not invented provenance', () => {
+    const { dom } = loadWebview({ Think: {} }, ['wire-model'], [], {}, 'vllm', undefined, undefined, true,
+      { 'entry-1': { 'model-config': 'Saved modes match preset: Qwen-Qwen3.8-Flash-Next.json' } });
+    expect(dom.window.document.querySelector('#modeDiscovery')!.textContent)
+      .toContain('Saved modes match preset: Qwen-Qwen3.8-Flash-Next.json');
   });
 });

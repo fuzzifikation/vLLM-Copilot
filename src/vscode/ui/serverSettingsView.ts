@@ -6,6 +6,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { isDeepStrictEqual } from 'node:util';
+import { findPresetForModel, loadModelPresets } from '../commands/presets.js';
 import { getConfig } from '../state/config.js';
 import { findModelConfigIndex, toPublicModelConfig, resolveConfigId, resolveVllmModelId, type ModelConfig } from '../../core/config/config.js';
 import { normalizeServerUrl, KNOWN_SERVER_TYPES, type ServerType } from '../../core/config/serverCore.js';
@@ -545,6 +547,19 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
         if (wireId && !openRouterWireIds.includes(wireId)) openRouterWireIds.push(wireId);
       }
     }
+    // Compare saved values, never infer historical provenance from a model name.
+    // OpenRouter discovery deliberately bypasses bundled presets.
+    const presets = await loadModelPresets(this.context.extensionUri);
+    const modeSourcesByModel: Record<string, Record<string, string>> = {};
+    for (const sv of servers) {
+      if (sv.serverType === 'openrouter') continue;
+      for (const model of sv.models) {
+        const preset = findPresetForModel(presets, resolveVllmModelId(model) ?? '');
+        if (preset?.config.modelModes && isDeepStrictEqual(preset.config.modelModes, model.modelModes)) {
+          (modeSourcesByModel[sv.serverId] ??= {})[model.id] = `Saved modes match preset: ${preset.sourceFile}`;
+        }
+      }
+    }
     const providersByModel: Record<string, OpenRouterModelEndpoint[]> = {};
     if (openRouterWireIds.length > 0) {
       const settled = await Promise.allSettled(openRouterWireIds.map((wireId) => getOpenRouterModelEndpointsCached(wireId, readServers())));
@@ -571,6 +586,7 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       selectedModelId: firstModel,
       knownParams: KNOWN_PARAMS,
       providersByModel,
+      modeSourcesByModel,
       personalities,
       activePersonalities,
       systemMessageCapture,
