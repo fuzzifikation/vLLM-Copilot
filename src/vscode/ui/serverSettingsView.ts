@@ -22,43 +22,45 @@ import {
 } from '../state/personalityStore.js';
 import { loadPersonalityMeta, loadPromptReplacements, COMMON_REPLACEMENTS_FILENAME } from '../../core/personality/promptReplacer.js';
 
-// Ordered by frequency of use: common sampling → length → penalties → output control → niche.
+// Dropdown order = key order. Ordered by frequency of use in this product's
+// own configs and typical Copilot-over-vLLM requests: sampling → thinking
+// control (chat_template_kwargs/reasoning_effort dominate the shipped
+// presets) → penalties → length/stop → format/tools → niche. Niche opens
+// with `priority`, which detonates unless the server runs
+// --scheduling-policy priority.
 const KNOWN_PARAMS: Record<string, { label: string; type: 'number' | 'string' | 'json'; options?: string[] }> = {
   // Sampling (most common)
   temperature: { label: 'Temperature', type: 'number' },
   top_p: { label: 'Top P', type: 'number' },
-
-  // Output length
-  max_tokens: { label: 'Max Tokens', type: 'number' },
-  min_tokens: { label: 'Min Tokens', type: 'number' },
-
-  // Sampling refinement
   top_k: { label: 'Top K', type: 'number' },
   min_p: { label: 'Min P', type: 'number' },
+
+  // Thinking control (most-used vLLM-specific params in shipped presets)
+  chat_template_kwargs: { label: 'Chat Template Kwargs', type: 'json' },
+  reasoning_effort: { label: 'Reasoning Effort', type: 'string', options: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
 
   // Penalties
   repetition_penalty: { label: 'Repetition Penalty', type: 'number' },
   presence_penalty: { label: 'Presence Penalty', type: 'number' },
   frequency_penalty: { label: 'Frequency Penalty', type: 'number' },
 
-  // Output control
+  // Length and stopping
+  max_tokens: { label: 'Max Tokens', type: 'number' },
+  min_tokens: { label: 'Min Tokens', type: 'number' },
   stop: { label: 'Stop Sequences', type: 'json' },
+  ignore_eos: { label: 'Ignore EOS', type: 'string', options: ['true', 'false'] },
+
+  // Format and tools
   response_format: { label: 'Response Format', type: 'json' },
-  reasoning_effort: { label: 'Reasoning Effort', type: 'string', options: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
-
-  // Reproducibility
-  seed: { label: 'Seed', type: 'number' },
-
-  // Tool / formatting
+  structured_outputs: { label: 'Structured Outputs', type: 'json' },
   parallel_tool_calls: { label: 'Parallel Tool Calls', type: 'string', options: ['true', 'false'] },
   skip_special_tokens: { label: 'Skip Special Tokens', type: 'string', options: ['true', 'false'] },
+  seed: { label: 'Seed', type: 'number' },
 
-  // vLLM-specific (advanced)
-  bad_words: { label: 'Bad Words', type: 'json' },
-  structured_outputs: { label: 'Structured Outputs', type: 'json' },
+  // Niche (server-flag or detector territory)
+  priority: { label: 'Request Priority (lower = sooner, vLLM-only)', type: 'number' },
   repetition_detection: { label: 'Repetition Detection', type: 'json' },
-  chat_template_kwargs: { label: 'Chat Template Kwargs', type: 'json' },
-  ignore_eos: { label: 'Ignore EOS', type: 'string', options: ['true', 'false'] },
+  bad_words: { label: 'Bad Words', type: 'json' },
 };
 
 interface ServerGroup {

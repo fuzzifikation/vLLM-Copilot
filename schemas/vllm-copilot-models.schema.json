@@ -166,6 +166,7 @@
         "chat_template_kwargs": { "type": "object", "description": "vLLM chat template params. Common keys: enable_thinking (bool), preserve_thinking (bool), reasoning_effort (string)." },
         "reasoning_effort": { "type": "string", "description": "Reasoning effort. vLLM maps 'high'/'max' → enable_thinking=true, 'none' → false (auto-inject). May also be placed inside chat_template_kwargs." },
         "allowed_token_ids": { "type": "array", "items": { "type": "integer" }, "description": "Restrict generation to these token IDs (vLLM-only; niche)." },
+        "priority": { "type": "integer", "description": "Scheduling priority; LOWER = sooner (negative outranks the default 0). Requires the vLLM server to run with --scheduling-policy priority; any non-zero value is rejected by the server otherwise (vLLM-only)." },
         "max_tokens": {
           "type": "integer",
           "minimum": 1,

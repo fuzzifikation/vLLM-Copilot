@@ -7,14 +7,24 @@
   'use strict';
 
   // Case-insensitive: substring hit, or every needle char appearing in
-  // order. needle must be trimmed and non-empty; haystacks arrive lowercase.
+  // order. Whitespace splits the query into tokens and EVERY token must
+  // match: 'qwen 3.8' has to hit 'qwen/qwen3.8-flash', whose id carries no
+  // space at all - an un-split needle could never match one, so a space in
+  // the query silently matched NOTHING. needle must be trimmed and
+  // non-empty; haystacks arrive lowercase.
   function matches(needle, haystack) {
-    if (haystack.indexOf(needle) !== -1) return true;
-    var i = 0;
-    for (var j = 0; j < haystack.length && i < needle.length; j++) {
-      if (haystack.charAt(j) === needle.charAt(i)) i++;
+    var tokens = needle.split(/\s+/);
+    for (var t = 0; t < tokens.length; t++) {
+      var tok = tokens[t];
+      if (!tok) continue;
+      if (haystack.indexOf(tok) !== -1) continue;
+      var i = 0;
+      for (var j = 0; j < haystack.length && i < tok.length; j++) {
+        if (haystack.charAt(j) === tok.charAt(i)) i++;
+      }
+      if (i !== tok.length) return false;
     }
-    return i === needle.length;
+    return true;
   }
 
   // Adapter for the Choices.js Searcher interface (reset / isEmptyIndex /

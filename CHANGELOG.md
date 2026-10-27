@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.37.3
+Priority scheduling reaches the model settings, and model search learns to handle spaces.
+
+### Added
+
+- **Request priority for vLLM servers.** A new `priority` parameter (Model Settings → Default Params, or `defaultParams` in settings) sends the request-body field vLLM uses under `--scheduling-policy priority`: lower = scheduled sooner, negative outranks the default 0. On a server without priority scheduling any non-zero value is rejected, so leave it unset unless you started vLLM with that flag.
+
+### Fixed
+
+- **Spaces in model search now work.** In the Model Selector and the Model Settings dropdown, every space-separated word in the search must match, in any order: `qwen 3.8` finds `qwen/qwen3.8-flash`. Before, a search containing a space matched nothing at all.
+
 ## v1.37.2
 Copilot redesigned the model picker, and this release makes the new layout survivable: one one-time explainer shows where the models and the menus live and why the chat must run on **Local** — including for users who saw the narrower v1.37.1 notice, which it replaces.
 

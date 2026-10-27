@@ -102,6 +102,7 @@ Any vLLM chat body field except `model`, `messages`, `stream`, `stream_options`.
 | `chat_template_kwargs` | vLLM chat template params (e.g. `{ "enable_thinking": true }`) *(vLLM-only)* |
 | `reasoning_effort` | Reasoning effort (e.g. `high`, `max`, `none`, `xhigh`). On vLLM this auto-maps to `chat_template_kwargs.enable_thinking` (`high`/`max` → true, `none` → false) |
 | `allowed_token_ids` | Restrict generation to these token IDs *(vLLM-only; niche)* |
+| `priority` | Scheduling priority - **lower = sooner** (negative outranks the default 0). Requires the server to run with `--scheduling-policy priority`; any non-zero value is rejected by the server otherwise *(vLLM-only)* |
 
 > **Not enabled by default:** `repetition_detection` is **off** unless you add it to a model's `defaultParams` or a mode. The n-gram detector (`max_pattern_size: 5, min_pattern_size: 2, min_count: 3`) triggers on structured output like XML tables, JSON arrays, and code loops - not just actual repetition - so it is opt-in. If you want it, add it per-model: `"repetition_detection": { "max_pattern_size": 5, "min_pattern_size": 2, "min_count": 3 }`.
 
