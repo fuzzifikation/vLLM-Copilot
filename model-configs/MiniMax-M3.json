@@ -1,7 +1,9 @@
 // MiniMax M3 — Model configuration
 // Model card: https://huggingface.co/MiniMaxAI/MiniMax-M3
 // vLLM recipe: https://recipes.vllm.ai/MiniMaxAI/MiniMax-M3 (updated 2026-08-03)
-// Verified 2026-08-27.
+// Verified 2026-08-27. Re-checked 2026-11-06: family corrected to the repo's
+// config.json model_type, "minimax_m3_vl" (it previously said "minimax_m3").
+// The separate MiniMax-M3.1-Flash.json preset covers the M3.1 line.
 //
 // Frontier vision-language MoE (~428B total / 23B active per card), MiniMax
 // Sparse Attention (MSA), 1,048,576-token native context, native multimodal
@@ -48,7 +50,7 @@
   "config": {
     "vllmModelId": "MiniMax-M3",
     "displayName": "MiniMax M3",
-    "family": "minimax_m3",
+    "family": "minimax_m3_vl",
     "maxOutputTokens": [131072, 65536, 32768, 16384],
     "capabilities": {
       "toolCalling": true,

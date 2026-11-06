@@ -1,0 +1,98 @@
+// MiniMax M3.1-Flash — Model configuration
+// Model card: https://huggingface.co/MiniMaxAI/MiniMax-M3.1-Flash
+// vLLM recipe: https://recipes.vllm.ai/MiniMaxAI/MiniMax-M3.1-Flash (updated 2026-11-02)
+// Verified 2026-11-06 against the model card, config.json (model_type
+// "minimax_m3_vl"), generation_config.json (temp=1.0, top_p=0.95, no top_k)
+// and chat_template.jinja.
+//
+// Vision-language MoE (~428B total / 23B active per card), MiniMax Sparse
+// Attention (MSA) in every layer, 1M-token context, native multimodal
+// (image + video), built-in DSpark speculative-decoding draft. Quantization-
+// aware trained: MXFP8 dense layers + NVFP4 experts (~285 GB). Served with
+// the same vLLM parsers as M3 (--tool-call-parser minimax_m3,
+// --reasoning-parser minimax_m3, vLLM 0.33+). DeepSWE v1.1: 73.7,
+// BankerToolBench: 76.2, CyberGym: 82.2.
+// The "MiniMax-M3.1-Flash" id below substring-matches quant variants; the
+// longer pattern wins over the M3 preset's "MiniMax-M3" for these ids.
+//
+// Thinking — DIFFERENT from M3 (this is why a separate preset exists):
+// M3's chat_template_kwargs.thinking_mode (enabled/adaptive/disabled) is
+// GONE. The M3.1 template hard-codes adaptive thinking instructions and
+// takes a `reasoning_effort` chat-template variable rendered as an
+// <effort> hint in the system prompt. Card levels: "low" | "medium" |
+// "high" | "xhigh" | "max" (card names no default; benchmarks state none
+// either). Thinking cannot be forced off — the model decides per turn.
+//
+// Sampling (card, local deployment): temperature = 1.0, top_p = 0.95.
+// No top_k in generation_config.json — do NOT inherit M3's top_k=40.
+//
+// To use manually, copy the "config" object below into settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//
+// Token budgets:
+//   - Context window: 1M tokens (card; recipe states 1,048,576). The ladder
+//     below adopts M3's curated ladder with head 131072 — the card states no
+//     output default. On smaller serve windows pick a shorter length in the
+//     Output Length dropdown to keep input headroom.
+//
+// Modes (adaptive thinking, effort hint only — deeper = slower):
+//   - Think (Max) / Think (XHigh) / Think (High) / Think (Medium) / Think (Low)
+
+{
+  "presetVersion": 1,
+  "match": ["MiniMax-M3.1-Flash"],
+  "meta": {
+    "name": "MiniMax M3.1-Flash",
+    "source": "https://huggingface.co/MiniMaxAI/MiniMax-M3.1-Flash",
+    "verified": "2026-11-06",
+    "notes": "Vision MoE (image+video), 1M context. Effort low/medium/high/xhigh/max via chat_template_kwargs.reasoning_effort (M3's thinking_mode is gone). Card sampling temp=1.0, top_p=0.95."
+  },
+  "config": {
+    "vllmModelId": "MiniMax-M3.1-Flash",
+    "displayName": "MiniMax M3.1-Flash",
+    "family": "minimax_m3_vl",
+    "maxOutputTokens": [131072, 65536, 32768, 16384],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
+    },
+    "modelModes": {
+      "Think (Max)": {
+        "chat_template_kwargs": {
+          "reasoning_effort": "max"
+        },
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "Think (XHigh)": {
+        "chat_template_kwargs": {
+          "reasoning_effort": "xhigh"
+        },
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "Think (High)": {
+        "chat_template_kwargs": {
+          "reasoning_effort": "high"
+        },
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "Think (Medium)": {
+        "chat_template_kwargs": {
+          "reasoning_effort": "medium"
+        },
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "Think (Low)": {
+        "chat_template_kwargs": {
+          "reasoning_effort": "low"
+        },
+        "temperature": 1.0,
+        "top_p": 0.95
+      }
+    },
+    "defaultMode": "Think (Max)"
+  }
+}

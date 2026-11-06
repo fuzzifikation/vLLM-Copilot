@@ -21,10 +21,20 @@
 //     (tool calls use DSML tag blocks, not JSON fences — server-side,
 //     invisible to this client)
 //
-// Sampling recommendations (model card "Minimal Inference", confirmed in the
-// tech report eval sections §5.3/Table 4):
-//   temperature = 1.0, top_p = 0.95 (thinking/agentic), top_p = 1.0 otherwise
+// Sampling recommendations (both cards' "Minimal Inference" tables, re-read
+// 2026-11-06): the base DeepSeek-V4.1-Flash card says temperature = 1.0 with
+// top_p "0.95 or 1.0" (undecided hedge); the DeepSeek-V4.1-Flash-1017
+// refresh card (2026-10-17, "a minor update", same deepseek_v41 arch, same
+// no-Jinja encoding) pins top_p = 1.0. All modes below therefore use
+// top_p = 1.0 — the only value both cards endorse. Earlier versions of this
+// preset used 0.95 in thinking modes, which the -1017 card does not carry.
+//   temperature = 1.0, top_p = 1.0
 //   context_window = 1M tokens, max_tokens >= 256K
+//
+// -1017 COVERAGE (verified 2026-11-06): the refresh id contains this
+// preset's pattern, so it shares this file. Its config.json agrees — same
+// model_type deepseek_v41, native vision_config — and its card keeps the
+// numeric-reasoning-effort encoding and the 1M window.
 //
 // Thinking mode — vLLM behavior (differs from V4!):
 //   V4.1 uses a NUMERIC reasoning budget (integer 1-100), rendered into the
@@ -63,7 +73,8 @@
   "meta": {
     "name": "DeepSeek V4.1 Flash",
     "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash",
-    "notes": "1M-context multimodal MoE (native vision). Numeric reasoning budget via reasoning_effort (max=100/xhigh=75/none, vLLM deepseek_v41); card sampling temp=1.0, top_p=0.95. Needs vLLM 0.30+ docker image with --tokenizer-mode/--reasoning-parser/--tool-call-parser deepseek_v41."
+    "verified": "2026-11-06",
+    "notes": "1M-context multimodal MoE (native vision). Numeric reasoning budget via reasoning_effort (max=100/xhigh=75/none, vLLM deepseek_v41); card sampling temp=1.0, top_p=1.0 (endorsed by the base and -1017 cards). Needs vLLM 0.30+ docker image with --tokenizer-mode/--reasoning-parser/--tool-call-parser deepseek_v41."
   },
   "config": {
     "vllmModelId": "DeepSeek-V4.1-Flash",
@@ -78,12 +89,12 @@
       "Think (Max)": {
         "reasoning_effort": "max",
         "temperature": 1.0,
-        "top_p": 0.95
+        "top_p": 1.0
       },
       "Think (High)": {
         "reasoning_effort": "xhigh",
         "temperature": 1.0,
-        "top_p": 0.95
+        "top_p": 1.0
       },
       "No Think": {
         "reasoning_effort": "none",

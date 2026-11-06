@@ -1,0 +1,92 @@
+// Kimi K3.1 Pro — Model configuration
+// Model card: https://huggingface.co/moonshotai/Kimi-K3.1-Pro
+// API limits:   https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart
+// vLLM recipe: https://recipes.vllm.ai/moonshotai/Kimi-K3.1-Pro (updated 2026-11-05)
+// Verified 2026-11-06 against the model card, the API quickstart "Important
+// limits", config.json (model_type "kimi_k31") and generation_config.json
+// (max_length 1048576, ships no sampling values).
+//
+// Post-trained Kimi K3 (K3.1 series head): 2.8T total / 104B active (16+2 of
+// 896 experts), Kimi Delta Attention + Gated DSA sparse attention on 24 of the
+// 93 layers, native vision (MoonViT-V2), 1,048,576-token context. Natively
+// MXFP4-weighted / MXFP8-activation (quantization-aware trained), ~1.56 TB on
+// disk. Served with the same vLLM parsers as K3 (--tool-call-parser kimi_k3,
+// --reasoning-parser kimi_k3, vLLM 0.34+).
+// Terminal-Bench 4.0: 65.7, DeepSWE v1.1: 75.5, GPQA-Diamond: 94.2.
+//
+// Thinking: ALWAYS ON — cannot be disabled (the effort vocabulary has no off
+// value). Effort is the top-level `reasoning_effort` request field:
+// "low" | "high" | "max" (default "max"). Unknown values fall back to max.
+//
+// PRESERVED THINKING (important): like K3, multi-turn and tool-call requests
+// must return the COMPLETE assistant message, including reasoning content and
+// tool_calls, not just `content`. This extension forwards VS Code's thinking
+// parts back as the `reasoning` field on assistant messages
+// (messageConverter.ts), which matches vLLM's wire name.
+//
+// Sampling (card + API "Important limits", the setting every published
+// benchmark used): temperature = 1.0, top_p = 0.95. The API additionally
+// fixes n = 1, presence_penalty = 0 and frequency_penalty = 0 and asks
+// clients to omit them; local vLLM applies sampling params, so the modes
+// below pin exactly these values.
+//
+// To use manually, copy the "config" object below into settings.json:
+//   "vllm-copilot.models": [ <PASTE_HERE> ]
+//
+// Token budgets:
+//   - Context window: 1,048,576 tokens (card; generation_config.json
+//     max_length agrees)
+//   - The API fixes max_completion_tokens at a 131072 default, settable up
+//     to 1048576; the ladder below adopts that default as its head. Thinking
+//     is always on and eats output budget — on smaller serve windows pick a
+//     shorter length in the Output Length dropdown.
+//
+// Modes (thinking cannot be turned off — Think (Low) is the "fast" mode):
+//   - Think (Max):  default, deepest reasoning (card benchmark setting)
+//   - Think (High): balanced depth/latency
+//   - Think (Low):  minimal reasoning effort
+
+{
+  "presetVersion": 1,
+  "match": ["Kimi-K3.1-Pro"],
+  "meta": {
+    "name": "Kimi K3.1 Pro",
+    "source": "https://huggingface.co/moonshotai/Kimi-K3.1-Pro",
+    "verified": "2026-11-06",
+    "notes": "3T-class multimodal (vision), 1M context, Gated DSA sparse attention. Thinking always on; effort low/high/max via reasoning_effort. Card sampling temp=1.0, top_p=0.95."
+  },
+  "config": {
+    "vllmModelId": "Kimi-K3.1-Pro",
+    "displayName": "Kimi K3.1 Pro",
+    "family": "kimi_k31",
+    "maxOutputTokens": [131072, 65536, 32768, 16384],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
+    },
+    "modelModes": {
+      "Think (Max)": {
+        "reasoning_effort": "max",
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "presence_penalty": 0,
+        "frequency_penalty": 0
+      },
+      "Think (High)": {
+        "reasoning_effort": "high",
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "presence_penalty": 0,
+        "frequency_penalty": 0
+      },
+      "Think (Low)": {
+        "reasoning_effort": "low",
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "presence_penalty": 0,
+        "frequency_penalty": 0
+      }
+    },
+    "defaultMode": "Think (Max)"
+  }
+}

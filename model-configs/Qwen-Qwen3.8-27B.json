@@ -1,16 +1,13 @@
-// Qwen3.8-27B — Model configuration (DRAFT)
-// Source: Qwen3.8 family model card (Qwen3.8-2.4T-A95B, released 2026-08-14)
-// https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B
-// Blog: https://qwen.ai/blog?id=qwen3.8
+// Qwen3.8-27B — Model configuration
+// Model card: https://huggingface.co/Qwen/Qwen3.8-27B
+// Verified 2026-11-06 against the released model card, config.json
+// (model_type "qwen3_5") and generation_config.json (temp=1.0, top_p=0.95,
+// top_k=20). The draft's inherited family-card values all held.
 //
-// ⚠️ DRAFT — Qwen3.8-27B is NOT yet released (expected 2026-08-14).
-// These params are inherited from the released Qwen3.8-2.4T-A95B family card.
-// VERIFY against the 27B model card on release before trusting them:
-//   - family (dense 27B; may get its own model_type, currently assumed qwen3_5)
-//   - whether "No Think" is supported (the 2.4T requires thinking and cannot
-//     disable it; the dense line historically can)
-//   - imageInput (the 2.4T is text-only; defaulted to false until proven)
-//   - context window (2.4T is 262,144 native; dense 27B may differ)
+// Dense 27B causal LM with a native vision encoder: image AND video input
+// (card pipeline_tag image-text-to-text). Context: 262,144 tokens natively,
+// extensible to 1M with RoPE (yarn) scaling — the server's --max-model-len
+// decides what you actually get.
 //
 // NOTE: These params work for ANY quantization variant (FP8, GGUF, AWQ, etc.).
 // Preset matching is substring-based, so a preset for the base model applies to
@@ -19,15 +16,23 @@
 //
 // Chat template parameters (all Jinja template variables, passed via chat_template_kwargs):
 //   - `enable_thinking: true/false` — enables/disables reasoning token generation
-//   - `preserve_thinking: true` — keeps  thinking... response blocks visible in multi-turn
-//     conversation history. On by default for the Qwen3.8 family.
+//     (thinking is ON by default, can be disabled per request)
+//   - `preserve_thinking: true` — keeps thinking blocks from earlier turns visible
+//     in multi-turn conversation history. On by default for the Qwen3.8 family.
 //
-// Reasoning depth (new Qwen3.8 family control, top-level request param):
+// Reasoning depth (Qwen3.8 family control, top-level request param):
 //   - `reasoning_effort`: xhigh (default) | medium | low
 //
-// Recommended sampling (family-wide, also what generation_config.json ships):
-//   temperature=1.0, top_p=0.95, top_k=20, min_p=0.0,
-//   presence_penalty=0.0, repetition_penalty=1.0
+// Recommended sampling (card, both modes; thinking-mode values also what
+// generation_config.json ships):
+//   - Thinking mode:    temperature=1.0, top_p=0.95, top_k=20, min_p=0.0,
+//                       presence_penalty=0.0, repetition_penalty=1.0
+//   - Non-thinking mode: temperature=0.7, top_p=0.80, top_k=20, min_p=0.0,
+//                       presence_penalty=1.5, repetition_penalty=1.0
+//
+// Token budgets (card recommendation for agentic use): up to 131,072 output
+// tokens for the final response. The ladder head adopts that; on a 262K serve
+// window it leaves ~131K input tokens.
 //
 // To use manually, copy the "config" object below into settings.json:
 //   "vllm-copilot.models": [ <PASTE_HERE> ]
@@ -37,18 +42,19 @@
   "presetVersion": 1,
   "match": ["Qwen3.8-27B"],
   "meta": {
-    "name": "Qwen3.8-27B (DRAFT)",
-    "source": "https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B",
-    "notes": "DRAFT - model unreleased. Params inherited from the Qwen3.8-2.4T-A95B family card: reasoning_effort xhigh/medium/low, enable_thinking toggle. Verify on release."
+    "name": "Qwen3.8-27B",
+    "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+    "verified": "2026-11-06",
+    "notes": "Dense 27B with native vision (image+video), 262K native context. reasoning_effort xhigh/medium/low, enable_thinking toggle, preserve_thinking on by default. Card sampling verified for both modes."
   },
   "config": {
     "vllmModelId": "Qwen3.8-27B",
     "displayName": "Qwen3.8-27B",
     "family": "qwen3_5",
-    "maxOutputTokens": [32768, 16384, 8192],
+    "maxOutputTokens": [131072, 65536, 32768, 16384],
     "capabilities": {
       "toolCalling": true,
-      "imageInput": false
+      "imageInput": true
     },
     "modelModes": {
       "Think (Deep)": {

@@ -7,14 +7,16 @@ Ready-to-use model configurations shipped with the extension. **Add or Reconfigu
 | `Agents-A1-config.json` | Agents-A1 (InternScience) | Think (General), Think (Coding), Think (Science), No Think | ✅ | ✅ |
 | `Qwen-Qwen3.6-27B.json` | Qwen3.6-27B | Think (General), Think (Coding), No Think | ✅ | ✅ |
 | `Qwen-Qwen3.6-35B-A3B.json` | Qwen3.6-35B-A3B | Think (General), Think (Coding), No Think | ✅ | ✅ |
-| `Qwen-Qwen3.8-27B.json` | Qwen3.8-27B ⚠️ draft | Think (Deep), Think (Balanced), No Think | ❓ | ✅ |
+| `Qwen-Qwen3.8-27B.json` | Qwen3.8-27B | Think (Deep), Think (Balanced), No Think | ✅ (image + video) | ✅ |
 | `Qwen-Qwen3.8-Flash-Next.json` | Qwen3.8-Flash-Next | Think (Deep), Think (Balanced), No Think | ✅ | ✅ |
 | `Poolside-Laguna-S-2.1.json` | Laguna-S-2.1 (Poolside) | Think, No Think | ❌ | ✅ |
 | `Tencent-Hy3-config.json` | Hy3 (Tencent) | Think (Deep), Think (Light), No Think | ❌ | ✅ |
 | `DeepSeek-V4-Flash.json` | DeepSeek V4 Flash | Think (Max), Think (High), No Think | ❌ | ✅ |
 | `DeepSeek-V4-Pro.json` | DeepSeek V4 Pro | Think (Max), Think (High), No Think | ❌ | ✅ |
 | `Kimi-K3.json` | Kimi K3 (Moonshot) | Think (Max), Think (High), Think (Low) | ✅ | ✅ (always on) |
+| `Kimi-K3.1-Pro.json` | Kimi K3.1 Pro (Moonshot) | Think (Max), Think (High), Think (Low) | ✅ | ✅ (always on) |
 | `MiniMax-M3.json` | MiniMax M3 | Think (Always), Think (Adaptive), No Think | ✅ | ✅ |
+| `MiniMax-M3.1-Flash.json` | MiniMax M3.1-Flash | Think (Max), Think (XHigh), Think (High), Think (Medium), Think (Low) | ✅ (image + video) | ✅ (adaptive, effort hint) |
 | `glm-5.2-config.json` | GLM-5.2 (Z-AI) | Think (Max), Think (High), No Think | ❌ | ✅ |
 | `GLM-5.3.json` | GLM-5.3 (Z.ai, full) | Think (Max), Think (High), Think (Low) | ❌ | ✅ (always on) |
 | `GLM-5.3-Flash.json` | GLM-5.3-Flash (Z.ai) | Think (Max), Think (High), Think (Low) | ✅ | ✅ (always on) |

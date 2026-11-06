@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-22",
+  "updated": "2026-11-06",
   "presets": [
     {
       "match": [
@@ -40,9 +40,21 @@
     },
     {
       "match": [
+        "Kimi-K3.1-Pro"
+      ],
+      "file": "Kimi-K3.1-Pro.json"
+    },
+    {
+      "match": [
         "Kimi-K3"
       ],
       "file": "Kimi-K3.json"
+    },
+    {
+      "match": [
+        "MiniMax-M3.1-Flash"
+      ],
+      "file": "MiniMax-M3.1-Flash.json"
     },
     {
       "match": [

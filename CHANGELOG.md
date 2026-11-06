@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.37.4
+The preset catalog catches up with the model zoo: two new presets, one graduation, one sampling repair.
+
+### Added
+
+- **Kimi K3.1 Pro preset.** Thinking is always on; modes are **Think (Max / High / Low)** with Moonshot's fixed sampling (temp 1.0, top_p 0.95), 1M context, output from 131K down.
+- **MiniMax M3.1-Flash preset.** M3.1 switched its thinking control from M3's `thinking_mode` to `reasoning_effort` (low through max), so it gets its own preset; official sampling temp 1.0, top_p 0.95, no top_k.
+
+### Changed
+
+- **Qwen3.8-27B preset is verified, not draft.** Its released card confirms vision input, and the output ladder now starts at 131K.
+
+### Fixed
+
+- **DeepSeek-V4.1-Flash thinking sampling.** Thinking modes now send top_p 1.0, the value the model's refresh card pins; they previously sent 0.95.
+
 ## v1.37.3
 Priority scheduling reaches the model settings, and model search learns to handle spaces.
 

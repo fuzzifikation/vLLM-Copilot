@@ -22,6 +22,15 @@
 // MiMo-V2-Flash and MiMo-V2.5 were NOT verified template-identical and must
 // not be caught by a broad "MiMo" pattern.
 //
+// MOPD VARIANTS (verified 2026-11-06): MiMo-V2.6-Flash-MOPD and
+// MiMo-V2.6-Pro-MOPD (2026-09-27, Xiaomi's tool-call-repetition fix stage)
+// also land on this preset, deliberately. Primary sources agree with the RL
+// checkpoints: the MOPD chat_template.jinja is the RL template minus one
+// blank line (identical enable_thinking clause), the MOPD card names the same
+// serve flags (--reasoning-parser mimo --tool-call-parser mimo) and the same
+// sampling (temp=1.0, top_p=0.95, matching its generation_config.json), and
+// both are 1M-context MiMoV2ForCausalLM.
+//
 // THINKING IS BINARY. The template only knows enable_thinking: true/false.
 // With false it pre-fills an empty  block so the model skips reasoning;
 // with true (or omitted) the model emits its own reasoning, extracted by the
@@ -45,10 +54,10 @@
   "presetVersion": 1,
   "match": ["MiMo-V2.6-Flash", "MiMo-V2.6-Pro"],
   "meta": {
-    "name": "MiMo-V2.6 (Flash-RL / Pro-RL)",
+    "name": "MiMo-V2.6 (Flash-RL / Pro-RL / MOPD)",
     "source": "https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Flash-RL",
-    "verified": "2026-09-22",
-    "notes": "One preset for both V2.6 RL checkpoints (identical template, parsers, sampling, 1M context). Binary thinking via enable_thinking - no effort levels. temp=1.0, top_p=0.95. Matches all quantized variants."
+    "verified": "2026-11-06",
+    "notes": "One preset for the V2.6 RL and MOPD checkpoints (identical template, parsers, sampling, 1M context). Binary thinking via enable_thinking - no effort levels. temp=1.0, top_p=0.95. Matches all quantized variants."
   },
   "config": {
     "vllmModelId": "MiMo-V2.6-Flash-RL",

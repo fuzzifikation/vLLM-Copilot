@@ -150,19 +150,15 @@ No workspace files are created; the schema is served from the extension itself.
 
 ## What makes this different from BYOK?
 
-VS Code's built-in Custom Endpoint (BYOK) handles chat, tools, vision, streaming, and a
-thinking-effort picker. It also supports a subset of basic inference parameters, such as
-`temperature` and `top_p`, configured for a model.
+VS Code's built-in Custom Endpoint (BYOK) handles chat, tools, vision, streaming, and a thinking-effort picker. It also supports a subset of basic inference parameters, such as `temperature` and `top_p`, configured for a model. You set it up by hand in `chatLanguageModels.json` through **Chat: Manage Language Models**, no extension needed: about five minutes to get one endpoint into the picker. If that is all you want, it is a fine choice.
 
-vLLM-Copilot is for users who want the full vLLM request surface and a richer workflow
-around it. It lets you define **model modes**: named configurations you switch between
-from the model picker. One model can have separate configurations for reasoning, precise
-coding, and creative work, including their sampling and vLLM-specific request settings.
+vLLM-Copilot is for users who want the full vLLM request surface and a richer workflow around it. It lets you define **model modes**: named configurations you switch between from the model picker. One model can have separate configurations for reasoning, precise coding, and creative work, including their sampling and vLLM-specific request settings.
 
 | Feature | BYOK | vLLM-Copilot |
 |---------|:----:|:--------------:|
 | Chat, tools, vision | ✅ | ✅ |
 | Multiple servers (per-model endpoint) | ✅ | ✅ |
+| Live model discovery from the running server | ✅ | ✅ |
 | Custom request headers (auth tokens) | ✅ | ✅ |
 | Thinking-effort picker (enum only) | ✅ | ✅ (as model mode) |
 | Output Length picker (predefined response caps) | ❌ | ✅ (second picker dropdown) |
@@ -395,7 +391,7 @@ The full command list, including auth rotation, model/server removal, log tools,
 
 ## Known Issues
 
-**Agent Host sessions hide the model menus.** When a chat runs on an Agent Host session (the Copilot CLI harness — including a Local chat that restoring the conversation moved onto it), the picker shows VS Code's own copy of your models instead of the one this extension published. That copy keeps the token budgets and capabilities but drops the **Model Mode** and **Output Length** submenus, the model icon and the price line. Switch the chat back to **Local** in its session dropdown, or start a new chat, to get your entry with its menus back. Your saved values are still applied to every request; to change one meanwhile use **Manage Models…**. Upstream: [microsoft/vscode#340138](https://github.com/microsoft/vscode/issues/340138).
+**Agent Host sessions hide the model menus.** When a chat runs on an Agent Host session (the Copilot CLI harness — including a Local chat that restoring the conversation moved onto it), the picker shows VS Code's own copy of your models instead of the one this extension published. That copy keeps the token budgets and capabilities but drops the **Model Mode** and **Output Length** submenus, the model icon and the price line. Switch the chat back to **Local** in its session dropdown, or start a new chat, to get your entry with its menus back. Your saved values are still applied to every request; to change one meanwhile run **vLLM-Copilot: Model Selector** from the Command Palette. Upstream: [microsoft/vscode#340138](https://github.com/microsoft/vscode/issues/340138).
 
 ---
 

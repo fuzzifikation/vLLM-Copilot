@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM (& OpenRouter) integration for GitHub Copilot & Agents window on self-hosted and remote servers (supports full featureset of vLLM, OpenRouter and Copilot). No subscription, no telemetry, no work content to any third party. Dashboard UI with full statistics of your servers",
-  "version": "1.37.3",
+  "version": "1.37.4",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -678,24 +678,27 @@
     "package:vsix": "node scripts/package-vsix.mjs"
   },
   "devDependencies": {
-    "@babel/parser": "^7.29.7",
+    "@babel/parser": "^8.1.0",
     "@types/jsdom": "^30.0.0",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^24.13.4",
+    "@types/node": "^26.6.6",
     "@types/vscode": "^1.128.0",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
-    "@vscode/vsce": "4.0.0",
+    "@vscode/vsce": "^4.1.0",
     "choices.js": "^11.2.4",
     "dependency-cruiser": "^18.2.0",
-    "jsdom": "^29.1.1",
+    "jsdom": "^31.0.0",
     "license-checker-rseidelsohn": "^5.0.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^5.1.0"
   },
   "dependencies": {
     "best-effort-json-parser": "^1.5.1",
-    "eventsource-parser": "^3.1.0",
+    "eventsource-parser": "^4.1.3",
     "jsonrepair": "^3.15.0"
+  },
+  "allowScripts": {
+    "@vscode/vsce-sign@2.1.0": true
   }
 }
