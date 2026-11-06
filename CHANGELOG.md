@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.37.5
+The extension starts again. Version 1.37.4 failed at startup, so the Dashboard and the vLLM models were missing.
+
+### Fixed
+
+- **Startup works again.** Models and the Dashboard appear after the update.
+
 ## v1.37.4
 The preset catalog catches up with the model zoo: two new presets, one graduation, one sampling repair.
 

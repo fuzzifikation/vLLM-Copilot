@@ -4,10 +4,10 @@ src/
 *.ts
 node_modules/
 # eventsource-parser is a runtime dependency (SSE stream parsing).
-# This extension is ESM, so Node resolves via the `import` condition → dist/index.js.
+# v4 splits its entry across dist/*.js: index.js imports errors.js and parse.js.
 !node_modules/eventsource-parser/package.json
 !node_modules/eventsource-parser/LICENSE
-!node_modules/eventsource-parser/dist/index.js
+!node_modules/eventsource-parser/dist/**/*.js
 
 # jsonrepair is a runtime dependency. Re-include just its ESM build
 # (this extension is ESM, so Node resolves via the `import` condition) plus
