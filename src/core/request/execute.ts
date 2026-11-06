@@ -6,10 +6,13 @@
  * the events, and owns its output vocabulary (parts, tool-argument repair
  * presentation, usage reporting/recording) and its user-facing diagnostics.
  *
- * Two kinds of event (the existing `StreamEvent` vocabulary plus attempt
- * completion):
+ * Three kinds of event (the existing `StreamEvent` vocabulary plus two
+ * attempt-boundary markers):
  *   - a `StreamEvent` already observed (timing, content buffer, think-tag
  *     detection, per-attempt tool-call id dedup applied to `state.outcome`);
+ *   - an `AttemptRestartEvent` — the attempt was abandoned and a fresh model
+ *     call follows (mid-stream replay, empty-response nudge, colon
+ *     continuation): whatever streamed from the abandoned attempt is final;
  *   - an `AttemptCompletionEvent` — the final sanitized usage, the completed
  *     request record, and the attempt's measured time — emitted once per
  *     attempt that ended normally with usage, including a quiet cancellation
@@ -183,7 +186,18 @@ export interface AttemptCompletionEvent {
   };
 }
 
-export type ExecutionEvent = StreamEvent | AttemptCompletionEvent;
+/**
+ * Emitted when an abandoned attempt is followed by a fresh model call
+ * (mid-stream replay, empty-response nudge, colon continuation). A threw
+ * attempt reports no usage, so NO `AttemptCompletionEvent` precedes the
+ * replay - this marker is the only signal that the previous attempt's
+ * streamed output is final and per-attempt consumer state must close.
+ */
+export interface AttemptRestartEvent {
+  attemptRestart: true;
+}
+
+export type ExecutionEvent = StreamEvent | AttemptCompletionEvent | AttemptRestartEvent;
 
 export function isAttemptCompletionEvent(e: ExecutionEvent): e is AttemptCompletionEvent {
   return 'attemptCompletion' in e;
@@ -365,6 +379,7 @@ export async function* executeChatRequest(
       log.appendLine(
         `[INFO] ${modelId}: server error mid-stream with no output - retrying (attempt ${attempt + 1}/${maxRetries + 1})`
       );
+      yield { attemptRestart: true };
       continue;
     }
 
@@ -455,5 +470,6 @@ export async function* executeChatRequest(
     log.appendLine(
       `[INFO] ${modelId}: ${reason} - retrying with assistant ${mode} (attempt ${attempt + 1}/${maxRetries + 1})`
     );
+    yield { attemptRestart: true };
   }
 }

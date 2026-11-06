@@ -272,6 +272,7 @@ import {
   type ModelLimitsResolver,
   type RequestLog,
   type ServerEntry,
+  type StreamEvent,
   type VllmConfig,
   type VllmChatOptions,
 } from '${pkgName}';
@@ -367,6 +368,12 @@ async function drain(
     if (onEvent && onEvent(ev)) break;
   }
   return events;
+}
+
+/** Narrow the three-member event union for content-rendering consumers:
+ * a StreamEvent is the only member carrying the streamed-content fields. */
+function isStreamEvent(e: ExecutionEvent): e is StreamEvent {
+  return 'finishedToolCalls' in e;
 }
 
 /** Poll a predicate until true or the budget runs out. */
@@ -482,11 +489,11 @@ try {
   const events1 = await drain(executeChatRequest(makeInput(asmInput.openaiMessages.slice(), new AbortController().signal, 0), state1), completions1);
   assert.equal(state1.attemptCount, 1);
   assert.equal(completions1.length, 1, 'exactly one completion event per successful request');
-  const text = events1.filter((e) => !isAttemptCompletionEvent(e) && e.content).map((e) => (e as { content: string }).content).join('');
+  const text = events1.filter(isStreamEvent).map((e) => e.content).join('');
   assert.equal(text, 'Hello from the mock.');
-  const reasoning = events1.filter((e) => !isAttemptCompletionEvent(e) && e.reasoning_content).map((e) => (e as { reasoning_content: string }).reasoning_content).join('');
+  const reasoning = events1.filter(isStreamEvent).map((e) => e.reasoning_content ?? '').join('');
   assert.equal(reasoning, 'thinking about it');
-  const toolCalls = events1.flatMap((e) => (isAttemptCompletionEvent(e) ? [] : e.finishedToolCalls));
+  const toolCalls = events1.filter(isStreamEvent).flatMap((e) => e.finishedToolCalls);
   assert.equal(toolCalls.length, 1);
   assert.deepEqual(toolCalls[0], { id: 'call_1', name: 'read_file', arguments: '{"path":"src/app.ts"}' });
   const comp = completions1[0].attemptCompletion;
@@ -544,9 +551,14 @@ try {
   const completions2: AttemptCompletionEvent[] = [];
   // The CALLER's own array goes in (no .slice()): a consumer reusing its
   // conversation history must never find synthetic retry prefills in it.
-  await drain(executeChatRequest(makeInput(asmInput.openaiMessages, new AbortController().signal, 1), state2), completions2);
+  const events2 = await drain(executeChatRequest(makeInput(asmInput.openaiMessages, new AbortController().signal, 1), state2), completions2);
   assert.equal(state2.attemptCount, 2);
   assert.equal(completions2.length, 1, 'the retried-away attempt records nothing twice');
+  assert.equal(
+    events2.filter((e) => 'attemptRestart' in e).length,
+    1,
+    'the abandoned attempt is closed by exactly one attemptRestart marker'
+  );
   assert.equal(completions2[0].attemptCompletion.usage.prompt_tokens, 7);
   assert.equal(asmInput.openaiMessages.length, 2, 'caller history is never mutated by retries');
   assert.deepEqual(asmInput.openaiMessages[1], { role: 'user', content: 'hi' });
@@ -578,7 +590,7 @@ try {
   const consumed = (async () => {
     for await (const ev of executeChatRequest(makeInput(asmInput.openaiMessages.slice(), ac.signal, 1), state3)) {
       if (isAttemptCompletionEvent(ev)) completions3.push(ev);
-      else if (ev.content && !abortScheduled) {
+      else if (isStreamEvent(ev) && ev.content && !abortScheduled) {
         abortScheduled = true;
         setTimeout(() => ac.abort('User cancelled'), 0);
       }

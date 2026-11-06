@@ -19,19 +19,25 @@ import { formatCostFine } from '../../core/usage/money.js';
  *   - Keys MUST be snake_case (`prompt_tokens`, not `promptTokens`)
  *   - MIME type MUST be `'usage'` (not `'application/json'`)
  *   - Must include `prompt_tokens_details`
+ * `completion_tokens_details.reasoning_tokens` is forwarded when the server
+ * reports it: the agent-host BYOK bridge reads that key for reasoning-token
+ * accounting, and the guard only checks presence of the required keys, so the
+ * extra nested object is safe.
  * The former standalone part-builder was absorbed here (audit P14-2): the
  * progress sink was its only customer, tests drive this function directly.
  */
 export function reportTokenUsage(
   progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cached_tokens?: number; prompt_tokens_details?: Record<string, number> },
+  usage: WireUsage,
 ): void {
-  const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? usage.cached_tokens ?? 0;
+  const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? 0;
+  const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens;
   const usageData = {
     prompt_tokens: usage.prompt_tokens,
     completion_tokens: usage.completion_tokens,
     total_tokens: usage.total_tokens,
     prompt_tokens_details: { cached_tokens: cachedTokens },
+    ...(reasoningTokens !== undefined && { completion_tokens_details: { reasoning_tokens: reasoningTokens } }),
   };
   const usageBytes = new TextEncoder().encode(JSON.stringify(usageData));
   progress.report(new vscode.LanguageModelDataPart(usageBytes, 'usage'));

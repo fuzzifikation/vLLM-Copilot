@@ -140,6 +140,82 @@ describe('Spike A: real extension host, real provider, mock backend', function (
     assert.equal(tools?.[0]?.function?.name, 'get_weather', 'tool definitions must reach the wire');
   });
 
+  it('streams reasoning as ONE thinking run and forwards the reasoning-token split', async () => {
+    const model = await resolveModel();
+    const requestsBefore = backend.requests.length;
+
+    // The shipped "Thought for 1s" fragmentation bug and the reasoning-token
+    // accounting fix, verified through the REAL host: the real
+    // LanguageModelThinkingPart class (not the vitest mock), the real part
+    // stream, and the usage DataPart exactly as VS Code's consumers parse it.
+    // A reasoning burst that arrives as two wire deltas must surface as two
+    // parts sharing one id, closed by the zero-length vscode_reasoning_done
+    // marker BEFORE the answer text, and the server's
+    // completion_tokens_details.reasoning_tokens must reach the usage payload.
+    const ThinkingPart = (vscode as unknown as {
+      LanguageModelThinkingPart: new (v: string, id?: string, m?: Record<string, unknown>) => { value: string; id?: string; metadata?: Record<string, unknown> };
+    }).LanguageModelThinkingPart;
+    assert.ok(ThinkingPart, 'the real VS Code build must expose LanguageModelThinkingPart');
+
+    backend.queue.push({
+      sse:
+        chunk({ role: 'assistant', reasoning_content: 'Deep ' }) +
+        chunk({ reasoning_content: 'thoughts' }) +
+        chunk({ content: 'The answer.' }) +
+        chunk({}, 'stop', {
+          prompt_tokens: 10,
+          completion_tokens: 8,
+          total_tokens: 18,
+          completion_tokens_details: { reasoning_tokens: 5 },
+        }) +
+        doneChunk(),
+    });
+
+    const cts = new vscode.CancellationTokenSource();
+    const response = await model.sendRequest(
+      [vscode.LanguageModelChatMessage.User('Think hard then answer.')],
+      {},
+      cts.token
+    );
+
+    const seq: string[] = [];
+    const texts: string[] = [];
+    const burstIds: (string | undefined)[] = [];
+    let marker: { id?: string; metadata?: Record<string, unknown> } | undefined;
+    let usagePayload: Record<string, any> | undefined;
+    for await (const part of response.stream) {
+      if (part instanceof ThinkingPart) {
+        if (part.metadata?.vscode_reasoning_done) {
+          marker = part;
+          seq.push('done');
+        } else {
+          burstIds.push(part.id);
+          seq.push('think');
+        }
+      } else if (part instanceof vscode.LanguageModelTextPart) {
+        seq.push('text');
+        texts.push(part.value);
+      } else if (part instanceof vscode.LanguageModelDataPart && part.mimeType === 'usage') {
+        usagePayload = JSON.parse(new TextDecoder().decode(part.data));
+      }
+    }
+    cts.dispose();
+
+    assert.deepEqual(seq, ['think', 'think', 'done', 'text'], 'one run, closed before the answer text');
+    assert.equal(burstIds.length, 2);
+    assert.ok(burstIds[0], 'thinking parts must carry a run id');
+    assert.equal(burstIds[1], burstIds[0], 'both deltas share ONE run id (the fragmentation fix)');
+    assert.ok(marker, 'the run must close with the done marker');
+    assert.equal(marker.id, burstIds[0], 'the marker closes the SAME run');
+    assert.equal(marker.metadata?.vscode_reasoning_done, true);
+    assert.equal(texts.join(''), 'The answer.');
+
+    assert.ok(usagePayload, 'the usage data part must reach the part stream');
+    assert.equal(usagePayload.completion_tokens_details?.reasoning_tokens, 5, 'the reasoning-token split must reach VS Code');
+
+    assert.equal(backend.requests.length, requestsBefore + 1, 'exactly one HTTP request');
+  });
+
   it('cancels mid-stream: stream stops, connection tears down, no re-ask', async () => {
     const model = await resolveModel();
     const requestsBefore = backend.requests.length;

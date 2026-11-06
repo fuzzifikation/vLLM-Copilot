@@ -85,9 +85,68 @@ describe('consumeStream', () => {
 
     await run([ev({ reasoning_content: 'thinking...' }), ev({ content: 'answer' })], progress, output, state);
 
-    expect(progress.report).toHaveBeenCalledWith(new vscode.LanguageModelThinkingPart('thinking...'));
+    // Wire contract (verified against VS Code 1.145): thinking parts carry a
+    // stable run id, and the run closes with a zero-length
+    // vscode_reasoning_done part before answer text — else every SSE chunk
+    // renders as its own "Thought for Xs" block.
+    const thinkingParts = progress.report.mock.calls
+      .map(c => c[0] as unknown)
+      .filter(p => p instanceof vscode.LanguageModelThinkingPart) as vscode.LanguageModelThinkingPart[];
+    expect(thinkingParts.map(p => p.value)).toEqual(['thinking...', '']);
+    expect(thinkingParts[0].id).toBeTruthy();
+    expect(thinkingParts[1].id).toBe(thinkingParts[0].id);
+    expect(thinkingParts[1].metadata).toEqual({ vscode_reasoning_done: true });
     expect(state.outcome.hadReasoning).toBe(true);
     expect(state.outcome.hadContent).toBe(true);
+  });
+
+  it('closes an open thinking run when the stream ends without a usage event', async () => {
+    const { progress, output } = setup();
+    const state = createExecutionState(Date.now());
+
+    // A transport that never sends a usage chunk yields no attempt-completion
+    // event, so no in-loop close can fire. Without the finally guard the
+    // "Thought for Xs" block stays open forever in the UI.
+    await run([ev({ reasoning_content: 'solo burst' })], progress, output, state);
+
+    const thinkingParts = progress.report.mock.calls
+      .map(c => c[0] as unknown)
+      .filter(p => p instanceof vscode.LanguageModelThinkingPart) as vscode.LanguageModelThinkingPart[];
+    expect(thinkingParts.map(p => p.value)).toEqual(['solo burst', '']);
+    expect(thinkingParts[1].metadata).toEqual({ vscode_reasoning_done: true });
+  });
+
+  it('starts a fresh thinking run after an executor retry', async () => {
+    const { progress, output } = setup();
+    const state = createExecutionState(Date.now());
+
+    // Reasoning-only stop with NO usage chunk: the empty-response nudge
+    // retries, and no attemptCompletion ever fires. The core's
+    // attemptRestart event is the only signal that the first burst is
+    // final - without it the retry's reasoning merges into the abandoned
+    // attempt's block and the user sees one Frankenstein "Thought" section.
+    let burst = 0;
+    const transport = {
+      chatCompletionStream: async function* () {
+        burst += 1;
+        yield ev({ reasoning_content: `burst ${burst}` });
+        yield ev({ finishReason: 'stop' });
+      },
+    };
+    await run([], progress, output, state, undefined, {
+      transport: transport as ExecutionInput['transport'],
+      maxRetries: 1,
+    });
+
+    const thinkingParts = progress.report.mock.calls
+      .map(c => c[0] as unknown)
+      .filter(p => p instanceof vscode.LanguageModelThinkingPart) as vscode.LanguageModelThinkingPart[];
+    expect(thinkingParts.map(p => p.value)).toEqual(['burst 1', '', 'burst 2', '']);
+    expect(thinkingParts[1].id).toBe(thinkingParts[0].id);
+    expect(thinkingParts[3].id).toBe(thinkingParts[2].id);
+    expect(thinkingParts[2].id).not.toBe(thinkingParts[0].id);
+    expect(thinkingParts[1].metadata).toEqual({ vscode_reasoning_done: true });
+    expect(thinkingParts[3].metadata).toEqual({ vscode_reasoning_done: true });
   });
 
   it('reports tool calls once each (dedup by id) and parses arguments', async () => {
@@ -117,7 +176,10 @@ describe('consumeStream', () => {
     // tool call: text and reasoning riding an all-duplicate tool batch must
     // still reach the user — only the duplicate call itself disappears.
     expect(progress.report).toHaveBeenCalledWith(new vscode.LanguageModelTextPart('after the dup'));
-    expect(progress.report).toHaveBeenCalledWith(new vscode.LanguageModelThinkingPart('r'));
+    const reasoningParts = progress.report.mock.calls
+      .map(c => c[0] as unknown)
+      .filter(p => p instanceof vscode.LanguageModelThinkingPart) as vscode.LanguageModelThinkingPart[];
+    expect(reasoningParts.map(p => p.value)).toContain('r');
     expect(state.outcome.contentBuffer).toBe('after the dup');
     const toolParts = progress.report.mock.calls.filter(c => c[0] instanceof vscode.LanguageModelToolCallPart);
     expect(toolParts).toHaveLength(1);

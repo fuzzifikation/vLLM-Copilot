@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.37.6
+The thinking stream stops splintering. Reasoning shows as one block, and its token count reaches VS Code.
+
+### Fixed
+
+- **One thinking block per thinking burst.** Reasoning no longer splinters into a column of "Thought for 1s" sections between tool calls.
+- **Reasoning tokens counted.** When the vLLM server reports a reasoning-token breakdown (launched with `--reasoning-parser`), it now reaches VS Code's model usage views.
+
 ## v1.37.5
 The extension starts again. Version 1.37.4 failed at startup, so the Dashboard and the vLLM models were missing.
 

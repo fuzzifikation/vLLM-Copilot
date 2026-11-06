@@ -105,7 +105,7 @@
   }
 
 ## ExecutionEvent
-  type ExecutionEvent = StreamEvent | AttemptCompletionEvent;
+  type ExecutionEvent = StreamEvent | AttemptCompletionEvent | AttemptRestartEvent;
 
 ## ExecutionInput
   interface ExecutionInput {

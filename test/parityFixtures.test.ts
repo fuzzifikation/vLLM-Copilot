@@ -157,7 +157,9 @@ async function buildScenarios(): Promise<string> {
         maxRetries: 1, signal: new AbortController().signal, log,
         limits: { wireModelId: 'wire-model', maxInputTokens: 1024, maxOutputTokens: 1024 },
       }, state)) {
-        if (!isAttemptCompletionEvent(chunk)) chunks.push(chunk);
+        // Boundary markers (completion, restart) carry no StreamEvent fields;
+        // the fixture response is built from content/reasoning/tool data only.
+        if (!isAttemptCompletionEvent(chunk) && !('attemptRestart' in chunk)) chunks.push(chunk);
       }
       const response = {
         content: chunks.map((chunk) => chunk.content).join(''),

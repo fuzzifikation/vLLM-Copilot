@@ -29,7 +29,7 @@ export class LanguageModelTextPart {
   constructor(public value: string) {}
 }
 export class LanguageModelThinkingPart {
-  constructor(public value: string | string[]) {}
+  constructor(public value: string | string[], public id?: string, public metadata?: Record<string, unknown>) {}
 }
 export class LanguageModelToolCallPart {
   constructor(public callId: string, public name: string, public input: any) {}

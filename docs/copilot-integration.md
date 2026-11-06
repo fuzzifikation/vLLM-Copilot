@@ -454,15 +454,15 @@ Qwen3.6's `preserve_thinking` option (enabled via `chat_template_kwargs`) is a c
 
 `prompt_tokens` includes everything the model processed - system prompt, tool schemas, all conversation history, and accumulated thinking blocks.
 
-**vLLM's `completion_tokens_details`:** On vLLM 0.21, the usage object is flat - no `reasoning_tokens` breakdown in the `/v1/chat/completions` endpoint. Thinking tokens are mixed into `completion_tokens`. The `/v1/responses` endpoint (newer API) does populate `completion_tokens_details.reasoning_tokens`, but that would require a major rewrite to adopt.
+**vLLM's `completion_tokens_details`:** Current vLLM populates `usage.completion_tokens_details.reasoning_tokens` on `/v1/chat/completions` when the server runs with `--reasoning-parser` (verified against upstream source and docs 2026-11-06; older vLLM, e.g. 0.21, reported flat usage with thinking mixed into `completion_tokens`). Without the flag there is no breakdown to forward.
 
-**Implication:** VS Code has no visibility into thinking token accumulation. The extension's `maxInputTokens` budget doesn't account for it specifically. The model card says this is intentional - "maintaining full reasoning context can enhance decision consistency and reduce overall token consumption by minimizing redundant reasoning."
+**Implication:** Accumulated thinking in history still inflates `prompt_tokens` invisibly: the extension's `maxInputTokens` budget cannot budget for it specifically. The model card says this is intentional - "maintaining full reasoning context can enhance decision consistency and reduce overall token consumption by minimizing redundant reasoning."
 
 **Our implementation:** We log authoritative token counts to the vLLM-Copilot output channel after each request:
 ```
-[TOKENS] model-id  input: 8500 (cached: 0)  output: 3200 (thinking: 0)  total: 11700
+[TOKENS] model-id  input: 8,500 (cached: 0)  output: 3,200 (41.2 tok/s)  total: 11,700
 ```
-This lets users watch context growth across turns when `preserve_thinking` is active. The `thinking` field will auto-populate if vLLM adds `reasoning_tokens` to the chat completions endpoint in a future version.
+This lets users watch context growth across turns when `preserve_thinking` is active. When the server reports `reasoning_tokens`, `reportTokenUsage` also forwards it to VS Code (in the `usage` data part) so the agent host's model-call accounting shows the reasoning split.
 
 **Recommended:** For agent scenarios (multi-turn, tool calling), `preserve_thinking: true` is beneficial per the model card. For simple chat, it may cause progressive slowdown as context grows. Users can toggle between "Think" and "No Think" modes.
 
