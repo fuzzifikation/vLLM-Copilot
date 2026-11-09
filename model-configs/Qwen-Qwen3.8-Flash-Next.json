@@ -7,8 +7,10 @@
 //
 // NOTE: These params work for ANY quantization variant (FP8, NVFP4, GGUF, etc.).
 // Preset matching is substring-based, so this preset applies to any served id
-// containing "Qwen3.8-Flash-Next". The config's `vllmModelId` must still be an
-// EXACT served model id — the extension never strips or forgives mismatches.
+// containing "Qwen3.8-Flash" (which also covers "Qwen3.8-Flash-Next"; the
+// longer pattern wins whenever both match). The config's `vllmModelId` must
+// still be an EXACT served model id — the extension never strips or forgives
+// mismatches.
 //
 // Chat template parameters (Jinja template variables, passed via chat_template_kwargs):
 //   - `enable_thinking: true/false` — default true; false emits no thinking tokens
@@ -46,7 +48,7 @@
 
 {
   "presetVersion": 1,
-  "match": ["Qwen3.8-Flash-Next"],
+  "match": ["Qwen3.8-Flash-Next", "Qwen3.8-Flash"],
   "meta": {
     "name": "Qwen3.8-Flash-Next",
     "source": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8",
