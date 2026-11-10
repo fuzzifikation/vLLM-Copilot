@@ -279,7 +279,7 @@ describe('Copilot harness mode mapping', () => {
 
         for (const [selection, expected] of [['high', deep], ['Deep', deep], ['Precise', precise]] as const) {
           const options = { modelOptions: {}, tools: [], modelConfiguration: { reasoningEffort: selection } };
-          expect(readPickerSelection(options, model).selectedMode).toBe(selection === 'high' ? 'Deep' : selection);
+          expect(readPickerSelection(options, model, override).selectedMode).toBe(selection === 'high' ? 'Deep' : selection);
           const request = buildRequest(model, [], options, {
             models: [override], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }],
           }, output);
@@ -289,6 +289,33 @@ describe('Copilot harness mode mapping', () => {
       }
     } finally {
       output.dispose();
+    }
+  });
+
+  it('decodes an effort-token selection as the mode name, not the picker label', () => {
+    // "xhigh" is the identifier the harness round-trips; VS Code renders it as
+    // "Extra High" in enumItemLabels. A reader that decodes through those labels
+    // hands the request a name no mode owns, and the mode's parameters vanish
+    // with nothing but a warning line in Output.
+    const override = {
+      id: 'm', server: 'srv', maxOutputTokens: 8192, defaultMode: 'xhigh',
+      modelModes: {
+        xhigh: { reasoning_effort: 'xhigh', temperature: 1 },
+        'Think-Coding': { temperature: 0.6 },
+      },
+    };
+    const model = buildModelInfo(describeModel({
+      wireId: 'm', contextWindow: 65536, serverType: 'vllm', override: override as any,
+    }));
+    expect(buildConfigurationSchema(override)!.properties.reasoningEffort.enumItemLabels)
+      .toEqual(['Extra High', 'Think-Coding']);
+
+    for (const selection of ['xhigh', 'Think-Coding']) {
+      const options = { modelOptions: {}, tools: [], modelConfiguration: { reasoningEffort: selection } };
+      expect(readPickerSelection(options, model, override).selectedMode).toBe(selection);
+      // Same answer with no entry at hand: the schema enum is the identifier
+      // space, so it must never be read as if it were the label space.
+      expect(readPickerSelection(options, model).selectedMode).toBe(selection);
     }
   });
 

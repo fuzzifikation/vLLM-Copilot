@@ -192,8 +192,13 @@ export function validateConfig(config: VllmConfig): string[] {
  * normalized output-length pick. ONE reader for both consumers (audit P1-1):
  * the provider tracks the selection for metadata re-registration, the request
  * builder uses it for params and the output budget; their private parses had
- * already drifted apart. Published schema values decode to their Local mode
- * names. Current configured modes and aliases take precedence over cached
+ * already drifted apart. The value the harness hands back is the schema's
+ * `enum` entry, which under the effort-token doctrine IS the Local mode name —
+ * except where a harness mapping aliased a descriptively named mode, and that
+ * alias is inverted through the entry's own mapping, never through
+ * `enumItemLabels`: those hold VS Code's display strings (`xhigh` becomes
+ * "Extra High"), so decoding through them turns a selection into a name no
+ * mode has. Current configured modes and aliases take precedence over cached
  * metadata; legacy names resolve only when the old name is absent.
  * Copilot-shape knowledge: this is why it lives at the host boundary, while
  * the numeric floor rule (`normalizePickerTokens`) stays in the core.
@@ -207,10 +212,9 @@ export function readPickerSelection(
     .modelConfiguration;
   const mode = modelConfiguration?.reasoningEffort;
   const property = (model as (vscode.LanguageModelChatInformation & {
-    configurationSchema?: { properties: Record<string, { enum?: unknown[]; enumItemLabels?: unknown[] }> };
+    configurationSchema?: { properties: Record<string, { enum?: unknown[] }> };
   }) | undefined)?.configurationSchema?.properties.reasoningEffort;
-  const index = typeof mode === 'string' ? property?.enum?.indexOf(mode) ?? -1 : -1;
-  let selected = index >= 0 ? property?.enumItemLabels?.[index] ?? mode : mode;
+  let selected = mode;
   const configuredNames = override?.modelModes ? Object.keys(override.modelModes) : undefined;
   const mapping = override ? readCopilotHarnessMapping(override) : undefined;
   if (typeof mode === 'string' && configuredNames?.includes(mode)) {
@@ -224,7 +228,7 @@ export function readPickerSelection(
     }
   }
   if (typeof selected === 'string') {
-    const availableNames = configuredNames ?? property?.enumItemLabels;
+    const availableNames = configuredNames ?? property?.enum;
     if (availableNames && !availableNames.includes(selected)) {
       // A stale chat value follows the rename chain to the first step this
       // model actually offers (`Think (High)` -> `Think-High` -> `high`), the
