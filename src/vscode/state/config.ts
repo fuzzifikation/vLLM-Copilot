@@ -98,7 +98,14 @@ export function readCopilotHarnessMapping(model?: ModelConfig): {
     }
     const defaultMode = model?.defaultMode && Object.hasOwn(modes, model.defaultMode)
       ? model.defaultMode : Object.keys(modes)[0];
-    if (!error && effortByMode.size > 0 && defaultMode && !effortByMode.has(defaultMode)) {
+    // The default mode has to be reachable in the harness's own vocabulary: the
+    // Agents window renders effort values, so a mapping that leaves a
+    // descriptively named default unaliased would publish a default it cannot
+    // label. A mode already NAMED as an effort token publishes itself and needs
+    // no alias - demanding one would force exactly the `{"high": "high"}`
+    // identity entry the schema and the migration forbid.
+    if (!error && effortByMode.size > 0 && defaultMode
+      && !effortByMode.has(defaultMode) && !isCopilotHarnessEffort(defaultMode)) {
       error = `must include the default mode "${defaultMode}"`;
     }
   }

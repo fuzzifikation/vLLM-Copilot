@@ -156,7 +156,11 @@ const HARNESS_EFFORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
   max: 'Absolute maximum capability with no constraints',
 };
 // VS Code has no hover text for `ultra` either; the label is what its own
-// fallback (capitalised token) would render.
+// fallback (capitalised token) would render. Consequence worth knowing: the
+// dropdown publishes `enumDescriptions` only when EVERY entry has text, so a
+// model with an `ultra` mode keeps plain rows - exactly like a model with a
+// descriptively named behavior mode. Inventing wording here would break the
+// rule that this table mirrors VS Code's own strings.
 
 /**
  * Build the `configurationSchema` for a model's picker settings: up to two

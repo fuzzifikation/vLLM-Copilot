@@ -9,12 +9,14 @@ Model-mode coverage for this year's coding models, so thinking depth comes from 
 
 ### Changed
 
-- **Modes that are an effort rung are now named with Copilot's own effort value** (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), so the picker shows VS Code's wording for the choice - *Extra High*, not a string the Agents window drops - and nothing stands between that label and the request. A name like `Think-High` plus a translation to `high` bought an extra lookup and a label only one host could show. Modes that are a *behavior* rather than a rung keep their names (`Think-Coding`, `Think-Always`, `Tooling`, `Agent`, `Chat-Fast`) and their alias. Bundled presets and newly discovered OpenRouter models use the new names; existing model entries migrate on the next start with their parameters intact, and an older chat needs one mode reselection to refresh its readout.
-- **Sampling every mode shares is declared once.** Presets that repeated identical `temperature` / `top_p` / penalties in each mode now state them in `defaultParams`. The request each mode sends is unchanged.
+- **Modes that are an effort rung are now named with Copilot's own effort value** (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`), so the picker shows VS Code's wording for the choice - *Extra High*, not a string the Agents window drops - and nothing stands between that label and the request. A name like `Think-High` plus a translation to `high` bought an extra lookup and a label only one host could show. Modes that are a *behavior* rather than a rung keep their names (`Think-Coding`, `Think-Always`, `Tooling`, `Agent`, `Chat-Fast`) and their alias. Bundled presets and newly discovered OpenRouter models use the new names; existing model entries migrate on the next start with their parameters intact, and an older chat needs one mode reselection to refresh its readout.
+- **Sampling every mode shares is declared once.** Presets that repeated the same `temperature` / `top_p` / penalties in each mode now state them in `defaultParams`, and only the mode that differs restates its own value. The request each mode sends is unchanged.
 
 ### Fixed
 
 - **Qwen3.8 had no Low rung.** The 27B and Flash-Next presets offered only `xhigh` and `medium`, although their chat template accepts `low`, so the mode list never showed it. Both now offer a `low` mode sending `reasoning_effort: "low"`, and Copilot's Low choice lands on it.
+- **A harness mapping could vanish whole.** On a model whose default mode was already an effort value (`high`), a mapping that aliased a behavior mode (`low` → `Tooling`) was rejected entirely, taking the aliases you wrote with it: the rule demanded an alias for the default mode, and only a forbidden identity entry (`high` → `high`) could supply one. A default mode that names its own effort now needs no alias.
+- **The mode-migration notification named the wrong version.** It read "vLLM-Copilot 1.38.0" whatever you had installed; it now names the version that actually ran the migration.
 
 ## v1.38.1
 Personality presets keep working when Microsoft renames the Agents-window prompt under us.

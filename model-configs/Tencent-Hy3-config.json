@@ -65,6 +65,7 @@
           "reasoning_effort": "no_think"
         }
       }
-    }
+    },
+    "defaultMode": "high"
   }
 }

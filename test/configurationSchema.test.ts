@@ -342,4 +342,24 @@ describe('Copilot harness mode mapping', () => {
     })) as ReturnType<typeof buildModelInfo> & { warningText?: Record<string, string> };
     expect(info.warningText?.copilot_harness_mapping).toContain('copilotHarnessMapping');
   });
+
+  it('accepts a mapping whose default mode is already an effort token', () => {
+    // The default mode must be reachable in the harness vocabulary, but a mode
+    // NAMED as an effort token publishes itself. Demanding an alias for it would
+    // force {"high": "high"}, the identity entry the schema forbids and the
+    // migration deletes, so such a mapping was thrown away whole - taking every
+    // alias the user actually wrote with it.
+    const modes = { high: { reasoning_effort: 'high' }, Tooling: { temperature: 0.6 } };
+    const override = {
+      id: 'm', server: 'srv', modelModes: modes,
+      defaultMode: 'high', copilotHarnessMapping: { low: 'Tooling' },
+    };
+    const schema = buildConfigurationSchema(override)!.properties.reasoningEffort;
+    expect(schema.enum).toEqual(['high', 'low']);
+    expect(schema.default).toBe('high');
+    const info = buildModelInfo(describeModel({
+      wireId: 'm', contextWindow: 65536, serverType: 'vllm', override: override as any,
+    })) as ReturnType<typeof buildModelInfo> & { warningText?: Record<string, string> };
+    expect(info.warningText?.copilot_harness_mapping).toBeUndefined();
+  });
 });
