@@ -354,6 +354,11 @@ A working chat model - minimum viable config. No modes, no custom params, just a
         "structured_outputs": { "choice": ["yes", "no"] }
       }
     },
+    // Copilot harness effort values -> mode names. Unmapped modes stay Local-only. Never sent to the server.
+    "copilotHarnessMapping": {
+      "high": "Think",
+      "none": "No-Think"
+    },
     "defaultMode": "Think"                            // must match a modelModes key
   }
 ]

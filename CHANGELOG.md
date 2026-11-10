@@ -7,12 +7,16 @@ Keep model modes selectable across Copilot harnesses and give them stable, space
 
 - **An update guide inside VS Code.** A Markdown preview opens once per installed version for both fresh installs and upgrades, replacing the old picker explainer.
 - **Copilot harness mode mapping.** Explicit preset mappings expose standard effort choices that select the original mode parameters. Local retains unmapped modes and Output Length.
-- **Wire-safe mode identifiers.** Bundled and newly discovered OpenRouter modes use names such as `Think-Coding` and `No-Think`. Existing recognized names and compatible mappings migrate automatically, with a notification; custom parameters are kept. Existing chats may need one mode reselection to restore the picker readout.
+- **Wire-safe mode identifiers.** Bundled and newly discovered OpenRouter modes use names such as `Think-Coding` and `No-Think`. Existing recognized names and compatible mappings migrate automatically, with a notification; custom parameters are kept, and only the exact known old DeepSeek V4 Pro and Agents-A1 mode definitions are repaired. Existing chats may need one mode reselection to restore the picker readout.
 
 ### Changed
 
 - **Poolside sampling follows checkpoint defaults.** Removed the preset's custom temperature, top-p and repetition-penalty overrides. Both thinking presets remain available.
-- **Preset thinking controls.** DeepSeek V4 Pro explicitly disables reasoning in `No-Think`; Agents-A1 drops the ignored preservation flag. Exact old preset modes are repaired automatically; customized variants are kept.
+- **Agents-A1 preset drops `preserve_thinking`.** Its official chat template ignores the flag; reasoning is retained only within the current turn.
+
+### Fixed
+
+- **DeepSeek V4 Pro `No-Think` turns reasoning off.** Since v1.33.2 the mode relied on omitting the reasoning controls, and current vLLM defaults to thinking on, so it kept reasoning anyway. It now sends `reasoning_effort: none` and `thinking: false`.
 
 ## v1.37.6
 The thinking stream stops splintering. Reasoning shows as one block, and its token count reaches VS Code.
