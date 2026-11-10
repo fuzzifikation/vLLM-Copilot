@@ -51,23 +51,25 @@
       "imageInput": false
     },
     "defaultParams": {
-      "temperature": 1.0
+      "temperature": 1.0,
+      "top_p": 0.95
     },
     "modelModes": {
       "max": {
         "chat_template_kwargs": {
           "thinking": true,
           "reasoning_effort": "max"
-        },
-        "top_p": 0.95
+        }
       },
       "high": {
         "chat_template_kwargs": {
           "thinking": true,
           "reasoning_effort": "high"
-        },
-        "top_p": 0.95
+        }
       },
+      // The card's "otherwise" recipe: top_p 1.0 overrides the agentic baseline.
+      // Its kwargs differ per mode, so they stay per-mode - overriding one key
+      // replaces the whole object, and this template needs its own pair.
       "none": {
         "reasoning_effort": "none",
         "chat_template_kwargs": {

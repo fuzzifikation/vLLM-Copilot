@@ -111,6 +111,11 @@ describe('existing model mode migration', () => {
           ? `Think (${name[0].toUpperCase()}${name.slice(1)})` : name;
       models = [{
         id: file, server: 'srv', vllmModelId: preset.match[0],
+        // The Add flow saves the preset's config whole, so a real user entry
+        // carries the shared baseline too. Omitting it here would fake a user
+        // whose thinking controls vanished and make the migration's honest
+        // "custom reasoning controls" refusal look like a bug.
+        ...(preset.config.defaultParams ? { defaultParams: structuredClone(preset.config.defaultParams) } : {}),
         modelModes: Object.fromEntries(Object.entries(preset.config.modelModes!).map(([name, params]) =>
           [legacyName(name), structuredClone(params)])),
         ...(preset.config.defaultMode ? { defaultMode: legacyName(preset.config.defaultMode) } : {}),

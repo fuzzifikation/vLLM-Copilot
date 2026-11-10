@@ -46,21 +46,22 @@
       "toolCalling": true,
       "imageInput": false
     },
+    "defaultParams": {
+      "chat_template_kwargs": {
+        "enable_thinking": true
+      }
+    },
     "modelModes": {
       "high": {
-        "chat_template_kwargs": {
-          "enable_thinking": true
-        },
         "temperature": 1.0,
         "top_p": 0.95
       },
       "Tooling": {
-        "chat_template_kwargs": {
-          "enable_thinking": true
-        },
         "temperature": 0.6,
         "top_p": 0.95
       },
+      // Params merge per top-level key, not deeply: this object REPLACES the
+      // default chat_template_kwargs wholesale, so it restates every kwarg.
       "none": {
         "chat_template_kwargs": {
           "enable_thinking": false

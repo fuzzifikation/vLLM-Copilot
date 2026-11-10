@@ -50,29 +50,26 @@
       "imageInput": true
     },
     "defaultParams": {
+      "top_p": 0.95,
       "top_k": 20,
       "min_p": 0.0,
-      "repetition_penalty": 1.0
+      "presence_penalty": 0.0,
+      "repetition_penalty": 1.0,
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "preserve_thinking": true
+      }
     },
     "modelModes": {
       "Think-General": {
-        "chat_template_kwargs": {
-          "enable_thinking": true,
-          "preserve_thinking": true
-        },
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "presence_penalty": 0.0
+        "temperature": 1.0
       },
       "Think-Coding": {
-        "chat_template_kwargs": {
-          "enable_thinking": true,
-          "preserve_thinking": true
-        },
-        "temperature": 0.6,
-        "top_p": 0.95,
-        "presence_penalty": 0.0
+        "temperature": 0.6
       },
+      // The card's no-think recipe. Params merge per top-level key, not deeply:
+      // this chat_template_kwargs object REPLACES the default one wholesale, so
+      // a mode overriding it must restate every kwarg it wants sent.
       "none": {
         "chat_template_kwargs": {
           "enable_thinking": false

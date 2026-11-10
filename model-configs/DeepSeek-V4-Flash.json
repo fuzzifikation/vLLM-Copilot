@@ -58,17 +58,17 @@
       "imageInput": false
     },
     "defaultParams": {
-      "temperature": 1.0
+      "temperature": 1.0,
+      "top_p": 0.95
     },
     "modelModes": {
       "max": {
-        "reasoning_effort": "max",
-        "top_p": 0.95
+        "reasoning_effort": "max"
       },
       "high": {
-        "reasoning_effort": "high",
-        "top_p": 0.95
+        "reasoning_effort": "high"
       },
+      // The card's "otherwise" recipe: top_p 1.0 overrides the agentic baseline.
       "none": {
         "reasoning_effort": "none",
         "top_p": 1.0
