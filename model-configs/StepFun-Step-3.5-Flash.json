@@ -60,8 +60,11 @@
     },
     // No "none" mapping: this model cannot stop thinking. "high" is an alias for
     // the default mode; Chat-Fast is a sampling choice, not a reasoning rung.
+    // The card's two sampling recipes; "none" is unusable here because this
+    // template thinks on every request and cannot be told not to.
     "copilotHarnessMapping": {
-      "high": "Agent"
+      "high": "Agent",
+      "low": "Chat-Fast"
     },
     "defaultMode": "Agent"
   }

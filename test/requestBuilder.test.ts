@@ -86,6 +86,29 @@ describe('buildRequest', () => {
     expect(result.mergedOptions.temperature).toBe(0.5);
   });
 
+  it('falls back to the model default mode when the selection names none', () => {
+    // A preset release renames or deletes a mode while the user still has the
+    // old one selected. Applying nothing used to strip the request of every mode
+    // parameter, so a thinking model quietly stopped sending its thinking flags.
+    const out = { appendLine: vi.fn() } as any;
+    const result = buildRequest(
+      { id: 'm', maxOutputTokens: 4096, maxInputTokens: 200 } as any, [] as any,
+      opts({ modelConfiguration: { reasoningEffort: 'Think-Someday' } }),
+      {
+        models: [{
+          id: 'm', server: 'srv', defaultMode: 'deep',
+          modelModes: { deep: { max_tokens: 2048, chat_template_kwargs: { thinking_mode: 'adaptive' } } },
+        }],
+        servers: [{ id: 'srv', serverUrl: 'http://host:8000' }],
+      },
+      out,
+    );
+    expect((result.mergedOptions as any).chat_template_kwargs).toEqual({ thinking_mode: 'adaptive' });
+    expect(result.mergedOptions.max_tokens).toBe(2048);
+    expect(out.appendLine.mock.calls.map((c: any[]) => String(c[0])).join('\n'))
+      .toMatch(/Selected mode "Think-Someday".*default mode "deep"/);
+  });
+
   it('honors the selected mode max_tokens within the advertised budget', () => {
     // Coherent state: metadata re-registered to the mode's budget (advertised 250).
     const advModel = (mo: number, mi: number) => ({ id: 'm', maxOutputTokens: mo, maxInputTokens: mi }) as any;

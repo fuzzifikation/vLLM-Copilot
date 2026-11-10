@@ -142,16 +142,30 @@ export function assembleRequest(
   const servers = config.servers;
   const override = resolveOverrideForModel(modelOverrides, modelId);
 
-  const modeParams = selectedMode && override?.modelModes?.[selectedMode]
-    ? override.modelModes[selectedMode]
-    : undefined;
+  // A selection this model does not offer — a harness effort with no mode of
+  // that name, or a picker value cached before a rename — used to strip the
+  // request of mode parameters entirely, so a thinking model silently lost its
+  // thinking flags and only a WARN in Output remembered. It now falls back to
+  // the model's own default mode, the one the picker advertised before anyone
+  // touched it. An absent selection stays mode-less: nothing was chosen, so
+  // nothing is applied.
+  const modeNames = override?.modelModes ? Object.keys(override.modelModes) : undefined;
+  const selectedKnown = typeof selectedMode === 'string' && !!modeNames?.includes(selectedMode);
+  const effectiveMode = selectedKnown
+    ? selectedMode
+    : typeof selectedMode === 'string' && modeNames?.length
+      ? (override?.defaultMode && modeNames.includes(override.defaultMode)
+        ? override.defaultMode
+        : modeNames[0])
+      : undefined;
+  const modeParams = effectiveMode ? override?.modelModes?.[effectiveMode] : undefined;
 
   const mergedOptions: Record<string, unknown> = {
     // Layered params: defaults ← caller modelOptions ← defaultParams ← mode.
     // No max_tokens is seeded into this layering (audit P1-2): the output
     // budget is re-asserted after the spread, so nothing layered before it —
     // the caller's UI value included — can reach the wire unclamped.
-    ...resolveRequestParams(override, selectedMode, runtimeOptions),
+    ...resolveRequestParams(override, effectiveMode, runtimeOptions),
     // NOTE: tools/tool_choice come last so the caller's tool definitions always win.
     tools,
     // Enforce tool_choice when the caller requires the model to call a tool.
@@ -169,7 +183,7 @@ export function assembleRequest(
   // NEXT request once metadata re-registers; down-switches are instant.
   mergedOptions.max_tokens = resolveMaxTokensForRequest(
     override,
-    selectedMode,
+    effectiveMode,
     advertisedMaxOutputTokens,
     pickerTokens,
   );
@@ -194,10 +208,11 @@ export function assembleRequest(
     mergedOptions.provider = { only: [providerTag] };
     log.appendLine(`[INFO] Model "${modelId}" → OpenRouter provider pinned: "${providerTag}" (provider.only)`);
   }
+  if (typeof selectedMode === 'string' && effectiveMode && effectiveMode !== selectedMode) {
+    log.appendLine(`[WARN] Selected mode "${selectedMode}" not found in modelModes for ${modelId} - applying the model's default mode "${effectiveMode}"`);
+  }
   if (modeParams) {
-    log.appendLine(`[INFO] Model mode: "${selectedMode}" → ${JSON.stringify(modeParams)}`);
-  } else if (selectedMode) {
-    log.appendLine(`[WARN] Selected mode "${selectedMode}" not found in modelModes for ${modelId} - no mode parameters applied`);
+    log.appendLine(`[INFO] Model mode: "${effectiveMode}" → ${JSON.stringify(modeParams)}`);
   } else if (override?.modelModes && Object.keys(override.modelModes).length > 0) {
     log.appendLine(`[WARN] Model has modelModes configured but none was selected for ${modelId}`);
   }

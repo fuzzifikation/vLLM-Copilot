@@ -149,7 +149,10 @@ describe('shipped model-configs presets', () => {
           expect(effort, `${file}: identity mapping "${effort}" is dead config`).not.toBe(name);
         }
         const defaultMode = preset.config.defaultMode;
-        if (Object.keys(mapping).length > 0 && defaultMode) {
+        // The default mode has to be reachable in the harness vocabulary - but a
+        // mode already NAMED for an effort token publishes itself, and aliasing
+        // it is exactly the identity entry the loop above rejects.
+        if (Object.keys(mapping).length > 0 && defaultMode && !isCopilotHarnessEffort(defaultMode)) {
           expect(Object.values(mapping), `${file}: no effort selects the default mode`)
             .toContain(defaultMode);
         }

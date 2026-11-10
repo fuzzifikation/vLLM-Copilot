@@ -76,9 +76,11 @@
         }
       }
     },
-    // Harness "high" selects always-on thinking, not a backend effort.
+    // enabled > adaptive > disabled, so every rung answers to a harness effort
+    // label; the `none` mode is named for its own level and publishes itself.
     "copilotHarnessMapping": {
-      "high": "Think-Always"
+      "high": "Think-Always",
+      "medium": "Think-Adaptive"
     },
     "defaultMode": "Think-Always"
   }

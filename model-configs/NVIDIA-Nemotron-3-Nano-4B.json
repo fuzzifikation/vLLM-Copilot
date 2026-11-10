@@ -68,6 +68,12 @@
         }
       }
     },
+    // `high` and `none` are named for their own levels. Only "Tooling" needs an
+    // alias to be reachable in the harness: thinking stays on there as well, the
+    // card's tool-accurate recipe just samples colder.
+    "copilotHarnessMapping": {
+      "medium": "Tooling"
+    },
     "defaultMode": "high"
   }
 }

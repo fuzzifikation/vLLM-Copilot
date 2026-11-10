@@ -38,8 +38,8 @@
 //   - Thinking on: model self-determines reasoning budget.
 //   - "none": direct responses, no reasoning tokens.
 //   - There are NO intermediate effort levels (low/medium/high) — binary on/off only.
-//   - Both "Think-General" and "Think-Code" remain available;
-//     both use checkpoint sampling defaults and preserve reasoning history.
+//   - One thinking mode only. A "Think-Code" twin used to sit beside it sending
+//     byte-identical parameters: a second label for one request, not a mode.
 //
 {
   "presetVersion": 1,
@@ -47,7 +47,7 @@
   "meta": {
     "source": "https://huggingface.co/poolside/Laguna-S-2.1",
     "verified": "2026-11-10",
-    "notes": "Poolside coding model with preserved thinking. Binary thinking (no effort levels); sampling is left to checkpoint defaults, as the current NVFP4 card recommends. Both General and Code thinking presets remain available."
+    "notes": "Poolside coding model with preserved thinking. Binary thinking (no effort levels); sampling is left to checkpoint defaults, as the current NVFP4 card recommends. Thinking is either on with preserved reasoning history or off."
   },
   "config": {
     "displayName": "Laguna-S-2.1",
@@ -59,12 +59,6 @@
     },
     "modelModes": {
       "Think-General": {
-        "chat_template_kwargs": {
-          "enable_thinking": true,
-          "preserve_thinking": true
-        }
-      },
-      "Think-Code": {
         "chat_template_kwargs": {
           "enable_thinking": true,
           "preserve_thinking": true

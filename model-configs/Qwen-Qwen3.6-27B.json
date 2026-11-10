@@ -80,8 +80,11 @@
       }
     },
     // Harness "high" selects the default thinking mode, not a backend effort.
+    // Both modes think; the coding recipe samples colder, so it answers to the
+    // rung below the recommended default. `none` publishes itself.
     "copilotHarnessMapping": {
-      "high": "Think-General"
+      "high": "Think-General",
+      "medium": "Think-Coding"
     },
     "defaultMode": "Think-General"
   }
