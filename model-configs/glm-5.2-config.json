@@ -9,9 +9,9 @@
 // its exact server model id; the preset does not rename it.
 //
 // Reasoning modes (from vLLM recipe):
-//   - Think Max: omit reasoning_effort or set "max" — deepest reasoning
-//   - Think High: "reasoning_effort": "high" — balanced depth/latency
-//   - No-Think: chat_template_kwargs.enable_thinking: false — no chain-of-thought
+//   - max:  omit reasoning_effort or set "max" — deepest reasoning
+//   - high: "reasoning_effort": "high" — balanced depth/latency
+//   - none: chat_template_kwargs.enable_thinking: false — no chain-of-thought
 //   Template resolves to "max" unless reasoning_effort is explicitly "high".
 //
 // Generation defaults: temperature=1.0, top_p=0.95 (from model card benchmarks).
@@ -41,33 +41,24 @@
       "toolCalling": true,
       "imageInput": false
     },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "presence_penalty": 0
+    },
     "modelModes": {
-      "Think-Max": {
-        "reasoning_effort": "max",
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "presence_penalty": 0
+      "max": {
+        "reasoning_effort": "max"
       },
-      "Think-High": {
-        "reasoning_effort": "high",
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "presence_penalty": 0
+      "high": {
+        "reasoning_effort": "high"
       },
-      "No-Think": {
+      "none": {
         "chat_template_kwargs": {
           "enable_thinking": false
-        },
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "presence_penalty": 0
+        }
       }
     },
-    "copilotHarnessMapping": {
-      "max": "Think-Max",
-      "high": "Think-High",
-      "none": "No-Think"
-    },
-    "defaultMode": "Think-High"
+    "defaultMode": "high"
   }
 }

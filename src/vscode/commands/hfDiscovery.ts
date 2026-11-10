@@ -25,7 +25,7 @@ import { loadModelPresets, findPresetForModel, mergePresetWithUserConfig, preset
  * - context window from the shared backend-aware resolver (resolveRuntimeLimits)
  * - generation defaults from generation_config.json on HuggingFace
  *
- * modelModes (Think/No-Think) are deliberately NOT synthesized from chat
+ * modelModes (reasoning rungs) are deliberately NOT synthesized from chat
  * templates — see the note in step 3 below.
  */
 
@@ -297,7 +297,7 @@ async function autoConfigureModel(
         }
         summary.push('No tool calling markers in chat template');
       }
-      // NOTE: modelModes (Think/No-Think) are NOT auto-detected from templates.
+      // NOTE: modelModes (reasoning rungs) are NOT auto-detected from templates.
       // They require model-specific knowledge that isn't discoverable from Jinja conditionals.
       // Configure them in model-configs/ presets or directly in settings.
     } else {

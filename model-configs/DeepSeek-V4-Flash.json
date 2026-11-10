@@ -38,9 +38,9 @@
 //   These are authoritative for local vLLM and applied in all modes.
 //
 // Modes:
-//   - Think-Max:    Maximum reasoning effort
-//   - Think-High:   Standard deep reasoning (default)
-//   - No-Think:       Direct responses, no thinking tokens (IdentityReasoningParser)
+//   - max:    Maximum reasoning effort
+//   - high:   Standard deep reasoning (default)
+//   - none:       Direct responses, no thinking tokens (IdentityReasoningParser)
 
 {
   "presetVersion": 1,
@@ -57,28 +57,23 @@
       "toolCalling": true,
       "imageInput": false
     },
+    "defaultParams": {
+      "temperature": 1.0
+    },
     "modelModes": {
-      "Think-Max": {
+      "max": {
         "reasoning_effort": "max",
-        "temperature": 1.0,
         "top_p": 0.95
       },
-      "Think-High": {
+      "high": {
         "reasoning_effort": "high",
-        "temperature": 1.0,
         "top_p": 0.95
       },
-      "No-Think": {
+      "none": {
         "reasoning_effort": "none",
-        "temperature": 1.0,
         "top_p": 1.0
       }
     },
-    "copilotHarnessMapping": {
-      "max": "Think-Max",
-      "high": "Think-High",
-      "none": "No-Think"
-    },
-    "defaultMode": "Think-High"
+    "defaultMode": "high"
   }
 }

@@ -64,27 +64,22 @@
       "toolCalling": true,
       "imageInput": true
     },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95
+    },
     "modelModes": {
-      "Think": {
+      "high": {
         "chat_template_kwargs": {
           "enable_thinking": true
-        },
-        "temperature": 1.0,
-        "top_p": 0.95
+        }
       },
-      "No-Think": {
+      "none": {
         "chat_template_kwargs": {
           "enable_thinking": false
-        },
-        "temperature": 1.0,
-        "top_p": 0.95
+        }
       }
     },
-    // Harness "high" enables thinking; this model has no effort levels.
-    "copilotHarnessMapping": {
-      "high": "Think",
-      "none": "No-Think"
-    },
-    "defaultMode": "Think"
+    "defaultMode": "high"
   }
 }

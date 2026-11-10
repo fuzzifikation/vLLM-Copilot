@@ -1,0 +1,75 @@
+// Gemma 4 (Google) — Model configuration
+// Source: https://huggingface.co/google/gemma-4-31B-it (2026-03) plus the
+// 26B-A4B, E4B and E2B cards. Verified against each repo's card,
+// chat_template.jinja, config.json and generation_config.json.
+//
+// model_type "gemma4", multimodal (text + image; audio on E2B/E4B/12B per the
+// card). Native function calling. All sizes share the same thinking knob and the
+// same sampling, so one preset covers them — with ONE deliberate exclusion:
+//   - gemma-4-12B publishes NO chat_template.jinja and its tokenizer_config.json
+//     carries no template at all, so its enable_thinking support cannot be
+//     verified from official files. It is excluded from the match list rather
+//     than guessed at.
+//
+// Context differs by size and that is fine for one ladder: config.json gives
+// 262,144 for 31B and 26B-A4B, 131,072 for E4B and E2B (card: "128K tokens
+// (E2B/E4B) and 256K tokens (12B, 26B A4B/31B)"). The [32768, 16384, 8192] head
+// still leaves ~96K input on the smallest window.
+//
+// Chat template parameters (chat_template_kwargs):
+//   - `enable_thinking: true/false` — the template declares
+//     `enable_thinking | default(false)`, i.e. thinking is OFF by default, and
+//     the card says "To enable reasoning, set enable_thinking=True". Both modes
+//     therefore state it explicitly; this preset's default mode turns thinking ON
+//     because Copilot is an agentic harness.
+//   - `preserve_thinking` exists (`| default(false)`) and gates whether thinking
+//     blocks survive on assistant messages that carry tool_calls. Left UNSET:
+//     neither the card nor the template recommends a value, so the checkpoint
+//     default stands.
+//   - `disable thinking` formatting caveat from the card: every size except E2B
+//     and E4B still emits an empty thought block when thinking is off. Harmless,
+//     but it explains why none responses differ slightly between sizes.
+//
+// Sampling: card lists temperature=1.0, top_p=0.95, top_k=64 and every size's
+// generation_config.json ships exactly that. Same values in both modes.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["gemma-4-31B", "gemma-4-26B-A4B", "gemma-4-E4B", "gemma-4-E2B"],
+  "meta": {
+    "source": "https://huggingface.co/google/gemma-4-31B-it",
+    "verified": "2026-11-10",
+    "notes": "Gemma 4 (gemma4, vision, 131K-262K by size). Thinking is OFF by default in the template; both modes state enable_thinking explicitly. preserve_thinking left at the checkpoint default. temp=1.0, top_p=0.95, top_k=64. gemma-4-12B excluded - it publishes no chat template."
+  },
+  "config": {
+    "displayName": "Gemma 4",
+    "family": "gemma4",
+    "maxOutputTokens": [32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
+    },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": 64
+    },
+    "modelModes": {
+      "high": {
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        }
+      },
+      "none": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "defaultMode": "high"
+  }
+}

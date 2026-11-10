@@ -63,9 +63,9 @@
 //     in the Output Length dropdown — output + input must fit max_model_len.
 //
 // Modes:
-//   - Think-Max:    effort 100 — benchmark settings, best accuracy
-//   - Think-High:   effort 75 — DeepSeek's API "high" tier (default)
-//   - No-Think:       thinking off (reasoning_effort "none"), direct answers
+//   - max:    effort 100 — benchmark settings, best accuracy
+//   - xhigh:   effort 75 — DeepSeek's API "high" tier (default)
+//   - none:       thinking off (reasoning_effort "none"), direct answers
 
 {
   "presetVersion": 1,
@@ -83,28 +83,21 @@
       "toolCalling": true,
       "imageInput": true
     },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 1.0
+    },
     "modelModes": {
-      "Think-Max": {
-        "reasoning_effort": "max",
-        "temperature": 1.0,
-        "top_p": 1.0
+      "max": {
+        "reasoning_effort": "max"
       },
-      "Think-High": {
-        "reasoning_effort": "xhigh",
-        "temperature": 1.0,
-        "top_p": 1.0
+      "xhigh": {
+        "reasoning_effort": "xhigh"
       },
-      "No-Think": {
-        "reasoning_effort": "none",
-        "temperature": 1.0,
-        "top_p": 1.0
+      "none": {
+        "reasoning_effort": "none"
       }
     },
-    "copilotHarnessMapping": {
-      "max": "Think-Max",
-      "xhigh": "Think-High",
-      "none": "No-Think"
-    },
-    "defaultMode": "Think-High"
+    "defaultMode": "xhigh"
   }
 }

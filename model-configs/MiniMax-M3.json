@@ -36,7 +36,7 @@
 // Modes:
 //   - Think-Always:   card-recommended for agentic use (Copilot requests)
 //   - Think-Adaptive: model decides per turn — vendor default
-//   - No-Think:         latency-sensitive turns
+//   - none:         latency-sensitive turns
 
 {
   "presetVersion": 1,
@@ -54,36 +54,31 @@
       "toolCalling": true,
       "imageInput": true
     },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": 40
+    },
     "modelModes": {
       "Think-Always": {
         "chat_template_kwargs": {
           "thinking_mode": "enabled"
-        },
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "top_k": 40
+        }
       },
       "Think-Adaptive": {
         "chat_template_kwargs": {
           "thinking_mode": "adaptive"
-        },
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "top_k": 40
+        }
       },
-      "No-Think": {
+      "none": {
         "chat_template_kwargs": {
           "thinking_mode": "disabled"
-        },
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "top_k": 40
+        }
       }
     },
     // Harness "high" selects always-on thinking, not a backend effort.
     "copilotHarnessMapping": {
-      "high": "Think-Always",
-      "none": "No-Think"
+      "high": "Think-Always"
     },
     "defaultMode": "Think-Always"
   }

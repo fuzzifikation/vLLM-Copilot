@@ -1,0 +1,69 @@
+// Step-3.5-Flash (StepFun) — Model configuration
+// Source: https://huggingface.co/stepfun-ai/Step-3.5-Flash (released 2026-02)
+// Verified against the model card, chat_template.jinja and config.json.
+//
+// model_type "step3p5", 256K context (card) / 262,144 (config.json). The card
+// pitches it at reasoning, coding and agentic work, with 3-way multi-token
+// prediction for decode speed and a 3:1 sliding-window attention ratio.
+//
+// NOTE: These params work for ANY quantization variant (FP8, GGUF, AWQ, etc.).
+// Preset matching is substring-based, so a preset for the base model applies to
+// any served variant whose id contains it. The user model entry keeps
+// its exact server model id; the preset does not rename it.
+//
+// ⚠️ THINKING IS ALWAYS ON — the template has NO enable_thinking variable and
+// its generation prompt is hardcoded to "assistant\n\n".
+// There is therefore no thinking-off mode. (Same
+// shape as GLM-5.3 and Kimi K3.)
+//
+// The card publishes two official sampling recipes, and they are the ONLY thing
+// separating the modes below:
+//   - "For general chat domain, we suggest: temperature=0.6, top_p=0.95"
+//   - "For reasoning / agent scenario, we recommend: temperature=1.0, top_p=0.95"
+// The repo ships no generation_config.json, so the card is the sole source.
+// Because the model cannot think less, the harness publishes only an alias for
+// the default mode. The chat recipe is a SAMPLING switch rather than a reasoning
+// rung, so Chat-Fast stays a Local / Model Settings mode.
+//
+// Serving: the card uses `--reasoning-parser step3p5`.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Step-3.5-Flash"],
+  "meta": {
+    "source": "https://huggingface.co/stepfun-ai/Step-3.5-Flash",
+    "verified": "2026-11-10",
+    "notes": "Step 3.5 Flash (step3p5, 256K). Thinking is always on - the template has no enable_thinking and hardcodes the open  generation prompt. Modes are the card's two sampling recipes: agent/chat at temp 1.0/0.6, top_p 0.95."
+  },
+  "config": {
+    "displayName": "Step-3.5-Flash",
+    "family": "step3p5",
+    "maxOutputTokens": [32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
+    },
+    "defaultParams": {
+      "top_p": 0.95
+    },
+    "modelModes": {
+      "Agent": {
+        "temperature": 1.0
+      },
+      "Chat-Fast": {
+        "temperature": 0.6
+      }
+    },
+    // No "none" mapping: this model cannot stop thinking. "high" is an alias for
+    // the default mode; Chat-Fast is a sampling choice, not a reasoning rung.
+    "copilotHarnessMapping": {
+      "high": "Agent"
+    },
+    "defaultMode": "Agent"
+  }
+}
+// tool_response ...

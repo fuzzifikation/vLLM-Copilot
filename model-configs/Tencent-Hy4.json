@@ -1,0 +1,68 @@
+// Hy4 (Tencent) — Model configuration
+// Source: https://huggingface.co/tencent/Hy4-preview (released 2026-08)
+// Verified against the model card, chat_template.jinja, config.json and
+// generation_config.json.
+//
+// model_type "hy_v4" (HYV4ForCausalLM), Apache-2.0, native 1,048,576-token
+// context (config.json; card table: "Context Length | 1M"). TEXT-ONLY — no
+// vision keys in config.json, so imageInput stays false. Sibling of the shipped
+// Hy3 preset, and NOT the same knob set: Hy3 offers no_think/low/high, Hy4's
+// template accepts only high and no_think.
+//
+// Chat template parameters (chat_template_kwargs):
+//   - `reasoning_effort`: "high" | "no_think". Template default is "high"; any
+//     other value raises `reasoning_effort error : ..., should be no_think/high`.
+//     There is NO "low" rung on Hy4 — do not copy Hy3's "low" mode here.
+//   - Card: "Reasoning mode: Defaults to \"high\" (deep chain-of-thought), which
+//     suits complex tasks such as math, coding, and reasoning. For direct
+//     responses, pass e[nable_think/no_think]".
+//
+// Sampling: card "Recommended parameters: temperature=0.9, top_p=1.0", and
+// generation_config.json ships temperature=0.9, top_p=1 (with top_k=-1, i.e.
+// top-k disabled — left alone rather than sent explicitly).
+//
+// Serving: card uses `--tool-call-parser hy_v4`.
+//
+// Token budgets (1,048,576 native context): ladder [65536, 32768, 16384, 8192].
+// The head is this extension's output budget for a 1M window (input = context −
+// output leaves ~983K); the card publishes no output-length recommendation.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Hy4"],
+  "meta": {
+    "source": "https://huggingface.co/tencent/Hy4-preview",
+    "verified": "2026-11-10",
+    "notes": "Tencent Hy4 preview (hy_v4, text-only, 1M native). chat_template_kwargs.reasoning_effort accepts ONLY high and no_think - the template raises on anything else, so there is no low rung like Hy3. temp=0.9, top_p=1.0."
+  },
+  "config": {
+    "displayName": "Hy4",
+    "family": "hy_v4",
+    "maxOutputTokens": [65536, 32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
+    },
+    "defaultParams": {
+      "temperature": 0.9,
+      "top_p": 1.0
+    },
+    "modelModes": {
+      "high": {
+        "chat_template_kwargs": {
+          "reasoning_effort": "high"
+        }
+      },
+      "none": {
+        "chat_template_kwargs": {
+          "reasoning_effort": "no_think"
+        }
+      }
+    },
+    "defaultMode": "high"
+  }
+}

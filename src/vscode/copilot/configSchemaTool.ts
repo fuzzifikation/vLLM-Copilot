@@ -44,11 +44,11 @@ server defaults (unset params omitted) → entry.\`defaultParams\` → the selec
 So a mode overrides \`defaultParams\`, and \`defaultParams\` overrides the server's default. Any parameter you do not set anywhere is omitted from the request — the server decides.\nException: when \`maxOutputTokens\` is an ARRAY, the user's **Output Length** picker selection outranks *every* \`max_tokens\` layer (mode, defaultParams, scalar budget) — see below.
 
 ## Model modes (\`modelModes\`)
-- An object whose keys are mode identifiers ("Think-Coding", "No-Think", ...) and whose values are param objects merged into the request body when that mode is active. Use case-preserving ASCII letters, digits and hyphens for new identifiers; custom legacy names remain supported.
+- An object whose keys are mode identifiers and whose values are param objects merged into the request body when that mode is active. Naming law: a mode that IS an effort rung of the model takes the Copilot harness token for that rung as its identifier — \`none\`, \`minimal\`, \`low\`, \`medium\`, \`high\`, \`xhigh\`, \`max\` — and needs no mapping, because that value is what the harness publishes and round-trips. A mode that is a *behavior* rather than a rung keeps a descriptive name (\"Think-Coding\", \"Tooling\", \"Agent\"): case-preserving ASCII letters, digits and hyphens. Do not invent \`Think-High\`-style names for plain rungs; they buy nothing and hide the effort label from the Agents window.
 - Toggle reasoning with \`chat_template_kwargs: { "enable_thinking": true|false }\` (vLLM), or use \`reasoning_effort\` ("high"/"max"/"none") which vLLM maps to \`enable_thinking\` automatically.
 - \`defaultMode\` must match one of the \`modelModes\` keys; if omitted or invalid, the first key is used.
-- Keep mode labels short and consistent with the model's actual capabilities (does it support thinking? vision?).
-- \`copilotHarnessMapping\` maps Copilot effort values (none/minimal/low/medium/high/xhigh/max/ultra) to existing mode names. Include the default mode, map each target once, and avoid effort keys that also name a different mode. Local keeps descriptive labels and unmapped modes; Copilot harness selections translate back to the original mode parameters. Keep the mapping beside \`modelModes\`, never inside request params. Existing chats may need one mode reselection for their picker readout.
+- Put parameters every mode shares (\`temperature\`, \`top_p\`, ...) in \`defaultParams\` and keep ONLY each mode's differences in \`modelModes\`. The merge is shallow per top-level key, so \`chat_template_kwargs\` may be baselined only when every mode sends the identical object.
+- \`copilotHarnessMapping\` is ONLY for descriptive mode names: it maps Copilot effort values (none/minimal/low/medium/high/xhigh/max/ultra) to existing mode names. When every mode is already named by its effort token, omit the mapping entirely — an identity mapping is dead config. Where you do use it: include the default mode, map each target once, and avoid effort keys that also name a different mode. Local keeps descriptive labels and unmapped modes; Copilot harness selections translate back to the original mode parameters. Keep the mapping beside \`modelModes\`, never inside request params. Existing chats may need one mode reselection for their picker readout.
 
 ## Gotchas\n- \`max_tokens\` inside \`defaultParams\`/\`modelModes\` sets the OUTPUT BUDGET for that scope — it overrides \`maxOutputTokens\` and is clamped to the model's context window AND the server-reported output ceiling. Prefer an ARRAY \`maxOutputTokens\` (next bullet) over per-mode \`max_tokens\` for length control — modes should describe *behavior* (thinking, sampling), not output length.\n- \`maxOutputTokens\`: number OR ordered array of token counts. A number is a plain cap. An array is shown as a second model-picker dropdown ("Output Length"), independent of \`modelModes\`: FIRST element = default AND desired output budget, entries above the model's clamped ceiling are dropped, fewer than 2 usable values = no dropdown at all. When the dropdown exists, the user's pick OWNS the request's \`max_tokens\` AND is the advertised output budget — a shorter pick grows the prompt budget (context − output). Example: \`"maxOutputTokens": [65536, 32768, 16384]\`. Never combine it with \`max_tokens\` in modes or \`defaultParams\`: VS Code delivers the dropdown's default even when the user never touches it, so the mode-level values are completely dead config — the picker replaces that layer, it does not merely outrank it.
 - \`model\`, \`messages\`, \`stream\`, \`stream_options\` are FORBIDDEN — the runtime owns them (the extension sets model/messages/stream/stream_options itself); never add them to params.
@@ -83,10 +83,10 @@ One server entry in the registry, one model referencing it by id:
     "maxOutputTokens": 32768,
     "defaultParams": { "temperature": 0.7, "top_p": 0.95 },
     "modelModes": {
-      "Think": { "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true }, "temperature": 1.0, "top_p": 0.95 },
-      "No-Think": { "chat_template_kwargs": { "enable_thinking": false }, "temperature": 0.7, "top_p": 0.8 }
+      "high": { "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true }, "temperature": 1.0 },
+      "none": { "chat_template_kwargs": { "enable_thinking": false }, "top_p": 0.8 }
     },
-    "defaultMode": "Think"
+    "defaultMode": "high"
   }
 ]
 \`\`\`

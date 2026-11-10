@@ -1,0 +1,65 @@
+// Ling-3.0-flash (InclusionAI / Ant Group) — Model configuration
+// Source: https://huggingface.co/inclusionAI/Ling-3.0-flash (released 2026-08)
+// Verified against the model card, chat_template.jinja and config.json.
+//
+// Sibling of Ling-3.1-flash, which has its own preset (different official
+// sampling). Longest-match routing keeps them apart: served ids containing
+// "Ling-3.1-flash" take that preset, "Ling-3.0-flash" lands here.
+//
+// model_type "bailing_hybrid", native hybrid linear attention (5:1 alternating),
+// context trained 8K -> 32K -> 256K; config.json max_position_embeddings 262,144.
+//
+// NOTE: Substring matching means this preset also covers quantized variants
+// (FP8, NVFP4, GGUF). The user model entry keeps its exact server model id.
+//
+// Chat template parameters (chat_template_kwargs):
+//   - `enable_thinking: true/false` — normalised to thinking_option 'on'/'off';
+//     "Thinking mode is enabled by default" (card).
+//   - Historical thinking is preserved by the template itself, not by a kwarg.
+//
+// Sampling: no generation_config.json in the repo. Card, verbatim: "Thinking
+// mode is enabled by default. Unless otherwise specified, the default parameters
+// for Ling-3.0-flash are as follows: temperature=0.6, top_p=0.95, top_k=20."
+// That is the ONLY official recipe for this model — note it is temp 0.6, where
+// the newer 3.1-flash recommends 1.0. The two presets are not interchangeable.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Ling-3.0-flash"],
+  "meta": {
+    "source": "https://huggingface.co/inclusionAI/Ling-3.0-flash",
+    "verified": "2026-11-10",
+    "notes": "Ling-3.0-flash (bailing_hybrid, 262K). enable_thinking on/off, thinking on by default. Card default params temp=0.6, top_p=0.95, top_k=20 (no generation_config.json in the repo)."
+  },
+  "config": {
+    "displayName": "Ling-3.0-flash",
+    "family": "bailing_hybrid",
+    "maxOutputTokens": [32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
+    },
+    "defaultParams": {
+      "temperature": 0.6,
+      "top_p": 0.95,
+      "top_k": 20
+    },
+    "modelModes": {
+      "high": {
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        }
+      },
+      "none": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "defaultMode": "high"
+  }
+}

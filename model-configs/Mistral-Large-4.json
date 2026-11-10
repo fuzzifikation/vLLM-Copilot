@@ -1,0 +1,71 @@
+// Mistral Large 4 (Mistral AI) — Model configuration
+// Source: https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B (released 2026-09)
+// Verified against the model card, chat_template.jinja, config.json and
+// generation_config.json.
+//
+// 1T total / 52B active MoE, model_type "mistral_large4", text AND image input.
+//
+// NOTE: These params work for ANY quantization variant (FP8, NVFP4, GGUF, etc.).
+// Preset matching is substring-based, so a preset for the base model applies to
+// any served variant whose id contains it. The user model entry keeps
+// its exact server model id; the preset does not rename it.
+//
+// Reasoning depth (per-request parameter, exactly as the card's own vLLM example
+// passes it — NOT a chat_template_kwarg):
+//   - `reasoning_effort`: "high" | "medium" | "low".
+//     Card: use "high" for complex prompts and agentic usage, "low" for fast chat
+//     replies, "medium" for day to day usage. Undefined defaults to "high".
+//   - ⚠️ THINKING CANNOT BE DISABLED. The template raises
+//     `reasoning_effort must be one of "low", "medium", "high"` for any other
+//     value, so no thinking-off mode exists here.
+//     The effort value is rendered into a [MODEL_SETTINGS] block in the prompt.
+//
+// Sampling: card and generation_config.json agree — temperature=1.0, top_p=0.95
+// (the card gives one recipe for all three efforts, so they sit in defaultParams).
+//
+// Vision: config.json ships vision_config / image_token_index (Pixtral-style
+// encoder per the card) — imageInput true.
+//
+// Token budgets (config.json max_position_embeddings = 1,048,576; card: 1M window):
+//   - ladder [65536, 32768, 16384, 8192]. The head is this extension's output
+//     budget for a 1M window (input = context − output leaves ~983K); the card
+//     publishes no output-length recommendation.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Mistral-Large-4"],
+  "meta": {
+    "source": "https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B",
+    "verified": "2026-11-10",
+    "notes": "Mistral Large 4 (mistral_large4, vision, 1M context). reasoning_effort high/medium/low as a request param; template rejects any other value, so thinking cannot be switched off. temp=1.0, top_p=0.95."
+  },
+  "config": {
+    "displayName": "Mistral Large 4",
+    "family": "mistral_large4",
+    "maxOutputTokens": [65536, 32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
+    },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95
+    },
+    "modelModes": {
+      "high": {
+        "reasoning_effort": "high"
+      },
+      "medium": {
+        "reasoning_effort": "medium"
+      },
+      "low": {
+        "reasoning_effort": "low"
+      }
+    },
+    "defaultMode": "high"
+  }
+}

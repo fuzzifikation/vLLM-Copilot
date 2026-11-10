@@ -139,15 +139,17 @@ These are sent as vLLM request-body parameters (configured in `defaultParams` or
 
 ## Model modes
 
-Model modes are **named configurations** for a model that you switch between from the Copilot model picker, like profiles for different tasks: one for deep reasoning, one for precise code, one for creative work. Each mode is a set of parameters merged into the vLLM request on top of `defaultParams`.
+Model modes are **named configurations** for a model that you switch between from the Copilot model picker, like profiles for different tasks: one for deep reasoning, one for precise code, one for creative work. Each mode is a set of parameters merged into the vLLM request on top of `defaultParams` — a value every mode shares belongs there once, not in every mode.
+
+A mode's identifier is the value the harness round-trips back to us, so a plain reasoning rung takes VS Code's own effort token and the picker then shows VS Code's own wording for it — `none` → *None*, `high` → *High*, `xhigh` → *Extra High*, and so on down the ladder. No alias table is involved, and the Agents window shows the same effort the mode actually sends. Name a mode yourself (`Think-Coding`, `Agent`, `Precise`) when it is a behavior rather than a rung; see [Configuration Reference → Model Entry Fields](configuration-reference.md#model-entry-fields).
 
 ```json
+"defaultParams": { "temperature": 1.0, "top_p": 0.95 },
 "modelModes": {
-  "Think": {
-    "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true },
-    "temperature": 1.0, "top_p": 0.95
+  "high": {
+    "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true }
   },
-  "No-Think": {
+  "none": {
     "chat_template_kwargs": { "enable_thinking": false },
     "temperature": 0.7, "top_p": 0.8
   },

@@ -1,0 +1,67 @@
+// Mistral Small 4 (Mistral AI) — Model configuration
+// Source: https://huggingface.co/mistralai/Mistral-Small-4-119B-2603 (2026-03)
+// Verified against the model card, chat_template.jinja and config.json.
+//
+// 119B MoE, model_type "mistral3" (vision + text encoder), text AND image input.
+// The "-2603" suffix is Mistral's own release-date tag; the checkpoint that
+// carries the published template and config is the -2603 repo, so that is the
+// source of every value here.
+//
+// NOTE: These params work for ANY quantization variant (NVFP4, FP8, GGUF, etc.).
+// Preset matching is substring-based, so a preset for the base model applies to
+// any served variant whose id contains it. The user model entry keeps
+// its exact server model id; the preset does not rename it.
+//
+// Reasoning depth (per-request parameter — NOT a chat_template_kwarg; this is
+// how the card's own examples pass it):
+//   - `reasoning_effort`: "high" | "none".
+//     Card: "high" = deep step-by-step reasoning for complex problems; "none" =
+//     fast, lightweight responses for everyday tasks. Undefined defaults to "none".
+//   - Any other value raises `reasoning_effort must be either "none" or "high"`.
+//     There is NO intermediate effort for this model — unlike Mistral Large 4,
+//     which takes low/medium/high and cannot be switched off.
+//
+// Sampling (card): "Temperature: 0.7 for reasoning_effort="high". Temp between
+// 0.0 and 0.7 for reasoning_effort="none" depending on task."
+//   - "high" therefore pins temperature=0.7 (a single official number).
+//   - "none" has only a RANGE and no official value, so this preset sets NO
+//     sampling for it and leaves the served checkpoint's generation_config.json
+//     in charge. Raise temperature there yourself if your task wants it.
+//
+// Token budgets: the card advertises a 256k context window (config.json reports
+// 1,048,576). The ladder is sized for the card's advertised 256K: head 32,768
+// leaves ~229K input. If you serve the full window, a longer output budget is
+// reachable through the Output Length dropdown.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Mistral-Small-4"],
+  "meta": {
+    "source": "https://huggingface.co/mistralai/Mistral-Small-4-119B-2603",
+    "verified": "2026-11-10",
+    "notes": "Mistral Small 4 (mistral3, vision, 256k card window). Per-request reasoning_effort is binary high|none (template rejects anything else). temperature=0.7 is official for high only; for none the card gives a 0.0-0.7 range, so sampling stays with the checkpoint."
+  },
+  "config": {
+    "displayName": "Mistral Small 4",
+    "family": "mistral3",
+    "maxOutputTokens": [32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
+    },
+    "modelModes": {
+      "high": {
+        "reasoning_effort": "high",
+        "temperature": 0.7
+      },
+      "none": {
+        "reasoning_effort": "none"
+      }
+    },
+    "defaultMode": "high"
+  }
+}

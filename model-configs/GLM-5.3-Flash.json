@@ -17,7 +17,7 @@
 // user model entry keeps its exact server model id.
 //
 // ⚠️ THINKING IS ALWAYS ON — the chat template opens a  block
-// unconditionally. There is NO "No Think" mode for this model (unlike
+// unconditionally. There is no thinking-off mode for this model (unlike
 // GLM-5.2, which has enable_thinking:false). Reasoning depth is controlled
 // ONLY through `reasoning_effort`.
 //
@@ -59,40 +59,25 @@
       "toolCalling": true,
       "imageInput": true
     },
-    "modelModes": {
-      "Think-Max": {
-        "reasoning_effort": "max",
-        "chat_template_kwargs": {
-          "clear_thinking": true
-        },
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "presence_penalty": 0
-      },
-      "Think-High": {
-        "reasoning_effort": "high",
-        "chat_template_kwargs": {
-          "clear_thinking": true
-        },
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "presence_penalty": 0
-      },
-      "Think-Low": {
-        "reasoning_effort": "low",
-        "chat_template_kwargs": {
-          "clear_thinking": true
-        },
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "presence_penalty": 0
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "presence_penalty": 0,
+      "chat_template_kwargs": {
+        "clear_thinking": true
       }
     },
-    "copilotHarnessMapping": {
-      "max": "Think-Max",
-      "high": "Think-High",
-      "low": "Think-Low"
+    "modelModes": {
+      "max": {
+        "reasoning_effort": "max"
+      },
+      "high": {
+        "reasoning_effort": "high"
+      },
+      "low": {
+        "reasoning_effort": "low"
+      }
     },
-    "defaultMode": "Think-Max"
+    "defaultMode": "max"
   }
 }

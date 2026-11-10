@@ -1,0 +1,73 @@
+// Nemotron-3-Super-120B-A12B (NVIDIA) — Model configuration
+// Source: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
+// (released 2026-03). Verified against the model card, chat_template.jinja,
+// config.json and generation_config.json.
+//
+// model_type "nemotron_h", 120B total / 12B active MoE, text-only. Context
+// 262,144 in config.json; the card serves 256K by default and documents 1M via
+// VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 --max-model-len 1048576, which this preset
+// deliberately does not assume.
+//
+// Chat template parameters (chat_template_kwargs):
+//   - `enable_thinking: true/false` — card: "To disable reasoning, add
+//     enable_thinking=False ... By default, enable_thinking is set to True."
+//   - `low_effort: true` — the card's own reduced-effort call is
+//     {"enable_thinking": True, "low_effort": True}. It stays paired with
+//     enable_thinking: true, exactly as documented.
+//   - `force_nonempty_content: true` — card: "For coding agents add the following
+//     to the API call - extra_body={\"chat_template_kwargs\":
+//     {\"force_nonempty_content\": True}". Copilot always sends tools and always
+//     looks like a coding agent, so both thinking modes set it.
+//
+// Sampling (card, verbatim): "Use temperature=1.0 and top_p=0.95 across all
+// tasks and serving backends — reasoning, tool calling, and general chat alike."
+// One recipe for everything, so every mode carries the same pair. generation_
+// config.json ships the same values.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Nemotron-3-Super"],
+  "meta": {
+    "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
+    "verified": "2026-11-10",
+    "notes": "Nemotron-3 Super 120B (nemotron_h, text-only, 256K default / 1M opt-in). enable_thinking on/off plus the card's low_effort rung; force_nonempty_content set for the coding-agent path as the card instructs. temp=1.0, top_p=0.95 for all tasks."
+  },
+  "config": {
+    "displayName": "Nemotron-3-Super",
+    "family": "nemotron_h",
+    "maxOutputTokens": [32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
+    },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95
+    },
+    "modelModes": {
+      "high": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "force_nonempty_content": true
+        }
+      },
+      "low": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "low_effort": true,
+          "force_nonempty_content": true
+        }
+      },
+      "none": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "defaultMode": "high"
+  }
+}

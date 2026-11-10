@@ -13,7 +13,7 @@
 //
 // Chat template parameters (Jinja template variables, passed via chat_template_kwargs):
 //   - `enable_thinking: true/false` — default true; false emits no thinking tokens
-//     (template appends an empty  block). No-Think IS supported.
+//     (template appends an empty  block). none IS supported.
 //   - `preserve_thinking: true` — keeps  thinking... blocks in multi-turn history.
 //     Default true for this family; set false to strip historical thinking.
 //
@@ -61,8 +61,13 @@
       "toolCalling": true,
       "imageInput": true
     },
+    "defaultParams": {
+      "top_k": 20,
+      "min_p": 0.0,
+      "repetition_penalty": 1.0
+    },
     "modelModes": {
-      "Think-Deep": {
+      "xhigh": {
         "chat_template_kwargs": {
           "enable_thinking": true,
           "preserve_thinking": true
@@ -70,12 +75,9 @@
         "reasoning_effort": "xhigh",
         "temperature": 1.0,
         "top_p": 0.95,
-        "top_k": 20,
-        "min_p": 0.0,
-        "presence_penalty": 0.0,
-        "repetition_penalty": 1.0
+        "presence_penalty": 0.0
       },
-      "Think-Balanced": {
+      "medium": {
         "chat_template_kwargs": {
           "enable_thinking": true,
           "preserve_thinking": true
@@ -83,28 +85,27 @@
         "reasoning_effort": "medium",
         "temperature": 1.0,
         "top_p": 0.95,
-        "top_k": 20,
-        "min_p": 0.0,
-        "presence_penalty": 0.0,
-        "repetition_penalty": 1.0
+        "presence_penalty": 0.0
       },
-      "No-Think": {
+      "low": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        },
+        "reasoning_effort": "low",
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "presence_penalty": 0.0
+      },
+      "none": {
         "chat_template_kwargs": {
           "enable_thinking": false
         },
         "temperature": 0.7,
         "top_p": 0.8,
-        "top_k": 20,
-        "min_p": 0.0,
-        "presence_penalty": 1.5,
-        "repetition_penalty": 1.0
+        "presence_penalty": 1.5
       }
     },
-    "copilotHarnessMapping": {
-      "xhigh": "Think-Deep",
-      "medium": "Think-Balanced",
-      "none": "No-Think"
-    },
-    "defaultMode": "Think-Deep"
+    "defaultMode": "xhigh"
   }
 }

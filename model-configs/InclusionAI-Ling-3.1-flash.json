@@ -1,0 +1,71 @@
+// Ling-3.1-flash (InclusionAI / Ant Group) — Model configuration
+// Source: https://huggingface.co/inclusionAI/Ling-3.1-flash (released 2026-10)
+// Verified against the model card and chat_template.jinja. inclusionAI/
+// Ling-3.1-flash-1019 ships a BYTE-IDENTICAL chat template (compared
+// character-for-character), so one pattern honestly covers both.
+//
+// 560B total / 25B active MoE, model_type "bailing_hybrid", MIT, 2026 release.
+// The card also introduces LingCode, the lab's own long-horizon coding-agent
+// harness — this family is tuned for exactly the workload Copilot drives.
+//
+// NOTE: Substring matching means this preset also covers quantized variants
+// (FP8, NVFP4, GGUF). The user model entry keeps its exact server model id.
+//
+// Chat template parameters (chat_template_kwargs):
+//   - `enable_thinking: true/false` — the template normalises it to
+//     thinking_option 'on'/'off', writes "detailed thinking on|off" into the
+//     system block, and opens (on) or immediately closes
+//     (off) the  block in the generation prompt.
+//     Thinking is ON when the kwarg is absent.
+//   - Historical thinking is ALWAYS preserved: the template hardcodes
+//     `{% set preserved_thinking = true %}`. There is no kwarg for it — do not
+//     add one.
+//
+// Sampling: the repo ships NO generation_config.json, so the card is the only
+// official source — "It is recommended to use the sampling parameters
+// (temperature=1.0, top_p=0.95, top_k=20) and set enable_thinking to true for
+// better performance." Those three values are applied to every mode.
+//
+// Serving: card uses `--tool-call-parser ling3`. Context 262,144 (config.json).
+// Text-only: config.json has no vision keys, so imageInput stays false.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Ling-3.1-flash"],
+  "meta": {
+    "source": "https://huggingface.co/inclusionAI/Ling-3.1-flash",
+    "verified": "2026-11-10",
+    "notes": "Ling-3.1-flash (bailing_hybrid, 262K, MIT). enable_thinking on/off; template hardcodes preserved_thinking. Card sampling temp=1.0, top_p=0.95, top_k=20 — there is no generation_config.json. Covers Ling-3.1-flash-1019 (identical template)."
+  },
+  "config": {
+    "displayName": "Ling-3.1-flash",
+    "family": "bailing_hybrid",
+    "maxOutputTokens": [32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
+    },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": 20
+    },
+    "modelModes": {
+      "high": {
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        }
+      },
+      "none": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "defaultMode": "high"
+  }
+}

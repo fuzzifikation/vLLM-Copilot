@@ -2,7 +2,7 @@
 
 > **Quick start:** Run **Add or Reconfigure Server/Model** from the Command Palette to auto-generate model entries. Use this reference when you need to customize advanced settings.
 
-> **Copilot can write this for you:** the extension registers an on-demand **Language Model Tool** (`vllm-copilot_model_schema`) that hands Copilot Chat the model-entry JSON schema plus the parameter resolution rules. Just ask in chat - e.g. *"configure my Qwen3.6 model with Think / No-Think modes"* - and Copilot will generate a valid `vllm-copilot.models` entry. The tool serves the bundled `schemas/vllm-copilot-models.schema.json`; no workspace files are created. If your AI doesn't pick it up automatically, force-attach it by typing `#vllmModelSchema` in the chat input.
+> **Copilot can write this for you:** the extension registers an on-demand **Language Model Tool** (`vllm-copilot_model_schema`) that hands Copilot Chat the model-entry JSON schema plus the parameter resolution rules. Just ask in chat - e.g. *"give my Qwen3.6 model high and none reasoning modes"* - and Copilot will generate a valid `vllm-copilot.models` entry. The tool serves the bundled `schemas/vllm-copilot-models.schema.json`; no workspace files are created. If your AI doesn't pick it up automatically, force-attach it by typing `#vllmModelSchema` in the chat input.
 
 All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are eight top-level settings: `vllm-copilot.servers` (array of **server entries** - endpoints, auth, backend type), `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), `vllm-copilot.enableFileLogging` (request/response logs), `vllm-copilot.logBodyLimit` (log truncation), `vllm-copilot.fixEmptyToolParameters` (inject empty schema into parameterless tool definitions), `vllm-copilot.dashboard.pollIntervalMs` (metrics polling), and `vllm-copilot.statusBar.enabled` (last-request status bar item).
 
@@ -39,8 +39,8 @@ Two entries may share one URL: identity is the URL + sanitized-headers pair, so 
 | `maxInputTokens` | computed | Auto-computed as the server context window minus the **effective output budget** (resolved `max_tokens`: Output Length pick when `maxOutputTokens` is an array > `modelModes` entry > `defaultParams.max_tokens` > budget). Set only to reduce further - an explicit pin owns the split, so a shorter output-length pick then no longer grows the input budget. |
 | `estimateCharsPerToken` | `3.5` | Chars-per-token for local token estimation. |
 | `defaultParams` | - | Model-scope generation params. Unset params are omitted - the server's default applies. Layered under `modelModes`. |
-| `modelModes` | - | Switchable parameter presets keyed by mode identifier, such as `Think-Coding` or `No-Think`. Use ASCII letters, digits and hyphens for new identifiers. Bundled modes are applied by **Add or Reconfigure Server/Model**; recognized legacy names migrate automatically without replacing parameters. Custom names remain supported. See [migration policy](../model-configs/README.md#mode-identifiers-and-migration). |
-| `copilotHarnessMapping` | - | Maps Copilot harness effort values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`) to existing `modelModes` names. Local retains descriptive labels and unmapped modes; the Copilot harness exposes mapped effort choices. Include the default mode and use unique, existing targets without effort-name collisions. Invalid mappings warn and retain Local choices. Keep beside `modelModes`, never inside request params. See [preset mapping policy and existing-chat guidance](../model-configs/README.md#copilot-harness-mapping). |
+| `modelModes` | - | Switchable parameter presets keyed by mode identifier. A plain reasoning rung takes the harness effort token (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), so VS Code shows its own effort label and no alias table is needed; a mode that is a behavior keeps a descriptive name such as `Think-Coding`. Use ASCII letters, digits and hyphens for new identifiers. Parameters every mode shares belong in `defaultParams`, not in every mode. Bundled modes are applied by **Add or Reconfigure Server/Model**; recognized legacy names migrate automatically without replacing parameters. Custom names remain supported. See [migration policy](../model-configs/README.md#mode-identifiers-and-migration). |
+| `copilotHarnessMapping` | - | Aliases Copilot harness effort values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`) to descriptively named `modelModes` entries. A mode already named after an effort token needs no entry, and an identity alias is dead config. Local retains descriptive labels and unmapped modes; the Copilot harness exposes the aliased effort choices. Targets must exist, each mode is aliased at most once, and no effort may alias a name another mode uses. Invalid mappings warn and retain Local choices. Keep beside `modelModes`, never inside request params. See [preset mapping policy and existing-chat guidance](../model-configs/README.md#copilot-harness-mapping). |
 | `defaultMode` | first mode | Which mode is active before the user picks one. |
 | `capabilities.toolCalling` | `true` | Model supports tool/function calling. |
 | `capabilities.imageInput` | `false` | Model supports vision/image input. |
@@ -330,21 +330,20 @@ A working chat model - minimum viable config. No modes, no custom params, just a
       }
     },
 
-    // ── modelModes: switchable presets; mode params override defaultParams ──
+    // ── modelModes: switchable presets; a plain rung is named with the harness effort token ──
     "modelModes": {
-      "Think": {
+      "high": {                                        // picker shows "High"; params above apply unless overridden here
         "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true },
-        "temperature": 1.0,
-        "top_p": 0.95,
         "top_k": 20,
         "thinking_token_budget": 8192
       },
-      "No-Think": {
+      "none": {                                        // picker shows "None"
         "chat_template_kwargs": { "enable_thinking": false },
         "temperature": 0.7,
         "top_p": 0.8,
         "presence_penalty": 1.5
       },
+      // A behavior, not a rung: it keeps its own name in every picker.
       "Strict JSON": {
         "temperature": 0.1,
         "top_p": 0.1,
@@ -354,12 +353,13 @@ A working chat model - minimum viable config. No modes, no custom params, just a
         "structured_outputs": { "choice": ["yes", "no"] }
       }
     },
-    // Copilot harness effort values -> mode names. Unmapped modes stay Local-only. Never sent to the server.
+    // Only for descriptively named modes: which mode an effort the user picks should run.
+    // A mode already named after the effort resolves itself and needs no entry.
+    // Unaliased modes stay Local-only. Never sent to the server.
     "copilotHarnessMapping": {
-      "high": "Think",
-      "none": "No-Think"
+      "medium": "Strict JSON"
     },
-    "defaultMode": "Think"                            // must match a modelModes key
+    "defaultMode": "high"                              // must match a modelModes key
   }
 ]
 ```

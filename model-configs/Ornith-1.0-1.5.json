@@ -1,0 +1,89 @@
+// Ornith 1.0 / 1.5 (ornith-ai) — Model configuration
+// Source: https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B (+ the 9B, 122B and
+// 397B cards) and the Ornith-1.0 9B / 35B / 397B repos. Verified against each
+// size's config.json, generation_config.json and chat_template.jinja.
+//
+// A coding-agent family (cards report SWE-bench Verified/Pro/Multilingual,
+// DeepSWE, Terminal-Bench 2.1, MCP-Atlas, Toolathlon). Both generations are 2026
+// releases — Ornith-1.0 in June 2026, Ornith-1.5 in August 2026 — and they share
+// the template's knob set, so one preset serves both.
+//
+// ARCHITECTURE SPLIT, AND WHY "family" IS ABSENT HERE: config.json says
+// model_type "qwen3_5" for the dense 9B sizes (both generations) and
+// "qwen3_5_moe" for 35B-A3B / 122B / 397B / 1.0-35B / 1.0-397B. A preset holds
+// ONE family string, and inventing a blend would be a guess, so the field is
+// omitted. Auto-Configure fills it from the served checkpoint's own model_type;
+// until then the picker estimates the family from the org prefix, which is
+// cosmetic only.
+//
+// Vision: EVERY published size ships vision_config plus image/vision start-end
+// token ids in config.json, so imageInput is true across the family.
+//
+// Chat template parameters (chat_template_kwargs):
+//   - `enable_thinking: true/false` — the template only special-cases an
+//     explicit false, emitting an empty  block, so thinking is ON by
+//     default.
+//   - There is NO preserve_thinking variable in this template. Do not add one.
+//
+// Sampling: DELIBERATELY UNSET for Think and none. The checkpoints and cards
+// disagree, and no single value is official for the whole family:
+//   generation_config.json  1.5-35B-A3B and 1.0-35B  temperature=1.0, top_p=0.95,
+//                                                     top_k=20
+//                           1.5-122B and 1.5-397B    temperature=0.6, top_p=0.95,
+//                                                     top_k=20
+//                           1.5-9B                   (repo ships no file at all)
+//   Cards: 1.5-9B and 1.5-122B recommend temperature=1.0 for general tasks and
+//   "temperature=0.6 ... for precise coding tasks"; 1.5-397B and the Ornith-1.0
+//   cards give temperature=0.6 as the general recommendation and 1.0 only to
+//   reproduce the reported benchmarks. Each served checkpoint therefore keeps
+//   authority over the default modes.
+//   "Think-Code" is the exception: temperature=0.6, top_p=0.95, top_k=20 is the
+//   identical precise-coding recipe on every card that states one.
+//
+// Token budgets: config.json gives 262,144 for 1.5-35B-A3B and the cards' vLLM
+// recipes serve --context-length 262144. Ladder [32768, 16384, 8192]; the head is
+// this extension's budget default for a 256K window, and the runtime clamps it to
+// whatever your server actually reports.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Ornith-1.5", "Ornith-1.0"],
+  "meta": {
+    "source": "https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B",
+    "verified": "2026-11-10",
+    "notes": "Ornith 1.0/1.5 coding family (dense 9B and MoE sizes, all with vision, 256K). enable_thinking on/off; no preserve_thinking. Sampling is left to each checkpoint because the cards and generation_config files disagree between sizes - only Think-Code pins the cards' shared precise-coding recipe (temp 0.6)."
+  },
+  "config": {
+    "displayName": "Ornith",
+    "maxOutputTokens": [32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
+    },
+    "modelModes": {
+      "high": {
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        }
+      },
+      "Think-Code": {
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        },
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "top_k": 20
+      },
+      "none": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "defaultMode": "high"
+  }
+}

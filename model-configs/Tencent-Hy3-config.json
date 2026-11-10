@@ -23,9 +23,9 @@
 //   - For complex tasks needing larger output, increase maxOutputTokens in settings
 //
 // Modes (values from official Hy3 model card / quickstart):
-//   - Think-Deep:   Deep chain-of-thought (reasoning_effort="high", temp=0.9)
-//   - Think-Light:  Light reasoning (reasoning_effort="low", temp=0.9)
-//   - No-Think:       Direct responses, no thinking tokens (temp=0.9)
+//   - high:   Deep chain-of-thought (reasoning_effort="high", temp=0.9)
+//   - low:  Light reasoning (reasoning_effort="low", temp=0.9)
+//   - none:       Direct responses, no thinking tokens (temp=0.9)
 //
 
 
@@ -45,33 +45,26 @@
       "toolCalling": true,
       "imageInput": false
     },
+    "defaultParams": {
+      "temperature": 0.9,
+      "top_p": 1.0
+    },
     "modelModes": {
-      "Think-Deep": {
+      "high": {
         "chat_template_kwargs": {
           "reasoning_effort": "high"
-        },
-        "temperature": 0.9,
-        "top_p": 1.0
+        }
       },
-      "Think-Light": {
+      "low": {
         "chat_template_kwargs": {
           "reasoning_effort": "low"
-        },
-        "temperature": 0.9,
-        "top_p": 1.0
+        }
       },
-      "No-Think": {
+      "none": {
         "chat_template_kwargs": {
           "reasoning_effort": "no_think"
-        },
-        "temperature": 0.9,
-        "top_p": 1.0
+        }
       }
-    },
-    "copilotHarnessMapping": {
-      "high": "Think-Deep",
-      "low": "Think-Light",
-      "none": "No-Think"
     }
   }
 }

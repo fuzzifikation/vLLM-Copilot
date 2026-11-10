@@ -100,6 +100,36 @@ describe('buildConfigurationSchema', () => {
       expect((schema!.properties.reasoningEffort as any).group).toBe('navigation');
       expect((schema!.properties.maxOutputTokens as any).group).toBe('tokens');
     });
+
+  it('effort-token modes publish VS Code labels without any mapping', () => {
+    const run = (extra: Record<string, unknown> = {}) => buildConfigurationSchema({
+      id: 'deep/thinker',
+      modelModes: {
+        max: { reasoning_effort: 'max' },
+        xhigh: { reasoning_effort: 'xhigh' },
+        none: { reasoning_effort: 'none' },
+        ...extra,
+      },
+      defaultMode: 'xhigh',
+    }, CEIL)!.properties.reasoningEffort as any;
+
+    const tokens = run();
+    expect(tokens.enum).toEqual(['max', 'xhigh', 'none']);
+    expect(tokens.enumItemLabels).toEqual(['Max', 'Extra High', 'None']);
+    expect(tokens.enumDescriptions).toEqual([
+      'Absolute maximum capability with no constraints',
+      'Highest reasoning depth but slowest',
+      'No reasoning applied',
+    ]);
+    expect(tokens.default).toBe('xhigh');
+
+    // A behavior mode keeps its own name, and a half-filled hover list is
+    // dropped rather than leaving that picker row with an empty tooltip.
+    const mixed = run({ 'Think-Coding': { temperature: 0.6 } });
+    expect(mixed.enum).toEqual(['max', 'xhigh', 'none', 'Think-Coding']);
+    expect(mixed.enumItemLabels).toEqual(['Max', 'Extra High', 'None', 'Think-Coding']);
+    expect(mixed.enumDescriptions).toBeUndefined();
+  });
   });
 
 describe('output-length menu (resolveOutputLengthOptions, via the schema)', () => {
@@ -173,6 +203,33 @@ describe('Copilot harness mode mapping', () => {
         models: [current], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }],
       }, output);
       expect(request.mergedOptions).toMatchObject(off);
+    } finally {
+      output.dispose();
+    }
+  });
+
+  it('follows the whole rename chain so an old chat selection finds its mode', () => {
+    const high = { reasoning_effort: 'high', temperature: 1 };
+    const off = { chat_template_kwargs: { enable_thinking: false }, temperature: 0.7 };
+    const override = {
+      id: 'm', server: 'srv', modelModes: { high, none: off }, defaultMode: 'high',
+    };
+    const model = buildModelInfo(describeModel({
+      wireId: 'm', contextWindow: 65536, serverType: 'vllm', override,
+    }));
+    const output = vscode.window.createOutputChannel('chained mode selection');
+    try {
+      // Two hops: 'Think (High)' -> 'Think-High' -> 'high', and
+      // 'No Think' -> 'No-Think' -> 'none'. One hop would land on a name this
+      // model no longer has and silently drop the user's choice.
+      for (const [saved, expected] of [['Think (High)', high], ['No Think', off]] as const) {
+        const request = buildRequest(model, [], {
+          modelOptions: {}, tools: [], modelConfiguration: { reasoningEffort: saved },
+        }, {
+          models: [override], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }],
+        }, output);
+        expect(request.mergedOptions, saved).toMatchObject(expected);
+      }
     } finally {
       output.dispose();
     }

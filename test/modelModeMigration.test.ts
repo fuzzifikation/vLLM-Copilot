@@ -7,6 +7,7 @@ import type { ServerEntry } from '../src/core/config/serverRegistry.js';
 import type { ModelPreset } from '../src/vscode/commands/presets.js';
 import { parsePresetFile } from '../src/vscode/commands/presets.js';
 import type { CopilotHarnessMapping } from '../src/vscode/state/config.js';
+import { COPILOT_HARNESS_EFFORTS } from '../src/vscode/state/config.js';
 import { maybeRunModelModeMigration } from '../src/vscode/migrations/modelModeMigration.js';
 
 const bundled = { presets: [] as ModelPreset[] };
@@ -33,9 +34,9 @@ describe('existing model mode migration', () => {
       sourceFile: 'Qwen.json',
       match: ['Qwen3.6-27B'],
       config: {
-        modelModes: { 'Think-General': general, 'Think-Coding': coding, 'No-Think': off },
+        modelModes: { 'Think-General': general, 'Think-Coding': coding, none: off },
         defaultMode: 'Think-General',
-        copilotHarnessMapping: { high: 'Think-General', none: 'No-Think' },
+        copilotHarnessMapping: { high: 'Think-General' },
       },
     }];
     models = [{
@@ -105,8 +106,9 @@ describe('existing model mode migration', () => {
       bundled.presets = [preset];
       marker = undefined;
       globalFlags.clear();
-      const legacyName = (name: string) => name === 'No-Think' ? 'No Think'
-        : name.startsWith('Think-') ? `Think (${name.slice(6)})` : name;
+      const legacyName = (name: string) => name === 'none' ? 'No Think'
+        : COPILOT_HARNESS_EFFORTS.includes(name as typeof COPILOT_HARNESS_EFFORTS[number])
+          ? `Think (${name[0].toUpperCase()}${name.slice(1)})` : name;
       models = [{
         id: file, server: 'srv', vllmModelId: preset.match[0],
         modelModes: Object.fromEntries(Object.entries(preset.config.modelModes!).map(([name, params]) =>
@@ -117,6 +119,33 @@ describe('existing model mode migration', () => {
       expect(models[0].modelModes, file).toEqual(preset.config.modelModes);
       expect(models[0].copilotHarnessMapping, file).toEqual(preset.config.copilotHarnessMapping);
     }
+  });
+
+  it('keeps a mode name that would lie about the effort it sends', async () => {
+    // DeepSeek-V4.1-Flash's old "Think-High" asks vLLM for "xhigh" (its "high"
+    // is DeepSeek's 75-tier). The generic rename would publish "high" for a
+    // request that still thinks at xhigh, so the name stays.
+    const file = 'DeepSeek-V4.1-Flash.json';
+    const preset = parsePresetFile(readFileSync(join(import.meta.dirname, '..', 'model-configs', file), 'utf8'), file)!;
+    expect(preset.config.modelModes!.xhigh).toMatchObject({ reasoning_effort: 'xhigh' });
+    bundled.presets = [preset];
+    models = [{
+      id: file, server: 'srv', vllmModelId: preset.match[0],
+      modelModes: structuredClone({
+        'Think (Max)': preset.config.modelModes!.max,
+        'Think (High)': preset.config.modelModes!.xhigh,
+        'No Think': preset.config.modelModes!.none,
+      }),
+      defaultMode: 'Think (High)',
+    }];
+    await run();
+    expect(models[0].modelModes).toEqual({
+      max: preset.config.modelModes!.max,
+      'Think (High)': preset.config.modelModes!.xhigh,
+      none: preset.config.modelModes!.none,
+    });
+    expect(models[0].defaultMode).toBe('Think (High)');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('it sends reasoning_effort "xhigh"'));
   });
 
   it('renames known modes, preserves customization and identity, and informs the user', async () => {
@@ -130,11 +159,11 @@ describe('existing model mode migration', () => {
       modelModes: {
         'Think-General': before.modelModes!['Think (General)'],
         'Think-Coding': before.modelModes!['Think (Coding)'],
-        'No-Think': before.modelModes!['No Think'],
+        none: before.modelModes!['No Think'],
         'My Custom Mode': before.modelModes!['My Custom Mode'],
       },
       defaultMode: 'Think-General',
-      copilotHarnessMapping: { high: 'Think-General', none: 'No-Think' },
+      copilotHarnessMapping: { high: 'Think-General' },
     });
     expect(update).toHaveBeenCalledWith('models', models, vscode.ConfigurationTarget.Workspace);
     expect(workspaceMarker).toBe('done');
@@ -147,7 +176,9 @@ describe('existing model mode migration', () => {
   it('rewrites an existing user mapping instead of replacing its chosen aliases', async () => {
     models[0].copilotHarnessMapping = { max: 'Think (General)', none: 'No Think' };
     await run();
-    expect(models[0].copilotHarnessMapping).toEqual({ max: 'Think-General', none: 'No-Think' });
+    // "No Think" becomes the effort token itself, so its alias is dead config
+    // and goes away; the alias the user actually chose for "max" is kept.
+    expect(models[0].copilotHarnessMapping).toEqual({ max: 'Think-General' });
   });
 
   it('does not let a completed global migration suppress a workspace override', async () => {
@@ -200,7 +231,7 @@ describe('existing model mode migration', () => {
     expect(marker).toBeUndefined();
     expect(update).not.toHaveBeenCalled();
     await run();
-    expect(models[0].copilotHarnessMapping).toEqual({ high: 'Think-General', none: 'No-Think' });
+    expect(models[0].copilotHarnessMapping).toEqual({ high: 'Think-General' });
     expect(marker).toBe('done');
   });
 
@@ -209,9 +240,9 @@ describe('existing model mode migration', () => {
       sourceFile: 'DeepSeek-V4-Pro.json', match: ['DeepSeek-V4-Pro'],
       config: {
         modelModes: {
-          'No-Think': { reasoning_effort: 'none', chat_template_kwargs: { thinking: false }, temperature: 1, top_p: 1 },
+          none: { reasoning_effort: 'none', chat_template_kwargs: { thinking: false }, temperature: 1, top_p: 1 },
         },
-        defaultMode: 'No-Think', copilotHarnessMapping: { none: 'No-Think' },
+        defaultMode: 'none',
       },
     }];
     models = [
@@ -224,13 +255,13 @@ describe('existing model mode migration', () => {
       },
     ];
     await run();
-    expect(models[0].modelModes!['No-Think']).toMatchObject({
+    expect(models[0].modelModes!.none).toMatchObject({
       reasoning_effort: 'none', chat_template_kwargs: { thinking: false },
     });
-    expect(models[0].copilotHarnessMapping).toEqual({ none: 'No-Think' });
-    expect(models[1].modelModes!['No-Think']).toEqual({ temperature: 0.4, top_p: 1 });
+    expect(models[0].copilotHarnessMapping).toBeUndefined();
+    expect(models[1].modelModes!.none).toEqual({ temperature: 0.4, top_p: 1 });
     expect(models[1].copilotHarnessMapping).toBeUndefined();
-    expect(models[2].modelModes!['No-Think']).toEqual({ temperature: 1, top_p: 1 });
+    expect(models[2].modelModes!.none).toEqual({ temperature: 1, top_p: 1 });
     expect(models[2].defaultParams).toEqual({ chat_template_kwargs: { custom_option: 'keep' } });
     expect(models[2].copilotHarnessMapping).toBeUndefined();
     expect(info).toHaveBeenCalledWith(expect.stringContaining('preset-control repairs'));
@@ -244,7 +275,7 @@ describe('existing model mode migration', () => {
     bundled.presets = [preset];
     const modes = structuredClone(preset.config.modelModes!);
     for (const [name, params] of Object.entries(modes)) {
-      if (name !== 'No-Think') {
+      if (name !== 'none') {
         const kwargs = params.chat_template_kwargs;
         if (!kwargs || typeof kwargs !== 'object') throw new Error('Expected preset template controls');
         params.chat_template_kwargs = { ...kwargs, preserve_thinking: true };
@@ -267,6 +298,9 @@ describe('existing model mode migration', () => {
 
   it('does not use bundled HF presets to invent OpenRouter mappings', async () => {
     servers[0].serverType = 'openrouter';
+    // Without an effort-token mode of its own, this model has nothing to
+    // publish, so the migration reports it instead of inventing aliases.
+    delete models[0].modelModes!['No Think'];
     await run();
     expect(models[0].defaultMode).toBe('Think-General');
     expect(models[0].copilotHarnessMapping).toBeUndefined();

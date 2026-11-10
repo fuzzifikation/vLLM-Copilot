@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM (& OpenRouter) integration for GitHub Copilot & Agents window on self-hosted and remote servers (supports full featureset of vLLM, OpenRouter and Copilot). No subscription, no telemetry, no work content to any third party. Dashboard UI with full statistics of your servers",
-  "version": "1.38.1",
+  "version": "1.38.2",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -515,7 +515,7 @@
                 },
                 "modelModes": {
                   "type": "object",
-                  "markdownDescription": "Custom model modes for the model picker dropdown. Each key is a label shown to the user, and the value is an object of parameters merged into the vLLM request body. Sampling parameters (temperature, top_p, etc.) can be included per mode and are sent in that mode's requests; a parameter a mode omits falls back to the model entry's own params, then to the server default.\n\n**Example (Qwen3.6 with per-mode sampling):**\n```json\n{\n  \"Think\": {\n    \"chat_template_kwargs\": { \"enable_thinking\": true, \"preserve_thinking\": true },\n    \"temperature\": 1.0,\n    \"top_p\": 0.95,\n    \"presence_penalty\": 0.0\n  },\n  \"No-Think\": {\n    \"chat_template_kwargs\": { \"enable_thinking\": false },\n    \"temperature\": 0.7,\n    \"top_p\": 0.8,\n    \"presence_penalty\": 1.5\n  }\n}\n```\n\n💡 Modes for new models come from bundled presets (`model-configs/`); OpenRouter models get them from the server's reasoning metadata. They are not auto-detected from HuggingFace. For existing entries, copy from `model-configs/` and hand-edit.",
+                  "markdownDescription": "Custom model modes for the model picker dropdown. Each key is the mode identifier the Copilot harness round-trips: for a plain reasoning rung use the harness effort token (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) so the picker shows VS Code's own wording for that effort; use a descriptive name (`Think-Coding`) only for a mode that is a behavior rather than a rung. The value is an object of parameters merged into the vLLM request body. Sampling parameters (temperature, top_p, etc.) can be included per mode and are sent in that mode's requests; a parameter a mode omits falls back to the model entry's `defaultParams`, then to the server default — so declare a value every mode shares once, in `defaultParams`, instead of repeating it.\n\n**Example (thinking on/off, shared sampling in `defaultParams`):**\n```json\n{\n  \"high\": {\n    \"chat_template_kwargs\": { \"enable_thinking\": true, \"preserve_thinking\": true }\n  },\n  \"none\": {\n    \"chat_template_kwargs\": { \"enable_thinking\": false },\n    \"temperature\": 0.7\n  }\n}\n```\n\n💡 Modes for new models come from bundled presets (`model-configs/`); OpenRouter models get them from the server's reasoning metadata. They are not auto-detected from HuggingFace. For existing entries, copy from `model-configs/` and hand-edit.",
                   "additionalProperties": {
                     "type": "object",
                     "description": "Parameters to merge into the vLLM request body when this mode is selected."

@@ -40,6 +40,33 @@
     },
     {
       "match": [
+        "gemma-4-31B",
+        "gemma-4-26B-A4B",
+        "gemma-4-E4B",
+        "gemma-4-E2B"
+      ],
+      "file": "Google-Gemma-4.json"
+    },
+    {
+      "match": [
+        "Ling-3.0-flash"
+      ],
+      "file": "InclusionAI-Ling-3.0-flash.json"
+    },
+    {
+      "match": [
+        "Ling-3.0-tiny"
+      ],
+      "file": "InclusionAI-Ling-3.0-tiny.json"
+    },
+    {
+      "match": [
+        "Ling-3.1-flash"
+      ],
+      "file": "InclusionAI-Ling-3.1-flash.json"
+    },
+    {
+      "match": [
         "Kimi-K3.1-Pro"
       ],
       "file": "Kimi-K3.1-Pro.json"
@@ -64,9 +91,66 @@
     },
     {
       "match": [
+        "Mistral-Large-4"
+      ],
+      "file": "Mistral-Large-4.json"
+    },
+    {
+      "match": [
+        "Mistral-Small-4"
+      ],
+      "file": "Mistral-Small-4.json"
+    },
+    {
+      "match": [
+        "Nemotron-3-Nano-4B"
+      ],
+      "file": "NVIDIA-Nemotron-3-Nano-4B.json"
+    },
+    {
+      "match": [
+        "Nemotron-3-Super"
+      ],
+      "file": "NVIDIA-Nemotron-3-Super.json"
+    },
+    {
+      "match": [
+        "Nemotron-3-Ultra"
+      ],
+      "file": "NVIDIA-Nemotron-3-Ultra.json"
+    },
+    {
+      "match": [
+        "Nemotron-3.5-Bolt-74B"
+      ],
+      "file": "NVIDIA-Nemotron-3.5-Bolt.json"
+    },
+    {
+      "match": [
+        "Nemotron-3.5-Lightning"
+      ],
+      "file": "NVIDIA-Nemotron-3.5-Lightning.json"
+    },
+    {
+      "match": [
+        "Ornith-1.5",
+        "Ornith-1.0"
+      ],
+      "file": "Ornith-1.0-1.5.json"
+    },
+    {
+      "match": [
         "Laguna-S-2.1"
       ],
       "file": "Poolside-Laguna-S-2.1.json"
+    },
+    {
+      "match": [
+        "Laguna-XS.2",
+        "Laguna-M.1",
+        "Laguna-XS-2.1"
+      ],
+      "file": "Poolside-Laguna-XS-M.json"
     },
     {
       "match": [
@@ -79,6 +163,12 @@
         "Qwen3.6-35B-A3B"
       ],
       "file": "Qwen-Qwen3.6-35B-A3B.json"
+    },
+    {
+      "match": [
+        "Qwen3.8-2.4T"
+      ],
+      "file": "Qwen-Qwen3.8-2.4T-A95B.json"
     },
     {
       "match": [
@@ -95,9 +185,21 @@
     },
     {
       "match": [
+        "Step-3.5-Flash"
+      ],
+      "file": "StepFun-Step-3.5-Flash.json"
+    },
+    {
+      "match": [
         "Hy3"
       ],
       "file": "Tencent-Hy3-config.json"
+    },
+    {
+      "match": [
+        "Hy4"
+      ],
+      "file": "Tencent-Hy4.json"
     },
     {
       "match": [

@@ -86,11 +86,6 @@ function isPositive(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0;
 }
 
-/** Build a mode slug from a reasoning effort, e.g. 'high' -> 'Think-High'. */
-function thinkModeLabel(effort: string): string {
-  return `Think-${effort === 'xhigh' ? 'XHigh' : effort[0].toUpperCase() + effort.slice(1)}`;
-}
-
 /**
  * Parse a user-provided model reference into the pieces needed for the metadata
  * lookup, preserving the FULL requested id for chat.
@@ -373,7 +368,10 @@ function normalizeOpenRouterModel(
   // (`supported_efforts`), whether reasoning is on by default, whether it's
   // mandatory, and whether the model takes `max_tokens` instead of `effort`
   // (Anthropic-style). Build real thinking modes from that instead of a
-  // hardcoded "Think-High / No-Think" pair.
+  // hardcoded `high` / `none` pair. Mode identifiers are the harness's own
+  // effort tokens (law: a rung is named by the token VS Code uses for it), so
+  // every effort the API advertises reaches the Agents window as a real effort
+  // label with no `copilotHarnessMapping` anywhere in the settings file.
   const reasoningSupported =
     data.reasoning != null ||
     supports(data, 'reasoning') ||
@@ -389,42 +387,42 @@ function normalizeOpenRouterModel(
 
     if (supportsMaxTokens) {
       // Anthropic-style reasoning: the budget is set via `reasoning.max_tokens`,
-      // not an effort level, and there's no per-effort mapping. A single "Think"
-      // mode (reasoning on) + "No-Think" (when disableable) is the honest shape.
+      // not an effort level, and there's no per-effort mapping. A single `Think`
+      // mode (reasoning on, no effort axis) + `none` (when disableable) is the
+      // honest shape. `Think` stays a name, not a token: it is not a rung.
       modelModes['Think'] = { reasoning: { enabled: true } };
     } else {
       // Effort ladder from supported_efforts (API ships no order — the
       // highest-effort defaultMode fallback below relies on catalog ordering,
       // which is a contract this module does not get); skipping 'none'. Elements
-      // are validated, not trusted: an empty-string or null entry would turn
-      // thinkModeLabel's `effort[0].toUpperCase()` into a TypeError, which the
-      // metrics engine files under TRANSIENT — the model would then be retried
-      // forever in silence instead of reported (CR-55). Fall back to a single
-      // 'high' when the API omits the allowlist OR the usable list is empty.
+      // are validated, not trusted: an empty-string entry would become an empty
+      // mode identifier the picker can neither render nor round-trip, and a null
+      // one would poison the key (CR-55 — such a model must be reported, not
+      // retried forever in silence). Fall back to a single 'high' when the API
+      // omits the allowlist OR the usable list is empty.
       const ladder = (reasoningCfg?.supported_efforts ?? []).filter(
         (e): e is string => typeof e === 'string' && e !== '' && e !== 'none'
       );
       const efforts = ladder.length > 0 ? ladder : ['high'];
       for (const effort of efforts) {
-        const label = thinkModeLabel(effort);
-        modelModes[label] = { reasoning: { enabled: true, effort } };
+        modelModes[effort] = { reasoning: { enabled: true, effort } };
       }
     }
 
     if (!reasoningMandatory) {
-      modelModes['No-Think'] = { reasoning: { enabled: false } };
+      modelModes['none'] = { reasoning: { enabled: false } };
     }
 
     // Default mode: the model's default effort when it maps to a generated mode;
-    // 'none'/disabled default -> "No-Think" (only if it exists; a mandatory-
-    // reasoning model has no No-Think mode, so fall through to the first mode);
-    // otherwise the first (highest) mode.
+    // 'none'/disabled default -> the `none` mode (only if it exists; a mandatory-
+    // reasoning model has none, so fall through to the first mode); otherwise the
+    // first (highest) mode.
     const defaultEffort = reasoningCfg?.default_effort;
-    const defaultLabel = defaultEffort && defaultEffort !== 'none' ? thinkModeLabel(defaultEffort) : undefined;
-    if (defaultLabel && modelModes[defaultLabel]) {
-      defaultMode = defaultLabel;
-    } else if ((defaultEffort === 'none' || reasoningCfg?.default_enabled === false) && modelModes['No-Think']) {
-      defaultMode = 'No-Think';
+    const defaultName = defaultEffort && defaultEffort !== 'none' ? defaultEffort : undefined;
+    if (defaultName && modelModes[defaultName]) {
+      defaultMode = defaultName;
+    } else if ((defaultEffort === 'none' || reasoningCfg?.default_enabled === false) && modelModes['none']) {
+      defaultMode = 'none';
     } else {
       defaultMode = Object.keys(modelModes)[0];
     }

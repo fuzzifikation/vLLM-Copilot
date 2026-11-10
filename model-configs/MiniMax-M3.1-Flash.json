@@ -36,7 +36,7 @@
 //     Output Length dropdown to keep input headroom.
 //
 // Modes (adaptive thinking, effort hint only — deeper = slower):
-//   - Think-Max / Think-XHigh / Think-High / Think-Medium / Think-Low
+//   - max / xhigh / high / medium / low
 
 {
   "presetVersion": 1,
@@ -54,50 +54,37 @@
       "toolCalling": true,
       "imageInput": true
     },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95
+    },
     "modelModes": {
-      "Think-Max": {
+      "max": {
         "chat_template_kwargs": {
           "reasoning_effort": "max"
-        },
-        "temperature": 1.0,
-        "top_p": 0.95
+        }
       },
-      "Think-XHigh": {
+      "xhigh": {
         "chat_template_kwargs": {
           "reasoning_effort": "xhigh"
-        },
-        "temperature": 1.0,
-        "top_p": 0.95
+        }
       },
-      "Think-High": {
+      "high": {
         "chat_template_kwargs": {
           "reasoning_effort": "high"
-        },
-        "temperature": 1.0,
-        "top_p": 0.95
+        }
       },
-      "Think-Medium": {
+      "medium": {
         "chat_template_kwargs": {
           "reasoning_effort": "medium"
-        },
-        "temperature": 1.0,
-        "top_p": 0.95
+        }
       },
-      "Think-Low": {
+      "low": {
         "chat_template_kwargs": {
           "reasoning_effort": "low"
-        },
-        "temperature": 1.0,
-        "top_p": 0.95
+        }
       }
     },
-    "copilotHarnessMapping": {
-      "max": "Think-Max",
-      "xhigh": "Think-XHigh",
-      "high": "Think-High",
-      "medium": "Think-Medium",
-      "low": "Think-Low"
-    },
-    "defaultMode": "Think-Max"
+    "defaultMode": "max"
   }
 }

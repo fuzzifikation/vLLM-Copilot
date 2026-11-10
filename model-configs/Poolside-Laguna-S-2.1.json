@@ -36,7 +36,7 @@
 //
 // Thinking modes (per Poolside):
 //   - Thinking on: model self-determines reasoning budget.
-//   - "No-Think": direct responses, no reasoning tokens.
+//   - "none": direct responses, no reasoning tokens.
 //   - There are NO intermediate effort levels (low/medium/high) — binary on/off only.
 //   - Both "Think-General" and "Think-Code" remain available;
 //     both use checkpoint sampling defaults and preserve reasoning history.
@@ -70,7 +70,7 @@
           "preserve_thinking": true
         }
       },
-      "No-Think": {
+      "none": {
         "chat_template_kwargs": {
           "enable_thinking": false
         }
@@ -78,8 +78,7 @@
     },
     // Harness "high" selects the default thinking mode, not a backend effort.
     "copilotHarnessMapping": {
-      "high": "Think-General",
-      "none": "No-Think"
+      "high": "Think-General"
     },
     "defaultMode": "Think-General"
   }

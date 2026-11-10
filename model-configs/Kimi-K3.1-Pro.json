@@ -41,10 +41,10 @@
 //     is always on and eats output budget — on smaller serve windows pick a
 //     shorter length in the Output Length dropdown.
 //
-// Modes (thinking cannot be turned off — Think-Low is the "fast" mode):
-//   - Think-Max:  default, deepest reasoning (card benchmark setting)
-//   - Think-High: balanced depth/latency
-//   - Think-Low:  minimal reasoning effort
+// Modes (thinking cannot be turned off — low is the "fast" mode):
+//   - max:  default, deepest reasoning (card benchmark setting)
+//   - high: balanced depth/latency
+//   - low:  minimal reasoning effort
 
 {
   "presetVersion": 1,
@@ -62,34 +62,23 @@
       "toolCalling": true,
       "imageInput": true
     },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "presence_penalty": 0,
+      "frequency_penalty": 0
+    },
     "modelModes": {
-      "Think-Max": {
-        "reasoning_effort": "max",
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "presence_penalty": 0,
-        "frequency_penalty": 0
+      "max": {
+        "reasoning_effort": "max"
       },
-      "Think-High": {
-        "reasoning_effort": "high",
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "presence_penalty": 0,
-        "frequency_penalty": 0
+      "high": {
+        "reasoning_effort": "high"
       },
-      "Think-Low": {
-        "reasoning_effort": "low",
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "presence_penalty": 0,
-        "frequency_penalty": 0
+      "low": {
+        "reasoning_effort": "low"
       }
     },
-    "copilotHarnessMapping": {
-      "max": "Think-Max",
-      "high": "Think-High",
-      "low": "Think-Low"
-    },
-    "defaultMode": "Think-Max"
+    "defaultMode": "max"
   }
 }

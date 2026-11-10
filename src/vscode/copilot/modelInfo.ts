@@ -127,6 +127,38 @@ function lengthLabels(values: number[]): string[] {
 }
 
 /**
+ * Picker wording for modes that ARE a harness effort token (`high`, `none`,
+ * `xhigh`, ...). Mirrors the label and hover text VS Code applies to its own
+ * models, so a vLLM row reads like a native row instead of showing lowercase
+ * source: microsoft/vscode `extensions/copilot/src/extension/conversation/
+ * common/languageModelAccess.ts` (`getReasoningEffortLabel` /
+ * `getReasoningEffortDescription`, MIT). `ultra` has no entry upstream either —
+ * VS Code capitalizes unknown values — so it keeps the authored name.
+ */
+const HARNESS_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  none: 'None',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra High',
+  max: 'Max',
+  ultra: 'Ultra',
+};
+
+const HARNESS_EFFORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  none: 'No reasoning applied',
+  minimal: 'Minimal reasoning for fastest responses',
+  low: 'Faster responses with less reasoning',
+  medium: 'Balanced reasoning and speed',
+  high: 'Greater reasoning depth but slower',
+  xhigh: 'Highest reasoning depth but slowest',
+  max: 'Absolute maximum capability with no constraints',
+};
+// VS Code has no hover text for `ultra` either; the label is what its own
+// fallback (capitalised token) would render.
+
+/**
  * Build the `configurationSchema` for a model's picker settings: up to two
  * independent dropdowns, each persisted per-model by VS Code.
  *
@@ -141,7 +173,9 @@ function lengthLabels(values: number[]): string[] {
  *
  * 1. `reasoningEffort` — the model MODE dropdown (behavior params: reasoning,
  *    sampling, template kwargs). Explicit harness aliases replace enum values
- *    only; Local labels and unmapped modes remain intact.
+ *    only; Local labels and unmapped modes remain intact. A mode NAMED as a
+ *    harness effort token publishes that value with no mapping at all and takes
+ *    VS Code's own label and hover text for it.
  * 2. `maxOutputTokens` — the output-LENGTH dropdown. Emitted ONLY when the
  *    model declares a VECTOR-form `maxOutputTokens` AND at least two entries
  *    survive the ceiling (`descriptor.outputLengthValues` — the core applies
@@ -159,11 +193,22 @@ function buildConfigurationSchema(
   const properties: Record<string, unknown> = {};
 
   if (descriptor.modeNames) {
+    // Labels: an effort-token mode borrows VS Code's wording; every other mode
+    // keeps the name its author chose (that name IS the Local label). The enum
+    // VALUE stays the token — it is what the harness round-trips back to us,
+    // and it resolves to the mode of the same name without a mapping.
+    const labels = descriptor.modeNames.map(name => HARNESS_EFFORT_LABELS[name] ?? name);
+    const descriptions = descriptor.modeNames.map(name => HARNESS_EFFORT_DESCRIPTIONS[name]);
     properties.reasoningEffort = {
       type: 'string',
       title: 'Model Mode',
       enum: descriptor.modeNames.map(name => effortByMode.get(name) ?? name),
-      enumItemLabels: descriptor.modeNames,
+      enumItemLabels: labels,
+      // Hover text only when every entry has some: a half-filled array would
+      // leave semantic modes with an empty tooltip row.
+      ...(descriptions.every((d): d is string => d !== undefined)
+        ? { enumDescriptions: descriptions }
+        : {}),
       default: effortByMode.get(descriptor.defaultMode ?? '') ?? descriptor.defaultMode,
       group: 'navigation',
     };

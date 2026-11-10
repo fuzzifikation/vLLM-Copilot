@@ -125,7 +125,7 @@ If you want to support this work: [![Sponsor via PayPal](https://img.shields.io/
 
 Your AI can build a valid `vllm-copilot.models` entry (server, auth, params, model modes) without you touching `settings.json`. The extension registers a **chat tool** (`vllm-copilot_model_schema`) that hands Copilot the model-entry schema and the parameter rules on demand.
 
-- **Just ask:** *"configure my Qwen3.6 model with Think / No-Think modes"*. Copilot calls the tool automatically.
+- **Just ask:** *"give my Qwen3.6 model high and none reasoning modes"*. Copilot calls the tool automatically.
 - **Force it:** if your AI gets shy, type `#vllmModelSchema` in the chat input to attach the tool to your prompt.
 
 No workspace files are created; the schema is served from the extension itself.
@@ -268,7 +268,7 @@ A visual editor for per-model configuration, no `settings.json` required:
 
 <img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/model-mode.png" width="100%" alt="Model mode picker showing different configurations">
 
-<em>Switch between model modes directly from the Copilot model picker: Think, No-Think, Precise, etc.</em>
+<em>Switch model modes in the Copilot model picker: reasoning rungs carry VS Code's own effort labels (High, Extra High, None), behavior modes keep their own name.</em>
 
 <img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/OutputLength_Picker_Workaround.png" width="100%" alt="Model list hover card showing the Output Length chip to click">
 

@@ -1,0 +1,85 @@
+// Qwen3.8-2.4T-A95B (Qwen) — Model configuration
+// Source: https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B (released 2026-08)
+// Verified against the model card, chat_template.jinja, config.json and
+// generation_config.json.
+//
+// The open-weight base of the hosted Qwen3.8-Max: model_type
+// "qwen3_5_moe_text", 2.4T total / 95B active. TEXT-ONLY — the card says the
+// hosted Max variant adds vision and a non-thinking mode, and this checkpoint has
+// neither, so imageInput is false and thinking cannot be disabled.
+//
+// NOTE: These params work for ANY quantization variant (FP8, GGUF, AWQ, etc.).
+// Preset matching is substring-based, so a preset for the base model applies to
+// any served variant whose id contains it. The user model entry keeps
+// its exact server model id; the preset does not rename it.
+//
+// ⚠️ THINKING CANNOT BE DISABLED. The template raises
+// 'Disabling thinking is not supported.' when enable_thinking is false, and the
+// card's own example annotates it "on by default; should not be turned off".
+// There is therefore no thinking-off mode — the effort ladder bottoms out at
+// "low".
+//
+// Reasoning depth (top-level request param, as the card's example sends it):
+//   - `reasoning_effort`: xhigh (default) | medium | low. The template raises
+//     'Unexpected reasoning effort ... Supported types are xhigh (default),
+//     medium, and low.' for anything else.
+//   - `preserve_thinking: true` — card: "reasoning context from historical
+//     messages is retained via preserve_thinking"; on by default for this family
+//     and sent explicitly, exactly as the shipped Qwen3.8-27B / Flash-Next
+//     presets do.
+//
+// Sampling (card, and generation_config.json ships the same core trio):
+//   temperature=1.0, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=0.0,
+//   repetition_penalty=1.0 — one recipe for the whole effort ladder.
+//
+// Token budgets (262,144 native, card: extensible to 1,010,000): ladder
+// [32768, 16384, 8192]. The head is this extension's budget for a native 256K
+// serve window (~229K input left); RoPE/YaRN extension is a server-side opt-in
+// this preset deliberately does not assume.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Qwen3.8-2.4T"],
+  "meta": {
+    "source": "https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B",
+    "verified": "2026-11-10",
+    "notes": "Qwen3.8-2.4T-A95B (qwen3_5_moe_text, text-only, 262K native). Thinking is mandatory - the template raises on enable_thinking:false - so effort maps xhigh/medium/low with no off switch. preserve_thinking on. Card sampling temp=1.0, top_p=0.95, top_k=20."
+  },
+  "config": {
+    "displayName": "Qwen3.8-2.4T-A95B",
+    "family": "qwen3_5_moe_text",
+    "maxOutputTokens": [32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
+    },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0,
+      "presence_penalty": 0.0,
+      "repetition_penalty": 1.0,
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "preserve_thinking": true
+      }
+    },
+    "modelModes": {
+      "xhigh": {
+        "reasoning_effort": "xhigh"
+      },
+      "medium": {
+        "reasoning_effort": "medium"
+      },
+      "low": {
+        "reasoning_effort": "low"
+      }
+    },
+    "defaultMode": "xhigh"
+  }
+}

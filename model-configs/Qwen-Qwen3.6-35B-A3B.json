@@ -18,7 +18,7 @@
 //     scenarios where the model benefits from seeing prior reasoning steps.
 //
 // IMPORTANT: Qwen3.6 does NOT support the /think and /nothink soft switch from Qwen3.
-// The model thinks by default; use "No-Think" mode for direct responses.
+// The model thinks by default; use "none" mode for direct responses.
 //
 // To apply manually, merge "config" into an existing model entry.
 // Keep that entry's id, server and actual server model ID unchanged.
@@ -35,7 +35,7 @@
 // Modes (all values from official Qwen3.6 model card Best Practices section):
 //   - Think-General:  General tasks (temp=1.0, presence_penalty=1.5)
 //   - Think-Coding:   Precise coding tasks like WebDev (temp=0.6, presence_penalty=0.0)
-//   - No-Think:         Direct responses, no thinking tokens (temp=0.7, top_p=0.8)
+//   - none:         Direct responses, no thinking tokens (temp=0.7, top_p=0.8)
 //
 // Architecture:
 //   - 35B total params, ~3B activated per token (MoE: 256 experts, 8 routed + 1 shared)
@@ -59,6 +59,11 @@
       "toolCalling": true,
       "imageInput": true
     },
+    "defaultParams": {
+      "top_k": 20,
+      "min_p": 0.0,
+      "repetition_penalty": 1.0
+    },
     "modelModes": {
       "Think-General": {
         "chat_template_kwargs": {
@@ -67,10 +72,7 @@
         },
         "temperature": 1.0,
         "top_p": 0.95,
-        "top_k": 20,
-        "min_p": 0.0,
-        "presence_penalty": 1.5,
-        "repetition_penalty": 1.0
+        "presence_penalty": 1.5
       },
       "Think-Coding": {
         "chat_template_kwargs": {
@@ -79,27 +81,20 @@
         },
         "temperature": 0.6,
         "top_p": 0.95,
-        "top_k": 20,
-        "min_p": 0.0,
-        "presence_penalty": 0.0,
-        "repetition_penalty": 1.0
+        "presence_penalty": 0.0
       },
-      "No-Think": {
+      "none": {
         "chat_template_kwargs": {
           "enable_thinking": false
         },
         "temperature": 0.7,
         "top_p": 0.8,
-        "top_k": 20,
-        "min_p": 0.0,
-        "presence_penalty": 1.5,
-        "repetition_penalty": 1.0
+        "presence_penalty": 1.5
       }
     },
     // Harness "high" selects the default thinking mode, not a backend effort.
     "copilotHarnessMapping": {
-      "high": "Think-General",
-      "none": "No-Think"
+      "high": "Think-General"
     },
     "defaultMode": "Think-General"
   }

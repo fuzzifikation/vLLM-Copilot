@@ -1,0 +1,71 @@
+// Nemotron-3-Ultra-550B-A55B (NVIDIA) — Model configuration
+// Source: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
+// (released 2026-06). Verified against the model card, chat_template.jinja,
+// config.json and generation_config.json.
+//
+// model_type "nemotron_h", 550B total / 55B active MoE, text-only. Context
+// 262,144 in config.json; card serves 256K by default and documents 1M behind
+// VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 --max-model-len 1048576.
+//
+// ⚠️ NO "NO-THINK" MODE ON PURPOSE. The card is explicit: "when calling the chat
+// completions endpoint with `tools`, you **must** set
+// \"chat_template_kwargs\": {\"enable_thinking\": true,
+// \"force_nonempty_content\": true} in the request body to parse both reasoning
+// and tool calls correctly." Copilot always sends tools, so a thinking-off mode
+// would silently corrupt tool-call parsing. The `none` effort is therefore
+// unmapped and this model exposes no off switch here, even though the template
+// would accept enable_thinking: false for tool-free requests.
+//
+// Chat template parameters (chat_template_kwargs):
+//   - `enable_thinking: true` (required with tools) and
+//     `force_nonempty_content: true` (same mandate, and repeated for coding
+//     agents elsewhere in the card).
+//   - `medium_effort: true` — the card's reduced-effort call is
+//     {"enable_thinking": True, "medium_effort": True}.
+//
+// Sampling: generation_config.json ships temperature=1.0, top_p=0.95 and the
+// card's examples use temperature=1.0; no separate per-effort recipe exists, so
+// both modes carry the checkpoint pair.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Nemotron-3-Ultra"],
+  "meta": {
+    "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+    "verified": "2026-11-10",
+    "notes": "Nemotron-3 Ultra 550B (nemotron_h, text-only, 256K default / 1M opt-in). Card requires enable_thinking+force_nonempty_content whenever tools are sent, so there is no thinking-off mode; medium (medium_effort) is the one lower rung. temp=1.0, top_p=0.95."
+  },
+  "config": {
+    "displayName": "Nemotron-3-Ultra",
+    "family": "nemotron_h",
+    "maxOutputTokens": [32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
+    },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95
+    },
+    "modelModes": {
+      "high": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "force_nonempty_content": true
+        }
+      },
+      "medium": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "medium_effort": true,
+          "force_nonempty_content": true
+        }
+      }
+    },
+    "defaultMode": "high"
+  }
+}

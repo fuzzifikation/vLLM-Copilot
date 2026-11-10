@@ -1,17 +1,16 @@
-# vLLM-Copilot 1.38.1: Copilot moved the controls. We adapted.
+# vLLM-Copilot 1.38.2: Sixteen models your picker had never heard of.
 
-Microsoft's Copilot enshittification continues. For local vLLM users, "progress" means more harnesses and fewer visible controls. We keep closing the gaps, and we report the causes upstream.
+Presets and mode names. The bytes each mode sends on the wire did not change.
 
-**Model modes appear as effort labels in the Agents window.** Copilot insists on its own labels, but the mode behind each one is yours, with your parameters. Modes without a label stay in **Local** (bottom left of the chat input) and in **Model Settings**.
+**Sixteen new model presets, every one a 2026 release.** NVIDIA Nemotron-3 (Nano-4B, Super, Ultra) and Nemotron-3.5 (Lightning, Bolt-74B), Google Gemma 4, Tencent Hy4, inclusionAI Ling (3.1-flash, 3.0-flash, 3.0-tiny), Qwen3.8-2.4T-A95B, Mistral Large 4 and Small 4, Poolside Laguna (XS.2, M.1, XS-2.1), Ornith 1.0/1.5 and StepFun Step-3.5-Flash. Thinking on, thinking off, and the effort rungs in between - wherever the model actually has them.
 
-**We edited your settings file to make that work.** In the Agents window a model must declare which of its modes answers to each label, and your file had no such declaration. On first start after the update we added it and cleaned up the internal mode names. A notification told you how many models were touched. Your own parameters stayed exactly as you set them. Models we did not recognize were left untouched and are listed in the vLLM-Copilot Output channel. One existing chat may need a mode reselection before its readout returns.
+**We did not guess a single value.** Each knob came out of that model's own `chat_template.jinja`, its `config.json` or `generation_config.json`, or one explicit sentence on its card. Where a card gave only a range, or published no template at all, the preset sets nothing and your checkpoint keeps authority. That is also why some of these have no "think less" mode: Qwen3.8-2.4T and Mistral Large 4 reject a reasoning-off request outright, Step-3.5-Flash has no switch to press at all, and NVIDIA's Ultra card demands thinking with non-empty content whenever tools are sent - and Copilot always sends tools.
 
-Two Agents-window limits are Microsoft's fault, not yours:
+**Qwen3.8 got the Low rung it always supported.** The 27B and Flash-Next presets offered xhigh and medium, so the mode list never showed Low although the template accepts it. It is there now, and it answers Copilot's Low choice.
 
-- **Output Length is missing.** VS Code drops our picker data, so the menu you configured never arrives. Use **Local** meanwhile. Report: [microsoft/vscode#340138](https://github.com/microsoft/vscode/issues/340138).
-- **The Agents window sends at most 128 tools.** VS Code hard-codes that number, and your server never gets asked. The extra tools vanish and the warning blames your model. Switch the chat to **Local** and your whole tool list ships. Report: [microsoft/vscode#347351](https://github.com/microsoft/vscode/issues/347351).
+**Reasoning rungs are now named the way Copilot names them.** A mode that *is* an effort level takes Microsoft's own value - `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` - so the picker shows VS Code's wording for it (*Extra High*, *Balanced reasoning and speed*) and the Agents window stops hiding choices it cannot render. Calling the same thing `Think-High` and translating it to `high` afterwards was a lookup for nothing. Modes that are a behavior rather than a rung keep their names: `Think-Coding`, `Think-Science`, `Think-Always`, `Tooling`, `Agent`, `Chat-Fast`. Your existing entries rename themselves on the next start with every parameter intact, and a parameter every mode shared now lives in the preset's `defaultParams` once instead of being copied into each mode. Open a chat you had before and pick the mode once if its tick mark went missing.
 
-**Your personality works in the Agents window again.** Microsoft renamed that window's system prompt and rewrote its rules. Our replacements match text exactly, so they quietly stopped matching and the model answered as Microsoft's brand instead of yours. All five presets now match the new text, checked against a capture of the live prompt. Main-window chat never broke.
+**You do not need this update for the presets.** They are served live from the repository, so your installed extension offers them the day they land when you add a model. The VSIX carries the same files for offline use.
 
 New installation: **Add or Reconfigure Server/Model** in the vLLM Dashboard, then pick your model under Copilot's **vLLM-Copilot** tab.
 

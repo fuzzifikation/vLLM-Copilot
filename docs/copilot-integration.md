@@ -344,7 +344,13 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
    return { ...r, ...userOverrides };
    ```
 
-**Copilot harness aliases.** `copilotHarnessMapping` declares standard effort values mapped to existing mode identifiers. The provider publishes those values with the identifiers as `enumItemLabels` for Local, leaving unmapped modes available there. The Agent Host filters the enum to standard efforts and supplies its own labels. The shared `readPickerSelection` reader resolves aliases and legacy names against the current configuration before provider budget tracking and request assembly; stale published metadata is only a fallback. Tracking runs after the protected configuration read, so configuration failures retain normal error reporting. Recognized legacy names resolve to slugs only when the old name is absent and the new identifier exists in the configured modes. Existing chats may need a mode reselection for the picker readout. See [migration and mapping policy](../model-configs/README.md#mode-identifiers-and-migration).
+**Effort tokens, then harness aliases.** The harness vocabulary is `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, plus `ultra` - the label and description tables plus `buildReasoningEffortSchemaProperty` in `extensions/copilot/src/extension/conversation/common/languageModelAccess.ts`, read 2026-11. The Agent-Host model router accepts the same eight values and `localModelBridge/requestRouter.ts` drops anything outside them. There is no `light`.
+
+A mode whose identifier is one of those tokens publishes itself: `enum` carries the token, `enumItemLabels` carries VS Code's own label for it (`xhigh` → *Extra High*), and the request resolves to the mode of the same name with no lookup. That is why the rungs in `model-configs/` carry the token - a name of its own plus a mapping made the Agents window show the raw string, because that window renders effort values and ignores unknown ones.
+
+`copilotHarnessMapping` stays for modes that are a behavior rather than a rung: it aliases an effort value to that mode's identifier, and the provider publishes the effort with the mode's own name as its `enumItemLabels` entry for Local. The Agent Host filters the enum to standard efforts and supplies its own labels. An identity entry (`"none": "none"`) is dead config and is not accepted.
+
+The shared `readPickerSelection` reader resolves aliases and legacy names against the current configuration before provider budget tracking and request assembly; stale published metadata is only a fallback. Tracking runs after the protected configuration read, so configuration failures retain normal error reporting. Recognized legacy names resolve to their current identifier only when the old name is absent and the new one exists in the configured modes. Existing chats may need a mode reselection for the picker readout. See [migration and mapping policy](../model-configs/README.md#mode-identifiers-and-migration).
 
 **Schema property format (JSON Schema + VS Code extensions):**
 
@@ -466,7 +472,7 @@ Qwen3.6's `preserve_thinking` option (enabled via `chat_template_kwargs`) is a c
 ```
 This lets users watch context growth across turns when `preserve_thinking` is active. When the server reports `reasoning_tokens`, `reportTokenUsage` also forwards it to VS Code (in the `usage` data part) so the agent host's model-call accounting shows the reasoning split.
 
-**Recommended:** For agent scenarios (multi-turn, tool calling), `preserve_thinking: true` is beneficial per the model card. For simple chat, it may cause progressive slowdown as context grows. Users can toggle between "Think" and "No-Think" modes.
+**Recommended:** For agent scenarios (multi-turn, tool calling), `preserve_thinking: true` is beneficial per the model card. For simple chat, it may cause progressive slowdown as context grows. Users switch it with the model picker's *High* and *None* effort choices.
 
 **Testing findings:** Our `len/3.5` token estimate produces estimates that closely match vLLM's authoritative `prompt_tokens` count, confirming our token counting is accurate.
 

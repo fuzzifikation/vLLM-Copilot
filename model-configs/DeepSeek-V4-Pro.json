@@ -10,14 +10,14 @@
 // preview, and the NVFP4/DSpark variants.
 //
 // Reasoning modes (recipe: keep reasoning controls in chat_template_kwargs):
-//   - Think Max:  chat_template_kwargs {thinking: true, reasoning_effort: "max"}
+//   - max:    chat_template_kwargs {thinking: true, reasoning_effort: "max"}
 //     Needs a server context window >= 393,216 (384K) — on smaller servers
 //     max-effort thinking runs can be truncated.
-//   - Think High: chat_template_kwargs {thinking: true, reasoning_effort: "high"}
-//   - No-Think:   reasoning_effort "none" + chat_template_kwargs {thinking: false}
+//   - high:   chat_template_kwargs {thinking: true, reasoning_effort: "high"}
+//   - none:   reasoning_effort "none" + chat_template_kwargs {thinking: false}
 //     Omitting these controls is not off: current vLLM defaults to thinking.
 //   - A "low" effort level also exists on 0813; not exposed as a mode here
-//     (High already balances depth/latency — add it if users ask).
+//     (high already balances depth/latency — add it if users ask).
 //
 // Sampling (card, local deployment): temperature = 1.0; top_p = 0.95 for
 // agentic scenarios, top_p = 1.0 otherwise. Benchmark recipe: temp=1.0,
@@ -50,37 +50,32 @@
       "toolCalling": true,
       "imageInput": false
     },
+    "defaultParams": {
+      "temperature": 1.0
+    },
     "modelModes": {
-      "Think-Max": {
+      "max": {
         "chat_template_kwargs": {
           "thinking": true,
           "reasoning_effort": "max"
         },
-        "temperature": 1.0,
         "top_p": 0.95
       },
-      "Think-High": {
+      "high": {
         "chat_template_kwargs": {
           "thinking": true,
           "reasoning_effort": "high"
         },
-        "temperature": 1.0,
         "top_p": 0.95
       },
-      "No-Think": {
+      "none": {
         "reasoning_effort": "none",
         "chat_template_kwargs": {
           "thinking": false
         },
-        "temperature": 1.0,
         "top_p": 1.0
       }
     },
-    "copilotHarnessMapping": {
-      "max": "Think-Max",
-      "high": "Think-High",
-      "none": "No-Think"
-    },
-    "defaultMode": "Think-Max"
+    "defaultMode": "max"
   }
 }

@@ -1,0 +1,77 @@
+// Nemotron-3.5-Bolt-74B-A9B (NVIDIA) — Model configuration
+// Source: https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB
+// (released 2026-10). Verified against the model card, chat_template.jinja and
+// generation_config.json.
+//
+// model_type "nemotron_h_omni" — a vision-capable Nemotron (config.json ships
+// vision_config / vision_final_layernorm), aimed at local agent harnesses.
+// Card: "Context Length: Up to 256K tokens". config.json exposes no top-level
+// max_position_embeddings, so the context figure here comes from the card.
+//
+// DELIBERATELY NARROW MATCH PATTERN — "Nemotron-3.5-Bolt-74B" only:
+//   - NVIDIA-Nemotron-3.5-Bolt-E4B-BF16 is a DIFFERENT architecture
+//     (config.json model_type "gemma4", 65,536-token window, template has
+//     enable_thinking/preserve_thinking but NO medium_effort). Applying this
+//     preset to it would send a knob its template does not have.
+//   - NVIDIA-Nemotron-3.5-Bolt-E4B-4GB is a lone Q4_K_M GGUF with no config.json,
+//     no chat_template.jinja and no generation_config.json — there is no official
+//     source to copy, so it gets no preset.
+//
+// Chat template parameters (chat_template_kwargs):
+//   - `enable_thinking: true/false` — card: "Set enable_thinking to False to
+//     disable reasoning."
+//   - `medium_effort: true` — card: "For medium reasoning effort, use
+//     {\"enable_thinking\": True, \"medium_effort\": True}."
+//   - No force_nonempty_content on this size: neither the card nor the template
+//     mentions it here (Super, Ultra and Lightning do).
+//   - Card also notes reasoning tokens and the final answer SHARE the max_tokens
+//     budget, which is why the ladder below does not start at 8K.
+//
+// Sampling: card table "Recommended Sampling | Text: temperature 1.0, top_p
+// 0.95"; generation_config.json ships the same pair.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Nemotron-3.5-Bolt-74B"],
+  "meta": {
+    "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB",
+    "verified": "2026-11-10",
+    "notes": "Nemotron-3.5 Bolt 74B-A9B (nemotron_h_omni, vision, 256K per card). enable_thinking on/off plus the card's medium_effort rung; no force_nonempty_content on this size. temp=1.0, top_p=0.95. Excludes the gemma4-based Bolt-E4B variants."
+  },
+  "config": {
+    "displayName": "Nemotron-3.5-Bolt",
+    "family": "nemotron_h_omni",
+    "maxOutputTokens": [32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": true
+    },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95
+    },
+    "modelModes": {
+      "high": {
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        }
+      },
+      "medium": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "medium_effort": true
+        }
+      },
+      "none": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "defaultMode": "high"
+  }
+}

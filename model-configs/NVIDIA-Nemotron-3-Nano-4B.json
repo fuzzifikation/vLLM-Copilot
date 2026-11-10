@@ -1,0 +1,72 @@
+// Nemotron-3-Nano-4B (NVIDIA) — Model configuration
+// Source: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16 (2026-03)
+// Verified against the model card, chat_template.jinja, config.json and
+// generation_config.json.
+//
+// DELIBERATELY NARROW MATCH PATTERN. Preset matching cannot express dates, and
+// the older NVIDIA-Nemotron-3-Nano-30B-A3B checkpoints are 2025 releases, which
+// this project does not add presets for. Matching on "Nemotron-3-Nano-4B"
+// selects the 2026 Nano by name instead of sweeping up its 2025 siblings.
+//
+// model_type "nemotron_h", context 262,144 (config.json; card: "Context length
+// up to 262K"). Text-only — no vision keys in config.json.
+//
+// Chat template parameters (chat_template_kwargs):
+//   - `enable_thinking: true/false` — card: "If you'd like to use reasoning off,
+//     add enable_thinking=False ... By default, enable_thinking is set to be True."
+//   - `truncate_history_thinking` exists in the template (drops thinking blocks
+//     from earlier turns). Left unset on purpose: an agent harness normally wants
+//     its own prior reasoning kept, and the card gives no recommendation.
+//   - There is NO low/medium effort knob on this size. Super and Ultra have one
+//     and carry their own presets.
+//
+// Sampling (card, verbatim): "temperature=1.0 and top_p=0.95 are recommended for
+// reasoning tasks, while temperature=0.6 and top_p=0.95 are recommended for tool
+// calling." Both are official, so both become modes. The card publishes no
+// thinking-off recipe, so none sets no sampling and inherits the checkpoint's
+// generation_config.json (temperature=1.0, top_p=0.95).
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Nemotron-3-Nano-4B"],
+  "meta": {
+    "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+    "verified": "2026-11-10",
+    "notes": "Nemotron-3 Nano-4B (nemotron_h, 262K, text-only). enable_thinking on/off, no effort knob. Card recipes: temp 1.0/top_p 0.95 for reasoning, temp 0.6/top_p 0.95 for tool calling. Pattern excludes the 2025 Nano-30B-A3B checkpoints."
+  },
+  "config": {
+    "displayName": "Nemotron-3-Nano-4B",
+    "family": "nemotron_h",
+    "maxOutputTokens": [32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
+    },
+    "modelModes": {
+      "high": {
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        },
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "Tooling": {
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        },
+        "temperature": 0.6,
+        "top_p": 0.95
+      },
+      "none": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "defaultMode": "high"
+  }
+}

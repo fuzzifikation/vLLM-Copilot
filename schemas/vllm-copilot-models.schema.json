@@ -72,7 +72,7 @@
     },
     "modelModes": {
       "type": "object",
-      "description": "Switchable named presets shown in the model picker. Each key is a user-visible mode label (e.g. \"Think\", \"No-Think\"); each value is a params object merged into the request body when that mode is active. Per-mode sampling params override `defaultParams`; params set nowhere are omitted so the server's own default applies. Toggle reasoning via chat_template_kwargs.enable_thinking or reasoning_effort.",
+      "description": "Switchable named presets shown in the model picker. Each key is the mode identifier the Copilot harness round-trips: use the effort token (\"none\", \"minimal\", \"low\", \"medium\", \"high\", \"xhigh\", \"max\") for a plain reasoning rung, so VS Code shows its own wording for it, and a descriptive name (\"Think-Coding\") only for a mode that is a behavior rather than a rung. Each value is a params object merged into the request body when that mode is active. Per-mode sampling params override `defaultParams` - declare a value every mode shares once in `defaultParams` instead of repeating it; params set nowhere are omitted so the server's own default applies. Toggle reasoning via chat_template_kwargs.enable_thinking or reasoning_effort.",
       "additionalProperties": {
         "allOf": [{ "$ref": "#/definitions/requestParams" }],
         "description": "Request params for this mode. Same vocabulary as defaultParams."
@@ -84,7 +84,7 @@
         "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
       },
       "additionalProperties": { "type": "string", "minLength": 1 },
-      "description": "Map Copilot harness effort values to existing modelModes names. Local retains original labels and unmapped modes; the Copilot harness uses standard effort labels. Include the default mode, map each mode once, and avoid effort keys conflicting with another mode name. Never sent to the server. Binary-thinking presets use high as an on alias, not a backend effort setting. Existing chats may need one mode reselection to restore their picker readout."
+      "description": "Alias Copilot harness effort values to descriptively named modelModes entries (e.g. {\"high\": \"Think-Coding\"}). A mode already named after an effort token needs no entry and must not have one - an identity alias is dead config. Local retains original labels and unmapped modes; the Copilot harness uses standard effort labels. Map each mode at most once, and no effort may alias a name another mode already uses. Never sent to the server. A binary-thinking preset uses high as an on alias, not a backend effort setting. Existing chats may need one mode reselection to restore their picker readout."
     },
     "defaultMode": {
       "type": "string",

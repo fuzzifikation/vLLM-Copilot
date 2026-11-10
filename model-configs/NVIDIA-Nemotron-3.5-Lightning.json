@@ -1,0 +1,65 @@
+// Nemotron-3.5-Lightning-30B-A3B (NVIDIA) — Model configuration
+// Source: https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+// (released 2026-08). Verified against the model card, chat_template.jinja,
+// config.json and generation_config.json.
+//
+// model_type "nemotron_h", 30B total / 3B active MoE, text-only. Context
+// 262,144 in config.json; card: "Up to 1M tokens (for single H100 deployment, we
+// use 256K)". Text-only — no vision keys in config.json.
+//
+// Chat template parameters (chat_template_kwargs):
+//   - `enable_thinking: true/false` — card table: "Reasoning Mode: Configurable
+//     on/off via chat template (enable_thinking=True/False)". No low/medium
+//     effort knob exists on this size, so there is no effort ladder to map.
+//   - `truncate_history_thinking` exists in the template; left unset because the
+//     card gives no recommendation and an agent harness normally wants its prior
+//     reasoning kept.
+//   - `force_nonempty_content: true` — card: "For coding agents, add
+//     extra_body={\"chat_template_kwargs\": {\"force_nonempty_content\": True}} to
+//     the API call, as shown below." The card's own agentic example sends it, so
+//     the thinking mode sends it too. Not added to none: the card's
+//     thinking-off example does not use it.
+//
+// Sampling: card table "Recommended Sampling: Temperature 1.0, Top_P 0.95", and
+// generation_config.json ships the same pair. One recipe for both modes.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Nemotron-3.5-Lightning"],
+  "meta": {
+    "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+    "verified": "2026-11-10",
+    "notes": "Nemotron-3.5 Lightning 30B-A3B (nemotron_h, text-only, 256K default / 1M opt-in). Binary enable_thinking on/off - no effort knob on this size. force_nonempty_content for the coding-agent path per the card. temp=1.0, top_p=0.95."
+  },
+  "config": {
+    "displayName": "Nemotron-3.5-Lightning",
+    "family": "nemotron_h",
+    "maxOutputTokens": [32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
+    },
+    "defaultParams": {
+      "temperature": 1.0,
+      "top_p": 0.95
+    },
+    "modelModes": {
+      "high": {
+        "chat_template_kwargs": {
+          "enable_thinking": true,
+          "force_nonempty_content": true
+        }
+      },
+      "none": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "defaultMode": "high"
+  }
+}

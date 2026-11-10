@@ -1,0 +1,65 @@
+// Laguna XS.2 / M.1 / XS-2.1 (Poolside) — Model configuration
+// Source: https://huggingface.co/poolside/Laguna-XS.2 (2026-04),
+// https://huggingface.co/poolside/Laguna-M.1 (2026-06) and
+// https://huggingface.co/poolside/Laguna-XS-2.1 (2026-06).
+// Verified against each repo's chat_template.jinja and generation_config.json.
+//
+// Three 2026 Poolside coding checkpoints, one template knob set: model_type
+// "laguna", context 262,144 (config.json), text-only, gc default
+// default_chat_template_kwargs {"enable_thinking": true}.
+//
+// WHY A SEPARATE FILE FROM Laguna-S-2.1: the S-2.1 preset sends
+// preserve_thinking: true, and NONE of these three templates declare that
+// variable (checked in every chat_template.jinja). Sending it here would be a
+// knob the template ignores. Longest-match routing is not the separator either —
+// "Laguna-XS-2.1" does not contain "Laguna-S-2.1", so the two files never fight.
+//
+// Chat template parameters (chat_template_kwargs):
+//   - `enable_thinking: true/false` — binary on/off, as the S-2.1 preset also
+//     documents for this family. No intermediate effort levels.
+//   - NO preserve_thinking here (see above).
+//
+// Sampling: left UNSET, following the standing Poolside ruling that the
+// checkpoint's generation_config.json is authoritative. These three ship
+// temperature=1.0, top_p=1.0, min_p=0.0 (XS-2.1 adds top_k=20).
+//
+// Output budget note: XS.2 and M.1 declare max_new_tokens=4096 in
+// generation_config.json, while XS-2.1 declares 32768. The ladder below wins for
+// every request, because the extension always sends an explicit max_tokens —
+// the checkpoint's 4096 default would truncate long thinking turns.
+//
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
+
+
+{
+  "presetVersion": 1,
+  "match": ["Laguna-XS.2", "Laguna-M.1", "Laguna-XS-2.1"],
+  "meta": {
+    "source": "https://huggingface.co/poolside/Laguna-XS.2",
+    "verified": "2026-11-10",
+    "notes": "Poolside Laguna XS.2 / M.1 / XS-2.1 (laguna, text-only, 262K). Binary enable_thinking; unlike Laguna-S-2.1 these templates have no preserve_thinking variable, so it is not sent. Sampling left to the checkpoint as usual for Poolside."
+  },
+  "config": {
+    "displayName": "Laguna",
+    "family": "laguna",
+    "maxOutputTokens": [32768, 16384, 8192],
+    "capabilities": {
+      "toolCalling": true,
+      "imageInput": false
+    },
+    "modelModes": {
+      "high": {
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        }
+      },
+      "none": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "defaultMode": "high"
+  }
+}

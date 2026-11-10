@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.38.2
+Model-mode coverage for this year's coding models, so thinking depth comes from the picker instead of hand-edited JSON - and mode names each Copilot harness can actually display.
+
+### Added
+
+- **Sixteen new presets, all 2026 releases.** NVIDIA Nemotron-3 Nano-4B / Super / Ultra and Nemotron-3.5 Lightning / Bolt-74B, Google Gemma 4 (31B, 26B-A4B, E4B, E2B), Tencent Hy4, inclusionAI Ling-3.1-flash / Ling-3.0-flash / Ling-3.0-tiny, Qwen3.8-2.4T-A95B, Mistral Large 4 / Small 4, Poolside Laguna XS.2 / M.1 / XS-2.1, Ornith 1.0 / 1.5 and StepFun Step-3.5-Flash. Each exposes the thinking and effort rungs that model's own chat template accepts, an output-length ladder sized to its documented window, and the sampling its card states - and no sampling where the card states only a range. Presets are served live, so existing installations get them without this update.
+
+### Changed
+
+- **Modes that are an effort rung are now named with Copilot's own effort value** (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), so the picker shows VS Code's wording for the choice - *Extra High*, not a string the Agents window drops - and nothing stands between that label and the request. A name like `Think-High` plus a translation to `high` bought an extra lookup and a label only one host could show. Modes that are a *behavior* rather than a rung keep their names (`Think-Coding`, `Think-Always`, `Tooling`, `Agent`, `Chat-Fast`) and their alias. Bundled presets and newly discovered OpenRouter models use the new names; existing model entries migrate on the next start with their parameters intact, and an older chat needs one mode reselection to refresh its readout.
+- **Sampling every mode shares is declared once.** Presets that repeated identical `temperature` / `top_p` / penalties in each mode now state them in `defaultParams`. The request each mode sends is unchanged.
+
+### Fixed
+
+- **Qwen3.8 had no Low rung.** The 27B and Flash-Next presets offered only `xhigh` and `medium`, although their chat template accepts `low`, so the mode list never showed it. Both now offer a `low` mode sending `reasoning_effort: "low"`, and Copilot's Low choice lands on it.
+
 ## v1.38.1
 Personality presets keep working when Microsoft renames the Agents-window prompt under us.
 

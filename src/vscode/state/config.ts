@@ -17,10 +17,27 @@ import {
 } from '../../core/config/config.js';
 import type { ServerEntry } from '../../core/config/serverRegistry.js';
 
-const COPILOT_HARNESS_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
+export const COPILOT_HARNESS_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
 export type CopilotHarnessMapping = Partial<Record<typeof COPILOT_HARNESS_EFFORTS[number], string>>;
 
-/** Only extension-owned legacy names migrate; custom names stay untouched. */
+/** True when a mode identifier already IS the harness's own effort token. */
+export function isCopilotHarnessEffort(name: string): boolean {
+  return COPILOT_HARNESS_EFFORTS.some(effort => effort === name);
+}
+
+/**
+ * Only extension-owned legacy names migrate; custom names stay untouched.
+ *
+ * The table is a rename CHAIN, followed transitively by the migration: the
+ * space-form names (v1.37 and earlier) step to their hyphen form, and the
+ * hyphen forms whose rung the Copilot harness names directly step again to the
+ * harness token (`Think (High)` -> `Think-High` -> `high`), which is what makes
+ * a mapping unnecessary for effort rungs. Deliberately absent: `Think-Deep`,
+ * `Think-Balanced`, `Think-Light`, `Think-Always` and `Think-Adaptive`. Those
+ * name a behavior, not a rung, and `Think-Deep` answers `xhigh` on Qwen3.8 but
+ * `high` on Tencent Hy4 — a global rename would produce a name that lies about
+ * the `reasoning_effort` its parameters send.
+ */
 export const LEGACY_MODEL_MODE_SLUGS: ReadonlyMap<string, string> = new Map([
   ['Think (General)', 'Think-General'],
   ['Think (Coding)', 'Think-Coding'],
@@ -40,6 +57,14 @@ export const LEGACY_MODEL_MODE_SLUGS: ReadonlyMap<string, string> = new Map([
   ['Think (Always)', 'Think-Always'],
   ['Think (Adaptive)', 'Think-Adaptive'],
   ['No Think', 'No-Think'],
+  ['Think-Max', 'max'],
+  ['Think-XHigh', 'xhigh'],
+  ['Think-High', 'high'],
+  ['Think-Medium', 'medium'],
+  ['Think-Low', 'low'],
+  ['Think-Minimal', 'minimal'],
+  ['Think-Ultra', 'ultra'],
+  ['No-Think', 'none'],
 ]);
 
 /** Validate host-only aliases and invert them for schema publication. */
@@ -199,10 +224,23 @@ export function readPickerSelection(
     }
   }
   if (typeof selected === 'string') {
-    const slug = LEGACY_MODEL_MODE_SLUGS.get(selected);
     const availableNames = configuredNames ?? property?.enumItemLabels;
-    if (slug && !availableNames?.includes(selected) && availableNames?.includes(slug)) {
-      selected = slug;
+    if (availableNames && !availableNames.includes(selected)) {
+      // A stale chat value follows the rename chain to the first step this
+      // model actually offers (`Think (High)` -> `Think-High` -> `high`), the
+      // same walk the activation migration performs on settings.
+      let current = selected;
+      const seen = new Set([current]);
+      for (;;) {
+        const next = LEGACY_MODEL_MODE_SLUGS.get(current);
+        if (!next || seen.has(next)) break;
+        seen.add(next);
+        current = next;
+        if (availableNames.includes(current)) {
+          selected = current;
+          break;
+        }
+      }
     }
   }
   return {
