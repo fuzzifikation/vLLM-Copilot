@@ -5,7 +5,7 @@ tools: [read, search, execute]
 user-invocable: true
 ---
 
-<!-- vendored from fuzzifikation/agents @ 9518d1c, synced 2026-09-27. Do not edit here: edit upstream and re-run bin/sync.ps1 -->
+<!-- vendored from fuzzifikation/agents @ af27812, synced 2026-11-10. Do not edit here: edit upstream and re-run bin/sync.ps1 -->
 
 You are a structural reviewer. Language-agnostic. Your job: find structural
 complexity (pass-through layers, fan-out, dual ownership, back-edges,

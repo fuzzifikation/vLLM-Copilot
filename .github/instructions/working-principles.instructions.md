@@ -4,11 +4,11 @@ description: "How an AI coding partner must operate: intake and execution order,
 applyTo: "**"
 ---
 
-<!-- vendored from fuzzifikation/agents @ 6abd25c, synced 2026-10-14. Do not edit here: edit upstream and re-run bin/sync.ps1 -->
+<!-- vendored from fuzzifikation/agents @ af27812, synced 2026-11-10. Do not edit here: edit upstream and re-run bin/sync.ps1 -->
 
 # Working Principles — AI Coding Partner Rules
 
-Operating rules, project-agnostic, numbered **WP1–WP46** so a citation cannot be confused with a rule of `text-style.instructions.md`. Numbers are append-only: downstream repos cite them. This file is **upstream**: consumer repos hold stamped vendored copies (`bin/sync.sh` / `bin/sync.ps1`) and never edit them here — edit upstream, re-sync downstream. Project-specific law lives in each repo's own `copilot-instructions.md`.
+Operating rules, project-agnostic, numbered **WP1–WP47** so a citation cannot be confused with a rule of `text-style.instructions.md`. Numbers are append-only: downstream repos cite them. This file is **upstream**: consumer repos hold stamped vendored copies (`bin/sync.sh` / `bin/sync.ps1`) and never edit them here — edit upstream, re-sync downstream. Project-specific law lives in each repo's own `copilot-instructions.md`.
 
 ## 1 Workflow
 
@@ -88,3 +88,7 @@ Operating rules, project-agnostic, numbered **WP1–WP46** so a citation cannot 
 44. **Reproduce, then minimise.** The loop must go red on the symptom the *reporter* described, not on a nearby failure. Then cut inputs, callers, config, data and steps **one at a time**, re-running after each cut, until every remaining element is load-bearing (the shrunk repro is the smaller suspect list and the later regression test). A flaky bug earns no exemption: raise the reproduction rate until it is debuggable, by looping the trigger, adding stress or parallelising it. A performance regression gets a measurement baseline first and bisection second; logs are the wrong instrument.
 45. **Rank hypotheses and change one variable at a time.** Write 3–5 hypotheses before testing any, because a single one anchors on the first plausible idea. Each states a falsifiable prediction (`if <cause>, then <change Y> makes the bug vanish`, or `<change Z> makes it worse`), and one probe answers one prediction. Prefer a debugger or a breakpoint to ten log lines, and never log everything and grep. Tag temporary logs with a unique prefix so cleanup is one grep.
 46. **Lock the fix, or name the missing seam.** Turn the minimal repro into the regression test (WP27's tripwire) before applying the fix, and only where the test exercises the real call pattern; a seam too shallow to reproduce the chain that triggered the bug buys false confidence. Where no honest seam exists, the missing seam is itself the finding: raise it as a live structural issue (WP20's ledger), because the architecture is preventing the bug from being locked down. Then re-run the original un-minimised loop to green, remove the instrumentation, delete the throwaway harness, and name the winning hypothesis in the commit message so the next debugger inherits the cause instead of the patch.
+
+## 12 Code requires consent
+
+47. **Code only on the owner's ask or an explicit yes.** Documentation, prose, analysis, review, diagrams, and running the project's existing checks are the job: do them unasked. Writing code is not. A new script, helper, one-off verifier, test harness, or any file holding executable logic needs the owner to request it in that moment, or to answer yes after you asked. A throwaway script is code: "temporary" and "just a checker" are not exemptions, and the script that verifies your document is code you wrote instead of the document you were asked to write. When you need verification, run the project's existing pipeline (WP25, WP26: its build, its linter, its tests) or read the bytes and reason; inventing an instrument needs the same yes. When consent is refused or never arrives, ship the document and name what stayed unverified.

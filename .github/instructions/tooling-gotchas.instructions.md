@@ -4,7 +4,7 @@ description: "Field-tested shell, Node, git and packaging traps where the tool f
 applyTo: "**"
 ---
 
-<!-- vendored from fuzzifikation/agents @ 6abd25c, synced 2026-10-14. Do not edit here: edit upstream and re-run bin/sync.ps1 -->
+<!-- vendored from fuzzifikation/agents @ af27812, synced 2026-11-10. Do not edit here: edit upstream and re-run bin/sync.ps1 -->
 
 # Tooling Gotchas: Silent Liars
 
