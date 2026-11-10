@@ -186,6 +186,19 @@ describe('existing model mode migration', () => {
     expect(models[0].copilotHarnessMapping).toEqual({ max: 'Think-General' });
   });
 
+  it('re-runs for a release that changed the rename table', async () => {
+    // The marker records the version that ran the migration, so a marker an
+    // older release filled in cannot silence a later rename wave: the 1.38.2
+    // renames (Think-High -> high) would otherwise never reach anyone who ran
+    // 1.38.0, leaving them a mode named "high" that sends xhigh.
+    (context as unknown as { extension?: unknown }).extension = { packageJSON: { version: '9.9.9' } };
+    globalFlags.set('vllmCopilot.modelModeMigration.user', 'done');
+    await run();
+    expect(models[0].defaultMode).toBe('Think-General');
+    expect(marker).toBe('9.9.9');
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('vLLM-Copilot 9.9.9 updated mode identifiers'));
+  });
+
   it('does not let a completed global migration suppress a workspace override', async () => {
     const legacy = structuredClone(models);
     await run();

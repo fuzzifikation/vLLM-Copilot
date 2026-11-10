@@ -10,7 +10,21 @@ import { findPresetForModel, loadModelPresets } from '../commands/presets.js';
 import { effectiveWriteTarget, readModels, readServers, writeModels } from '../state/configStore.js';
 import { isCopilotHarnessEffort, LEGACY_MODEL_MODE_SLUGS, readCopilotHarnessMapping, type CopilotHarnessMapping } from '../state/config.js';
 
-const MIGRATION_FLAG = 'vllmCopilot.modelModeMigration.v1';
+/**
+ * Completion marker, per settings scope. The value is the extension VERSION
+ * that last ran the migration, not a bare `done`: the rename table and the
+ * bundled preset mappings are CODE, so a release that changes them has to reach
+ * users whose marker is already filled in (a 1.38.2 rename wave gated behind a
+ * marker 1.38.0 wrote would simply never run). The rewrite is idempotent, and
+ * the notification only fires when something actually changed.
+ */
+const MIGRATION_FLAG = 'vllmCopilot.modelModeMigration';
+
+function extensionVersion(context: vscode.ExtensionContext): string | undefined {
+  const packageJSON = context.extension?.packageJSON as { version?: string } | undefined;
+  return packageJSON?.version;
+}
+
 const REASONING_CONTROL_KEYS = ['reasoning_effort', 'chat_template_kwargs', 'reasoning'] as const;
 
 /** Offline identifier/mapping migration; only exact known old preset controls are repaired. */
@@ -19,18 +33,20 @@ export async function maybeRunModelModeMigration(
   output: vscode.OutputChannel,
 ): Promise<void> {
   try {
+    const version = extensionVersion(context);
+    const marker = version ?? 'done';
     const completionStates = {
       [vscode.ConfigurationTarget.Global]: { state: context.globalState, key: `${MIGRATION_FLAG}.user` },
       [vscode.ConfigurationTarget.Workspace]: { state: context.workspaceState, key: `${MIGRATION_FLAG}.workspace` },
       [vscode.ConfigurationTarget.WorkspaceFolder]: { state: context.workspaceState, key: `${MIGRATION_FLAG}.folder` },
     };
     let completionState = completionStates[effectiveWriteTarget('models')];
-    if (completionState.state.get<string>(completionState.key) === 'done') return;
+    if (completionState.state.get<string>(completionState.key) === marker) return;
     if (readModels().length === 0) return;
     const presets = await loadModelPresets(context.extensionUri, { requireComplete: true });
     // Read again after the asynchronous file load; do not write an older settings snapshot.
     completionState = completionStates[effectiveWriteTarget('models')];
-    if (completionState.state.get<string>(completionState.key) === 'done') return;
+    if (completionState.state.get<string>(completionState.key) === marker) return;
     const models = readModels();
     if (models.length === 0) return;
     const servers = readServers();
@@ -187,14 +203,14 @@ export async function maybeRunModelModeMigration(
     }
 
     if (changed > 0) await writeModels(next);
-    await completionState.state.update(completionState.key, 'done');
+    await completionState.state.update(completionState.key, marker);
     if (changed > 0) {
       const parameters = repaired.size > 0
         ? `Customized parameters were kept; ${repaired.size} model(s) received known preset-control repairs.`
         : 'Your parameters were kept.';
       output.appendLine(`[INFO] Mode migration: updated ${changed} model(s). ${parameters} Identity and other settings were preserved.`);
       void vscode.window.showInformationMessage(
-        `vLLM-Copilot 1.38.0 updated mode identifiers and compatible harness mappings for ${changed} model(s). ${parameters} Reselect the mode once in existing chats.${review.size ? ` ${review.size} model(s) need manual review; see vLLM-Copilot Output.` : ''}`,
+        `vLLM-Copilot${version ? ` ${version}` : ''} updated mode identifiers and compatible harness mappings for ${changed} model(s). ${parameters} Reselect the mode once in existing chats.${review.size ? ` ${review.size} model(s) need manual review; see vLLM-Copilot Output.` : ''}`,
       );
     } else if (review.size > 0) {
       void vscode.window.showWarningMessage(
