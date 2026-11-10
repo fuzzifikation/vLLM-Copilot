@@ -54,6 +54,77 @@ const servers = [{ id: 'srv', serverUrl: 'http://localhost:8000' }];
 const configWithModel = { models: [{ id: 'm1', server: 'srv', family: 'test-family' }], servers } as VllmConfig;
 
 describe('provideLanguageModelChatInformation (facade)', () => {
+  it('tracks current mode names and budgets while a request still carries old metadata', async () => {
+    const general = { max_tokens: 8000, chat_template_kwargs: { enable_thinking: true } };
+    const off = { max_tokens: 2000, chat_template_kwargs: { enable_thinking: false }, temperature: 0.7 };
+    const legacy = {
+      id: 'm1', server: 'srv', family: 'test-family', maxOutputTokens: 8192,
+      modelModes: { 'Think (General)': general, 'No Think': off }, defaultMode: 'Think (General)',
+    };
+    let active: VllmConfig = { models: [legacy], servers };
+    const sent: Parameters<ProviderClient['chatCompletionStream']>[2][] = [];
+    const client = fakeClient({
+      getConfigCached: vi.fn(async () => active),
+      getModelContextWindow: vi.fn(async () => ({ contextWindow: 65536 })),
+      chatCompletionStream: async function* (_id, _messages, options) {
+        sent.push(options);
+        yield { content: 'ok', finishedToolCalls: [], finishReason: 'stop' };
+      },
+    });
+    const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+    try {
+      const [published] = await provider.provideLanguageModelChatInformation({ silent: false }, makeToken());
+      const updated = {
+        ...legacy, modelModes: { 'Think-General': general, 'No-Think': off }, defaultMode: 'Think-General',
+        copilotHarnessMapping: { high: 'Think-General', none: 'No-Think' },
+      };
+      active = { models: [updated], servers };
+      provider.clearCache();
+      await provider.provideLanguageModelChatResponse(published, [], {
+        modelOptions: {}, tools: [], modelConfiguration: { reasoningEffort: 'No Think' },
+      } as vscode.ProvideLanguageModelChatResponseOptions, { report() {} }, makeToken());
+      expect(sent[0]).toMatchObject(off);
+      const [refreshed] = await provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+      expect(refreshed.maxOutputTokens).toBe(2000);
+    } finally {
+      provider.dispose();
+    }
+  });
+
+  it('decodes harness picks for both requests and re-published mode budgets', async () => {
+    const override = {
+      id: 'm1', server: 'srv', family: 'test-family',
+      modelModes: {
+        Deep: { reasoning_effort: 'xhigh', max_tokens: 8000 },
+        Balanced: { reasoning_effort: 'medium', max_tokens: 2000 },
+      },
+      copilotHarnessMapping: { xhigh: 'Deep', medium: 'Balanced' },
+      defaultMode: 'Deep',
+    };
+    const sent: Parameters<ProviderClient['chatCompletionStream']>[2][] = [];
+    const client = fakeClient({
+      getConfigCached: vi.fn(async () => ({ models: [override], servers })),
+      getModelContextWindow: vi.fn(async () => ({ contextWindow: 65536 })),
+      chatCompletionStream: async function* (_id, _messages, options) {
+        sent.push(options);
+        yield { content: 'ok', finishedToolCalls: [], finishReason: 'stop' };
+      },
+    });
+    const provider = new VllmChatModelProvider(makeContext(), makeOutput(), undefined, { client });
+    try {
+      const [model] = await provider.provideLanguageModelChatInformation({ silent: false }, makeToken());
+      await provider.provideLanguageModelChatResponse(model, [], {
+        modelOptions: {}, tools: [], modelConfiguration: { reasoningEffort: 'medium' },
+      } as vscode.ProvideLanguageModelChatResponseOptions, { report() {} }, makeToken());
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ reasoning_effort: 'medium', max_tokens: 2000 });
+      const [refreshed] = await provider.provideLanguageModelChatInformation({ silent: true }, makeToken());
+      expect(refreshed.maxOutputTokens).toBe(2000);
+    } finally {
+      provider.dispose();
+    }
+  });
+
   it('returns [] and skips discovery when running locally on a remote', async () => {
     const originalRemoteName = vscode.env.remoteName;
     (vscode.env as any).remoteName = 'wsl';

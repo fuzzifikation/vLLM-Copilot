@@ -2,12 +2,13 @@
 // Source: Poolside model card + release blog post
 // https://huggingface.co/poolside/Laguna-S-2.1
 // https://poolside.ai/blog/introducing-laguna-s-2-1
-// Verified 2026-07-28.
+// Verified 2026-11-10 against the current base/NVFP4 cards,
+// generation_config.json and chat_template.jinja.
 //
 // NOTE: These params work for ANY quantization variant (NVFP4, FP8, INT4, GGUF, etc.).
 // Preset matching is substring-based, so a preset for the base model applies to
-// any served variant whose id contains it. The config's `vllmModelId` must still
-// be an EXACT served model id — the extension never strips or forgives mismatches.
+// any served variant whose id contains it. The user model entry keeps
+// its exact server model id; the preset does not rename it.
 //
 // Chat template parameters (all Jinja template variables, passed via chat_template_kwargs):
 //   - `enable_thinking: true/false` — enables/disables native interleaved reasoning
@@ -15,8 +16,8 @@
 //     multi-turn conversation history. Poolside recommends preserving reasoning
 //     content for agentic coding workflows so the model can see prior reasoning steps.
 //
-// To use manually, copy the "config" object below into settings.json:
-//   "vllm-copilot.models": [ <PASTE_HERE> ]
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
 //
 // Token budgets (262,144-token context):
 //   - maxOutputTokens ladder [65536, 32768, 16384, 8192] — default 65,536
@@ -27,43 +28,28 @@
 //   - Note: model supports up to 1M context and routinely generates 100K+ tokens
 //     in thinking mode for agentic tasks.
 //
-// Important: The Laguna-S-2.1 release card does not list sampling parameters.
-// The values below (temperature=1.0, top_k=20) are taken from Poolside's
-// internal evaluation harness for the Laguna M.1 / XS.2 series — same recipe,
-// same team, same eval infrastructure. Published in the technical report:
-//   https://poolside.ai/assets/laguna/laguna-m1-xs2-technical-report.pdf
-//   (Section 6.2.1 "Settings": "We sample LAGUNA XS.2 and LAGUNA M.1 with a
-//   temperature of 1.0 and top_k = 20, with thinking mode enabled.")
+// Sampling: the current NVFP4 card says generation_config.json is authoritative
+// and recommends serving its defaults instead of overriding temperature/top_p:
+//   https://huggingface.co/poolside/Laguna-S-2.1-NVFP4
+// Both checkpoints ship temperature=1.0, top_p=1.0, min_p=0.0, top_k=20.
+// Leave sampling unset here so the served checkpoint owns it.
 //
 // Thinking modes (per Poolside):
-//   - "Think" (max): model self-determines reasoning budget. Lifts benchmark scores
-//     significantly (e.g., Terminal-Bench 60% → 70%, DeepSWE 17% → 40%).
-//   - "No Think": direct responses, no reasoning tokens.
+//   - Thinking on: model self-determines reasoning budget.
+//   - "No-Think": direct responses, no reasoning tokens.
 //   - There are NO intermediate effort levels (low/medium/high) — binary on/off only.
-//     We provide two thinking modes with different temperatures:
-//     - "Think (General)": temperature=0.7 (Poolside NVFP4 recommendation)
-//     - "Think (Code)": temperature=0.2 for deterministic code completion
-//   - For "No Think", use vLLM server defaults (top_k=20 from generation_config.json).
-//
-//   - Sampling parameters: per-mode temperature is set directly in modelModes.
-//     - "Think (General)": temperature=0.7, top_p=0.95 (Poolside NVFP4 recommendation
-//       from https://huggingface.co/poolside/Laguna-S-2.1-NVFP4 "Recommended sampling")
-//     - "Think (Code)": temperature=0.2 for deterministic code completion
-//     - "No Think": vLLM server defaults (top_k=20 from generation_config.json)
-//     Default repetition_penalty=1.05 is set via `defaultParams` (model-scope baseline
-//     shared by all modes). Override per-mode by adding the key inside a specific mode entry.
+//   - Both "Think-General" and "Think-Code" remain available;
+//     both use checkpoint sampling defaults and preserve reasoning history.
 //
 {
   "presetVersion": 1,
   "match": ["Laguna-S-2.1"],
   "meta": {
-    "name": "Laguna-S-2.1",
     "source": "https://huggingface.co/poolside/Laguna-S-2.1",
-    "verified": "2026-07-28",
-    "notes": "Poolside coding model with preserved thinking. Binary thinking (no effort levels); temp 0.7 general / 0.2 code; repetition_penalty 1.05 baseline."
+    "verified": "2026-11-10",
+    "notes": "Poolside coding model with preserved thinking. Binary thinking (no effort levels); sampling is left to checkpoint defaults, as the current NVFP4 card recommends. Both General and Code thinking presets remain available."
   },
   "config": {
-    "vllmModelId": "Laguna-S-2.1",
     "displayName": "Laguna-S-2.1",
     "family": "laguna",
     "maxOutputTokens": [65536, 32768, 16384, 8192],
@@ -71,32 +57,30 @@
       "toolCalling": true,
       "imageInput": false
     },
-    "defaultParams": {
-      "repetition_penalty": 1.05
-    },
     "modelModes": {
-      "Think (General)": {
+      "Think-General": {
         "chat_template_kwargs": {
           "enable_thinking": true,
           "preserve_thinking": true
-        },
-        "temperature": 0.7,
-        "top_p": 0.95
+        }
       },
-      "Think (Code)": {
+      "Think-Code": {
         "chat_template_kwargs": {
           "enable_thinking": true,
           "preserve_thinking": true
-        },
-        "temperature": 0.2,
-        "top_p": 0.95
+        }
       },
-      "No Think": {
+      "No-Think": {
         "chat_template_kwargs": {
           "enable_thinking": false
         }
       }
     },
-    "defaultMode": "Think (General)"
+    // Harness "high" selects the default thinking mode, not a backend effort.
+    "copilotHarnessMapping": {
+      "high": "Think-General",
+      "none": "No-Think"
+    },
+    "defaultMode": "Think-General"
   }
 }

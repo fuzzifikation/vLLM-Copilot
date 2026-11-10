@@ -26,8 +26,8 @@
 // Sampling (card, local deployment): temperature = 1.0, top_p = 0.95.
 // No top_k in generation_config.json — do NOT inherit M3's top_k=40.
 //
-// To use manually, copy the "config" object below into settings.json:
-//   "vllm-copilot.models": [ <PASTE_HERE> ]
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
 //
 // Token budgets:
 //   - Context window: 1M tokens (card; recipe states 1,048,576). The ladder
@@ -36,19 +36,17 @@
 //     Output Length dropdown to keep input headroom.
 //
 // Modes (adaptive thinking, effort hint only — deeper = slower):
-//   - Think (Max) / Think (XHigh) / Think (High) / Think (Medium) / Think (Low)
+//   - Think-Max / Think-XHigh / Think-High / Think-Medium / Think-Low
 
 {
   "presetVersion": 1,
   "match": ["MiniMax-M3.1-Flash"],
   "meta": {
-    "name": "MiniMax M3.1-Flash",
     "source": "https://huggingface.co/MiniMaxAI/MiniMax-M3.1-Flash",
     "verified": "2026-11-06",
     "notes": "Vision MoE (image+video), 1M context. Effort low/medium/high/xhigh/max via chat_template_kwargs.reasoning_effort (M3's thinking_mode is gone). Card sampling temp=1.0, top_p=0.95."
   },
   "config": {
-    "vllmModelId": "MiniMax-M3.1-Flash",
     "displayName": "MiniMax M3.1-Flash",
     "family": "minimax_m3_vl",
     "maxOutputTokens": [131072, 65536, 32768, 16384],
@@ -57,35 +55,35 @@
       "imageInput": true
     },
     "modelModes": {
-      "Think (Max)": {
+      "Think-Max": {
         "chat_template_kwargs": {
           "reasoning_effort": "max"
         },
         "temperature": 1.0,
         "top_p": 0.95
       },
-      "Think (XHigh)": {
+      "Think-XHigh": {
         "chat_template_kwargs": {
           "reasoning_effort": "xhigh"
         },
         "temperature": 1.0,
         "top_p": 0.95
       },
-      "Think (High)": {
+      "Think-High": {
         "chat_template_kwargs": {
           "reasoning_effort": "high"
         },
         "temperature": 1.0,
         "top_p": 0.95
       },
-      "Think (Medium)": {
+      "Think-Medium": {
         "chat_template_kwargs": {
           "reasoning_effort": "medium"
         },
         "temperature": 1.0,
         "top_p": 0.95
       },
-      "Think (Low)": {
+      "Think-Low": {
         "chat_template_kwargs": {
           "reasoning_effort": "low"
         },
@@ -93,6 +91,13 @@
         "top_p": 0.95
       }
     },
-    "defaultMode": "Think (Max)"
+    "copilotHarnessMapping": {
+      "max": "Think-Max",
+      "xhigh": "Think-XHigh",
+      "high": "Think-High",
+      "medium": "Think-Medium",
+      "low": "Think-Low"
+    },
+    "defaultMode": "Think-Max"
   }
 }

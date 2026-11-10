@@ -8,9 +8,8 @@
 // NOTE: These params work for ANY quantization variant (FP8, NVFP4, GGUF, etc.).
 // Preset matching is substring-based, so this preset applies to any served id
 // containing "Qwen3.8-Flash" (which also covers "Qwen3.8-Flash-Next"; the
-// longer pattern wins whenever both match). The config's `vllmModelId` must
-// still be an EXACT served model id — the extension never strips or forgives
-// mismatches.
+// longer pattern wins whenever both match). The user model entry retains
+// the exact server model id; the preset does not rename it.
 //
 // Chat template parameters (Jinja template variables, passed via chat_template_kwargs):
 //   - `enable_thinking: true/false` — default true; false emits no thinking tokens
@@ -42,21 +41,19 @@
 //   texts". Qwen ran all agentic benchmarks at native 256K without YaRN, so
 //   this preset budgets for native context only.
 //
-// To use manually, copy the "config" object below into settings.json:
-//   "vllm-copilot.models": [ <PASTE_HERE> ]
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
 
 
 {
   "presetVersion": 1,
   "match": ["Qwen3.8-Flash-Next", "Qwen3.8-Flash"],
   "meta": {
-    "name": "Qwen3.8-Flash-Next",
     "source": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8",
     "verified": "2026-08-27",
     "notes": "qwen4_exp MoE (125B/6B active) with vision, 262K context. reasoning_effort xhigh/medium/low; official card sampling for thinking and no-think."
   },
   "config": {
-    "vllmModelId": "Qwen3.8-Flash-Next",
     "displayName": "Qwen3.8-Flash-Next",
     "family": "qwen4_exp",
     "maxOutputTokens": [32768, 16384, 8192],
@@ -65,7 +62,7 @@
       "imageInput": true
     },
     "modelModes": {
-      "Think (Deep)": {
+      "Think-Deep": {
         "chat_template_kwargs": {
           "enable_thinking": true,
           "preserve_thinking": true
@@ -78,7 +75,7 @@
         "presence_penalty": 0.0,
         "repetition_penalty": 1.0
       },
-      "Think (Balanced)": {
+      "Think-Balanced": {
         "chat_template_kwargs": {
           "enable_thinking": true,
           "preserve_thinking": true
@@ -91,7 +88,7 @@
         "presence_penalty": 0.0,
         "repetition_penalty": 1.0
       },
-      "No Think": {
+      "No-Think": {
         "chat_template_kwargs": {
           "enable_thinking": false
         },
@@ -103,6 +100,11 @@
         "repetition_penalty": 1.0
       }
     },
-    "defaultMode": "Think (Deep)"
+    "copilotHarnessMapping": {
+      "xhigh": "Think-Deep",
+      "medium": "Think-Balanced",
+      "none": "No-Think"
+    },
+    "defaultMode": "Think-Deep"
   }
 }

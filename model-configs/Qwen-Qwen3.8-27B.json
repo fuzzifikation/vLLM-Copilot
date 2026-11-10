@@ -11,8 +11,8 @@
 //
 // NOTE: These params work for ANY quantization variant (FP8, GGUF, AWQ, etc.).
 // Preset matching is substring-based, so a preset for the base model applies to
-// any served variant whose id contains it. The config's `vllmModelId` must still
-// be an EXACT served model id — the extension never strips or forgives mismatches.
+// any served variant whose id contains it. The user model entry keeps
+// its exact server model id; the preset does not rename it.
 //
 // Chat template parameters (all Jinja template variables, passed via chat_template_kwargs):
 //   - `enable_thinking: true/false` — enables/disables reasoning token generation
@@ -34,21 +34,19 @@
 // tokens for the final response. The ladder head adopts that; on a 262K serve
 // window it leaves ~131K input tokens.
 //
-// To use manually, copy the "config" object below into settings.json:
-//   "vllm-copilot.models": [ <PASTE_HERE> ]
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
 
 
 {
   "presetVersion": 1,
   "match": ["Qwen3.8-27B"],
   "meta": {
-    "name": "Qwen3.8-27B",
     "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
     "verified": "2026-11-06",
     "notes": "Dense 27B with native vision (image+video), 262K native context. reasoning_effort xhigh/medium/low, enable_thinking toggle, preserve_thinking on by default. Card sampling verified for both modes."
   },
   "config": {
-    "vllmModelId": "Qwen3.8-27B",
     "displayName": "Qwen3.8-27B",
     "family": "qwen3_5",
     "maxOutputTokens": [131072, 65536, 32768, 16384],
@@ -57,7 +55,7 @@
       "imageInput": true
     },
     "modelModes": {
-      "Think (Deep)": {
+      "Think-Deep": {
         "chat_template_kwargs": {
           "enable_thinking": true,
           "preserve_thinking": true
@@ -70,7 +68,7 @@
         "presence_penalty": 0.0,
         "repetition_penalty": 1.0
       },
-      "Think (Balanced)": {
+      "Think-Balanced": {
         "chat_template_kwargs": {
           "enable_thinking": true,
           "preserve_thinking": true
@@ -83,7 +81,7 @@
         "presence_penalty": 0.0,
         "repetition_penalty": 1.0
       },
-      "No Think": {
+      "No-Think": {
         "chat_template_kwargs": {
           "enable_thinking": false
         },
@@ -95,6 +93,11 @@
         "repetition_penalty": 1.0
       }
     },
-    "defaultMode": "Think (Deep)"
+    "copilotHarnessMapping": {
+      "xhigh": "Think-Deep",
+      "medium": "Think-Balanced",
+      "none": "No-Think"
+    },
+    "defaultMode": "Think-Deep"
   }
 }

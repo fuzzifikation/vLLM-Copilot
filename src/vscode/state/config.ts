@@ -17,6 +17,75 @@ import {
 } from '../../core/config/config.js';
 import type { ServerEntry } from '../../core/config/serverRegistry.js';
 
+const COPILOT_HARNESS_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
+export type CopilotHarnessMapping = Partial<Record<typeof COPILOT_HARNESS_EFFORTS[number], string>>;
+
+/** Only extension-owned legacy names migrate; custom names stay untouched. */
+export const LEGACY_MODEL_MODE_SLUGS: ReadonlyMap<string, string> = new Map([
+  ['Think (General)', 'Think-General'],
+  ['Think (Coding)', 'Think-Coding'],
+  ['Think (Science)', 'Think-Science'],
+  ['Think (Code)', 'Think-Code'],
+  ['Think (Deep)', 'Think-Deep'],
+  ['Think (Balanced)', 'Think-Balanced'],
+  ['Think (Max)', 'Think-Max'],
+  ['Think (XHigh)', 'Think-XHigh'],
+  ['Think (High)', 'Think-High'],
+  ['Think (Medium)', 'Think-Medium'],
+  ['Think (Low)', 'Think-Low'],
+  ['Think (Light)', 'Think-Light'],
+  ['Think (Xhigh)', 'Think-XHigh'],
+  ['Think (Minimal)', 'Think-Minimal'],
+  ['Think (Ultra)', 'Think-Ultra'],
+  ['Think (Always)', 'Think-Always'],
+  ['Think (Adaptive)', 'Think-Adaptive'],
+  ['No Think', 'No-Think'],
+]);
+
+/** Validate host-only aliases and invert them for schema publication. */
+export function readCopilotHarnessMapping(model?: ModelConfig): {
+  effortByMode: ReadonlyMap<string, string>;
+  warning?: string;
+} {
+  const effortByMode = new Map<string, string>();
+  const supplied = (model as (ModelConfig & { copilotHarnessMapping?: unknown }) | undefined)
+    ?.copilotHarnessMapping;
+  if (supplied === undefined) return { effortByMode };
+
+  const modes = model?.modelModes ?? {};
+  let error: string | undefined;
+  if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) {
+    error = 'must be an object mapping harness efforts to mode names';
+  } else {
+    for (const [effort, mode] of Object.entries(supplied)) {
+      if (!COPILOT_HARNESS_EFFORTS.some(value => value === effort)) {
+        error = `contains unsupported effort "${effort}"`;
+      } else if (typeof mode !== 'string' || !Object.hasOwn(modes, mode)) {
+        error = `effort "${effort}" must name an existing model mode`;
+      } else if (effortByMode.has(mode)) {
+        error = `maps more than one effort to mode "${mode}"`;
+      } else if (effort !== mode && Object.hasOwn(modes, effort)) {
+        error = `effort "${effort}" conflicts with an existing mode of that name`;
+      } else {
+        effortByMode.set(mode, effort);
+      }
+      if (error) break;
+    }
+    const defaultMode = model?.defaultMode && Object.hasOwn(modes, model.defaultMode)
+      ? model.defaultMode : Object.keys(modes)[0];
+    if (!error && effortByMode.size > 0 && defaultMode && !effortByMode.has(defaultMode)) {
+      error = `must include the default mode "${defaultMode}"`;
+    }
+  }
+  if (error) effortByMode.clear();
+  return {
+    effortByMode,
+    warning: error
+      ? `Model "${model?.displayName || model?.id}": copilotHarnessMapping ${error}. Mapping ignored; Local modes are unchanged.`
+      : undefined,
+  };
+}
+
 /**
  * Read configuration from VS Code settings.
  *
@@ -84,6 +153,10 @@ export function validateConfig(config: VllmConfig): string[] {
   const warnings: string[] = [];
   rawShapeWarnings(warnings);
   warnings.push(...validateSuppliedConfig(config));
+  for (const model of config.models) {
+    const { warning } = readCopilotHarnessMapping(model);
+    if (warning) warnings.push(warning);
+  }
   return warnings;
 }
 
@@ -94,18 +167,48 @@ export function validateConfig(config: VllmConfig): string[] {
  * normalized output-length pick. ONE reader for both consumers (audit P1-1):
  * the provider tracks the selection for metadata re-registration, the request
  * builder uses it for params and the output budget; their private parses had
- * already drifted apart. The `any` read here means a future proposal drop
- * compiles clean and the mode picker fails silently — known, accepted coupling.
+ * already drifted apart. Published schema values decode to their Local mode
+ * names. Current configured modes and aliases take precedence over cached
+ * metadata; legacy names resolve only when the old name is absent.
  * Copilot-shape knowledge: this is why it lives at the host boundary, while
  * the numeric floor rule (`normalizePickerTokens`) stays in the core.
  */
-export function readPickerSelection(options: unknown): { selectedMode?: string; pickerTokens?: number } {
+export function readPickerSelection(
+  options: unknown,
+  model?: vscode.LanguageModelChatInformation,
+  override?: ModelConfig,
+): { selectedMode?: string; pickerTokens?: number; warning?: string } {
   const modelConfiguration = (options as { modelConfiguration?: Record<string, unknown> })
     .modelConfiguration;
   const mode = modelConfiguration?.reasoningEffort;
+  const property = (model as (vscode.LanguageModelChatInformation & {
+    configurationSchema?: { properties: Record<string, { enum?: unknown[]; enumItemLabels?: unknown[] }> };
+  }) | undefined)?.configurationSchema?.properties.reasoningEffort;
+  const index = typeof mode === 'string' ? property?.enum?.indexOf(mode) ?? -1 : -1;
+  let selected = index >= 0 ? property?.enumItemLabels?.[index] ?? mode : mode;
+  const configuredNames = override?.modelModes ? Object.keys(override.modelModes) : undefined;
+  const mapping = override ? readCopilotHarnessMapping(override) : undefined;
+  if (typeof mode === 'string' && configuredNames?.includes(mode)) {
+    selected = mode;
+  } else if (mapping) {
+    for (const [name, effort] of mapping.effortByMode) {
+      if (effort === mode) {
+        selected = name;
+        break;
+      }
+    }
+  }
+  if (typeof selected === 'string') {
+    const slug = LEGACY_MODEL_MODE_SLUGS.get(selected);
+    const availableNames = configuredNames ?? property?.enumItemLabels;
+    if (slug && !availableNames?.includes(selected) && availableNames?.includes(slug)) {
+      selected = slug;
+    }
+  }
   return {
-    selectedMode: typeof mode === 'string' ? mode : undefined,
+    selectedMode: typeof selected === 'string' ? selected : undefined,
     pickerTokens: normalizePickerTokens(modelConfiguration?.maxOutputTokens),
+    warning: mapping?.warning,
   };
 }
 

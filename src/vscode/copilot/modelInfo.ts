@@ -11,6 +11,8 @@
 import * as vscode from 'vscode';
 import type { ModelDescriptor } from '../../core/catalog/describe.js';
 import { formatCostRate } from '../../core/usage/money.js';
+import type { RequestLog } from '../../core/shared/trace.js';
+import { readCopilotHarnessMapping } from '../state/config.js';
 
 /**
  * True when `current` (a VS Code version string such as `1.135.0` or
@@ -138,7 +140,8 @@ function lengthLabels(values: number[]): string[] {
  * `contextSize`, so our `tokens` slot is uncontested).
  *
  * 1. `reasoningEffort` — the model MODE dropdown (behavior params: reasoning,
- *    sampling, template kwargs). Emitted when the model has modes.
+ *    sampling, template kwargs). Explicit harness aliases replace enum values
+ *    only; Local labels and unmapped modes remain intact.
  * 2. `maxOutputTokens` — the output-LENGTH dropdown. Emitted ONLY when the
  *    model declares a VECTOR-form `maxOutputTokens` AND at least two entries
  *    survive the ceiling (`descriptor.outputLengthValues` — the core applies
@@ -151,6 +154,7 @@ function lengthLabels(values: number[]): string[] {
  */
 function buildConfigurationSchema(
   descriptor: ModelDescriptor,
+  effortByMode: ReadonlyMap<string, string>,
 ): { properties: Record<string, unknown> } | undefined {
   const properties: Record<string, unknown> = {};
 
@@ -158,9 +162,9 @@ function buildConfigurationSchema(
     properties.reasoningEffort = {
       type: 'string',
       title: 'Model Mode',
-      enum: descriptor.modeNames,
+      enum: descriptor.modeNames.map(name => effortByMode.get(name) ?? name),
       enumItemLabels: descriptor.modeNames,
-      default: descriptor.defaultMode,
+      default: effortByMode.get(descriptor.defaultMode ?? '') ?? descriptor.defaultMode,
       group: 'navigation',
     };
   }
@@ -222,6 +226,7 @@ function buildPickerPrice(descriptor: ModelDescriptor): string {
  */
 export function buildModelInfo(
   descriptor: ModelDescriptor,
+  output?: RequestLog,
 ): vscode.LanguageModelChatInformation {
   // `detail` and `tooltip` are readonly on the stable type, so they are placed
   // in the literal rather than assigned afterwards.
@@ -259,7 +264,9 @@ export function buildModelInfo(
     ...(price ? { detail: price, tooltip: price } : {}),
   };
 
-  const schema = buildConfigurationSchema(descriptor);
+  const { effortByMode, warning: mappingWarning } = readCopilotHarnessMapping(descriptor.override);
+  if (mappingWarning) output?.appendLine(`[WARN] ${mappingWarning}`);
+  const schema = buildConfigurationSchema(descriptor, effortByMode);
   if (schema) {
     info.configurationSchema = schema;
   }
@@ -274,6 +281,9 @@ export function buildModelInfo(
   );
   if (banners.warningText) {
     info.warningText = banners.warningText;
+  }
+  if (mappingWarning) {
+    info.warningText = { ...info.warningText, copilot_harness_mapping: mappingWarning };
   }
   if (banners.infoText) {
     info.infoText = banners.infoText;

@@ -14,8 +14,8 @@
 // and tracking issue vllm-project/vllm#56400):
 //   - vLLM 0.30.0+; no pip wheel serves this architecture — use the
 //     dedicated image: vllm/vllm-openai:deepseekv41-flash
-//   - --tokenizer-mode deepseek_v41  (the release ships NO Jinja chat
-//     template; vLLM's built-in V4.1 encoder IS the template)
+//   - --tokenizer-mode deepseek_v41  (use vLLM's built-in V4.1 encoder;
+//     the HF Jinja template has a different effort vocabulary)
 //   - --reasoning-parser deepseek_v41
 //   - --tool-call-parser deepseek_v41 --enable-auto-tool-choice
 //     (tool calls use DSML tag blocks, not JSON fences — server-side,
@@ -24,8 +24,8 @@
 // Sampling recommendations (both cards' "Minimal Inference" tables, re-read
 // 2026-11-06): the base DeepSeek-V4.1-Flash card says temperature = 1.0 with
 // top_p "0.95 or 1.0" (undecided hedge); the DeepSeek-V4.1-Flash-1017
-// refresh card (2026-10-17, "a minor update", same deepseek_v41 arch, same
-// no-Jinja encoding) pins top_p = 1.0. All modes below therefore use
+// refresh card (2026-10-17, "a minor update", same deepseek_v41 arch and
+// vLLM encoder) pins top_p = 1.0. All modes below therefore use
 // top_p = 1.0 — the only value both cards endorse. Earlier versions of this
 // preset used 0.95 in thinking modes, which the -1017 card does not carry.
 //   temperature = 1.0, top_p = 1.0
@@ -51,8 +51,8 @@
 //   returns empty content with finish_reason=length. The explicit modes
 //   below always pin the effort, so this cannot happen via the picker.
 //
-// To use manually, copy the "config" object below into settings.json:
-//   "vllm-copilot.models": [ <PASTE_HERE> ]
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
 //
 // Token budgets:
 //   - Context window: 1,048,576 tokens (config.json max_position_embeddings)
@@ -63,21 +63,19 @@
 //     in the Output Length dropdown — output + input must fit max_model_len.
 //
 // Modes:
-//   - Think (Max):    effort 100 — benchmark settings, best accuracy
-//   - Think (High):   effort 75 — DeepSeek's API "high" tier (default)
-//   - No Think:       thinking off (reasoning_effort "none"), direct answers
+//   - Think-Max:    effort 100 — benchmark settings, best accuracy
+//   - Think-High:   effort 75 — DeepSeek's API "high" tier (default)
+//   - No-Think:       thinking off (reasoning_effort "none"), direct answers
 
 {
   "presetVersion": 1,
   "match": ["DeepSeek-V4.1-Flash"],
   "meta": {
-    "name": "DeepSeek V4.1 Flash",
     "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash",
     "verified": "2026-11-06",
     "notes": "1M-context multimodal MoE (native vision). Numeric reasoning budget via reasoning_effort (max=100/xhigh=75/none, vLLM deepseek_v41); card sampling temp=1.0, top_p=1.0 (endorsed by the base and -1017 cards). Needs vLLM 0.30+ docker image with --tokenizer-mode/--reasoning-parser/--tool-call-parser deepseek_v41."
   },
   "config": {
-    "vllmModelId": "DeepSeek-V4.1-Flash",
     "displayName": "DeepSeek V4.1 Flash",
     "family": "deepseek_v41",
     "maxOutputTokens": [262144, 131072, 65536, 32768],
@@ -86,22 +84,27 @@
       "imageInput": true
     },
     "modelModes": {
-      "Think (Max)": {
+      "Think-Max": {
         "reasoning_effort": "max",
         "temperature": 1.0,
         "top_p": 1.0
       },
-      "Think (High)": {
+      "Think-High": {
         "reasoning_effort": "xhigh",
         "temperature": 1.0,
         "top_p": 1.0
       },
-      "No Think": {
+      "No-Think": {
         "reasoning_effort": "none",
         "temperature": 1.0,
         "top_p": 1.0
       }
     },
-    "defaultMode": "Think (High)"
+    "copilotHarnessMapping": {
+      "max": "Think-Max",
+      "xhigh": "Think-High",
+      "none": "No-Think"
+    },
+    "defaultMode": "Think-High"
   }
 }

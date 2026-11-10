@@ -10,8 +10,8 @@
 //    top_p = 1.0 otherwise"
 // Evaluation uses temperature=1.0, top_p=0.95 with max reasoning effort.
 //
-// To use manually, copy the "config" object below into settings.json:
-//   "vllm-copilot.models": [ <PASTE_HERE> ]
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
 //
 // Token budgets:
 //   - Context window: 1,048,576 tokens (model supports up to 1M)
@@ -38,20 +38,18 @@
 //   These are authoritative for local vLLM and applied in all modes.
 //
 // Modes:
-//   - Think (Max):    Maximum reasoning effort
-//   - Think (High):   Standard deep reasoning (default)
-//   - No Think:       Direct responses, no thinking tokens (IdentityReasoningParser)
+//   - Think-Max:    Maximum reasoning effort
+//   - Think-High:   Standard deep reasoning (default)
+//   - No-Think:       Direct responses, no thinking tokens (IdentityReasoningParser)
 
 {
   "presetVersion": 1,
   "match": ["DeepSeek-V4-Flash"],
   "meta": {
-    "name": "DeepSeek V4 Flash",
     "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731",
     "notes": "1M-context MoE. Thinking depth via top-level reasoning_effort (max/high/none, auto-injected by vLLM); card sampling temp=1.0, top_p=0.95."
   },
   "config": {
-    "vllmModelId": "DeepSeek-V4-Flash",
     "displayName": "DeepSeek V4 Flash",
     "family": "deepseek_v4",
     "maxOutputTokens": [131072, 65536, 32768, 16384],
@@ -60,22 +58,27 @@
       "imageInput": false
     },
     "modelModes": {
-      "Think (Max)": {
+      "Think-Max": {
         "reasoning_effort": "max",
         "temperature": 1.0,
         "top_p": 0.95
       },
-      "Think (High)": {
+      "Think-High": {
         "reasoning_effort": "high",
         "temperature": 1.0,
         "top_p": 0.95
       },
-      "No Think": {
+      "No-Think": {
         "reasoning_effort": "none",
         "temperature": 1.0,
         "top_p": 1.0
       }
     },
-    "defaultMode": "Think (High)"
+    "copilotHarnessMapping": {
+      "max": "Think-Max",
+      "high": "Think-High",
+      "none": "No-Think"
+    },
+    "defaultMode": "Think-High"
   }
 }

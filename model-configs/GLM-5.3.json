@@ -17,7 +17,7 @@
 //
 // NOTE: These params work for ANY quantization variant. Preset matching is
 // substring-based, so this preset also matches "GLM-5.3-FP8". The
-// config's `vllmModelId` must still be an EXACT served model id.
+// user model entry keeps its exact server model id.
 //
 // ⚠️ THINKING IS ALWAYS ON — the chat template opens a  block
 // unconditionally. There is NO "No Think" mode for this model (unlike
@@ -42,21 +42,19 @@
 //     in the Output Length dropdown to keep input headroom.
 //   - input = context − max_tokens, so output budgets here never starve input.
 //
-// To use manually, copy the "config" object below into settings.json:
-//   "vllm-copilot.models": [ <PASTE_HERE> ]
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
 
 
 {
   "presetVersion": 1,
   "match": ["GLM-5.3"],
   "meta": {
-    "name": "GLM-5.3",
     "source": "https://huggingface.co/zai-org/GLM-5.3",
     "verified": "2026-08-30",
     "notes": "Full GLM-5.3 (glm_moe_dsa, same base as GLM-5.2, text-only). Thinking always on - depth only via reasoning_effort (max/high/low); clear_thinking strips historical thinking. temp=1.0, top_p=0.95. Flash has its own preset."
   },
   "config": {
-    "vllmModelId": "GLM-5.3",
     "displayName": "GLM-5.3",
     "family": "glm_moe_dsa",
     "maxOutputTokens": [131072, 65536, 32768, 16384],
@@ -64,7 +62,7 @@
       "toolCalling": true
     },
     "modelModes": {
-      "Think (Max)": {
+      "Think-Max": {
         "reasoning_effort": "max",
         "chat_template_kwargs": {
           "clear_thinking": true
@@ -73,7 +71,7 @@
         "top_p": 0.95,
         "presence_penalty": 0
       },
-      "Think (High)": {
+      "Think-High": {
         "reasoning_effort": "high",
         "chat_template_kwargs": {
           "clear_thinking": true
@@ -82,7 +80,7 @@
         "top_p": 0.95,
         "presence_penalty": 0
       },
-      "Think (Low)": {
+      "Think-Low": {
         "reasoning_effort": "low",
         "chat_template_kwargs": {
           "clear_thinking": true
@@ -92,6 +90,11 @@
         "presence_penalty": 0
       }
     },
-    "defaultMode": "Think (Max)"
+    "copilotHarnessMapping": {
+      "max": "Think-Max",
+      "high": "Think-High",
+      "low": "Think-Low"
+    },
+    "defaultMode": "Think-Max"
   }
 }

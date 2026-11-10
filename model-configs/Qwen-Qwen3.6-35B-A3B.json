@@ -6,8 +6,8 @@
 //
 // NOTE: These params work for ANY quantization variant (FP8, GGUF, AWQ, etc.).
 // Preset matching is substring-based, so a preset for the base model applies to
-// any served variant whose id contains it. The config's `vllmModelId` must still
-// be an EXACT served model id — the extension never strips or forgives mismatches.
+// any served variant whose id contains it. The user model entry keeps
+// its exact server model id; the preset does not rename it.
 //
 // Chat template parameters (all Jinja template variables, passed via chat_template_kwargs):
 //   - `enable_thinking: true/false` — enables/disables reasoning token generation
@@ -18,10 +18,10 @@
 //     scenarios where the model benefits from seeing prior reasoning steps.
 //
 // IMPORTANT: Qwen3.6 does NOT support the /think and /nothink soft switch from Qwen3.
-// The model thinks by default; use "No Think" mode for direct responses.
+// The model thinks by default; use "No-Think" mode for direct responses.
 //
-// To use manually, copy the "config" object below into settings.json:
-//   "vllm-copilot.models": [ <PASTE_HERE> ]
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
 //
 // Token budgets:
 //   - Context window: 262,144 tokens (native), extensible up to ~1,010,000 (YaRN)
@@ -33,9 +33,9 @@
 //     input budget as the advertised default)
 //
 // Modes (all values from official Qwen3.6 model card Best Practices section):
-//   - Think (General):  General tasks (temp=1.0, presence_penalty=1.5)
-//   - Think (Coding):   Precise coding tasks like WebDev (temp=0.6, presence_penalty=0.0)
-//   - No Think:         Direct responses, no thinking tokens (temp=0.7, top_p=0.8)
+//   - Think-General:  General tasks (temp=1.0, presence_penalty=1.5)
+//   - Think-Coding:   Precise coding tasks like WebDev (temp=0.6, presence_penalty=0.0)
+//   - No-Think:         Direct responses, no thinking tokens (temp=0.7, top_p=0.8)
 //
 // Architecture:
 //   - 35B total params, ~3B activated per token (MoE: 256 experts, 8 routed + 1 shared)
@@ -47,13 +47,11 @@
   "presetVersion": 1,
   "match": ["Qwen3.6-35B-A3B"],
   "meta": {
-    "name": "Qwen3.6-35B-A3B",
     "source": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
     "verified": "2026-07-31",
     "notes": "Qwen3.6 MoE (35B total / 3B active) with vision. Thinks by default (no /think soft-switch); official card sampling per mode."
   },
   "config": {
-    "vllmModelId": "Qwen3.6-35B-A3B",
     "displayName": "Qwen3.6-35B-A3B",
     "family": "qwen3_5_moe",
     "maxOutputTokens": [32768, 16384, 8192],
@@ -62,7 +60,7 @@
       "imageInput": true
     },
     "modelModes": {
-      "Think (General)": {
+      "Think-General": {
         "chat_template_kwargs": {
           "enable_thinking": true,
           "preserve_thinking": true
@@ -74,7 +72,7 @@
         "presence_penalty": 1.5,
         "repetition_penalty": 1.0
       },
-      "Think (Coding)": {
+      "Think-Coding": {
         "chat_template_kwargs": {
           "enable_thinking": true,
           "preserve_thinking": true
@@ -86,7 +84,7 @@
         "presence_penalty": 0.0,
         "repetition_penalty": 1.0
       },
-      "No Think": {
+      "No-Think": {
         "chat_template_kwargs": {
           "enable_thinking": false
         },
@@ -98,6 +96,11 @@
         "repetition_penalty": 1.0
       }
     },
-    "defaultMode": "Think (General)"
+    // Harness "high" selects the default thinking mode, not a backend effort.
+    "copilotHarnessMapping": {
+      "high": "Think-General",
+      "none": "No-Think"
+    },
+    "defaultMode": "Think-General"
   }
 }

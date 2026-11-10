@@ -243,7 +243,7 @@ describe('the OpenRouter route (via resolveModelConfigForAddSafely)', () => {
     expect(fetchFn.mock.calls.some(([u]) => String(u).includes('/api/models/'))).toBe(false);
     expect(infoSpy).not.toHaveBeenCalled();
     // Thinking modes came from the reasoning object, not fabricated.
-    expect(result!.modelConfig.modelModes?.['Think (High)']).toEqual({ reasoning: { enabled: true, effort: 'high' } });
+    expect(result!.modelConfig.modelModes?.['Think-High']).toEqual({ reasoning: { enabled: true, effort: 'high' } });
     // No API completion cap → 10% of the context window, hard-capped at 81920.
     // floor(500000 × 0.1) = 50000 < 81920 → 50000, then halved into an Output
     // length ladder (head = default = rung closest to 10% of the window).

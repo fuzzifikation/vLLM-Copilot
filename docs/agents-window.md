@@ -56,7 +56,7 @@ See [Personalities & system prompts](./manual.md#personalities--system-prompts) 
 ## Fine print
 
 - **Experimental.** Microsoft documents the BYOK bridge as experimental, and Agent Host sessions remain preview functionality. If the picker stays empty after reopening the Agents window, report it to VS Code first.
-- **Model Mode / Output Length controls** are rendered by VS Code from provider metadata. Support in the Agents window depends on the host version. Enable `vllm-copilot.enableFileLogging` before blaming the model when a mode appears ignored.
+- **Mapped effort choices** use each model's `copilotHarnessMapping` to select its existing modes. The harness shows standard effort labels; Local shows the mode identifiers and unmapped choices. Compatible existing model entries migrate automatically; unresolved cases need a manual mapping or Auto-Configure. **Output Length** and other provider metadata still need the [upstream fix](https://github.com/microsoft/vscode/issues/340138). See [migration and mapping policy](../model-configs/README.md#mode-identifiers-and-migration).
 - **Utility tasks** such as titles and commit messages use `chat.byokUtilityModelDefault`, which the extension sets to `mainAgent` unless you chose another value.
 - **The Local harness** remains a main-window feature. The Copilot harness with BYOK models is the path for vLLM models in the Agents window.
 - Agent Host sessions can use worktree isolation, MCP servers, hooks, and the usual agent customizations. Those are harness features and are outside this extension.

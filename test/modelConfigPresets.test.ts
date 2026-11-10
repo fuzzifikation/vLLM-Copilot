@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import * as vscode from 'vscode';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parsePresetFile, parsePresetRawJson, PRESET_CONFIG_KEYS } from '../src/vscode/commands/presets.js';
+import { describeModel } from '../src/core/catalog/describe.js';
+import { buildModelInfo } from '../src/vscode/copilot/modelInfo.js';
+import { buildRequest } from '../src/vscode/copilot/requestBuilder.js';
 
 /**
  * Guards the shipped model-configs/ presets: every JSON must parse through the
@@ -21,6 +25,56 @@ describe('shipped model-configs presets', () => {
     expect(presetFiles.length).toBeGreaterThan(0);
   });
 
+  it('leaves Poolside sampling to the checkpoint instead of overriding its defaults', () => {
+    const preset = parsePresetFile(
+      readFileSync(configsDir + 'Poolside-Laguna-S-2.1.json', 'utf8'),
+      'Poolside-Laguna-S-2.1.json',
+    )!;
+    expect(preset.config.defaultParams).toBeUndefined();
+    for (const params of Object.values(preset.config.modelModes!)) {
+      for (const key of ['temperature', 'top_p', 'top_k', 'min_p', 'repetition_penalty']) {
+        expect(params).not.toHaveProperty(key);
+      }
+    }
+  });
+
+  it('explicitly disables DeepSeek Pro thinking instead of relying on the server default', () => {
+    const preset = parsePresetFile(
+      readFileSync(configsDir + 'DeepSeek-V4-Pro.json', 'utf8'), 'DeepSeek-V4-Pro.json',
+    )!;
+    expect(preset.config.modelModes!['No-Think']).toMatchObject({
+      reasoning_effort: 'none',
+      chat_template_kwargs: { thinking: false },
+    });
+    const override = {
+      ...preset.config, id: 'm', server: 'srv',
+      defaultParams: { reasoning_effort: 'max', chat_template_kwargs: { thinking: true } },
+    };
+    const model = buildModelInfo(describeModel({
+      wireId: 'm', contextWindow: 1_048_576, serverType: 'vllm', override,
+    }));
+    const output = vscode.window.createOutputChannel('DeepSeek thinking off');
+    try {
+      const request = buildRequest(model, [], {
+        modelOptions: {}, tools: [], modelConfiguration: { reasoningEffort: 'none' },
+      }, {
+        models: [override], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }],
+      }, output);
+      expect(request.mergedOptions).toMatchObject({ reasoning_effort: 'none', chat_template_kwargs: { thinking: false } });
+    } finally {
+      output.dispose();
+    }
+  });
+
+  it('does not send an unsupported preservation flag to the official Agents-A1 template', () => {
+    const preset = parsePresetFile(
+      readFileSync(configsDir + 'Agents-A1-config.json', 'utf8'), 'Agents-A1-config.json',
+    )!;
+    for (const params of Object.values(preset.config.modelModes!)) {
+      expect(params.chat_template_kwargs ?? {}).not.toHaveProperty('preserve_thinking');
+    }
+  });
+
   for (const file of presetFiles) {
     describe(file, () => {
       const text = readFileSync(configsDir + file, 'utf8');
@@ -37,8 +91,7 @@ describe('shipped model-configs presets', () => {
         const preset = parsePresetFile(text, file);
         expect(preset, `${file} failed to parse`).not.toBeNull();
         expect(preset!.match!.every(m => m.trim().length > 0)).toBe(true);
-        // Identity used for matching / merging target.
-        expect(preset!.config.vllmModelId).toBeTruthy();
+        expect(preset!.config).not.toHaveProperty('vllmModelId');
         // Presets exist to supply modes; each should define at least one.
         expect(Object.keys(preset!.config.modelModes ?? {}).length).toBeGreaterThan(0);
         // If a defaultMode is set it must reference a real mode.
@@ -54,10 +107,70 @@ describe('shipped model-configs presets', () => {
         }
       });
 
+      it('uses wire-safe mode identifiers', () => {
+        const preset = parsePresetFile(text, file)!;
+        for (const name of Object.keys(preset.config.modelModes!)) {
+          expect(name).toMatch(/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/);
+        }
+      });
+
+      it('maps harness efforts to existing modes with the correct backend effort', () => {
+        const preset = parsePresetFile(text, file)!;
+        const modes = preset.config.modelModes!;
+        const mapping = preset.config.copilotHarnessMapping;
+        expect(mapping, `${file}: missing harness mapping`).toBeDefined();
+        expect(Object.keys(mapping!)).not.toHaveLength(0);
+        const defaultMode = preset.config.defaultMode ?? Object.keys(modes)[0];
+        expect(Object.values(mapping!)).toContain(defaultMode);
+
+        for (const [effort, name] of Object.entries(mapping!)) {
+          expect(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']).toContain(effort);
+          expect(Object.hasOwn(modes, name), `${file}: missing mode "${name}"`).toBe(true);
+          const params = modes[name];
+          const kwargs = params.chat_template_kwargs;
+          const templateEffort = kwargs && typeof kwargs === 'object' && 'reasoning_effort' in kwargs
+            ? kwargs.reasoning_effort : undefined;
+          const backendEffort = params.reasoning_effort ?? templateEffort;
+          if (typeof backendEffort === 'string') {
+            expect(effort).toBe(backendEffort === 'no_think' ? 'none' : backendEffort);
+          } else if (effort !== 'none') {
+            expect(effort).toBe('high');
+            expect(name).toBe(defaultMode);
+          }
+        }
+      });
+
+      it('publishes every mapped harness choice and sends its original mode parameters', () => {
+        const preset = parsePresetFile(text, file)!;
+        const override = { ...preset.config, id: 'm', server: 'srv' };
+        const model = buildModelInfo(describeModel({
+          wireId: 'm', contextWindow: 1_048_576, serverType: 'vllm', override,
+        }));
+        const schema = (model as typeof model & {
+          configurationSchema: { properties: { reasoningEffort: { enum: string[]; enumItemLabels: string[] } } };
+        }).configurationSchema.properties.reasoningEffort;
+        const output = vscode.window.createOutputChannel('preset harness test');
+        try {
+          for (const [effort, name] of Object.entries(preset.config.copilotHarnessMapping!)) {
+            expect(schema.enum).toContain(effort);
+            expect(schema.enumItemLabels[schema.enum.indexOf(effort)]).toBe(name);
+            const request = buildRequest(model, [], {
+              modelOptions: {}, tools: [], modelConfiguration: { reasoningEffort: effort, maxOutputTokens: 16384 },
+            }, {
+              models: [override], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }],
+            }, output);
+            expect(request.mergedOptions).toMatchObject(preset.config.modelModes![name]);
+            expect(request.mergedOptions).not.toHaveProperty('copilotHarnessMapping');
+            expect(request.mergedOptions.max_tokens).toBe(16384);
+          }
+        } finally {
+          output.dispose();
+        }
+      });
+
       it('carries user-facing provenance metadata', () => {
         const meta = parsePresetRawJson(text)!.meta as Record<string, string | undefined>;
-        expect(typeof meta?.name, `${file}: meta.name must be a string`).toBe('string');
-        expect(meta.name!.trim().length).toBeGreaterThan(0);
+        expect(meta).not.toHaveProperty('name');
         expect(typeof meta?.notes, `${file}: meta.notes must be a string`).toBe('string');
         expect(meta.notes!.trim().length).toBeGreaterThan(0);
         if (meta.source !== undefined) {

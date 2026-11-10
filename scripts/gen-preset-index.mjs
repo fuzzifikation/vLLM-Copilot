@@ -28,13 +28,13 @@ const SCHEMA_VERSION = 1;
  * index should never advertise garbage in the first place.
  */
 export const PRESET_CONFIG_KEYS = new Set([
-  'vllmModelId',
   'displayName',
   'family',
   'maxInputTokens',
   'maxOutputTokens',
   'capabilities',
   'modelModes',
+  'copilotHarnessMapping',
   'defaultMode',
   'defaultParams',
   'estimateCharsPerToken',

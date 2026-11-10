@@ -18,6 +18,14 @@ const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
  * direct edit of it.
  */
 describe('dual-license invariants', () => {
+  it('includes the runtime update page in the actual VSCE payload list', () => {
+    const result = spawnSync(process.execPath, [
+      join(ROOT, 'node_modules', '@vscode', 'vsce', 'vsce'), 'ls', '--no-dependencies',
+    ], { cwd: ROOT, encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.split(/\r?\n/)).toContain('resources/update.md');
+  });
+
   it('keeps the root LICENSE byte-identical to the BUSL source of truth', () => {
     // An in-place MIT substitution, however it happened, shows up here as a
     // modification and fails the suite before it can be committed.

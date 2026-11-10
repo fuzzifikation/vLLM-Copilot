@@ -5,7 +5,6 @@ import { discoverModels } from './discovery.js';
 import type { RequestLog } from '../../core/shared/trace.js';
 import { runChatResponse } from './streamOrchestrator.js';
 import type { ProviderClient } from './contracts.js';
-import { readPickerSelection } from '../state/config.js';
 import { resolveOverrideForModel, resolveModelSettings, resolveServerConfig, type ModelConfig } from '../../core/config/config.js';
 import type { ServerEntry } from '../../core/config/serverRegistry.js';
 import type { FileLogger } from '../logging/logger.js';
@@ -407,13 +406,6 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
       return;
     }
 
-    // Track the selected model mode and output length so re-registered metadata
-    // (and Copilot's context-window bar) reflects the picked output budget. Read
-    // before delegating — the request builder reads the same picker state through
-    // the same shared reader (single parse, single normalization).
-    const { selectedMode, pickerTokens: selectedLength } = readPickerSelection(options);
-    this.trackConfigSelection(model.id, selectedMode, selectedLength);
-
     await runChatResponse(
       {
         client: this.client,
@@ -422,6 +414,7 @@ export class VllmChatModelProvider implements vscode.LanguageModelChatProvider, 
         systemMessages: this.systemMessages,
         contextWindow: this.modelContextWindows.get(model.id),
         onTransportFailure: () => this.clearCache(),
+        onConfigSelection: (mode, length) => this.trackConfigSelection(model.id, mode, length),
       },
       model,
       messages,

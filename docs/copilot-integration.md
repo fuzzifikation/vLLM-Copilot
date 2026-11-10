@@ -292,7 +292,7 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
 
 ### `configurationSchema`: Model Picker Settings (Thinking Effort)
 
-**⚠️ PROPOSED API** - `configurationSchema` is a `chatProvider`-proposal field. It is **not** in stable `@types/vscode` (the `LanguageModelChatInformation` interface there omits it), but it **is** declared in upstream `vscode.proposed.chatProvider.d.ts` (microsoft/vscode). It still requires `enabledApiProposals: ["chatProvider"]` and VS Code reads it at runtime. The same applies to `options.modelConfiguration` on the request side - also a proposal field absent from `@types/vscode`.
+**Runtime-supported metadata, absent from stable types.** `configurationSchema` and `options.modelConfiguration` are absent from the installed stable `@types/vscode` declarations, but VS Code reads them at runtime without an `enabledApiProposals` entry. The extension uses typed host-boundary intersections for these fields; do not re-add `chatProvider` to the manifest.
 
 **Status:** Implemented. Proposed API - absent from stable `@types/vscode` but declared upstream and read by VS Code at runtime. Can change or be dropped with a future proposal update.
 
@@ -343,6 +343,8 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
        a.default !== void 0 && (r[s] = a.default);
    return { ...r, ...userOverrides };
    ```
+
+**Copilot harness aliases.** `copilotHarnessMapping` declares standard effort values mapped to existing mode identifiers. The provider publishes those values with the identifiers as `enumItemLabels` for Local, leaving unmapped modes available there. The Agent Host filters the enum to standard efforts and supplies its own labels. The shared `readPickerSelection` reader resolves aliases and legacy names against the current configuration before provider budget tracking and request assembly; stale published metadata is only a fallback. Tracking runs after the protected configuration read, so configuration failures retain normal error reporting. Recognized legacy names resolve to slugs only when the old name is absent and the new identifier exists in the configured modes. Existing chats may need a mode reselection for the picker readout. See [migration and mapping policy](../model-configs/README.md#mode-identifiers-and-migration).
 
 **Schema property format (JSON Schema + VS Code extensions):**
 
@@ -464,7 +466,7 @@ Qwen3.6's `preserve_thinking` option (enabled via `chat_template_kwargs`) is a c
 ```
 This lets users watch context growth across turns when `preserve_thinking` is active. When the server reports `reasoning_tokens`, `reportTokenUsage` also forwards it to VS Code (in the `usage` data part) so the agent host's model-call accounting shows the reasoning split.
 
-**Recommended:** For agent scenarios (multi-turn, tool calling), `preserve_thinking: true` is beneficial per the model card. For simple chat, it may cause progressive slowdown as context grows. Users can toggle between "Think" and "No Think" modes.
+**Recommended:** For agent scenarios (multi-turn, tool calling), `preserve_thinking: true` is beneficial per the model card. For simple chat, it may cause progressive slowdown as context grows. Users can toggle between "Think" and "No-Think" modes.
 
 **Testing findings:** Our `len/3.5` token estimate produces estimates that closely match vLLM's authoritative `prompt_tokens` count, confirming our token counting is accurate.
 

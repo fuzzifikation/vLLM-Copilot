@@ -147,7 +147,7 @@ Model modes are **named configurations** for a model that you switch between fro
     "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true },
     "temperature": 1.0, "top_p": 0.95
   },
-  "No Think": {
+  "No-Think": {
     "chat_template_kwargs": { "enable_thinking": false },
     "temperature": 0.7, "top_p": 0.8
   },

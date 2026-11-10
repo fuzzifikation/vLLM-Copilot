@@ -1,13 +1,14 @@
 import * as vscode from 'vscode';
 import type { ModelConfig } from '../../core/config/config.js';
+import type { CopilotHarnessMapping } from '../state/config.js';
 import { stripJsonc } from '../../core/shared/jsonc.js';
 import { jsonrepair } from 'jsonrepair';
 
 // ---- Local preset loading ----
 
 /**
- * The part of a `ModelConfig` a preset is allowed to provide: everything
- * except identity and transport. A preset must never carry `id`, `server`
+ * The part of a `ModelConfig` a preset is allowed to provide, plus Copilot-only
+ * mapping metadata. A preset must never carry `id`, `vllmModelId`, `server`
  * (the registry ref) or `provider` — those belong to the user's own
  * settings, and merging them in would let a preset repoint or rename a
  * model. Also excludes runtime-behaviour knobs (timeouts, auto-continue,
@@ -17,6 +18,7 @@ import { jsonrepair } from 'jsonrepair';
 export type PresetConfig = Omit<
   ModelConfig,
   | 'id'
+  | 'vllmModelId'
   | 'server'
   | 'provider'
   | 'routingMode'
@@ -28,7 +30,10 @@ export type PresetConfig = Omit<
   | 'autoContinueRetries'
   | 'contextWindow'
   | 'cost'
->;
+> & {
+  /** Harness effort -> existing mode name; never a backend request parameter. */
+  copilotHarnessMapping?: CopilotHarnessMapping;
+};
 
 /**
  * Allow-list of keys permitted inside a v2 preset's `config` object.
@@ -36,13 +41,13 @@ export type PresetConfig = Omit<
  * keys are tolerated so older extension versions can read newer presets).
  */
 export const PRESET_CONFIG_KEYS: ReadonlySet<string> = new Set<keyof PresetConfig & string>([
-  'vllmModelId',
   'displayName',
   'family',
   'maxInputTokens',
   'maxOutputTokens',
   'capabilities',
   'modelModes',
+  'copilotHarnessMapping',
   'defaultMode',
   'defaultParams',
   'estimateCharsPerToken',
@@ -65,8 +70,6 @@ export function presetBlobUrl(sourceFile: string): string {
 
 /** Provenance metadata shown to the user when a preset is offered. All optional. */
 export interface PresetMeta {
-  /** Human-readable model name (e.g. "DeepSeek V4 Pro"). */
-  name?: string;
   /** Upstream URL the parameters were sourced from (https). */
   source?: string;
   /** ISO date (YYYY-MM-DD) the parameters were last verified against sources. */
@@ -94,10 +97,12 @@ export interface ModelPreset {
 
 /**
  * Load all model presets from the model-configs/ directory in the extension.
- * Returns an array of presets with their source filenames.
+ * Best-effort for discovery; migrations require a complete catalogue before
+ * recording completion.
  */
 export async function loadModelPresets(
-  extensionUri: vscode.Uri
+  extensionUri: vscode.Uri,
+  options: { requireComplete?: boolean } = {},
 ): Promise<ModelPreset[]> {
   const configsDir = vscode.Uri.joinPath(extensionUri, 'model-configs');
   const presets: ModelPreset[] = [];
@@ -116,15 +121,26 @@ export async function loadModelPresets(
         const raw = await vscode.workspace.fs.readFile(fileUri);
         const text = new TextDecoder().decode(raw);
         const preset = parsePresetFile(text, name);
-        if (preset) presets.push(preset);
-      } catch {
+        if (preset) {
+          presets.push(preset);
+        } else if (options.requireComplete) {
+          throw new Error(`Invalid bundled model preset "${name}".`);
+        }
+      } catch (error) {
+        if (options.requireComplete) {
+          throw new Error(`Could not load bundled model preset "${name}": ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        }
         // Skip malformed preset files — they won't match anything anyway.
       }
     }
-  } catch {
+  } catch (error) {
+    if (options.requireComplete) throw error;
     // model-configs/ directory may not exist in some installs.
   }
 
+  if (options.requireComplete && presets.length === 0) {
+    throw new Error('No bundled model presets could be loaded.');
+  }
   return presets;
 }
 
@@ -183,7 +199,7 @@ function parsePresetEnvelope(raw: Record<string, unknown>, sourceFile: string): 
   if (raw.meta && typeof raw.meta === 'object' && !Array.isArray(raw.meta)) {
     const src = raw.meta as Record<string, unknown>;
     const kept: PresetMeta = {};
-    for (const key of ['name', 'source', 'verified', 'notes'] as const) {
+    for (const key of ['source', 'verified', 'notes'] as const) {
       const v = src[key];
       if (typeof v === 'string' && v.trim().length > 0) {
         kept[key] = v;
@@ -239,8 +255,7 @@ export function parsePresetRawJson(text: string): Record<string, unknown> | null
  * id (or of its server-reported `root`), case-insensitively.
  *
  * Every preset carries a non-empty `match[]` (the v2 envelope guard enforces
- * this), so matching never consults `config.vllmModelId` — patterns are the
- * curated, deliberately distinctive substrings of whatever the server actually
+ * this). Patterns are the curated, deliberately distinctive substrings of whatever the server actually
  * serves, e.g. `Qwen3.8-27B` matches a llama.cpp full path
  * `/srv/data/models/Qwen3.8-27B-Q6_K.gguf`, an HF repo `Qwen/Qwen3.8-27B`,
  * or a quantized served id `nvidia/DeepSeek-V4-Flash-NVFP4`. If the string
@@ -253,8 +268,7 @@ export function parsePresetRawJson(text: string): Record<string, unknown> | null
  * array order (deterministic given a fixed array — which is how remote presets get
  * priority for free: `[remote, ...bundled]`).
  *
- * Presets only set `vllmModelId`/`match` (never `id` — the user's own identifier
- * in settings), so matching never leaks the preset's id into the user's config.
+ * Matching does not change the user's model identity.
  */
 export function findPresetForModel(
   presets: ModelPreset[],
@@ -292,19 +306,9 @@ export function mergePresetWithUserConfig(
   preset: PresetConfig,
   userConfig: ModelConfig
 ): ModelConfig {
-  // Start with the guard-validated preset as the base (full replace). The
-  // guard-allowed keys structurally exclude transport and identity — a preset
-  // contributes modes/limits, never server refs.
-  const merged = { ...preset } as ModelConfig;
-
-  // Identity is the user's — a preset must NEVER rename the model, repoint its
-  // vLLM server model id, or retarget its server entry.
-  merged.id = userConfig.id;
-  merged.server = userConfig.server;
+  const merged: ModelConfig = { ...preset, id: userConfig.id, server: userConfig.server };
   if (userConfig.vllmModelId !== undefined) {
     merged.vllmModelId = userConfig.vllmModelId;
-  } else {
-    delete merged.vllmModelId;
   }
 
   return merged;

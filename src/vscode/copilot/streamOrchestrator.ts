@@ -8,6 +8,7 @@ import { createExecutionState, executeChatRequest } from '../../core/request/exe
 import { reportPostStreamDiagnostics, handleResponseError } from './postStream.js';
 import type { SystemMessagePipeline } from './systemMessagePipeline.js';
 import { isTransportFailureText, iterateCauses } from '../../core/shared/errors.js';
+import { readPickerSelection } from '../state/config.js';
 
 /**
  * True when the request failed at the transport layer: the server never
@@ -45,6 +46,8 @@ export interface ChatDeps {
    * this to invalidate its model cache so the dead model drops out.
    */
   onTransportFailure?: () => void;
+  /** Track the same current-config selection used for request assembly. */
+  onConfigSelection?: (selectedMode: string | undefined, selectedLength: number | undefined) => void;
 }
 
 /**
@@ -97,12 +100,14 @@ export async function runChatResponse(
     // the config read and anything unforeseen. stream/loop failures were
     // already routed through handleResponseError.
     const config: VllmConfig = await client.getConfigCached();
+    const streamOverride = resolveOverrideForModel(config.models, model.id);
+    const selection = readPickerSelection(options, model, streamOverride);
+    deps.onConfigSelection?.(selection.selectedMode, selection.pickerTokens);
 
     // System message pipeline: apply replacements, capture to disk, return processed messages.
     // Replacements are applied to a clone — VS Code's original messages are never mutated.
     const processedMessages = await systemMessages.processSystemMessages(model, messages, config);
 
-    const streamOverride = resolveOverrideForModel(config.models, model.id);
     const maxRetries = resolveModelSettings(streamOverride).autoContinueRetries;
 
     const { vllmModelId, wireModelId, openaiMessages, mergedOptions, serverConfig } =

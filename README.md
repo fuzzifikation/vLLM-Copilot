@@ -19,10 +19,10 @@ GitHub Copilot provides the familiar chat, tools, and model picker; you provide 
 <a id="new-ui"></a>
 Microsoft decided to make life difficult for all of us, introducing features nobody wanted. This means that the ui for selecting the local model from vllm-copilot has changed. It now works like this:
 <a href="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/Howto-use-the-new-UI.png">
-<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/Howto-use-the-new-UI.png" width="560" alt="How to use the new Copilot model picker: the circled vLLM-Copilot provider tab at the top, a pinned model with its Think (Deep) and 16K chips, and the circled Local session selector at the bottom left of the chat input">
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/Howto-use-the-new-UI.png" width="560" alt="How to use the Copilot model picker: the circled vLLM-Copilot provider tab at the top, a pinned model with mode and output-length chips, and the circled Local session selector at the bottom left of the chat input">
 </a>
 
-<em><strong>How to use the new Copilot UI:</strong> switch the chat to <strong>Local</strong> (bottom left of the chat input) and pick your model under the circled <strong>vLLM-Copilot</strong> tab — the top tab when the picker opens. Mode and output length are the chips on each model's row; on an Agent Host session VS Code hides them.</em>
+<em><strong>How to use the new Copilot UI:</strong> switch the chat to <strong>Local</strong> (bottom left of the chat input) and pick your model under the circled <strong>vLLM-Copilot</strong> tab for the full mode and output-length controls. The Copilot harness offers mapped effort choices only; <a href="#known-issues">other picker metadata remains missing</a>.</em>
 
 </div>
 
@@ -113,7 +113,7 @@ If you want to support this work: [![Sponsor via PayPal](https://img.shields.io/
 3. **Add your vLLM server & model:** *(same for llama.cpp, lm-studio, ollama)* in the Dashboard, click **Add or Reconfigure Server/Model** at the bottom of the tree → enter your server URL → *(optional) enter vLLM API key and HTTP request headers from IT* → pick a model → done. The extension auto-configures the model (family, capabilities, context window) from curated presets (bundled, and refreshed live from GitHub when online) or HuggingFace.
 4. **Edit settings** *(optional)*: open the **Model Settings** view (below the Dashboard) to adjust displayName, params, model modes, and more. No `settings.json` editing required.
 5. **Change the personality** *(optional)*: in **Model Settings**, pick a model and choose a personality from the dropdown in its **General** section (or `Ctrl+Shift+P` → **Set Model Personality**). Pick **Default (no personality)** later to clear it.
-6. **Chat:** Open Copilot Chat — [the picture at the top](#new-ui) shows all of this in one look. The chat input's bottom bar carries the **model chip** — the model name plus its `Mode · Length` readout, e.g. `Think (Deep) · 16K`. Click it to open the model picker: the tabs up top are **providers**. The left tab holds Copilot's own models; the **vLLM-Copilot** tab is yours, with pinned models on top. Pick a model, switch mode and output length from the chip on its row. Only the model rows and the chip carry our **V** glyph — the tab icon is VS Code's own choice. **Check the session selector at the bottom left reads "Local":** on an Agent Host session VS Code swaps in its own copy of your models and hides the **Model Mode** and **Output Length** menus (see [Known Issues](#known-issues)).
+6. **Chat:** Open Copilot Chat ([the picture at the top](#new-ui) shows the controls). The chat input's bottom bar carries the **model chip**, such as `Think-Deep · 16K`. Click it to open the model picker and choose the **vLLM-Copilot** provider tab. Pick a model, then switch mode and output length from the chip on its row. **Use Local for the full controls.** The Copilot harness offers modes listed in `copilotHarnessMapping` under standard effort labels; Output Length and other metadata remain missing (see [Known Issues](#known-issues)).
 
 </td></tr>
 </table>
@@ -125,7 +125,7 @@ If you want to support this work: [![Sponsor via PayPal](https://img.shields.io/
 
 Your AI can build a valid `vllm-copilot.models` entry (server, auth, params, model modes) without you touching `settings.json`. The extension registers a **chat tool** (`vllm-copilot_model_schema`) that hands Copilot the model-entry schema and the parameter rules on demand.
 
-- **Just ask:** *"configure my Qwen3.6 model with Think / No Think modes"*. Copilot calls the tool automatically.
+- **Just ask:** *"configure my Qwen3.6 model with Think / No-Think modes"*. Copilot calls the tool automatically.
 - **Force it:** if your AI gets shy, type `#vllmModelSchema` in the chat input to attach the tool to your prompt.
 
 No workspace files are created; the schema is served from the extension itself.
@@ -268,7 +268,7 @@ A visual editor for per-model configuration, no `settings.json` required:
 
 <img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/model-mode.png" width="100%" alt="Model mode picker showing different configurations">
 
-<em>Switch between model modes directly from the Copilot model picker: Think, No Think, Precise, etc.</em>
+<em>Switch between model modes directly from the Copilot model picker: Think, No-Think, Precise, etc.</em>
 
 <img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/docs/images/OutputLength_Picker_Workaround.png" width="100%" alt="Model list hover card showing the Output Length chip to click">
 
@@ -391,7 +391,11 @@ The full command list, including auth rotation, model/server removal, log tools,
 
 ## Known Issues
 
-**Agent Host sessions hide the model menus.** When a chat runs on an Agent Host session (the Copilot CLI harness — including a Local chat that restoring the conversation moved onto it), the picker shows VS Code's own copy of your models instead of the one this extension published. That copy keeps the token budgets and capabilities but drops the **Model Mode** and **Output Length** submenus, the model icon and the price line. Switch the chat back to **Local** in its session dropdown, or start a new chat, to get your entry with its menus back. Your saved values are still applied to every request; to change one meanwhile run **vLLM-Copilot: Model Selector** from the Command Palette. Upstream: [microsoft/vscode#340138](https://github.com/microsoft/vscode/issues/340138).
+The extension opens a short Markdown update guide once per installed version, including on fresh installations. It replaces the old picker-explainer notification.
+
+**Agent Host sessions expose mapped modes, not the full model controls.** The Copilot harness replaces our model entry with its own. Models with `copilotHarnessMapping` now offer standard effort choices that select the corresponding model modes. Domain or adaptive modes without a mapping remain available in **Local** and **Model Settings** only. **Output Length**, the model icon and price line are still missing from the Agent Host picker. Use **Local** for the full controls. Upstream: [microsoft/vscode#340138](https://github.com/microsoft/vscode/issues/340138).
+
+On upgrade, recognized old mode names and compatible harness mappings migrate automatically, with a notification. Customized parameters and custom mode names are preserved; only exact known old preset-control definitions are repaired. Ambiguous cases produce Output warnings instead of guessed mappings. Existing chats still apply their old selections, but VS Code may omit the picker readout/checkmark until you select the mode once again. For binary-thinking models, the harness's **High** choice means thinking on, not a new backend effort setting. See [migration and mapping policy](model-configs/README.md#mode-identifiers-and-migration).
 
 ---
 

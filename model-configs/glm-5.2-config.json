@@ -5,13 +5,13 @@
 //
 // NOTE: These params work for ANY quantization variant (FP8, GGUF, AWQ, etc.).
 // Preset matching is substring-based, so a preset for the base model applies to
-// any served variant whose id contains it. The config's `vllmModelId` must still
-// be an EXACT served model id — the extension never strips or forgives mismatches.
+// any served variant whose id contains it. The user model entry keeps
+// its exact server model id; the preset does not rename it.
 //
 // Reasoning modes (from vLLM recipe):
 //   - Think Max: omit reasoning_effort or set "max" — deepest reasoning
 //   - Think High: "reasoning_effort": "high" — balanced depth/latency
-//   - No Think: chat_template_kwargs.enable_thinking: false — no chain-of-thought
+//   - No-Think: chat_template_kwargs.enable_thinking: false — no chain-of-thought
 //   Template resolves to "max" unless reasoning_effort is explicitly "high".
 //
 // Generation defaults: temperature=1.0, top_p=0.95 (from model card benchmarks).
@@ -22,20 +22,18 @@
 //     leaves ~917K input at full 1M server context; on smaller serve windows
 //     pick a shorter length in the Output Length dropdown.
 //
-// To use manually, copy the "config" object below into settings.json:
-//   "vllm-copilot.models": [ <PASTE_HERE> ]
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
 
 {
   "presetVersion": 1,
   "match": ["GLM-5.2"],
   "meta": {
-    "name": "GLM-5.2",
     "source": "https://recipes.vllm.ai/zai-org/GLM-5.2",
     "verified": "2026-07-10",
     "notes": "Thinking depth via reasoning_effort (max/high); enable_thinking=false disables chain-of-thought. Sampling temp=1.0, top_p=0.95."
   },
   "config": {
-    "vllmModelId": "GLM-5.2",
     "displayName": "GLM-5.2",
     "family": "glm_moe_dsa",
     "maxOutputTokens": [131072, 65536, 32768, 16384],
@@ -44,19 +42,19 @@
       "imageInput": false
     },
     "modelModes": {
-      "Think (Max)": {
+      "Think-Max": {
         "reasoning_effort": "max",
         "temperature": 1.0,
         "top_p": 0.95,
         "presence_penalty": 0
       },
-      "Think (High)": {
+      "Think-High": {
         "reasoning_effort": "high",
         "temperature": 1.0,
         "top_p": 0.95,
         "presence_penalty": 0
       },
-      "No Think": {
+      "No-Think": {
         "chat_template_kwargs": {
           "enable_thinking": false
         },
@@ -65,6 +63,11 @@
         "presence_penalty": 0
       }
     },
-    "defaultMode": "Think (High)"
+    "copilotHarnessMapping": {
+      "max": "Think-Max",
+      "high": "Think-High",
+      "none": "No-Think"
+    },
+    "defaultMode": "Think-High"
   }
 }

@@ -33,9 +33,8 @@ const noLog = () => {};
 const V2_PRESET = {
   presetVersion: 1,
   match: ['New-Model'],
-  meta: { name: 'New Model', source: 'https://example.org/card', verified: '2026-08-27', notes: 'Card defaults.' },
+  meta: { source: 'https://example.org/card', verified: '2026-08-27', notes: 'Card defaults.' },
   config: {
-    vllmModelId: 'New-Model',
     modelModes: { Fast: { reasoning_effort: 'low' } },
     defaultMode: 'Fast',
   },
@@ -56,7 +55,7 @@ describe('fetchRemotePreset', () => {
 
     expect(preset).toBeDefined();
     expect(preset!.sourceFile).toBe('remote:New-Model.json');
-    expect(preset!.config.vllmModelId).toBe('New-Model');
+    expect(preset!.config.modelModes).toEqual({ Fast: { reasoning_effort: 'low' } });
     expect(preset!.meta?.notes).toBe('Card defaults.');
     // Exactly two GETs: list + the one winner file. Never more.
     expect(fn).toHaveBeenCalledTimes(2);

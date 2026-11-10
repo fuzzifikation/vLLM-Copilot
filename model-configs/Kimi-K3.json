@@ -28,8 +28,8 @@
 // these and asks clients to omit them; local vLLM applies sampling params,
 // so the modes below set exactly these values.
 //
-// To use manually, copy the "config" object below into settings.json:
-//   "vllm-copilot.models": [ <PASTE_HERE> ]
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
 //
 // Token budgets:
 //   - Context window: 1,048,576 tokens
@@ -39,22 +39,20 @@
 //     leaves ~917K input; on smaller serve windows pick a shorter length in the
 //     Output Length dropdown to hand tokens back to the prompt.
 //
-// Modes (thinking cannot be turned off — Think (Low) is the "fast" mode):
-//   - Think (Max):  default, deepest reasoning
-//   - Think (High): balanced depth/latency
-//   - Think (Low):  minimal reasoning effort
+// Modes (thinking cannot be turned off — Think-Low is the "fast" mode):
+//   - Think-Max:  default, deepest reasoning
+//   - Think-High: balanced depth/latency
+//   - Think-Low:  minimal reasoning effort
 
 {
   "presetVersion": 1,
   "match": ["Kimi-K3"],
   "meta": {
-    "name": "Kimi K3",
     "source": "https://huggingface.co/moonshotai/Kimi-K3",
     "verified": "2026-08-27",
     "notes": "3T-class multimodal (vision), 1M context. Thinking always on; effort low/high/max via reasoning_effort. Fixed sampling temp=1.0, top_p=0.95."
   },
   "config": {
-    "vllmModelId": "Kimi-K3",
     "displayName": "Kimi K3",
     "family": "kimi_k3",
     "maxOutputTokens": [131072, 65536, 32768, 16384],
@@ -63,21 +61,21 @@
       "imageInput": true
     },
     "modelModes": {
-      "Think (Max)": {
+      "Think-Max": {
         "reasoning_effort": "max",
         "temperature": 1.0,
         "top_p": 0.95,
         "presence_penalty": 0,
         "frequency_penalty": 0
       },
-      "Think (High)": {
+      "Think-High": {
         "reasoning_effort": "high",
         "temperature": 1.0,
         "top_p": 0.95,
         "presence_penalty": 0,
         "frequency_penalty": 0
       },
-      "Think (Low)": {
+      "Think-Low": {
         "reasoning_effort": "low",
         "temperature": 1.0,
         "top_p": 0.95,
@@ -85,6 +83,11 @@
         "frequency_penalty": 0
       }
     },
-    "defaultMode": "Think (Max)"
+    "copilotHarnessMapping": {
+      "max": "Think-Max",
+      "high": "Think-High",
+      "low": "Think-Low"
+    },
+    "defaultMode": "Think-Max"
   }
 }

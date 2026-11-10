@@ -15,7 +15,7 @@ import type { ServerEntry } from '../../core/config/serverRegistry.js';
  * then workspace value, else User settings. No workspace open (or no override
  * present) → `inspect()` reports no workspace values → Global, unchanged.
  */
-function effectiveWriteTarget(key: 'models' | 'servers'): vscode.ConfigurationTarget {
+export function effectiveWriteTarget(key: 'models' | 'servers'): vscode.ConfigurationTarget {
   const inspected = vscode.workspace.getConfiguration('vllm-copilot').inspect(key);
   if (inspected?.workspaceFolderValue !== undefined) {
     return vscode.ConfigurationTarget.WorkspaceFolder;

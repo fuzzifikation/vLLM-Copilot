@@ -2,15 +2,15 @@
 // Source: InternScience model card, evaluation README inference parameters
 // https://huggingface.co/InternScience/Agents-A1
 // https://github.com/InternScience/Agents-A1/tree/main/evaluation
-// Verified 2026-07-18.
+// Verified 2026-11-10 against the model/evaluation cards and official chat template.
 //
 // Chat template parameters (all Jinja template variables, passed via chat_template_kwargs):
 //   - `enable_thinking: true/false` — enables/disables reasoning token generation
-//   - `preserve_thinking: true` — keeps <think>...</think> blocks visible in multi-turn
-//     conversation history. Same Jinja template as Qwen3.5/3.6 family.
+// The official template retains reasoning within the current tool-call turn,
+// but drops it before the last real user query. It does not read preserve_thinking.
 //
-// To use manually, copy the "config" object below into settings.json:
-//   "vllm-copilot.models": [ <PASTE_HERE> ]
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
 //
 // Token budgets:
 //   - Context window: 262,144 tokens (recommended by authors)
@@ -19,22 +19,20 @@
 //   - maxInputTokens: auto-computed as ~229,376 (context window minus output)
 //
 // Modes (inference params sourced from authors' evaluation README files per domain):
-//   - Think (General):  Official model card defaults
-//   - Think (Coding):   evaluation/MLE/README.md (SciCode, MLE-Lite)
-//   - Think (Science):  evaluation/Science/README.md (HiPhO, FS-O, FS-R)
-//   - No Think:         Direct responses, no thinking tokens
+//   - Think-General:  Official model card defaults
+//   - Think-Coding:   evaluation/MLE/README.md (SciCode, MLE-Lite)
+//   - Think-Science:  evaluation/Science/README.md (HiPhO, FS-O, FS-R)
+//   - No-Think:         Direct responses, no thinking tokens
 
 {
   "presetVersion": 1,
   "match": ["Agents-A1"],
   "meta": {
-    "name": "Agents-A1",
     "source": "https://huggingface.co/InternScience/Agents-A1",
-    "verified": "2026-07-18",
-    "notes": "Scientific agent MoE on the Qwen3.5/3.6 chat template. Thinking toggle via enable_thinking; per-domain modes use the authors' evaluation sampling."
+    "verified": "2026-11-10",
+    "notes": "Scientific agent MoE with binary thinking via enable_thinking. The official template retains reasoning only within the current turn; per-domain modes use the authors' evaluation sampling."
   },
   "config": {
-    "vllmModelId": "Agents-A1",
     "displayName": "Agents-A1",
     "family": "qwen3_5_moe",
     "maxOutputTokens": [32768, 16384, 8192],
@@ -43,10 +41,9 @@
       "imageInput": true
     },
     "modelModes": {
-      "Think (General)": {
+      "Think-General": {
         "chat_template_kwargs": {
-          "enable_thinking": true,
-          "preserve_thinking": true
+          "enable_thinking": true
         },
         "temperature": 0.85,
         "top_p": 0.95,
@@ -55,10 +52,9 @@
         "presence_penalty": 1.1,
         "repetition_penalty": 1.0
       },
-      "Think (Coding)": {
+      "Think-Coding": {
         "chat_template_kwargs": {
-          "enable_thinking": true,
-          "preserve_thinking": true
+          "enable_thinking": true
         },
         "temperature": 1.0,
         "top_p": 0.95,
@@ -67,15 +63,14 @@
         "presence_penalty": 1.5,
         "repetition_penalty": 1.0
       },
-      "Think (Science)": {
+      "Think-Science": {
         "chat_template_kwargs": {
-          "enable_thinking": true,
-          "preserve_thinking": true
+          "enable_thinking": true
         },
         "temperature": 0.6,
         "top_p": 0.95
       },
-      "No Think": {
+      "No-Think": {
         "chat_template_kwargs": {
           "enable_thinking": false
         },
@@ -87,6 +82,11 @@
         "repetition_penalty": 1.0
       }
     },
-    "defaultMode": "Think (General)"
+    // Harness "high" selects the default thinking mode, not a backend effort.
+    "copilotHarnessMapping": {
+      "high": "Think-General",
+      "none": "No-Think"
+    },
+    "defaultMode": "Think-General"
   }
 }

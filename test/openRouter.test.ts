@@ -249,25 +249,25 @@ describe('normalizeOpenRouterModel', () => {
     expect(info.capabilities).toEqual({ toolCalling: true, imageInput: true });
   });
 
-  it('builds reasoning modes when supported, omits No Think when mandatory', () => {
+  it('builds reasoning modes when supported, omits No-Think when mandatory', () => {
     const optional = normalizeModelViaCatalog(
       { ...base, supported_parameters: ['reasoning_effort'], reasoning: { mandatory: false } },
       'x',
     );
     expect(optional.modelModes).toEqual({
-      'Think (High)': { reasoning: { enabled: true, effort: 'high' } },
-      'No Think': { reasoning: { enabled: false } },
+      'Think-High': { reasoning: { enabled: true, effort: 'high' } },
+      'No-Think': { reasoning: { enabled: false } },
     });
-    expect(optional.defaultMode).toBe('Think (High)');
+    expect(optional.defaultMode).toBe('Think-High');
 
     const mandatory = normalizeModelViaCatalog(
       { ...base, supported_parameters: ['reasoning'], reasoning: { mandatory: true } },
       'x',
     );
     expect(mandatory.modelModes).toEqual({
-      'Think (High)': { reasoning: { enabled: true, effort: 'high' } },
+      'Think-High': { reasoning: { enabled: true, effort: 'high' } },
     });
-    expect('No Think' in (mandatory.modelModes ?? {})).toBe(false);
+    expect('No-Think' in (mandatory.modelModes ?? {})).toBe(false);
   });
 
   it('builds the full effort ladder from supported_efforts (no hardcoded pair)', () => {
@@ -279,23 +279,26 @@ describe('normalizeOpenRouterModel', () => {
           mandatory: false,
           default_effort: 'medium',
           default_enabled: true,
-          supported_efforts: ['high', 'medium', 'low', 'minimal'],
+          supported_efforts: ['max', 'xhigh', 'high', 'medium', 'low', 'minimal', 'ultra'],
         },
       },
       'x',
     );
     expect(info.modelModes).toEqual({
-      'Think (High)': { reasoning: { enabled: true, effort: 'high' } },
-      'Think (Medium)': { reasoning: { enabled: true, effort: 'medium' } },
-      'Think (Low)': { reasoning: { enabled: true, effort: 'low' } },
-      'Think (Minimal)': { reasoning: { enabled: true, effort: 'minimal' } },
-      'No Think': { reasoning: { enabled: false } },
+      'Think-Max': { reasoning: { enabled: true, effort: 'max' } },
+      'Think-XHigh': { reasoning: { enabled: true, effort: 'xhigh' } },
+      'Think-High': { reasoning: { enabled: true, effort: 'high' } },
+      'Think-Medium': { reasoning: { enabled: true, effort: 'medium' } },
+      'Think-Low': { reasoning: { enabled: true, effort: 'low' } },
+      'Think-Minimal': { reasoning: { enabled: true, effort: 'minimal' } },
+      'Think-Ultra': { reasoning: { enabled: true, effort: 'ultra' } },
+      'No-Think': { reasoning: { enabled: false } },
     });
     // Default mode honors the model's default_effort.
-    expect(info.defaultMode).toBe('Think (Medium)');
+    expect(info.defaultMode).toBe('Think-Medium');
   });
 
-  it('defaults to No Think when reasoning is disabled by default', () => {
+  it('defaults to No-Think when reasoning is disabled by default', () => {
     const info = normalizeModelViaCatalog(
       {
         ...base,
@@ -304,7 +307,7 @@ describe('normalizeOpenRouterModel', () => {
       },
       'x',
     );
-    expect(info.defaultMode).toBe('No Think');
+    expect(info.defaultMode).toBe('No-Think');
   });
 
   it('uses a single Think mode for Anthropic-style max_tokens reasoning (no effort ladder)', () => {
@@ -318,7 +321,7 @@ describe('normalizeOpenRouterModel', () => {
     );
     expect(info.modelModes).toEqual({
       'Think': { reasoning: { enabled: true } },
-      'No Think': { reasoning: { enabled: false } },
+      'No-Think': { reasoning: { enabled: false } },
     });
     expect(info.defaultMode).toBe('Think');
   });
@@ -335,16 +338,16 @@ describe('normalizeOpenRouterModel', () => {
       'x',
     );
     expect(info.modelModes).toEqual({
-      'Think (Low)': { reasoning: { enabled: true, effort: 'low' } },
-      'No Think': { reasoning: { enabled: false } },
+      'Think-Low': { reasoning: { enabled: true, effort: 'low' } },
+      'No-Think': { reasoning: { enabled: false } },
     });
-    expect(info.defaultMode).toBe('Think (Low)');
+    expect(info.defaultMode).toBe('Think-Low');
   });
 
-  it('does not dangle a No Think default when reasoning is mandatory + default is none', () => {
-    // Contradictory-but-reachable metadata: reasoning is mandatory (no No Think
+  it('does not dangle a No-Think default when reasoning is mandatory + default is none', () => {
+    // Contradictory-but-reachable metadata: reasoning is mandatory (no No-Think
     // mode) yet the default_effort is 'none'. defaultMode must not reference a
-    // mode that doesn't exist (regression: it used to point at 'No Think').
+    // mode that doesn't exist (regression: it used to point at 'No-Think').
     const info = normalizeModelViaCatalog(
       {
         ...base,
@@ -354,11 +357,11 @@ describe('normalizeOpenRouterModel', () => {
       'x',
     );
     expect(info.modelModes).toEqual({
-      'Think (High)': { reasoning: { enabled: true, effort: 'high' } },
+      'Think-High': { reasoning: { enabled: true, effort: 'high' } },
     });
-    expect('No Think' in (info.modelModes ?? {})).toBe(false);
-    // Falls back to the only real mode instead of the nonexistent No Think.
-    expect(info.defaultMode).toBe('Think (High)');
+    expect('No-Think' in (info.modelModes ?? {})).toBe(false);
+    // Falls back to the only real mode instead of the nonexistent No-Think.
+    expect(info.defaultMode).toBe('Think-High');
   });
 
   it('falls back to a single high effort when supported_efforts is empty or all-none', () => {
@@ -373,10 +376,10 @@ describe('normalizeOpenRouterModel', () => {
         'x',
       );
       expect(info.modelModes).toEqual({
-        'Think (High)': { reasoning: { enabled: true, effort: 'high' } },
-        'No Think': { reasoning: { enabled: false } },
+        'Think-High': { reasoning: { enabled: true, effort: 'high' } },
+        'No-Think': { reasoning: { enabled: false } },
       });
-      expect(info.defaultMode).toBe('Think (High)');
+      expect(info.defaultMode).toBe('Think-High');
     }
   });
 

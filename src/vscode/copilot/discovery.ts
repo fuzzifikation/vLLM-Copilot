@@ -39,5 +39,5 @@ export async function discoverModels(
     selectedModeByModel,
     selectedLengthByModel,
   );
-  return descriptors.map(buildModelInfo);
+  return descriptors.map(descriptor => buildModelInfo(descriptor, output));
 }

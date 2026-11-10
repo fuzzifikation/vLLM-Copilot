@@ -86,9 +86,9 @@ function isPositive(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0;
 }
 
-/** Title-case a reasoning effort into a mode label, e.g. 'high' → 'Think (High)'. */
+/** Build a mode slug from a reasoning effort, e.g. 'high' -> 'Think-High'. */
 function thinkModeLabel(effort: string): string {
-  return `Think (${effort[0].toUpperCase()}${effort.slice(1)})`;
+  return `Think-${effort === 'xhigh' ? 'XHigh' : effort[0].toUpperCase() + effort.slice(1)}`;
 }
 
 /**
@@ -373,7 +373,7 @@ function normalizeOpenRouterModel(
   // (`supported_efforts`), whether reasoning is on by default, whether it's
   // mandatory, and whether the model takes `max_tokens` instead of `effort`
   // (Anthropic-style). Build real thinking modes from that instead of a
-  // hardcoded "Think (High) / No Think" pair.
+  // hardcoded "Think-High / No-Think" pair.
   const reasoningSupported =
     data.reasoning != null ||
     supports(data, 'reasoning') ||
@@ -390,7 +390,7 @@ function normalizeOpenRouterModel(
     if (supportsMaxTokens) {
       // Anthropic-style reasoning: the budget is set via `reasoning.max_tokens`,
       // not an effort level, and there's no per-effort mapping. A single "Think"
-      // mode (reasoning on) + "No Think" (when disableable) is the honest shape.
+      // mode (reasoning on) + "No-Think" (when disableable) is the honest shape.
       modelModes['Think'] = { reasoning: { enabled: true } };
     } else {
       // Effort ladder from supported_efforts (API ships no order — the
@@ -412,19 +412,19 @@ function normalizeOpenRouterModel(
     }
 
     if (!reasoningMandatory) {
-      modelModes['No Think'] = { reasoning: { enabled: false } };
+      modelModes['No-Think'] = { reasoning: { enabled: false } };
     }
 
     // Default mode: the model's default effort when it maps to a generated mode;
-    // 'none'/disabled default → "No Think" (only if it exists — a mandatory-
-    // reasoning model has no No Think mode, so fall through to the first mode);
+    // 'none'/disabled default -> "No-Think" (only if it exists; a mandatory-
+    // reasoning model has no No-Think mode, so fall through to the first mode);
     // otherwise the first (highest) mode.
     const defaultEffort = reasoningCfg?.default_effort;
     const defaultLabel = defaultEffort && defaultEffort !== 'none' ? thinkModeLabel(defaultEffort) : undefined;
     if (defaultLabel && modelModes[defaultLabel]) {
       defaultMode = defaultLabel;
-    } else if ((defaultEffort === 'none' || reasoningCfg?.default_enabled === false) && modelModes['No Think']) {
-      defaultMode = 'No Think';
+    } else if ((defaultEffort === 'none' || reasoningCfg?.default_enabled === false) && modelModes['No-Think']) {
+      defaultMode = 'No-Think';
     } else {
       defaultMode = Object.keys(modelModes)[0];
     }

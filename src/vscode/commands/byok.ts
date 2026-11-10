@@ -121,40 +121,21 @@ export async function ensureAgentHostModelsEnabled(): Promise<void> {
   }
 }
 
-/** globalState key for the new-picker explainer; shown once per install, to
- * every user — the redesign reaches everyone, not just Agent Host sessions. */
-const NEW_PICKER_NOTICE_FLAG = 'vllmCopilot.newPickerNotice.v1';
-/** README section holding the annotated picker picture the notice points at. */
-const NEW_PICKER_GUIDE_URL = 'https://github.com/fuzzifikation/vLLM-Copilot#new-ui';
-
 /**
- * One-time explainer for Copilot's redesigned model picker, stripped to the
- * two moves that matter: run the chat on "Local" (an Agent Host session makes
- * VS Code render its own copy of the model, without our Model Mode / Output
- * Length menus) and pick the model under the vLLM-Copilot tab. Everything else
- * — the chips, the anatomy, the picture — is the README's job, reached by
- * "Show Me". Recorded as seen before the dialog opens: an informational notice
- * must never nag, not even if the window dies mid-dialog.
- *
- * This is the ONLY startup notice. Its predecessor — an Agent Host-scoped
- * heads-up shipped in v1.37.1 — said a subset of this and was flag-re-armed to
- * add the Local advice; upgrading users then got two near-identical toasts in
- * one activation. Re-arming it was the bug: everyone upgrading to this version
- * sees the explainer anyway, so the heads-up was deleted outright rather than
- * sequenced (a chain only delays the second toast to the next window).
+ * Show the packaged guide once per installed version, including first installs.
+ * Commit the marker only after the resource read and preview command succeed.
  */
-export async function maybeShowNewPickerNotice(context: vscode.ExtensionContext): Promise<void> {
-  if (context.globalState.get<string>(NEW_PICKER_NOTICE_FLAG)) return;
-  await context.globalState.update(NEW_PICKER_NOTICE_FLAG, 'seen');
-  const choice = await vscode.window.showInformationMessage(
-    'vLLM-Copilot: with Copilot\'s new model picker, switch the chat to "Local" and pick '
-      + 'your model under the "vLLM-Copilot" tab. The README shows how — "Show Me".',
-    { title: 'Show Me' },
-    { title: 'Got it', isCloseAffordance: true }
-  );
-  if (choice?.title === 'Show Me') {
-    await vscode.env.openExternal(vscode.Uri.parse(NEW_PICKER_GUIDE_URL));
+export async function maybeShowUpdatePage(context: vscode.ExtensionContext): Promise<void> {
+  const version: unknown = context.extension.packageJSON.version;
+  if (typeof version !== 'string' || version.length === 0) {
+    throw new Error('Cannot show the update page without an extension version.');
   }
+  const flag = `vllmCopilot.updatePage.${version}`;
+  if (context.globalState.get<boolean>(flag) === true) return;
+  const uri = vscode.Uri.joinPath(context.extensionUri, 'resources', 'update.md');
+  await vscode.workspace.fs.readFile(uri);
+  await vscode.commands.executeCommand('markdown.showPreview', uri, undefined, { locked: true });
+  await context.globalState.update(flag, true);
 }
 
 /**

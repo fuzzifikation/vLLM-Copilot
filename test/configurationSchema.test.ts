@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import * as vscode from 'vscode';
 import { buildModelInfo } from '../src/vscode/copilot/modelInfo.js';
 import { describeModel } from '../src/core/catalog/describe.js';
+import { buildRequest } from '../src/vscode/copilot/requestBuilder.js';
+import { readPickerSelection } from '../src/vscode/state/config.js';
 
 // A generous ceiling so mode-only fixtures are never filtered — the length
 // dropdown is emitted ONLY when a vector is declared, so these stay clean.
@@ -148,5 +151,111 @@ describe('output-length menu (resolveOutputLengthOptions, via the schema)', () =
     const r = menu(nine);
     expect(r!.enum).toHaveLength(8);
     expect(r!.enumItemLabels).toHaveLength(8);
+  });
+});
+
+describe('Copilot harness mode mapping', () => {
+  it('uses current mode definitions when published metadata still contains legacy names', () => {
+    const off = { chat_template_kwargs: { enable_thinking: false }, temperature: 0.7 };
+    const legacy = { id: 'm', server: 'srv', modelModes: { 'No Think': off }, defaultMode: 'No Think' };
+    const current = {
+      ...legacy, modelModes: { 'No-Think': off }, defaultMode: 'No-Think',
+      copilotHarnessMapping: { none: 'No-Think' },
+    };
+    const published = buildModelInfo(describeModel({
+      wireId: 'm', contextWindow: 65536, serverType: 'vllm', override: legacy,
+    }));
+    const output = vscode.window.createOutputChannel('stale mode metadata');
+    try {
+      const request = buildRequest(published, [], {
+        modelOptions: {}, tools: [], modelConfiguration: { reasoningEffort: 'No Think' },
+      }, {
+        models: [current], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }],
+      }, output);
+      expect(request.mergedOptions).toMatchObject(off);
+    } finally {
+      output.dispose();
+    }
+  });
+
+  it('resolves saved legacy labels to slugs without confusing a collision with another mode', () => {
+    const output = vscode.window.createOutputChannel('legacy mode selection');
+    try {
+      for (const collision of [false, true]) {
+        const modelModes: Record<string, Record<string, unknown>> = {
+          'Think-Coding': { temperature: 0.6 },
+        };
+        if (collision) modelModes['Think (Coding)'] = { temperature: 0.2 };
+        const override = { id: 'm', server: 'srv', modelModes };
+        const model = buildModelInfo(describeModel({
+          wireId: 'm', contextWindow: 65536, serverType: 'vllm', override,
+        }));
+        const options = { modelOptions: {}, tools: [], modelConfiguration: { reasoningEffort: 'Think (Coding)' } };
+        const request = buildRequest(model, [], options, {
+          models: [override], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }],
+        }, output);
+        expect(request.mergedOptions.temperature).toBe(collision ? 0.2 : 0.6);
+      }
+    } finally {
+      output.dispose();
+    }
+  });
+
+  it('keeps explicit aliases stable across reordering while preserving Local selections', () => {
+    const deep = { reasoning_effort: 'high', temperature: 1, max_tokens: 8000 };
+    const precise = { reasoning_effort: 'high', temperature: 0.2, max_tokens: 4000 };
+    const original = {
+      id: 'm', server: 'srv', maxOutputTokens: 8192, modelModes: { Deep: deep, Precise: precise },
+      copilotHarnessMapping: { high: 'Deep' }, defaultMode: 'Deep',
+    };
+    const reordered = { ...original, modelModes: { Precise: precise, Deep: deep } };
+    const output = vscode.window.createOutputChannel('harness mapping test');
+    try {
+      for (const override of [original, reordered]) {
+        const model = buildModelInfo(describeModel({
+          wireId: 'm', contextWindow: 65536, serverType: 'vllm', override,
+        }));
+        const schema = buildConfigurationSchema(override)!.properties.reasoningEffort;
+        expect(schema.enum[schema.enumItemLabels.indexOf('Deep')]).toBe('high');
+        expect(schema.enum[schema.enumItemLabels.indexOf('Precise')]).toBe('Precise');
+        expect(schema.default).toBe('high');
+
+        for (const [selection, expected] of [['high', deep], ['Deep', deep], ['Precise', precise]] as const) {
+          const options = { modelOptions: {}, tools: [], modelConfiguration: { reasoningEffort: selection } };
+          expect(readPickerSelection(options, model).selectedMode).toBe(selection === 'high' ? 'Deep' : selection);
+          const request = buildRequest(model, [], options, {
+            models: [override], servers: [{ id: 'srv', serverUrl: 'http://localhost:8000' }],
+          }, output);
+          expect(request.mergedOptions).toMatchObject(expected);
+          expect(request.mergedOptions).not.toHaveProperty('copilotHarnessMapping');
+        }
+      }
+    } finally {
+      output.dispose();
+    }
+  });
+
+  it.each([
+    { mapping: null },
+    { mapping: [] },
+    { mapping: { extreme: 'Deep' } },
+    { mapping: { high: 'Missing' } },
+    { mapping: { high: 1 } },
+    { mapping: { high: 'Deep', max: 'Deep' } },
+    { mapping: { low: 'Precise' } },
+    { mapping: { high: 'Deep' }, collision: true },
+  ])('surfaces an unusable mapping without removing Local modes: %j', testCase => {
+    const modes: Record<string, Record<string, unknown>> = { Deep: {}, Precise: {} };
+    if ('collision' in testCase) modes.high = {};
+    const override = {
+      id: 'm', server: 'srv', modelModes: modes,
+      defaultMode: 'Deep', copilotHarnessMapping: testCase.mapping,
+    };
+    const schema = buildConfigurationSchema(override)!;
+    expect(schema.properties.reasoningEffort.enum).toEqual(Object.keys(modes));
+    const info = buildModelInfo(describeModel({
+      wireId: 'm', contextWindow: 65536, serverType: 'vllm', override,
+    })) as ReturnType<typeof buildModelInfo> & { warningText?: Record<string, string> };
+    expect(info.warningText?.copilot_harness_mapping).toContain('copilotHarnessMapping');
   });
 });

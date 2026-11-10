@@ -8,7 +8,7 @@ import {
   registerConfigureUtilityModelCommand,
   ensureByokUtilityDefault,
   ensureAgentHostModelsEnabled,
-  maybeShowNewPickerNotice,
+  maybeShowUpdatePage,
 } from './vscode/commands/byok.js';
 import { setSessionManagerOutput } from './vscode/copilot/sessionManager.js';
 import { syncBundledPersonalities, migratePersonalityPathRefs } from './vscode/state/personalityStore.js';
@@ -35,6 +35,7 @@ import { initUsageStore } from './vscode/state/usageStore.js';
 import { EXTERNAL_USAGE_API_VERSION, flushExternalUsageWrites, initExternalUsage, recordExternalRequests, watchUsageResets } from './vscode/state/externalUsage.js';
 import { maybeOfferOutputLengthMigration } from './vscode/migrations/outputLengthMigration.js';
 import { maybeRunServerRegistryMigration } from './vscode/migrations/serverRegistryMigration.js';
+import { maybeRunModelModeMigration } from './vscode/migrations/modelModeMigration.js';
 import { DashboardTreeProvider, DashboardDndController, registerOpenDashboardWebCommand } from './vscode/ui/dashboard.js';
 import { registerStatusBar } from './vscode/ui/statusBar.js';
 import { ServerSettingsViewProvider } from './vscode/ui/serverSettingsView.js';
@@ -201,6 +202,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // complete before the output-length offer below, which addresses models by
     // { id, server } — a ref that only exists after the rewrite.
     await maybeRunServerRegistryMigration(context, outputChannel);
+    await maybeRunModelModeMigration(context, outputChannel);
 
     // One-time activation summary
     const fullConfig = await getConfig();
@@ -280,12 +282,8 @@ export async function activate(context: vscode.ExtensionContext) {
       outputChannel.appendLine(`[WARN] Output length migration offer failed: ${err}`);
     });
 
-    // One-time explainer for the redesigned Copilot model picker: switch to
-    // "Local", pick the model under the vLLM-Copilot tab, README for the rest.
-    // The only startup notice; supersedes the v1.37.1 Agent Host heads-up.
-    // Never-nag pattern: records itself as seen before showing.
-    maybeShowNewPickerNotice(context).catch(err => {
-      outputChannel.appendLine(`[WARN] New picker notice failed: ${err}`);
+    maybeShowUpdatePage(context).catch(err => {
+      outputChannel.appendLine(`[WARN] Update page failed: ${err}`);
     });
 
     // Expose the model-entry schema to Copilot Chat as an on-demand LM tool so

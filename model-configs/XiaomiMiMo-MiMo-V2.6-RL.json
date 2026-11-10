@@ -45,22 +45,18 @@
 //     models burn long thinking traces; at full context that still leaves
 //     ~917K input. On smaller serve windows pick a shorter Output Length.
 //
-// To use manually, copy the "config" object below into settings.json:
-//   "vllm-copilot.models": [ <PASTE_HERE> ]
-//   vllmModelId must be the EXACT served model id (this holds the Flash-RL
-//   canonical name; the Add flow overwrites it with what the server reports).
+// To apply manually, merge "config" into an existing model entry.
+// Keep that entry's id, server and actual server model ID unchanged.
 
 {
   "presetVersion": 1,
   "match": ["MiMo-V2.6-Flash", "MiMo-V2.6-Pro"],
   "meta": {
-    "name": "MiMo-V2.6 (Flash-RL / Pro-RL / MOPD)",
     "source": "https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Flash-RL",
     "verified": "2026-11-06",
     "notes": "One preset for the V2.6 RL and MOPD checkpoints (identical template, parsers, sampling, 1M context). Binary thinking via enable_thinking - no effort levels. temp=1.0, top_p=0.95. Matches all quantized variants."
   },
   "config": {
-    "vllmModelId": "MiMo-V2.6-Flash-RL",
     "displayName": "MiMo-V2.6",
     "family": "mimo_v2",
     "maxOutputTokens": [131072, 65536, 32768, 16384],
@@ -76,13 +72,18 @@
         "temperature": 1.0,
         "top_p": 0.95
       },
-      "No Think": {
+      "No-Think": {
         "chat_template_kwargs": {
           "enable_thinking": false
         },
         "temperature": 1.0,
         "top_p": 0.95
       }
+    },
+    // Harness "high" enables thinking; this model has no effort levels.
+    "copilotHarnessMapping": {
+      "high": "Think",
+      "none": "No-Think"
     },
     "defaultMode": "Think"
   }

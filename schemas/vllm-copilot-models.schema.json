@@ -72,11 +72,19 @@
     },
     "modelModes": {
       "type": "object",
-      "description": "Switchable named presets shown in the model picker. Each key is a user-visible mode label (e.g. \"Think\", \"No Think\"); each value is a params object merged into the request body when that mode is active. Per-mode sampling params override `defaultParams`; params set nowhere are omitted so the server's own default applies. Toggle reasoning via chat_template_kwargs.enable_thinking or reasoning_effort.",
+      "description": "Switchable named presets shown in the model picker. Each key is a user-visible mode label (e.g. \"Think\", \"No-Think\"); each value is a params object merged into the request body when that mode is active. Per-mode sampling params override `defaultParams`; params set nowhere are omitted so the server's own default applies. Toggle reasoning via chat_template_kwargs.enable_thinking or reasoning_effort.",
       "additionalProperties": {
         "allOf": [{ "$ref": "#/definitions/requestParams" }],
         "description": "Request params for this mode. Same vocabulary as defaultParams."
       }
+    },
+    "copilotHarnessMapping": {
+      "type": "object",
+      "propertyNames": {
+        "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+      },
+      "additionalProperties": { "type": "string", "minLength": 1 },
+      "description": "Map Copilot harness effort values to existing modelModes names. Local retains original labels and unmapped modes; the Copilot harness uses standard effort labels. Include the default mode, map each mode once, and avoid effort keys conflicting with another mode name. Never sent to the server. Binary-thinking presets use high as an on alias, not a backend effort setting. Existing chats may need one mode reselection to restore their picker readout."
     },
     "defaultMode": {
       "type": "string",

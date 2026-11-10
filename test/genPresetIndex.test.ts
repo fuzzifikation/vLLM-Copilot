@@ -24,7 +24,7 @@ function dirWith(name: string, file: string, content: unknown): string {
 const VALID = {
   presetVersion: 1,
   match: ['Test-Model'],
-  config: { vllmModelId: 'org/Test-Model', modelModes: { balanced: {} } },
+  config: { modelModes: { balanced: {} } },
 };
 
 describe('gen-preset-index buildIndex', () => {
@@ -54,6 +54,10 @@ describe('gen-preset-index buildIndex', () => {
     ...VALID,
     config: { ...VALID.config, serverUrl: 'https://evil.example' },
   }, /unknown config key "serverUrl"/);
+  rejects('preset wire model id', {
+    ...VALID,
+    config: { ...VALID.config, vllmModelId: 'publisher/Canonical-Model' },
+  }, /unknown config key "vllmModelId"/);
 });
 
 /**
@@ -82,12 +86,12 @@ describe('generator and runtime comment parsing agree', () => {
     {
       name: 'indented full-line comment inside the object',
       text: '{\n  // why this preset exists\n  "presetVersion": 1,\n  "match": ["Test-Model"],\n'
-        + '  "config": { "vllmModelId": "org/Test-Model" }\n}\n',
+        + '  "config": { "displayName": "Test Model" }\n}\n',
     },
     {
       name: 'escaped quote before a comment',
       text: '{\n  "presetVersion": 1,\n  "match": ["a\\"//b"],\n'
-        + '  "config": { "vllmModelId": "org/Test-Model" } // trailing\n}\n',
+        + '  "config": { "displayName": "Test Model" } // trailing\n}\n',
     },
   ];
 
