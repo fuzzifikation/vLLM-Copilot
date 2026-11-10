@@ -70,8 +70,8 @@ Model Selector (webview, opened from an OR server row)
 
 | File | Responsibility |
 |---|---|
-| `src/backends/openRouter.ts` | OpenRouter control plane: input parsing, catalog metadata resolution/normalization, provider endpoints (incl. perf stats + auth for them), account/credits probes. The ONLY vendor-specific module. |
-| `src/backends/runtimeLimits.ts` | `resolveRuntimeLimits()` dispatch - the OpenRouter arm calls into `openRouter.ts`; `detectServerType()` recognizes `openrouter.ai` hosts. |
+| `src/core/backends/openRouter.ts` | OpenRouter control plane: input parsing, catalog metadata resolution/normalization, provider endpoints (incl. perf stats + auth for them), account/credits probes. The ONLY vendor-specific module. |
+| `src/core/backends/runtimeLimits.ts` | `resolveRuntimeLimits()` dispatch - the OpenRouter arm calls into `openRouter.ts`; `detectServerType()` recognizes `openrouter.ai` hosts. |
 | `src/vscode/copilot/requestBuilder.ts` | Applies the pinned `provider: { only: [tag] }` and the routing-mode suffix (`:nitro`/`:exacto`) to the wire id at request time. |
 | `src/vscode/ui/vllmMetrics.ts` | Metrics engine - resolves per-model context + output ceiling from the relay catalog, caches per-provider `/endpoints` lists and per-model context/output per session. |
 | `src/vscode/ui/dashboard.ts` | Relay tree: Account node + one node per model; per-provider limits, pricing, cost, the symmetric Attention icon, and the Model Selector entry point on OpenRouter rows. |

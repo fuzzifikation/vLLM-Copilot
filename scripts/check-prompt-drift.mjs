@@ -9,6 +9,21 @@
  * stays in). This script catches that drift by comparing the presets against the
  * current VS Code prompt source on GitHub (microsoft/vscode).
  *
+ * TWO HARNESSES, TWO SOURCES. Copilot drives two prompt surfaces and this product
+ * supports both; a preset rule declares which one it targets:
+ *
+ *   - Local harness (no `scope` key) - VS Code's own prompt assembly, main window.
+ *     Source is public, so these rules are matched against live microsoft/vscode.
+ *   - Copilot harness (`"scope": "copilot"`) - the Agent Host loop behind the Agents
+ *     window: the prompt the picker labels "Copilot" and the code long called "CLI".
+ *     Source is NOT public, so these rules are matched against the checked-in
+ *     anchor-region reference scripts/copilot-prompt-reference.txt.
+ *
+ * Neither surface keeps rules for its own superseded wording: when Microsoft renames
+ * a prompt, the rules anchored on the old text are re-anchored and the reference
+ * regenerated in the same unit (owner ruling 2026-11-10). Copilot-harness rules bound
+ * to wording-specific text carry `"wording": "sdk"`.
+ *
  * Two signals, each answering a different question:
  *
  *   1. RULE MATCH — does each preset `find` still exist in the current source?
@@ -22,20 +37,16 @@
  *      warning even if individual `find` strings happen to survive (e.g. a wording
  *      change elsewhere in the same file, or a rename).
  *
- * IMPORTANT: this is a CANARY, not proof. The definitive re-verification after it
- * fires is a fresh `systemMessageCapture` run in VS Code and checking the rendered
- * system messages in .vllm/system-messages.json.
- *
- * TWO SOURCES, by rule scope:
- *   - classic rules (default): matched against the live microsoft/vscode prompt
- *     sources above.
- *   - rules marked `"scope": "cli"` (Agents-window / Copilot CLI runtime): the CLI
- *     prompt source is NOT public (the github/copilot-cli repo ships a compiled
- *     binary), so these are matched against the checked-in anchor-region reference
- *     instead. When the Agents-window personalities act weird: enable
- *     `vllm-copilot.systemMessageCapture`, run one Agents-window turn, re-run
- *     `node scripts/extract-cli-reference.mjs <capture>` and `git diff` the
- *     reference — that is the CLI-side drift detection.
+ * IMPORTANT: this is a CANARY, not proof, and BOTH of its arms are static. The
+ * microsoft/vscode arm tracks upstream source, not what your installed VS Code
+ * actually sends; the Copilot arm compares rules against a frozen capture, so a
+ * stale reference matched against stale rules reads "All good" forever. The only
+ * instrument that sees a live prompt is `npm run check:copilot-rules` against a
+ * fresh `systemMessageCapture` (.vllm/system-messages.json). When Agents-window
+ * personalities act weird: enable `vllm-copilot.systemMessageCapture`, run one
+ * Agents-window turn, run `npm run check:copilot-rules`, then
+ * `node scripts/extract-copilot-reference.mjs <capture>` and `git diff` the
+ * reference.
  *
  * Usage:
  *   npm run check:prompt-drift            # check (exit 1 on drift/failure)
@@ -50,7 +61,7 @@ import { createRequire } from 'node:module';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const REPL_DIR = path.join(ROOT, 'prompt-replacements');
-const CLI_REFERENCE = path.join(ROOT, 'scripts', 'cli-prompt-reference.txt');
+const COPILOT_REFERENCE = path.join(ROOT, 'scripts', 'copilot-prompt-reference.txt');
 const THIS_FILE = fileURLToPath(import.meta.url);
 
 const { parse } = createRequire(import.meta.url)('@babel/parser');
@@ -78,7 +89,7 @@ const BASELINE = {
   'safetyRules.tsx': '7ecef64b69f9b3d69b90ca09a6b6ea186af08e88',
   'copilotIdentity.tsx': '5a25066c49f5878ea09ea8e22cadeb7a3d038edc',
   'agentPrompt.tsx': 'ef7f92fedb3844189167ba31413f04be8c5c632e',
-  'defaultAgentInstructions.tsx': '90918df3b64d77ea798b57f975b5d35b2f7a9361',
+  'defaultAgentInstructions.tsx': 'b95f24c1e05807bf39e831dd23afe8be72db66c6',
   'openai/defaultOpenAIPrompt.tsx': '4fbcbe0d95691a8d0ee9c96673bfeae87981f703',
   'promptVariablesService.ts': 'c2b23c9fb3c3b193a8179b04de3f34d20dbfd46a',
 };
@@ -148,7 +159,7 @@ function loadPresetFinds() {
       const key = collapse(r.find);
       if (seen.has(key)) continue;
       seen.add(key);
-      finds.push({ ruleName: r.ruleName || '(unnamed)', find: r.find, file, scope: r.scope === 'cli' ? 'cli' : 'classic' });
+      finds.push({ ruleName: r.ruleName || '(unnamed)', find: r.find, file, scope: r.scope === 'copilot' ? 'copilot' : 'local' });
     }
   }
   return finds;
@@ -198,7 +209,7 @@ async function main() {
   let deadRules = 0;
   const lines = [];
   for (const f of finds) {
-    if (f.scope === 'cli') continue; // CLI-scoped rules are matched in step 3b
+    if (f.scope === 'copilot') continue; // Copilot-harness rules are matched in step 3b
     const key = collapse(f.find);
     const matchedIn = [...canonical.entries()].filter(([, text]) => text.includes(key)).map(([label]) => label);
     if (matchedIn.length) {
@@ -210,30 +221,30 @@ async function main() {
     }
   }
 
-  // 3b. CLI-scoped rules: matched against the local anchor-region reference (see header).
-  const cliFinds = finds.filter((f) => f.scope === 'cli');
-  let cliRefMissing = false;
-  if (cliFinds.length) {
+  // 3b. Copilot-harness rules: matched against the local anchor-region reference (see header).
+  const copilotFinds = finds.filter((f) => f.scope === 'copilot');
+  let refMissing = false;
+  if (copilotFinds.length) {
     let refText = null;
     try {
-      // EOL-normalize: CLI rule finds come from JSON (`\n` escapes, always LF)
+      // EOL-normalize: these rule finds come from JSON (`\n` escapes, always LF)
       // and are matched verbatim; a core.autocrlf checkout can materialize the
       // reference with CRLF, which would report every multi-line rule as DEAD.
-      refText = readFileSync(CLI_REFERENCE, 'utf8').replace(/\r\n/g, '\n');
+      refText = readFileSync(COPILOT_REFERENCE, 'utf8').replace(/\r\n/g, '\n');
     } catch {
-      cliRefMissing = true;
+      refMissing = true;
     }
-    for (const f of cliFinds) {
-      if (cliRefMissing) {
-        lines.push(`  [SKIP] ${f.ruleName}  -- CLI reference missing (run scripts/extract-cli-reference.mjs)`);
+    for (const f of copilotFinds) {
+      if (refMissing) {
+        lines.push(`  [SKIP] ${f.ruleName}  -- Copilot reference missing (run scripts/extract-copilot-reference.mjs)`);
         continue;
       }
       if (refText.includes(f.find)) {
-        lines.push(`  [OK]   ${f.ruleName}  (cli-ref)`);
+        lines.push(`  [OK]   ${f.ruleName}  (copilot-ref)`);
       } else {
         deadRules++;
-        lines.push(`  [DEAD] ${f.ruleName}  -- NOT FOUND in CLI reference`);
-        lines.push(`      If a fresh capture still lacks this text, Microsoft changed the CLI prompt.`);
+        lines.push(`  [DEAD] ${f.ruleName}  -- NOT FOUND in the Copilot-harness reference`);
+        lines.push(`      If a fresh capture still lacks this text, Microsoft changed the Copilot-harness prompt.`);
         lines.push(`      find: ${JSON.stringify(f.find.length > 120 ? f.find.slice(0, 120) + '...' : f.find)}`);
       }
     }
@@ -252,7 +263,7 @@ async function main() {
   // ── Output ────────────────────────────────────────────────────────
   const date = new Date().toISOString().slice(0, 10);
   console.log(`\n[Prompt drift canary - ${date}]`);
-  console.log(`Watched source: microsoft/vscode (main) + ${path.relative(ROOT, CLI_REFERENCE)} for CLI-scoped rules\n`);
+  console.log(`Watched source: microsoft/vscode (main) for Local-harness rules + ${path.relative(ROOT, COPILOT_REFERENCE)} for Copilot-harness rules\n`);
 
   console.log(`RULES (${finds.length} distinct find strings across ${readdirSorted(REPL_DIR).filter(f => f.endsWith('.json')).length} files):`);
   console.log(lines.join('\n') || '  (none)');
@@ -274,7 +285,7 @@ async function main() {
 
   const problems = deadRules + changedFiles.length + missingFiles.length
     + (updateBaseline ? 0 : unpinnedFiles.length)
-    + (cliRefMissing && cliFinds.length ? 1 : 0);
+    + (refMissing && copilotFinds.length ? 1 : 0);
   console.log(`\nResult: ${deadRules} dead rule(s), ${changedFiles.length} changed file(s), ${missingFiles.length} missing file(s), ${unpinnedFiles.length} unpinned file(s).`);
   if (problems === 0) {
     console.log('All good - presets match the current Microsoft prompt source.');

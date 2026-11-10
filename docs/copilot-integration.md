@@ -410,7 +410,7 @@ The model **hover** card mirrors this: `SUPPORTED_CONFIG_GROUPS = ['navigation',
 
 **Problem:** First prompt after VS Code restart took ~20 seconds. Subsequent prompts were instant.
 
-**Root cause (historical - pre-migration):** VS Code calls `provideTokenCount` **100+ times** before sending a request - once per message and once per available tool schema. Under the legacy global-server layout, every call executed `await getConfig()`, which did `await context.secrets.get('vllm-copilot.apiKey')` - async disk I/O to VS Code's credential storage, resulting in 100+ sequential disk reads. The current per-model `getConfig()` in `src/config.ts` no longer touches `context.secrets`.
+**Root cause (historical - pre-migration):** VS Code calls `provideTokenCount` **100+ times** before sending a request - once per message and once per available tool schema. Under the legacy global-server layout, every call executed `await getConfig()`, which did `await context.secrets.get('vllm-copilot.apiKey')` - async disk I/O to VS Code's credential storage, resulting in 100+ sequential disk reads. The current per-model `getConfig()` in `src/vscode/state/config.ts` no longer touches `context.secrets`.
 
 **The fix (current behavior):** `provideTokenCount` reads the model config through the client's config cache (`getConfigCached()`) on every call; the char/3.5 estimate is cheap and does no secrets or network I/O.
 

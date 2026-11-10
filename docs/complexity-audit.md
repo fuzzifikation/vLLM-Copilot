@@ -701,7 +701,7 @@ Canary verdicts (all re-verified live): index freshness = vitest
 file-list-equality, runs in `npm test` which `npm run build` runs (semantic
 JSON comparison, hence EOL-immune); preset-match equality pinned in the same
 suite; gen-prompt-drift = manual-only by design (needs GitHub fetch + blob
-SHA baseline, whitespace-collapsed); cli-rules = static half in `npm test`
+SHA baseline, whitespace-collapsed); copilot-rules = static half in `npm test`
 (EOL-normalized read of the anchor file), live half manual vs capture.
 
 ### Findings

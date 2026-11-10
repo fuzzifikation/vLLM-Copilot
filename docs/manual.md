@@ -184,7 +184,7 @@ After every request, the Output channel shows exact token counts (input/output, 
 - OpenRouter models prefer their actual reported cost (`usage.cost`) and never sum it with configured rates.
 - **Reset Usage** is a right-click action on the node.
 
-Full design (data model, persistence, retention, summation semantics): **[Token & Cost Usage Tracker](usage.md)**.
+The implementation holds the rest of the design: `src/core/usage/` (ledger, record, money) and `src/vscode/state/usageStore.ts` (persistence).
 
 ---
 
@@ -210,6 +210,29 @@ Copilot injects hidden instructions into every request (~21KB of safety rules an
 4. Point `systemMessageReplacementsFile` at it on the model entry - or use **Load** in Model Settings.
 
 Replacements are exact substring matches, applied sequentially to every system message before it reaches vLLM. Matched rules are logged in the capture file. The prompt-building architecture behind this: [copilot-integration.md](copilot-integration.md).
+
+#### Two harnesses, two prompts
+
+Copilot runs two harnesses that concern this extension, and each ships its own hidden
+system prompt. Each rule declares which one it edits:
+
+- **Local harness** - VS Code's own prompt assembly in the main window. This is the
+  surface the first replacements were built for; its rules carry no `scope` key. The
+  prompt's source is public, so `npm run check:prompt-drift` matches those rules
+  against live `microsoft/vscode` text.
+- **Copilot harness** - the Agents window, driven by Agent Host. Its prompt is the one
+  the CLI/Agents-window harness uses, which this code called "CLI" before Microsoft
+  labelled the surface "Copilot". Those rules carry `"scope": "copilot"` and are
+  checked against `scripts/copilot-prompt-reference.txt`, a frozen capture, because the
+  prompt's source is not public. `npm run check:copilot-rules` against a fresh capture
+  is the only instrument that can see Microsoft change that prompt.
+
+Neither harness keeps rules for its own superseded wording: when Microsoft renames a
+prompt, the rules anchored on the old text are re-anchored and the reference
+regenerated in the same commit (owner ruling 2026-11-10). A `"wording"` tag marks a
+rule bound to one specific wording of the Copilot-harness prompt, so a drift audit can
+say "this rule is for other VS Code builds" instead of crying dead. Rule *names* keep
+their historical `(CLI)` suffix - that labels the rule, not the surface.
 
 ### Workspace custom instructions
 

@@ -21,14 +21,15 @@
     },
     {
       "ruleName": "Remove CLI tone instruction (CLI)",
-      "scope": "cli",
+      "scope": "copilot",
       "find": "Respond concisely to the user, but be thorough in your work.",
       "replace": ""
     },
     {
       "ruleName": "Remove CLI identity opener (CLI)",
-      "scope": "cli",
-      "find": "You are an AI assistant using Copilot CLI runtime in VS Code. You help users with software engineering tasks.",
+      "scope": "copilot",
+      "wording": "sdk",
+      "find": "You are an AI assistant using Copilot SDK in VS Code. You help users with software engineering tasks.",
       "replace": ""
     },
     {

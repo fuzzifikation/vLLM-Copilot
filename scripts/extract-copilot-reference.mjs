@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Extract the CLI-prompt anchor regions from a system-message capture.
+ * Extract the Copilot-harness prompt anchor regions from a system-message capture.
  *
- * The Agents-window (Copilot CLI runtime) system prompt is ~41 KB, of which
+ * The Copilot harness (Agents window) system prompt is ~70 KB, of which
  * only a handful of regions are relevant to our prompt replacements: the
  * identity opener, the code-change rules, the security block, the commit
  * trailer, the gh-CLI preference, the style block and the closing tone line.
@@ -10,26 +10,30 @@
  * volatile session-context manifest) is user- or session-specific noise that
  * must NOT end up in a checked-in drift reference.
  *
- * Output: a small plain-text reference (default scripts/cli-prompt-reference.txt)
- * containing exactly those regions, plus human-readable region markers.
- * The drift canary (check-prompt-drift.mjs) verifies every `scope: "cli"` rule
- * find against this file instead of live GitHub (the CLI prompt source is not
- * public). When personalities act weird in the Agents window: enable
- * `vllm-copilot.systemMessageCapture`, run one Agents-window turn, re-run this
- * script against the new capture, and `git diff` the reference.
+ * Output: a small plain-text reference (default scripts/copilot-prompt-reference.txt)
+ * containing exactly those regions, plus human-readable region markers. It mirrors
+ * the CURRENT harness wording: a re-run overwrites, and rules anchored on superseded
+ * text are re-anchored or deleted in the same unit (owner ruling 2026-11-10 — support
+ * for an old wording is dropped, not accumulated). The drift canary
+ * (check-prompt-drift.mjs) verifies every `scope: "copilot"` rule find against this file
+ * instead of live GitHub (the harness prompt source is not public). When personalities
+ * act weird in the Agents window: enable `vllm-copilot.systemMessageCapture`, run one
+ * Agents-window turn, run `npm run check:copilot-rules` against the capture, then re-run
+ * this script and `git diff` the reference.
  *
  * Usage:
- *   node scripts/extract-cli-reference.mjs [capture.json] [out.txt]
+ *   node scripts/extract-copilot-reference.mjs [capture.json] [out.txt]
  * Default capture: .vllm/system-messages.json in this workspace (written by
  * `vllm-copilot.systemMessageCapture` after an Agents-window turn).
  */
 import { readFileSync, writeFileSync } from 'node:fs';
+import { copilotPromptWording, MARKER_HINT } from './copilot-prompt-wording.mjs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CAPTURE = process.argv[2] ?? path.join(ROOT, '.vllm', 'system-messages.json');
-const OUT = process.argv[3] ?? path.join(ROOT, 'scripts', 'cli-prompt-reference.txt');
+const OUT = process.argv[3] ?? path.join(ROOT, 'scripts', 'copilot-prompt-reference.txt');
 
 /** Regions we anchor rules on: [label, startMarker, endMarker, includeEndMarker]. */
 const REGIONS = [
@@ -75,20 +79,20 @@ const allEntries = Array.isArray(raw) ? raw : [raw];
 if (allEntries.length === 0) throw new Error('capture file contains no entries');
 
 // A capture holds every system message seen while systemMessageCapture was on:
-// classic Copilot chat turns, CLI (Agents-window) turns, anything else. Only the
-// CLI runtime prompt is anchored here, so non-CLI entries are ignored — without
-// this filter a session that used classic chat before the Agents turn puts a
-// classic system message at entries[0] and every marker lookup fails.
-const CLI_MARKER = 'using Copilot CLI runtime';
-const entries = allEntries.filter((e) => (e.receivedContent || '').includes(CLI_MARKER));
+// classic Copilot chat turns, harness (Agents-window) turns, the action-approval
+// judge, anything else. Only the harness prompt is anchored here, so other
+// entries are ignored — without this filter a session that used classic chat
+// before the Agents turn puts a classic system message at entries[0] and every
+// marker lookup fails.
+const entries = allEntries.filter((e) => copilotPromptWording(e.receivedContent));
 if (entries.length === 0) {
   throw new Error(
-    `no capture entry contains "${CLI_MARKER}" — the capture holds no Agents-window (CLI runtime) ` +
-    'turn. Enable vllm-copilot.systemMessageCapture, run one Agents-window turn, and re-run.'
+    `no capture entry is a harness prompt (looked for ${MARKER_HINT}) — the capture holds no ` +
+    'Agents-window turn. Enable vllm-copilot.systemMessageCapture, run one Agents-window turn, and re-run.'
   );
 }
 if (entries.length < allEntries.length) {
-  console.log(`filtered ${allEntries.length - entries.length} non-CLI capture entry(ies)`);
+  console.log(`filtered ${allEntries.length - entries.length} non-harness capture entry(ies)`);
 }
 
 const first = extractRegions(entries[0].receivedContent);
@@ -102,10 +106,18 @@ for (let i = 1; i < entries.length; i++) {
 }
 
 const header = [
-  '# CLI prompt anchor regions — extracted from a systemMessageCapture of Agents-window turns',
+  '# Copilot-harness prompt anchor regions — from a systemMessageCapture of Agents-window turns',
   '# (all capture entries byte-identical in these regions; see file history for provenance).',
-  '# Generated by scripts/extract-cli-reference.mjs. Do not hand-edit.',
-  '# Checked by scripts/check-prompt-drift.mjs against every rule with "scope": "cli".',
+  '# The other surface, the Local harness (VS Code main window), has public source and is',
+  '# canaried against microsoft/vscode directly — it needs no reference file like this one.',
+  '# Generated by scripts/extract-copilot-reference.mjs. Do not hand-edit.',
+  '# Checked by scripts/check-prompt-drift.mjs and test/copilotPromptRules.test.ts against every',
+  '# rule with "scope": "copilot"; each region text appears exactly once here.',
+  '#',
+  '# This mirrors the CURRENT harness wording and nothing else. Microsoft renames this',
+  '# prompt ("Copilot CLI runtime" → "Copilot SDK", 2026-11); when a region moves, the',
+  '# rules anchored on it move in the same unit and a re-run overwrites the old text.',
+  '# Support for a superseded wording is deleted, not accumulated.',
   '',
 ].join('\n');
 const body = Object.entries(first)

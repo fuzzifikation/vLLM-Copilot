@@ -56,19 +56,20 @@ describe('persona/common rule split (bundled files)', () => {
     'prompt-replacements-supportive-mentor.json',
   ];
 
-  it('common file ships 6 classic removals + 5 CLI-scoped rules with unique names', async () => {
+  it('common file ships 6 Local-harness removals + 5 Copilot-harness rules with unique names', async () => {
     // Scope-aware contract reads the RAW JSON: the runtime loader strips
-    // unknown fields (scope is dev-tooling metadata, never needed at runtime).
+    // unknown fields (scope/wording are dev-tooling metadata, never runtime).
     const raw = JSON.parse(await fs.readFile(commonPath, 'utf-8')) as {
       rules: { ruleName?: string; find: string; replace: string; scope?: string }[];
     };
     expect(raw.rules).toHaveLength(11);
-    const classic = raw.rules.filter(r => !r.scope);
-    const cli = raw.rules.filter(r => r.scope === 'cli');
-    expect(classic).toHaveLength(6);
-    expect(classic.every(r => r.replace === '' && r.find.length > 0 && !!r.ruleName)).toBe(true);
-    expect(cli).toHaveLength(5);
-    expect(cli.every(r => r.find.length > 0 && !!r.ruleName)).toBe(true);
+    const local = raw.rules.filter(r => !r.scope);
+    const copilot = raw.rules.filter(r => r.scope === 'copilot');
+    expect(local).toHaveLength(6);
+    expect(local.every(r => r.replace === '' && r.find.length > 0 && !!r.ruleName)).toBe(true);
+    // 3 rules on boilerplate every harness wording shares + 2 on current-wording text.
+    expect(copilot).toHaveLength(5);
+    expect(copilot.every(r => r.find.length > 0 && !!r.ruleName)).toBe(true);
     expect(new Set(raw.rules.map(r => r.ruleName)).size).toBe(11);
     // The runtime loader must still parse the file cleanly (scope ignored).
     expect(await loadPromptReplacements(commonPath)).toHaveLength(11);

@@ -45,18 +45,26 @@ Current VS Code versions synchronize the BYOK model bridge to a running Agent Ho
 
 ## Personalities work there too
 
-The Agents window ships its own system prompt (the Copilot CLI runtime prompt,
-a different text from classic chat). Your configured **personality preset**
-applies there as well: the model gets your persona's voice, the safety block is
-replaced by the user-owned security protocol (risks are surfaced to you, you
-decide), and the "Co-authored-by: Copilot" commit trailer instruction is
-removed. **Default** (no personality) leaves that prompt untouched, as always.
-See [Personalities & system prompts](./manual.md#personalities--system-prompts) in the Manual for the replacement mechanics.
+The Agents window runs the **Copilot harness**, which ships its own system prompt
+(Microsoft renames its boilerplate without notice, most recently "Copilot CLI
+runtime" → "Copilot SDK" in 2026-11; it is a different text from the **Local
+harness** prompt of the main window). Your
+configured **personality preset** applies there as well: the model gets your
+persona's voice, the safety block is replaced by the user-owned security protocol
+(risks are surfaced to you, you decide), and the "Co-authored-by: Copilot" commit
+trailer instruction is removed. **Default** (no personality) leaves that prompt
+untouched, as always. Rules that anchor this prompt carry `"scope": "copilot"`;
+those bound to wording specific to the current prompt also carry `"wording": "sdk"`.
+When Microsoft renames the prompt, the affected rules are re-anchored
+rather than kept alongside the old text, so an Agents window older than the
+current wording runs with vanilla identity until the extension catches up.
+See [Two harnesses, two prompts](./manual.md#two-harnesses-two-prompts) in the Manual for the replacement mechanics.
 
 ## Fine print
 
 - **Experimental.** Microsoft documents the BYOK bridge as experimental, and Agent Host sessions remain preview functionality. If the picker stays empty after reopening the Agents window, report it to VS Code first.
 - **Mapped effort choices** use each model's `copilotHarnessMapping` to select its existing modes. The harness shows standard effort labels; Local shows the mode identifiers and unmapped choices. Compatible existing model entries migrate automatically; unresolved cases need a manual mapping or Auto-Configure. **Output Length** and other provider metadata still need the [upstream fix](https://github.com/microsoft/vscode/issues/340138). See [migration and mapping policy](../model-configs/README.md#mode-identifiers-and-migration).
+- **The tool budget is 128, hardcoded by VS Code.** The Agent Host caps every BYOK request at 128 tool definitions regardless of the model's or server's real capacity (its rationale is OpenAI's own 128-tool limit, which does not generalize to vLLM). Tools the conversation already called are kept first, the rest follows list order, and the overflow is dropped with a "The model only supports 128 tools" warning. There is no provider API or setting to raise it; "Configure Tools" is the only lever. We reported it upstream as [microsoft/vscode#347351](https://github.com/microsoft/vscode/issues/347351). **The cap is Agent Host only:** `BYOK_MAX_TOOLS = 128` and its single call site `capBridgeTools` live in `src/vs/platform/agentHost/node/copilot/` (verified against VS Code source 2026-11-10), and no tool-count constant exists in the workbench chat path, so a Local chat sends every tool the user has enabled.
 - **Utility tasks** such as titles and commit messages use `chat.byokUtilityModelDefault`, which the extension sets to `mainAgent` unless you chose another value.
 - **The Local harness** remains a main-window feature. The Copilot harness with BYOK models is the path for vLLM models in the Agents window.
 - Agent Host sessions can use worktree isolation, MCP servers, hooks, and the usual agent customizations. Those are harness features and are outside this extension.

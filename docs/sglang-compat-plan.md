@@ -25,7 +25,7 @@ They do not share a transport, a discovery path, or a request body. Neither bloc
 > **Why not one table driving rendering:** the current code has exactly two render paths - a shared server renderer (vLLM + LM Studio/llama.cpp/Ollama, where "degraded" is missing *data*, not a code path) and the OpenRouter relay path. Bolting SGLang onto the shared renderer with more conditionals recreates the `ServerTreeItem` constructor's inline `isOpenRouterRelay`/`isVllm` branches. A per-backend renderer (a small strategy map, possibly one module `dashboardRenderers.ts`) gives SGLang a real path while the ~200 shared metric-row lines stay single-sourced.
 
 **Recommended sequencing (updated 2026-08-22 - OpenRouter shipped but did NOT deliver a reusable classification seam):**
-1. **Land the acquisition descriptor table** (`fetchAllEndpoints` in `src/vllmMetrics.ts`). It still splits on a binary `isVllm`; the OpenRouter account/credits probe is an inline branch. A local refactor of shipped code, no new surface.
+1. **Land the acquisition descriptor table** (`fetchAllEndpoints` in `src/vscode/ui/vllmMetrics.ts`). It still splits on a binary `isVllm`; the OpenRouter account/credits probe is an inline branch. A local refactor of shipped code, no new surface.
 2. **Land the renderer strategy** (`dashboard.ts`): extract the inline `isOpenRouterRelay`/`isVllm` branches from `ServerTreeItem` and `getServerMetricsChildren` into per-backend renderers. OpenRouter gets its proper path; the shared metric-row builder takes a per-backend label/behavior map; SGLang slots in as a third renderer. This is the precondition that makes "SGLang has its own path, not patched vLLM" true (§6).
 3. **Land SGLang after**, as a small additive delivery: `ServerType` arm + classifier arm + limits arm + the metrics mapper + `/server_info` version source + the SGLang renderer + deep-dive eligibility (precondition #2).
 
@@ -122,29 +122,29 @@ The classic router is the one case that cannot be rescued. Same policy as every 
 > 3. **Surface SGLang retractions under "Retractions"** (not "Preemptions") - locked decision, see §5.
 > 4. **Verify the Rust server's `sglang:*` metric names.** Research verified the Python collector (`python/sglang/srt/observability/metrics_collector.py`). The Rust server (`SGLANG_RUST_SERVER=1`, increasingly the default) has its own metrics implementation - the plan cites rust files for HTTP endpoints but NOT for metric names. Before shipping, confirm the Rust server emits the same `sglang:*` names, or scope the mapper to the Python server and gate the Rust server's dashboard rows.
 
-### Configuration (`src/config.ts` + package schema)
+### Configuration (`src/core/config/serverCore.ts` and `src/core/config/config.ts` + package schema)
 - Add `'sglang'` to `ServerType` (`'vllm' | 'lmstudio' | 'llamacpp' | 'ollama' | 'openrouter' | 'sglang'`).
 - Add to the validation list in `config.ts` and to the `vllm-copilot.models` JSON schema in `package.json` if the schema enumerates `serverType`.
 - `serverType` missing still means vLLM (unchanged policy). Error messages that enumerate the supported backends get `'sglang'` added.
 
-### Classifier (`src/autoConfig.ts` + `src/serverSettingsView.ts`)
+### Classifier (`src/core/backends/runtimeLimits.ts` + `src/vscode/ui/serverSettingsView.ts`)
 - Add `owned_by === 'sglang'` detection, **checked before** the `max_model_len → vLLM` rule - SGLang reports BOTH, and we want it labeled as SGLang, not vLLM. No collision: vLLM's `owned_by` is never `"sglang"`.
 - `resolveDetectedServerType` in `serverSettingsView.ts` mirrors this.
 
-### Runtime limits (`src/vllmClient.ts` `resolveRuntimeLimits`)
+### Runtime limits (`src/core/backends/runtimeLimits.ts`, function `resolveRuntimeLimits`)
 - Add `case 'sglang'`: `GET /v1/models` → matching `max_model_len` (identical to the vLLM arm). Optionally fall back to `GET /server_info` → `max_context_length` for gateway deployments where the model card omits the field. Never fabricate.
 
-### Metrics + version (`src/vllmMetrics.ts`)
+### Metrics + version (`src/vscode/ui/vllmMetrics.ts`)
 - `fetchAllEndpoints`: version from `/server_info` (parse `version`) when `serverType === 'sglang'`; online probe stays `/health` (SGLang serves it - unlike LM Studio/llama.cpp/Ollama).
 - **Gate `/version` and `/load` by backend.** Today `fetchAllEndpoints` unconditionally fires both for every backend and tolerates a 404. On SGLang they 404 on every poll tick forever - 2 wasted round-trips per server per interval, and correctness depends on 404-silence. Fix: fetch `/version` only for vLLM (and `/server_info` for SGLang), and `/load` only for vLLM; drop the 404-tolerance crutch. This is a small `fetchAllEndpoints` change, not a rewrite.
 - Add the `sglang:*` mapping from §5 alongside the `vllm:*` parser (single `MetricsParser` entry point, prefix-dispatch).
 - **Metrics resolved 2026-08-22:** TPOT = `inter_token_latency_seconds` (primary) + `time_per_output_token_seconds` (alias); spec-decode = `spec_accept_rate` only (drafts/depth rows stay empty); `cache_hit_rate` needs ×100; multi-rank label aggregation. The one remaining research gate is the Rust server metric inventory (precondition #4).
 
-### Dashboard / deep-dive (`src/dashboard.ts`, `deepDiveView.ts`)
+### Dashboard / deep-dive (`src/vscode/ui/dashboard.ts`, `deepDiveView.ts`)
 - **SGLang renderer** (precondition #2's strategy map, §0): its own summary line, version label (`/server_info`), section order, "Retractions" label, and the "metrics disabled - launch with `--enable-metrics`" hint when the scrape is 200-with-zero-`sglang:`. Composes the shared metric-row primitives - it does NOT duplicate them and does NOT grow `if (serverType === 'sglang')` branches in shared code.
 - **Deep-dive eligibility**: `dashboard.ts` L86 gates `contextValue` on `isVllm`. With the renderer strategy, deep-dive availability becomes a per-backend renderer decision. SGLang qualifies (real metrics + version); the deep-dive webview then needs SGLang's version source (`/server_info`) and its raw metrics - same `ServerRawData` shape, so no webview fork, but the version label must not assume `/version`.
 
-### Error text (`src/messageConverter.ts`, `tokenBudget.ts`)
+### Error text (`src/vscode/copilot/messageConverter.ts`, `tokenBudget.ts`)
 - No functional change required; context-length errors already match. Verify the budget messaging names "sglang" where a backend name leaks.
 
 ### Docs

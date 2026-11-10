@@ -162,7 +162,7 @@ When server flags aren't set, the node shows a hint: "Start vLLM with `--enable-
 
 ### Token Usage & Cost
 
-Under each server, a collapsible **Token Usage and Cost** node shows **cumulative** token consumption across all requests (not just the last one). It updates **immediately** after every completed prompt - it does not wait for the metrics poll interval. The node is **model-first**: one collapsible entry per model (labeled by `displayName`), each with **Today** and **Overall** rows. For the design and data model behind this feature, see [usage.md](usage.md). **OpenRouter servers do not show this node** - every relay model already carries its own token/cost rows in its expanded details, so a server-level aggregate would be pure duplication. (Usage is still recorded, and **Reset Usage** stays available via the palette command.)
+Under each server, a collapsible **Token Usage and Cost** node shows **cumulative** token consumption across all requests (not just the last one). It updates **immediately** after every completed prompt - it does not wait for the metrics poll interval. The node is **model-first**: one collapsible entry per model (labeled by `displayName`), each with **Today** and **Overall** rows. **OpenRouter servers do not show this node** - every relay model already carries its own token/cost rows in its expanded details, so a server-level aggregate would be pure duplication. (Usage is still recorded, and **Reset Usage** stays available via the palette command.)
 
 | Row | Description |
 |---|---|
@@ -430,7 +430,7 @@ The extension ships with five pre-built personality presets. Pick one, point you
 
 Each preset file contains its **voice** (identity, behavioral principles, tone reinforcement) plus one last entry, `{ "include": "prompt-replacements-common.json" }`, which splices in the personality-neutral boilerplate removals (safety rules, "your name is GitHub Copilot" identity) from the file sitting right next to it, **after** the voice rules. That include is just a rule position: in your own file you can keep it, move it, or delete the line to run with only your own rules. **Default (no personality)** applies nothing: the vanilla prompt stays untouched.
 
-Personalities apply in the **Agents window** too: the shared file and preset files carry additional rules scoped to the Agents-window (Copilot CLI runtime) prompt, replacing its `prohibited_actions` block with the user-owned security protocol and applying the persona's voice there as well. See [Agents window](./agents-window.md#personalities-work-there-too).
+Personalities apply in the **Agents window** too: the shared file and preset files carry additional rules scoped to the **Copilot harness** prompt (`"scope": "copilot"`) - the surface behind the Agents window, which this code long called "CLI" - replacing its `prohibited_actions` block with the user-owned security protocol and applying the persona's voice there as well. Rules of that surface that depend on one specific prompt wording also carry `"wording": "sdk"`; untagged ones anchor text every wording shares. Microsoft renames that boilerplate without notice, so affected rules are re-anchored when it moves and rules for superseded wording are deleted. The other surface, the **Local harness** (main window), needs no tag. See [Two harnesses, two prompts](./manual.md#two-harnesses-two-prompts).
 
 | Preset | File | Personality |
 |--------|------|-------------|

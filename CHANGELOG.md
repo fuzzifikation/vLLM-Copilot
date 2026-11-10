@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.38.1
+Personality presets keep working when Microsoft renames the Agents-window prompt under us.
+
+### Fixed
+
+- **Personalities lost their identity in the Agents window.** The Copilot harness rewrote its system prompt - the identity line became "Copilot SDK" (was "Copilot CLI runtime") and the code-change rules were reworded - so the preset rules anchored on the old text silently stopped matching: the model kept Microsoft's identity instead of your persona's, and the code-change rules stayed unmodified. The affected rules now anchor the current wording. Classic chat was never affected.
+
+### Known Issue
+
+- **The Agents window sends at most 128 tools (VS Code bug, not ours).** Agent Host hard-codes the ceiling for every BYOK request, keeps the tools already called plus a prefix of the list, and leaves a provider no way to declare its model's real tool limit. "Configure Tools" in the warning is the only lever inside the Agents window; a chat on **Local** sends every tool. Reported upstream as [microsoft/vscode#347351](https://github.com/microsoft/vscode/issues/347351). Our other open reports there: [microsoft/vscode#340138](https://github.com/microsoft/vscode/issues/340138) (model modes and Output Length missing in the Agents window), [microsoft/vscode#333413](https://github.com/microsoft/vscode/issues/333413) (picker settings stale after an update), [microsoft/vscode#333802](https://github.com/microsoft/vscode/issues/333802) (subagents reject BYOK models), [microsoft/vscode#326597](https://github.com/microsoft/vscode/issues/326597) (historical thinking parts dropped), [microsoft/vscode#321761](https://github.com/microsoft/vscode/issues/321761) (reserved output room ignores the configured output cap).
+
 ## v1.38.0
 Keep model modes selectable across Copilot harnesses and give them stable, space-free identifiers.
 
