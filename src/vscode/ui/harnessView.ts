@@ -18,6 +18,36 @@ const BRIDGE_ID = 'System-Sciences.dsh-bridge';
 /** Where to send the user if VS Code's in-app extension page is unavailable. */
 const BRIDGE_MARKETPLACE_URL = `https://marketplace.visualstudio.com/items?itemName=${BRIDGE_ID}`;
 
+/** Alpha feedback lands on the bridge's own issue tracker, not on us. */
+const DSH_ISSUES_URL = 'https://github.com/fuzzifikation/dsh-bridge/issues';
+
+/** Our own row inside the bridge's list: this command id opens the issue tracker. */
+const FEEDBACK_COMMAND = 'vllm-copilot.dshFeedback';
+
+/**
+ * Row order, most-reached-for first - the bridge's manifest order is its
+ * author's bookkeeping, not the user's. **Open Harness** leads because it is the
+ * whole session in one row: the bridge starts a stopped harness and installs a
+ * missing one before it opens the view. Lifecycle follows, then the update
+ * command, then diagnosis, with settings above the one destructive row.
+ * Commands a later bridge adds are not in this list and land just above
+ * **Open Bridge Settings**, so the section can never lose or bury a command.
+ */
+const ROW_ORDER = [
+  'dshBridge.open',
+  'dshBridge.openNewView',
+  'dshBridge.start',
+  'dshBridge.stop',
+  'dshBridge.restart',
+  'dshBridge.installOrUpdate',
+  'dshBridge.showLogs',
+  'dshBridge.report',
+  FEEDBACK_COMMAND,
+  'dshBridge.sweepStaleTabs',
+  'dshBridge.openSettings',
+  'dshBridge.uninstall',
+];
+
 /** Tree decoration per bridge command; the manifest's icons are tuned for menus, not rows. */
 const BRIDGE_ICONS: Record<string, string> = {
   'dshBridge.installOrUpdate': 'cloud-download',
@@ -44,6 +74,9 @@ const OPEN_BRIDGE: vscode.Command = {
   title: 'Try the DeepSeek Harness',
 };
 
+/** Auto-registered focus command for this section: reveals it when hidden. */
+const FOCUS_SECTION = 'vllm-copilot.harness.focus';
+
 /**
  * Opens the bridge's extension page inside VS Code (`extension.open`, the same
  * command VS Code's own reporters use) and falls back to the Marketplace in the
@@ -63,11 +96,36 @@ export class HarnessTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
   private readonly changed = new vscode.EventEmitter<vscode.TreeItem | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
   private readonly subscriptions: vscode.Disposable[] = [];
+  /** Whether the bridge was there the last time the extension list moved. */
+  private bridgeWasInstalled: boolean;
 
   constructor() {
+    this.bridgeWasInstalled = Boolean(vscode.extensions.getExtension(BRIDGE_ID));
+    // The feedback row sits inside the bridge's list but the command is ours:
+    // an external link needs env.openExternal, and no shipped workbench command
+    // promises that for an http URI. Not contributed to the palette on purpose -
+    // the sidebar row is the only entry point it needs.
     // Installing or uninstalling the bridge re-renders the section on the spot:
-    // no polling, no reload window.
-    this.subscriptions.push(vscode.extensions.onDidChange(() => this.changed.fire(undefined)));
+    // no polling, no reload window. The same event carries the handoff: pressing
+    // Install on the bridge's page leaves the user in the editor area with
+    // nothing in front of them, so the section - which at that instant becomes
+    // the bridge's control panel, led by "Open Harness" - opens itself once. It
+    // reveals the section only. Launching the harness is not ours to do: the
+    // bridge starts it when the user asks, and calling dshBridge.open here would
+    // install a runtime and open a port unsolicited.
+    this.subscriptions.push(
+      vscode.commands.registerCommand(FEEDBACK_COMMAND, () => {
+        void vscode.env.openExternal(vscode.Uri.parse(DSH_ISSUES_URL));
+      }),
+      vscode.extensions.onDidChange(() => {
+        const installed = Boolean(vscode.extensions.getExtension(BRIDGE_ID));
+        if (installed && !this.bridgeWasInstalled) {
+          void vscode.commands.executeCommand(FOCUS_SECTION);
+        }
+        this.bridgeWasInstalled = installed;
+        this.changed.fire(undefined);
+      })
+    );
   }
 
   dispose(): void {
@@ -90,7 +148,7 @@ export class HarnessTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
     const bridge = vscode.extensions.getExtension(BRIDGE_ID);
     if (!bridge) {
       const pitch = new vscode.TreeItem(
-        'Alpha - run it on your own models',
+        'Run it on your own models',
         vscode.TreeItemCollapsibleState.None
       );
       pitch.iconPath = new vscode.ThemeIcon('rocket');
@@ -118,12 +176,19 @@ export class HarnessTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
     );
     head.command = OPEN_BRIDGE;
 
-    // Manifest order is the bridge author's own prioritisation, so rows keep it.
-    const contributed: unknown[] = Array.isArray(bridge.packageJSON?.contributes?.commands)
+    // The bridge's manifest order is its author's bookkeeping, so the rows get
+    // ROW_ORDER instead. A command this file has never heard of ranks a half-step
+    // under stale-tab cleanup: above **Open Bridge Settings** whatever its
+    // manifest position is, and never between two rows whose order we chose.
+    const rank = (id: string) => {
+      const at = ROW_ORDER.indexOf(id);
+      return at >= 0 ? at : ROW_ORDER.indexOf('dshBridge.sweepStaleTabs') + 0.5;
+    };
+    const contributed: { id: string; title: string }[] = [];
+    const manifest: unknown[] = Array.isArray(bridge.packageJSON?.contributes?.commands)
       ? bridge.packageJSON.contributes.commands
       : [];
-    const rows: vscode.TreeItem[] = [head];
-    for (const entry of contributed) {
+    for (const entry of manifest) {
       const id = (entry as { command?: unknown })?.command;
       if (typeof id !== 'string' || !id) {
         continue;
@@ -136,10 +201,23 @@ export class HarnessTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
         : typeof (rawTitle as { value?: unknown })?.value === 'string'
           ? (rawTitle as { value: string }).value
           : id;
-      const row = new vscode.TreeItem(title, vscode.TreeItemCollapsibleState.None);
-      row.iconPath = new vscode.ThemeIcon(BRIDGE_ICONS[id] ?? 'run');
-      row.tooltip = new vscode.MarkdownString(`${title}\n\n\`${id}\``);
-      row.command = { command: id, title };
+      contributed.push({ id, title });
+    }
+    // The alpha's feedback row belongs in that order too, wherever the bridge's
+    // own commands end up - so it joins the list and sorts with it.
+    contributed.push({ id: FEEDBACK_COMMAND, title: 'Report an Issue' });
+
+    const rows: vscode.TreeItem[] = [head];
+    for (const entry of contributed.sort((a, b) => rank(a.id) - rank(b.id))) {
+      const ours = entry.id === FEEDBACK_COMMAND;
+      const row = new vscode.TreeItem(entry.title, vscode.TreeItemCollapsibleState.None);
+      row.iconPath = new vscode.ThemeIcon(ours ? 'comment-discussion' : BRIDGE_ICONS[entry.id] ?? 'run');
+      row.tooltip = new vscode.MarkdownString(
+        ours
+          ? `Opens \`${DSH_ISSUES_URL}\` - bugs, wishes and half-formed grumbles are what an alpha runs on.`
+          : `${entry.title}\n\n\`${entry.id}\``
+      );
+      row.command = { command: entry.id, title: entry.title };
       rows.push(row);
     }
     return rows;

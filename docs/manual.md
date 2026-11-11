@@ -193,12 +193,12 @@ The implementation holds the rest of the design: `src/core/usage/` (ledger, reco
 
 ## DeepSeek Harness
 
-The second section under the **V** icon, below the Dashboard. It points at our companion extension, the **DeepSeek Harness Bridge** (`System-Sciences.dsh-bridge`) - an agent harness that runs inside VS Code on the servers you configured here. It is a separate extension, not a setting of this one.
+The second section under the **V** icon, below the Dashboard, titled **DeepSeek Harness (New, Alpha)**. It points at our companion extension, the **DeepSeek Harness Bridge** (`System-Sciences.dsh-bridge`) - an agent harness that runs inside VS Code on the servers you configured here. It is a separate extension, not a setting of this one.
 
 - **Bridge not installed**: the section shows what the harness is and **Install DeepSeek Harness Bridge**, which opens the bridge's extension page inside VS Code (in the browser, if the workbench refuses) where **Install** waits. Command alternative: **Try the DeepSeek Harness (Alpha)**.
-- **Bridge installed**: the section lists the bridge's own commands - install or update the harness, start, stop, restart, open a harness view, show logs, status, settings. The list is read from the installed extension's manifest, so it can never offer a command that extension does not have, and installing or uninstalling it re-renders the section without reloading the window.
+- **Bridge installed**: the section lists the bridge's own commands, ordered by how often a user reaches for them - **Open Harness** (which installs a missing harness and starts a stopped one before opening it), another view, start, stop, restart, install or update, logs, bridge status, **Report an Issue**, stale-tab cleanup, settings, uninstall. The command list is read from the installed extension's manifest, so it can never offer a command that extension does not have, a command added later sorts into its place, and installing or uninstalling it re-renders the section without reloading the window. The section reveals itself when the install lands; it never launches anything on its own - every row waits to be pressed.
 
-The bridge declares this extension as a dependency and reaches its configuration and usage ledger through the published companion API - which is why harness usage lands in the same tracker. It is in alpha.
+The bridge declares this extension as a dependency and reaches its configuration and usage ledger through the published companion API - which is why harness usage lands in the same tracker. The harness is in alpha, which is what the section title says; **Report an Issue** opens the bridge's issue list on GitHub, and the bridge's own status bar pill reaches a harness view from anywhere in the window.
 
 ---
 

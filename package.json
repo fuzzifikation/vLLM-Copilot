@@ -77,7 +77,7 @@
         },
         {
           "id": "vllm-copilot.harness",
-          "name": "DeepSeek Harness (new)",
+          "name": "DeepSeek Harness (New, Alpha)",
           "icon": "$(rocket)"
         },
         {
