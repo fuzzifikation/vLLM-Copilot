@@ -8,6 +8,10 @@ Our own agent harness exists, and the people who already run the servers for it 
 
 - **The DeepSeek Harness, one click away.** A new **DeepSeek Harness (New, Alpha)** section sits under the Dashboard. While our harness bridge is not installed it tells you what the harness is and opens its extension page, where **Install** waits. Once installed it becomes the bridge's control panel, led by **Open Harness** - that one row installs a missing harness, starts a stopped one and shows you the view - with the rest in the order you reach for them, and it opens itself the moment the bridge finishes installing. **Report an Issue** is in the list too: the harness is in alpha, and what testers report is what it runs on.
 
+### Changed
+
+- **A broken model entry says so.** A misspelled or leftover field in a `vllm-copilot.models` entry now shows an error in `settings.json` instead of being quietly ignored, and `id` and `server` must be non-empty. Unknown request parameters still reach the server untouched; the four keys the extension owns (`model`, `messages`, `stream`, `stream_options`) are marked forbidden where you might type them.
+
 ## v1.38.2
 Model-mode coverage for this year's coding models, so thinking depth comes from the picker instead of hand-edited JSON - and mode names each Copilot harness can actually display.
 
