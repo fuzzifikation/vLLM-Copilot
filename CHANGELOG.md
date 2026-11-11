@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.39.0
+
+Our own agent harness exists, and the people who already run the servers for it never hear about it unless they open the update page. This release puts it in the sidebar.
+
+### Added
+
+- **The DeepSeek Harness, one click away.** A new **DeepSeek Harness** section sits under the Dashboard. While our harness bridge is not installed it tells you what the harness is and opens its extension page, where **Install** waits. Once installed it becomes the bridge's control panel - install or update the harness, start, stop, restart, open a view, logs, status, settings - so you drive it from the same sidebar as your servers. Alpha, and testers are what it needs.
+
 ## v1.38.2
 Model-mode coverage for this year's coding models, so thinking depth comes from the picker instead of hand-edited JSON - and mode names each Copilot harness can actually display.
 

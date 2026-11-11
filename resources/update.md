@@ -1,18 +1,12 @@
-# vLLM-Copilot 1.38.2: Sixteen models your picker had never heard of.
+# vLLM-Copilot 1.39.0: The harness you were missing, one click from your servers.
 
-Presets and mode names. The bytes each mode sends on the wire did not change.
+Distribution. The DeepSeek Harness has existed for weeks and most of you never heard of it, so it now lives where you already work.
 
-**Sixteen new model presets, every one a 2026 release.** NVIDIA Nemotron-3 (Nano-4B, Super, Ultra) and Nemotron-3.5 (Lightning, Bolt-74B), Google Gemma 4, Tencent Hy4, inclusionAI Ling (3.1-flash, 3.0-flash, 3.0-tiny), Qwen3.8-2.4T-A95B, Mistral Large 4 and Small 4, Poolside Laguna (XS.2, M.1, XS-2.1), Ornith 1.0/1.5 and StepFun Step-3.5-Flash. Thinking on, thinking off, and the effort rungs in between - wherever the model actually has them.
+**A third section in the vLLM sidebar, under the Dashboard: DeepSeek Harness.** Open it with the **V** icon. If the bridge is not installed, the section says what the harness is and offers **Install DeepSeek Harness Bridge** - that opens the bridge extension page inside VS Code, where Install waits. Command alternative: **vLLM-Copilot: Try the DeepSeek Harness (Alpha)**.
 
-**We did not guess a single value.** Each knob came out of that model's own `chat_template.jinja`, its `config.json` or `generation_config.json`, or one explicit sentence on its card. Where a card gave only a range, or published no template at all, the preset sets nothing and your checkpoint keeps authority. That is also why some of these have no "think less" mode: Qwen3.8-2.4T and Mistral Large 4 reject a reasoning-off request outright, Step-3.5-Flash has no switch to press at all, and NVIDIA's Ultra card demands thinking with non-empty content whenever tools are sent - and Copilot always sends tools.
+**Once the bridge is installed, the section becomes its control panel.** Install or update the harness, start it, stop it, restart it (draining in-flight requests), open a harness view, show its logs, get its status, open its settings. The rows come from the installed bridge itself, so the sidebar can never offer you a command that extension does not have - and installing or uninstalling the bridge updates the section without reloading the window.
 
-**Qwen3.8 got the Low rung it always supported.** The 27B and Flash-Next presets offered xhigh and medium, so the mode list never showed Low although the template accepts it. It is there now, and it answers Copilot's Low choice.
-
-**Reasoning rungs are now named the way Copilot names them.** A mode that *is* an effort level takes Microsoft's own value - `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` - so the picker shows VS Code's wording for it (*Extra High*, *Balanced reasoning and speed*) and the Agents window stops hiding choices it cannot render. Calling the same thing `Think-High` and translating it to `high` afterwards was a lookup for nothing. Modes that are a behavior rather than a rung keep their names: `Think-Coding`, `Think-Science`, `Think-Always`, `Tooling`, `Agent`, `Chat-Fast`. Your existing entries rename themselves on the next start with every parameter intact, and a parameter every mode shared now lives in the preset's `defaultParams` once instead of being copied into each mode. Open a chat you had before and pick the mode once if its tick mark went missing.
-
-**You do not need this update for the presets.** They are served live from the repository, so your installed extension offers them the day they land when you add a model. The VSIX carries the same files for offline use.
-
-New installation: **Add or Reconfigure Server/Model** in the vLLM Dashboard, then pick your model under Copilot's **vLLM-Copilot** tab.
+**What the harness is.** Copilot keeps taking controls away, so we stopped waiting. The DeepSeek Harness (DSH) is our replacement for the Copilot agent. It runs inside VS Code, with your own vLLM model doing the thinking. Your models, modes, parameters and personalities come along, and its usage lands in the same tracker. In our testing it beats the Copilot harness today. The bridge (`System-Sciences.dsh-bridge`) needs this extension and declares it as a dependency, so the servers you configured here are the servers it runs on. It is in alpha, and testers are what it needs.
 
 Microsoft still owes you six fixes. All six have open reports at microsoft/vscode, filed by us:
 
@@ -22,8 +16,6 @@ Microsoft still owes you six fixes. All six have open reports at microsoft/vscod
 - [microsoft/vscode#333802](https://github.com/microsoft/vscode/issues/333802) - subagents reject your BYOK models
 - [microsoft/vscode#326597](https://github.com/microsoft/vscode/issues/326597) - historical thinking dropped before we see it
 - [microsoft/vscode#321761](https://github.com/microsoft/vscode/issues/321761) - reserved output room ignores your output cap
-
-**We are building our own agent harness, inside VS Code.** Copilot keeps taking controls away, so we stopped waiting. The DeepSeek Harness (DSH) is our replacement for Copilot's agent. It runs inside VS Code, with your own vLLM model doing the thinking. Your models, modes, parameters and personalities come along, and its usage lands in the same tracker. In our testing it beats Copilot's harness today. It is in alpha, and we need testers. Open an [issue in this repository](https://github.com/fuzzifikation/vLLM-Copilot/issues) and say you want to test DSH.
 
 Add your reproduction; Microsoft moves when reports pile up. Everything else that bites you is ours: [report it](https://github.com/fuzzifikation/vLLM-Copilot/issues) and we take it from there.
 

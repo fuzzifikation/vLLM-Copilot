@@ -111,7 +111,7 @@ If you want to support this work: [![Sponsor via PayPal](https://img.shields.io/
 1. **Install** this extension from the VS Code Marketplace.
 2. **Open the vLLM panel:** click the **V** icon in the activity bar (left sidebar). The **Dashboard** opens.
 3. **Add your vLLM server & model:** *(same for llama.cpp, lm-studio, ollama)* in the Dashboard, click **Add or Reconfigure Server/Model** at the bottom of the tree → enter your server URL → *(optional) enter vLLM API key and HTTP request headers from IT* → pick a model → done. The extension auto-configures the model (family, capabilities, context window) from curated presets (bundled, and refreshed live from GitHub when online) or HuggingFace.
-4. **Edit settings** *(optional)*: open the **Model Settings** view (below the Dashboard) to adjust displayName, params, model modes, and more. No `settings.json` editing required.
+4. **Edit settings** *(optional)*: open the **Model Settings** view (third in the vLLM sidebar, under Dashboard and DeepSeek Harness) to adjust displayName, params, model modes, and more. No `settings.json` editing required.
 5. **Change the personality** *(optional)*: in **Model Settings**, pick a model and choose a personality from the dropdown in its **General** section (or `Ctrl+Shift+P` → **Set Model Personality**). Pick **Default (no personality)** later to clear it.
 6. **Chat:** Open Copilot Chat ([the picture at the top](#new-ui) shows the controls). The chat input's bottom bar carries the **model chip**, such as `Think-Deep · 16K`. Click it to open the model picker and choose the **vLLM-Copilot** provider tab. Pick a model, then switch mode and output length from the chip on its row. **Use Local for the full controls.** The Copilot harness offers modes listed in `copilotHarnessMapping` under standard effort labels; Output Length and other metadata remain missing (see [Known Issues](#known-issues)).
 
@@ -224,8 +224,18 @@ Models and providers misbehave. The extension makes bounded recovery attempts fo
 
 ## Features
 
+### DeepSeek Harness
+Open it with the **V** icon in the activity bar (left sidebar); it sits under the Dashboard.
+
+Copilot keeps taking controls away from you, so we stopped waiting and built our own agent harness: the **DeepSeek Harness (DSH)** runs inside VS Code with your own vLLM model doing the thinking. Your models, modes, parameters and personalities come along, and its usage lands in the same tracker. It ships as a separate extension, and this section is where you reach it:
+
+- **Bridge not installed** - the section explains what it is and offers **Install DeepSeek Harness Bridge**, which opens the extension page inside VS Code. It is in alpha, and testers are what it needs.
+- **Bridge installed** - the section becomes the bridge's control panel: install or update the harness, start, stop, restart, open a harness view, show logs, status, settings. The rows are read from the installed bridge itself, so they always match the commands it actually has.
+
+The harness needs a model server - the same servers you configure here - and declares this extension as a dependency.
+
 ### Model Settings
-Open it with the **V** icon in the activity bar (left sidebar); it sits below the Dashboard.
+Open it with the **V** icon in the activity bar (left sidebar); it sits below the DeepSeek Harness section.
 <table>
 <tr>
 <td valign="top" width="62%">

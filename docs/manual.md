@@ -12,12 +12,13 @@ The detailed guide to vLLM-Copilot. The [README](../README.md) is the quick pitc
 4. [Configuration](#configuration)
 5. [Model modes](#model-modes)
 6. [Observability & cost](#observability--cost)
-7. [Personalities & system prompts](#personalities--system-prompts)
-8. [Reliability & tooling](#reliability--tooling)
-9. [Copilot integration](#copilot-integration)
-10. [Commands](#commands)
-11. [Troubleshooting](#troubleshooting)
-12. [Reference index](#reference-index)
+7. [DeepSeek Harness](#deepseek-harness)
+8. [Personalities & system prompts](#personalities--system-prompts)
+9. [Reliability & tooling](#reliability--tooling)
+10. [Copilot integration](#copilot-integration)
+11. [Commands](#commands)
+12. [Troubleshooting](#troubleshooting)
+13. [Reference index](#reference-index)
 
 ---
 
@@ -190,6 +191,17 @@ The implementation holds the rest of the design: `src/core/usage/` (ledger, reco
 
 ---
 
+## DeepSeek Harness
+
+The second section under the **V** icon, below the Dashboard. It points at our companion extension, the **DeepSeek Harness Bridge** (`System-Sciences.dsh-bridge`) - an agent harness that runs inside VS Code on the servers you configured here. It is a separate extension, not a setting of this one.
+
+- **Bridge not installed**: the section shows what the harness is and **Install DeepSeek Harness Bridge**, which opens the bridge's extension page inside VS Code (in the browser, if the workbench refuses) where **Install** waits. Command alternative: **Try the DeepSeek Harness (Alpha)**.
+- **Bridge installed**: the section lists the bridge's own commands - install or update the harness, start, stop, restart, open a harness view, show logs, status, settings. The list is read from the installed extension's manifest, so it can never offer a command that extension does not have, and installing or uninstalling it re-renders the section without reloading the window.
+
+The bridge declares this extension as a dependency and reaches its configuration and usage ledger through the published companion API - which is why harness usage lands in the same tracker. It is in alpha.
+
+---
+
 ## Personalities & system prompts
 
 ### Personality presets
@@ -279,6 +291,7 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 | **Remove Model** | Remove a single configured model (button in Model Settings). |
 | **Delete** | Remove the right-clicked server entry only (with confirm). Refuses while any model still references it; other registry entries on the same URL are untouched. |
 | **Move ↑ / Move ↓** | Reorder server rows from the server's right-click menu, or drag one server row onto another (it lands there; dropping below the list moves it to the bottom). The order lives in the `vllm-copilot.servers` array itself - the Dashboard and Model Settings follow it. |
+| **Try the DeepSeek Harness (Alpha)** | Open the DeepSeek Harness Bridge extension page inside VS Code, from where it installs. The **DeepSeek Harness** sidebar section shows the same action until the bridge is installed, and the bridge's own commands after that. |
 | **Open Log File** | Open today's debug log. |
 | **Clear Log Files** | Delete all debug logs except the active one. |
 | **Diagnose Connection** | Deep TLS/proxy/DNS/cert diagnostic report (utilities). |

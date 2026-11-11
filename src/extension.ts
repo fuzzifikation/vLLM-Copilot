@@ -37,6 +37,7 @@ import { maybeOfferOutputLengthMigration } from './vscode/migrations/outputLengt
 import { maybeRunServerRegistryMigration } from './vscode/migrations/serverRegistryMigration.js';
 import { maybeRunModelModeMigration } from './vscode/migrations/modelModeMigration.js';
 import { DashboardTreeProvider, DashboardDndController, registerOpenDashboardWebCommand } from './vscode/ui/dashboard.js';
+import { HarnessTreeProvider, registerTryDeepSeekHarnessCommand } from './vscode/ui/harnessView.js';
 import { registerStatusBar } from './vscode/ui/statusBar.js';
 import { ServerSettingsViewProvider } from './vscode/ui/serverSettingsView.js';
 import { registerOpenDeepDiveCommand } from './vscode/ui/deepDiveView.js';
@@ -336,6 +337,15 @@ export async function activate(context: vscode.ExtensionContext) {
       dashboardView.onDidChangeVisibility(e => {
         dashboardTree.setVisible(e.visible);
       }),
+    );
+
+    // Companion section under the Dashboard: the DeepSeek Harness bridge. Rows
+    // are the bridge's own commands once it is installed, the pitch until then.
+    const harnessTree = new HarnessTreeProvider();
+    context.subscriptions.push(
+      registerTryDeepSeekHarnessCommand(),
+      harnessTree,
+      vscode.window.createTreeView('vllm-copilot.harness', { treeDataProvider: harnessTree }),
     );
 
     // Last-request status bar chip: renders from the usage store on request

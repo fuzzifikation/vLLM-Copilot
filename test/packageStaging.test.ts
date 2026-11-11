@@ -18,7 +18,10 @@ const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
  * direct edit of it.
  */
 describe('dual-license invariants', () => {
-  it('includes the runtime update page in the actual VSCE payload list', () => {
+  // One `vsce ls` costs 4.6-4.7 s on an idle machine (measured 2026-11-11),
+  // and Vitest's default budget is 5000 ms: the tripwire went red from load
+  // alone, on a subprocess whose speed is not what the assertion is about.
+  it('includes the runtime update page in the actual VSCE payload list', { timeout: 30_000 }, () => {
     const result = spawnSync(process.execPath, [
       join(ROOT, 'node_modules', '@vscode', 'vsce', 'vsce'), 'ls', '--no-dependencies',
     ], { cwd: ROOT, encoding: 'utf8' });

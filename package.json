@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM (& OpenRouter) integration for GitHub Copilot & Agents window on self-hosted and remote servers (supports full featureset of vLLM, OpenRouter and Copilot). No subscription, no telemetry, no work content to any third party. Dashboard UI with full statistics of your servers",
-  "version": "1.38.2",
+  "version": "1.39.0",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -74,6 +74,11 @@
           "id": "vllm-copilot.dashboard",
           "name": "Dashboard",
           "icon": "$(pulse)"
+        },
+        {
+          "id": "vllm-copilot.harness",
+          "name": "DeepSeek Harness (new)",
+          "icon": "$(rocket)"
         },
         {
           "id": "vllm-copilot.serverSettings",
@@ -249,6 +254,12 @@
         "command": "vllm-copilot.configureCost",
         "title": "Set Cost…",
         "category": "vLLM-Copilot"
+      },
+      {
+        "command": "vllm-copilot.tryDeepSeekHarness",
+        "title": "Try the DeepSeek Harness (Alpha)",
+        "category": "vLLM-Copilot",
+        "icon": "$(rocket)"
       }
     ],
     "menus": {
