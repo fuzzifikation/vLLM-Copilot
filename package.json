@@ -445,6 +445,7 @@
             "markdownDescription": "Per-model configuration: server reference, params, modes. Server connection facts (URL, auth, type) live in the `vllm-copilot.servers` registry. See README Configuration Reference for details. A copy of this key in a workspace `.vscode/settings.json` **overrides** the User value for that folder - and Dashboard/command edits then target that workspace layer, so you edit what you see. Caution: any repo can ship such a file and redirect your requests (and headers) - override on folders you trust.",
             "items": {
               "type": "object",
+              "additionalProperties": false,
               "required": [
                 "id",
                 "server"
@@ -452,6 +453,7 @@
               "properties": {
                 "server": {
                   "type": "string",
+                  "minLength": 1,
                   "markdownDescription": "**Required.** The `id` of this model's server entry in the `vllm-copilot.servers` registry. There is no global server and models never carry URLs, auth, or type themselves."
                 },
                 "provider": {
@@ -478,6 +480,7 @@
                 },
                 "id": {
                   "type": "string",
+                  "minLength": 1,
                   "markdownDescription": "**Unique preset ID** used by VS Code to identify this model preset. Must be unique across all entries. If `vllmModelId` is not set, this value is also used as the vLLM server model identifier."
                 },
                 "vllmModelId": {
@@ -527,6 +530,25 @@
                 },
                 "defaultParams": {
                   "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "model": {
+                      "not": {},
+                      "markdownDescription": "**FORBIDDEN** - the runtime sets the model id from this entry; a value here is ignored."
+                    },
+                    "messages": {
+                      "not": {},
+                      "markdownDescription": "**FORBIDDEN** - the extension builds the messages; a value here is ignored."
+                    },
+                    "stream": {
+                      "not": {},
+                      "markdownDescription": "**FORBIDDEN** - the runtime always sends `stream: true`; a value here is ignored."
+                    },
+                    "stream_options": {
+                      "not": {},
+                      "markdownDescription": "**FORBIDDEN** - the runtime always sends `stream_options.include_usage`; a value here is ignored."
+                    }
+                  },
                   "markdownDescription": "**Model-scope request params** (raw vLLM request-body keys, snake_case). Merged into the request body and overridden by the selected `modelModes` entry. Params not set here (or in a mode) are **omitted**, so the server's own defaults apply. Nothing is forced.\n\nExample: `{ \"temperature\": 1, \"top_p\": 0.95, \"presence_penalty\": 0, \"repetition_detection\": { \"max_pattern_size\": 4, \"min_count\": 3 } }`"
                 },
                 "modelModes": {
@@ -534,6 +556,25 @@
                   "markdownDescription": "Custom model modes for the model picker dropdown. Each key is the mode identifier the Copilot harness round-trips: for a plain reasoning rung use the harness effort token (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`) so the picker shows VS Code's own wording for that effort; use a descriptive name (`Think-Coding`) only for a mode that is a behavior rather than a rung. The value is an object of parameters merged into the vLLM request body. Sampling parameters (temperature, top_p, etc.) can be included per mode and are sent in that mode's requests; a parameter a mode omits falls back to the model entry's `defaultParams`, then to the server default — so declare a baseline value once in `defaultParams` when every mode declares it and at most one mode differs — that outlier overrides it anyway. The merge is per top-level key: a mode that overrides `chat_template_kwargs` replaces the whole object, so it must restate every kwarg it wants sent.\n\n**Example (thinking on/off, shared sampling in `defaultParams`):**\n```json\n{\n  \"high\": {\n    \"chat_template_kwargs\": { \"enable_thinking\": true, \"preserve_thinking\": true }\n  },\n  \"none\": {\n    \"chat_template_kwargs\": { \"enable_thinking\": false },\n    \"temperature\": 0.7\n  }\n}\n```\n\n💡 Modes for new models come from bundled presets (`model-configs/`); OpenRouter models get them from the server's reasoning metadata. They are not auto-detected from HuggingFace. For existing entries, copy from `model-configs/` and hand-edit.",
                   "additionalProperties": {
                     "type": "object",
+                    "additionalProperties": true,
+                    "properties": {
+                      "model": {
+                        "not": {},
+                        "markdownDescription": "**FORBIDDEN** - the runtime sets the model id from this entry; a value here is ignored."
+                      },
+                      "messages": {
+                        "not": {},
+                        "markdownDescription": "**FORBIDDEN** - the extension builds the messages; a value here is ignored."
+                      },
+                      "stream": {
+                        "not": {},
+                        "markdownDescription": "**FORBIDDEN** - the runtime always sends `stream: true`; a value here is ignored."
+                      },
+                      "stream_options": {
+                        "not": {},
+                        "markdownDescription": "**FORBIDDEN** - the runtime always sends `stream_options.include_usage`; a value here is ignored."
+                      }
+                    },
                     "description": "Parameters to merge into the vLLM request body when this mode is selected."
                   }
                 },
@@ -563,6 +604,7 @@
                 },
                 "capabilities": {
                   "type": "object",
+                  "additionalProperties": false,
                   "markdownDescription": "⚡ **Experimental**: model capabilities not discoverable from vLLM. Set these manually.",
                   "properties": {
                     "toolCalling": {

@@ -64,8 +64,9 @@ describe('shipped vllm-copilot-models.schema.json (artifact)', () => {
 // The model-entry schema lives in TWO artifacts: schemas/vllm-copilot-models.schema.json
 // (standalone, for editors via $schema) and package.json's inline `vllm-copilot.models`
 // contribution (what VS Code itself validates against). Descriptions legitimately differ
-// (markdown vs plain), but the STRUCTURE must not: this test fails when one side gains a
-// field the other lacks, gains a differently-typed field, or changes `required`.
+// (markdown vs plain), but the CONSTRAINTS must not: this test fails when one side gains a
+// field the other lacks, gains a differently-typed or differently-constrained field, or
+// changes `required`.
 
 describe('inline and standalone model schemas stay structurally in sync', () => {
   const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -83,13 +84,60 @@ describe('inline and standalone model schemas stay structurally in sync', () => 
     expect(a).toEqual(b);
   });
 
-  it('requires the same fields on both sides', () => {
+  it('requires the same fields and rejects the same unknown entry fields', () => {
     expect([...inline.required].sort()).toEqual([...standalone.required].sort());
+    expect(inline.additionalProperties).toBe(false);
+    expect(standalone.additionalProperties).toBe(false);
   });
 
   it('declares the same top-level type per property', () => {
     for (const key of Object.keys(inline.properties) as string[]) {
       expect([key, inline.properties[key].type]).toEqual([key, standalone.properties[key]?.type]);
+    }
+  });
+
+  // Constraint keywords whose drift changes what VS Code accepts in settings.json.
+  // `defaultParams` and `modelModes` are pinned by the request-params test below
+  // instead: the standalone side reaches the shared vocabulary through `$ref`, and a
+  // contribution schema is one self-contained document that cannot carry that
+  // definition, so only their `type` is comparable here.
+  const CONSTRAINT_KEYS = [
+    'type', 'enum', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum',
+    'minLength', 'minItems', 'maxItems', 'additionalProperties', 'anyOf',
+  ] as const;
+  const canon = (value: any): any =>
+    Array.isArray(value) ? value.map(canon)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(Object.keys(value).sort().map(k => [k, canon(value[k])]))
+        : value;
+  const constraints = (node: any): string => {
+    const picked: Record<string, unknown> = {};
+    for (const key of CONSTRAINT_KEYS) if (node?.[key] !== undefined) picked[key] = node[key];
+    return JSON.stringify(canon(picked));
+  };
+
+  it('declares the same constraint keywords per property', () => {
+    for (const key of Object.keys(standalone.properties) as string[]) {
+      if (key === 'defaultParams' || key === 'modelModes') continue;
+      expect([key, constraints(inline.properties[key])]).toEqual([key, constraints(standalone.properties[key])]);
+    }
+  });
+
+  // The runtime owns these four body keys (chatTransport.ts PROTECTED_BODY_KEYS): a value
+  // in params is dropped, so both schemas call them forbidden. Everything else in a params
+  // object is passed through to the request body verbatim - newer or backend-specific keys
+  // must keep working without a schema edit.
+  const RUNTIME_OWNED_KEYS = ['model', 'messages', 'stream', 'stream_options'];
+
+  it('both param scopes pass unknown keys through and forbid the runtime-owned ones', () => {
+    const scopes = [
+      inline.properties.defaultParams,
+      inline.properties.modelModes.additionalProperties,
+      standalone.definitions.requestParams,
+    ];
+    for (const scope of scopes) {
+      expect(scope.additionalProperties).toBe(true);
+      for (const key of RUNTIME_OWNED_KEYS) expect([key, scope.properties[key]?.not]).toEqual([key, {}]);
     }
   });
 });
