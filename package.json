@@ -58,6 +58,11 @@
   "extensionKind": [
     "workspace"
   ],
+  "capabilities": {
+    "agentsWindow": {
+      "supported": true
+    }
+  },
   "contributes": {
     "viewsContainers": {
       "activitybar": [

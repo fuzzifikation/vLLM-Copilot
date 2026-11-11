@@ -54,9 +54,19 @@ export async function ensureByokUtilityDefault(): Promise<void> {
  * Host process that does NOT see LanguageModelChatProvider models unless
  * BYOK/extension-provider models are explicitly allowed:
  * - `chat.agentHost.byokModels.enabled` — exposes provider models to agent-host
- *   sessions (docs: "AI language models in VS Code", BYOK note).
+ *   sessions (docs: "AI language models in VS Code", BYOK note). VS Code 1.146
+ *   defaulted it to `true`, but the setting is tagged `experimental` with
+ *   `experiment: { mode: 'startup' }`, so the default can move from a remote
+ *   experiment without a release. The explicit write pins it. Kept on purpose.
  * - `extensions.supportAgentsWindow` — opt-in map deciding which extensions
- *   activate inside the Agents window (docs: "Use the Agents window").
+ *   activate inside the Agents window (docs: "Use the Agents window"). Since
+ *   1.137 an author can declare support instead, via `capabilities.agentsWindow.supported`
+ *   in package.json (we do), and from 1.137 that declaration is what loads us
+ *   because `extensionManifestPropertiesService.ts` reads it before its "no
+ *   executable code without declared support" rule. This write stays for two
+ *   reasons: it is the only door on 1.135 and 1.136, and the user value outranks
+ *   the declaration (and any product allowlist), so it survives an experiment
+ *   flipping our declaration off.
  * Both are gated on registration at runtime (absent on older builds). Current
  * VS Code versions synchronize BYOK model availability to a running Agent Host.
  */

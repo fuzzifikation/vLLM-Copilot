@@ -227,19 +227,12 @@ Replacements are exact substring matches, applied sequentially to every system m
 
 #### Two harnesses, two prompts
 
-Copilot runs two harnesses that concern this extension, and each ships its own hidden
-system prompt. Each rule declares which one it edits:
+Two harnesses concern this extension and each ships its own hidden system prompt, so each rule declares which one it edits:
 
-- **Local harness** - VS Code's own prompt assembly in the main window. This is the
-  surface the first replacements were built for; its rules carry no `scope` key. The
-  prompt's source is public, so `npm run check:prompt-drift` matches those rules
-  against live `microsoft/vscode` text.
-- **Copilot harness** - the Agents window, driven by Agent Host. Its prompt is the one
-  the CLI/Agents-window harness uses, which this code called "CLI" before Microsoft
-  labelled the surface "Copilot". Those rules carry `"scope": "copilot"` and are
-  checked against `scripts/copilot-prompt-reference.txt`, a frozen capture, because the
-  prompt's source is not public. `npm run check:copilot-rules` against a fresh capture
-  is the only instrument that can see Microsoft change that prompt.
+- **Local harness** - VS Code's own prompt assembly, reachable in the main window while the harness lasts. Its rules carry no `scope` key, and its prompt's source is public, so `npm run check:prompt-drift` matches those rules against live `microsoft/vscode` text. VS Code 1.146 deprecated this harness and dates its removal to February 2027, and new chats have defaulted to the Copilot harness since 1.143, so these rules now cover only sessions you switched to **Local** by hand, and they lose their surface in February 2027.
+- **Copilot harness** - the Agent Host behind both the Agents window and the editor's Chat view. Its prompt is the one the CLI/Agents-window harness uses, which this code called "CLI" before Microsoft labelled the surface "Copilot". Those rules carry `"scope": "copilot"` and are checked against `scripts/copilot-prompt-reference.txt`, a frozen capture, because the prompt's source is not public. `npm run check:copilot-rules` against a fresh capture is the only instrument that can see Microsoft change that prompt.
+
+One prompt therefore survives February 2027, and it is the `"scope": "copilot"` one. Harness routing and the removal date are in the [Agents window guide](agents-window.md#which-harness-runs-your-chat).
 
 Neither harness keeps rules for its own superseded wording: when Microsoft renames a
 prompt, the rules anchored on the old text are re-anchored and the reference
@@ -267,7 +260,7 @@ The extension merges `.github/copilot-instructions.md`, `AGENTS.md`, and `CLAUDE
 
 ## Copilot integration
 
-vLLM-Copilot implements the VS Code **Language Model Chat Provider** interface. Copilot routes chat requests to the provider, which sends them to the model's server via the OpenAI-compatible wire protocol (chat completions with SSE streaming), then streams the response back into Copilot. Tool calls, vision, subagent capabilities, and thinking modes are surfaced through the provider's model metadata.
+vLLM-Copilot implements the VS Code **Language Model Chat Provider** interface. Copilot routes chat requests to the provider, which sends them to the model's server via the OpenAI-compatible wire protocol (chat completions with SSE streaming), then streams the response back into Copilot. Tool calls, vision, subagent capabilities, and thinking modes are surfaced through the provider's model metadata. On current VS Code the agent loop usually runs in the Agent Host rather than the extension host, and that host reaches us through its BYOK bridge; [Which harness runs your chat](agents-window.md#which-harness-runs-your-chat) lists what the bridge changes.
 
 - The **Configure Utility Model** command switches which model backs MCP servers (`mainAgent` / `copilot` / `none`).
 - Model modes and personalities are switched from the Copilot model picker and the extension's own sidebar UI.
