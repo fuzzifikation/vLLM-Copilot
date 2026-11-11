@@ -6,7 +6,9 @@ import { parsePresetFile, parsePresetRawJson, PRESET_CONFIG_KEYS } from '../src/
 import { describeModel } from '../src/core/catalog/describe.js';
 import { buildModelInfo } from '../src/vscode/copilot/modelInfo.js';
 import { buildRequest } from '../src/vscode/copilot/requestBuilder.js';
-import { COPILOT_HARNESS_EFFORTS, isCopilotHarnessEffort } from '../src/vscode/state/config.js';
+import {
+  COPILOT_HARNESS_EFFORTS, isCopilotHarnessEffort, readCopilotHarnessMapping,
+} from '../src/vscode/state/config.js';
 
 /**
  * Guards the shipped model-configs/ presets: every JSON must parse through the
@@ -130,6 +132,28 @@ describe('shipped model-configs presets', () => {
           const sent = typeof merged.reasoning_effort === 'string'
             ? merged.reasoning_effort
             : typeof kwargEffort === 'string' ? kwargEffort : undefined;
+          // The reasoning knobs the effort-string check cannot see. Without
+          // these, a mode named "none" that sends {"enable_thinking": true}
+          // carries no effort string and ships green while answering None
+          // with full chain-of-thought.
+          if (isCopilotHarnessEffort(name)) {
+            const kw = kwargs && typeof kwargs === 'object' && !Array.isArray(kwargs)
+              ? kwargs as Record<string, unknown> : {};
+            const reasoning = typeof merged.reasoning === 'object' && merged.reasoning !== null
+              && !Array.isArray(merged.reasoning)
+              ? merged.reasoning as Record<string, unknown> : undefined;
+            const thinkingOn = merged.enable_thinking === true || kw.enable_thinking === true
+              || reasoning?.enabled === true;
+            if (name === 'none') {
+              expect(thinkingOn, `${file}: mode "none" turns thinking on`).toBe(false);
+            } else if (merged.enable_thinking === false || kw.enable_thinking === false) {
+              expect(name, `${file}: mode disables thinking but is named "${name}"`).toBe('none');
+            }
+            if (typeof reasoning?.effort === 'string') {
+              expect(name, `${file}: mode "${name}" sends reasoning.effort "${reasoning.effort}"`)
+                .toBe(reasoning.effort === 'no_think' ? 'none' : reasoning.effort);
+            }
+          }
           if (sent === undefined) continue;
           expect(name, `${file}: mode "${name}" sends reasoning_effort "${sent}"`)
             .toBe(sent === 'no_think' ? 'none' : sent);
@@ -156,6 +180,13 @@ describe('shipped model-configs presets', () => {
           expect(Object.values(mapping), `${file}: no effort selects the default mode`)
             .toContain(defaultMode);
         }
+        // The runtime validator is the authority on what survives: a duplicate
+        // target or an effort key colliding with a same-named mode clears the
+        // WHOLE mapping with one Output warning, stripping every descriptive
+        // mode's effort label — and presets are served live from main, so a
+        // bad one degrades every user the same day. Assert it accepts.
+        const { warning } = readCopilotHarnessMapping({ ...preset.config, id: 'm', server: 'srv' });
+        expect(warning, `${file}: runtime rejects the harness mapping`).toBeUndefined();
       });
 
       it('sends no baseline parameter that a mode already repeats', () => {
@@ -222,11 +253,12 @@ describe('shipped model-configs presets', () => {
         if (meta.source !== undefined) {
           expect(meta.source, `${file}: meta.source must be https`).toMatch(/^https:\/\//);
         }
-        if (meta.verified !== undefined) {
-          expect(meta.verified, `${file}: meta.verified must be YYYY-MM-DD`).toMatch(
-            /^\d{4}-\d{2}-\d{2}$/,
-          );
-        }
+        // Required, not conditional: README states provenance contains source,
+        // verified and notes, and a conditional check lets the one preset
+        // without a date keep sailing through.
+        expect(meta.verified, `${file}: meta.verified is required`).toMatch(
+          /^\d{4}-\d{2}-\d{2}$/,
+        );
       });
     });
   }

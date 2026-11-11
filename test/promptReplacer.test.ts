@@ -56,23 +56,23 @@ describe('persona/common rule split (bundled files)', () => {
     'prompt-replacements-supportive-mentor.json',
   ];
 
-  it('common file ships 6 Local-harness removals + 5 Copilot-harness rules with unique names', async () => {
+  it('common file ships 5 Local-harness removals + 5 Copilot-harness rules with unique names', async () => {
     // Scope-aware contract reads the RAW JSON: the runtime loader strips
     // unknown fields (scope/wording are dev-tooling metadata, never runtime).
     const raw = JSON.parse(await fs.readFile(commonPath, 'utf-8')) as {
       rules: { ruleName?: string; find: string; replace: string; scope?: string }[];
     };
-    expect(raw.rules).toHaveLength(11);
+    expect(raw.rules).toHaveLength(10);
     const local = raw.rules.filter(r => !r.scope);
     const copilot = raw.rules.filter(r => r.scope === 'copilot');
-    expect(local).toHaveLength(6);
+    expect(local).toHaveLength(5);
     expect(local.every(r => r.replace === '' && r.find.length > 0 && !!r.ruleName)).toBe(true);
     // 3 rules on boilerplate every harness wording shares + 2 on current-wording text.
     expect(copilot).toHaveLength(5);
     expect(copilot.every(r => r.find.length > 0 && !!r.ruleName)).toBe(true);
-    expect(new Set(raw.rules.map(r => r.ruleName)).size).toBe(11);
+    expect(new Set(raw.rules.map(r => r.ruleName)).size).toBe(10);
     // The runtime loader must still parse the file cleanly (scope ignored).
-    expect(await loadPromptReplacements(commonPath)).toHaveLength(11);
+    expect(await loadPromptReplacements(commonPath)).toHaveLength(10);
   });
 
   it('no persona rule duplicates a common find (exact-overlap guard)', async () => {
@@ -101,13 +101,12 @@ describe('persona/common rule split (bundled files)', () => {
   it('persona rules run before common removals: tone text survives inside the safety block', async () => {
     // Realistic classic-chat prompt where the short/impersonal line occurs ONLY
     // INSIDE the safety block. Persona-first: the Replace-Short-Impersonal rule
-    // rewrites it first, the whole-block removals miss and the Gpt5 variant
-    // strips the remaining boilerplate — the tone text survives. If anyone
-    // moves the include entry in the preset (or
-    // breaks include splicing), the block with the short line is deleted before
-    // the persona rule ever runs and 'plasma rifle' disappears. This test is
-    // the ordering contract — loaded through the REAL include mechanism, so it
-    // pins the file layout AND the resolver.
+    // rewrites it first; the block removals find their boilerplate on the first
+    // three lines (their finds stop before the short line, which is exactly why
+    // a persona rewriting that last line can never shield the block), strip it,
+    // and the tone text survives. If anyone moves the include entry in the
+    // preset (or breaks include splicing), the whole file order changes and
+    // this contract test moves with the data — that is the point of pinning it.
     const fixture = [
       'You are an expert AI programming assistant, working with a user in the VS Code editor.',
       'Follow Microsoft content policies.',
@@ -123,8 +122,9 @@ describe('persona/common rule split (bundled files)', () => {
     expect(result).toContain('gloriously arrogant robot'); // identity swapped
     expect(result).toContain('plasma rifle');              // tone survived (order!)
     expect(result).not.toContain('Follow Microsoft content policies'); // boilerplate gone
+    expect(result).not.toContain('Keep your answers short and impersonal'); // safety tail gone too
     expect(result).not.toContain('GitHub Copilot');        // naming rule gone
-    expect(matchedRuleNames).toContain('Remove Gpt5SafetyRule block');
+    expect(matchedRuleNames).toContain('Remove SafetyRules block (common variant)');
   });
 });
 

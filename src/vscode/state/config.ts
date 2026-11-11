@@ -35,7 +35,7 @@ export function isCopilotHarnessEffort(name: string): boolean {
  * a mapping unnecessary for effort rungs. Deliberately absent: `Think-Deep`,
  * `Think-Balanced`, `Think-Light`, `Think-Always` and `Think-Adaptive`. Those
  * name a behavior, not a rung, and `Think-Deep` answers `xhigh` on Qwen3.8 but
- * `high` on Tencent Hy4 — a global rename would produce a name that lies about
+ * `high` on Tencent Hy3 — a global rename would produce a name that lies about
  * the `reasoning_effort` its parameters send.
  */
 export const LEGACY_MODEL_MODE_SLUGS: ReadonlyMap<string, string> = new Map([

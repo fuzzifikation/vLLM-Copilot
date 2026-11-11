@@ -21,9 +21,10 @@
 //   - "For general chat domain, we suggest: temperature=0.6, top_p=0.95"
 //   - "For reasoning / agent scenario, we recommend: temperature=1.0, top_p=0.95"
 // The repo ships no generation_config.json, so the card is the sole source.
-// Because the model cannot think less, the harness publishes only an alias for
-// the default mode. The chat recipe is a SAMPLING switch rather than a reasoning
-// rung, so Chat-Fast stays a Local / Model Settings mode.
+// Because the model cannot think less, there is no "none" alias. The harness
+// publishes one alias per card recipe: "high" for the default Agent mode, "low"
+// for the colder Chat-Fast sampling. Both are SAMPLING choices, not reasoning
+// rungs; the mapping only makes both recipes reachable from the Agents window.
 //
 // Serving: the card uses `--reasoning-parser step3p5`.
 //
@@ -58,10 +59,9 @@
         "temperature": 0.6
       }
     },
-    // No "none" mapping: this model cannot stop thinking. "high" is an alias for
-    // the default mode; Chat-Fast is a sampling choice, not a reasoning rung.
-    // The card's two sampling recipes; "none" is unusable here because this
-    // template thinks on every request and cannot be told not to.
+    // No "none" mapping: this template thinks on every request and cannot be
+    // told not to. "high" aliases the default Agent mode and "low" the card's
+    // colder Chat-Fast recipe — sampling choices, not reasoning rungs.
     "copilotHarnessMapping": {
       "high": "Agent",
       "low": "Chat-Fast"

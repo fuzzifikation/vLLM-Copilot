@@ -47,6 +47,7 @@
   "match": ["DeepSeek-V4-Flash"],
   "meta": {
     "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731",
+    "verified": "2026-11-10",
     "notes": "1M-context MoE. Thinking depth via top-level reasoning_effort (max/high/none, auto-injected by vLLM); card sampling temp=1.0, top_p=0.95."
   },
   "config": {
