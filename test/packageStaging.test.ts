@@ -68,6 +68,15 @@ describe('dual-license invariants', () => {
     expect(ignore).toMatch(/^\.vscode-test\.mjs$/m);
   });
 
+  it('keeps the core-proof fixtures out of the shipped extension', () => {
+    // parity/ is 18.8 KB of scenario and fixture JSON that only scripts/ reads
+    // (core-proof, parity-export). Nothing on the runtime path opens it, and the
+    // packager copies the whole tree, so a build-time directory ships silently
+    // unless a check names it.
+    const ignore = read('.vscodeignore');
+    expect(ignore).toMatch(/^parity\/$/m);
+  });
+
   it('packages through the staging wrapper from the build', () => {
     const scripts = JSON.parse(read('package.json')).scripts;
     expect(scripts['package:vsix']).toContain('package-vsix.mjs');

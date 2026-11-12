@@ -2,28 +2,23 @@
 
 ## v1.39.0
 
-Our own agent harness exists, and the people who already run the servers for it never hear about it unless they open the update page. This release puts it in the sidebar.
+Model-mode coverage for this year's coding models, so thinking depth comes from the picker instead of hand-edited JSON, with mode names each Copilot harness can actually display - and our own agent harness moved into the sidebar, where the people who already run the servers for it see it without opening an update page.
 
 ### Added
 
 - **The DeepSeek Harness, one click away.** A new **DeepSeek Harness (New, Alpha)** section sits under the Dashboard. While our harness bridge is not installed it tells you what the harness is and opens its extension page, where **Install** waits. Once installed it becomes the bridge's control panel, led by **Open Harness** - that one row installs a missing harness, starts a stopped one and shows you the view - with the rest in the order you reach for them, and it opens itself the moment the bridge finishes installing. **Report an Issue** is in the list too: the harness is in alpha, and what testers report is what it runs on.
 
-### Changed
-
-- **A broken model entry says so.** A misspelled or leftover field in a `vllm-copilot.models` entry now shows an error in `settings.json` instead of being quietly ignored, and `id` and `server` must be non-empty. Unknown request parameters still reach the server untouched; the four keys the extension owns (`model`, `messages`, `stream`, `stream_options`) are marked forbidden where you might type them.
-
-## v1.38.2
-Model-mode coverage for this year's coding models, so thinking depth comes from the picker instead of hand-edited JSON - and mode names each Copilot harness can actually display.
-
-### Added
-
 - **Sixteen new presets, all 2026 releases.** NVIDIA Nemotron-3 Nano-4B / Super / Ultra and Nemotron-3.5 Lightning / Bolt-74B, Google Gemma 4 (31B, 26B-A4B, E4B, E2B), Tencent Hy4, inclusionAI Ling-3.1-flash / Ling-3.0-flash / Ling-3.0-tiny, Qwen3.8-2.4T-A95B, Mistral Large 4 / Small 4, Poolside Laguna XS.2 / M.1 / XS-2.1, Ornith 1.0 / 1.5 and StepFun Step-3.5-Flash. Each exposes the thinking and effort rungs that model's own chat template accepts, an output-length ladder sized to its documented window, and the sampling its card states - and no sampling where the card states only a range. Presets are served live, so existing installations get them without this update.
+
+- **Our models reach the Agents window.** The manifest declares Agents-window support, so on VS Code 1.137 and newer the extension runs in that window with nothing for you to enable, and once a model is configured the Agent Host's bring-your-own-model switch is switched on for you - only where you have never set it yourself, so a `false` you wrote stays yours. On 1.135-1.136, which cannot read that declaration, the setting is written in your place instead.
 
 ### Changed
 
 - **Modes that are an effort rung are now named with Copilot's own effort value** (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`), so the picker shows VS Code's wording for the choice - *Extra High*, not a string the Agents window drops - and nothing stands between that label and the request. A name like `Think-High` plus a translation to `high` bought an extra lookup and a label only one host could show. Modes that are a *behavior* rather than a rung keep their names (`Think-Coding`, `Think-Always`, `Tooling`, `Agent`, `Chat-Fast`) and their alias. Bundled presets and newly discovered OpenRouter models use the new names; existing model entries migrate on the next start with their parameters intact, and an older chat needs one mode reselection to refresh its readout.
 - **Sampling every mode shares is declared once.** Presets that repeated the same `temperature` / `top_p` / penalties in each mode now state them in `defaultParams`, and only the mode that differs restates its own value. The request each mode sends is unchanged.
 - **Behavior modes that are really a rung now answer to that effort level.** `MiniMax-M3` answers `medium` with `Think-Adaptive`, `Step-3.5-Flash` answers `low` with its colder `Chat-Fast` recipe, Qwen3.6 27B and 35B-A3B answer `medium` with `Think-Coding`, and the Nemotron-3 Nano-4B `Tooling` and Ornith `Think-Code` modes gained their first alias - before, the Agents window offered those models only its own effort names and never reached the mode. `Poolside Laguna-S-2.1` lost its `Think-Code` mode, which sent byte-identical parameters to `Think-General`: one request, not two. Modes that are a *domain* rather than a depth (`Agents-A1`: General / Coding / Science, all thinking-on) keep only the recommended default aliased, because an effort label there would promise a depth the request does not have.
+
+- **A broken model entry says so.** A misspelled or leftover field in a `vllm-copilot.models` entry now shows an error in `settings.json` instead of being quietly ignored, and `id` and `server` must be non-empty. Unknown request parameters still reach the server untouched; the four keys the extension owns (`model`, `messages`, `stream`, `stream_options`) are marked forbidden where you might type them.
 
 ### Fixed
 

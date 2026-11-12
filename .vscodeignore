@@ -39,6 +39,9 @@ docs/
 # Test files
 test/
 vitest.config.ts
+# Core-proof fixtures (scripts/core-proof.mjs, scripts/parity-export.mjs). Read
+# at build time only - no runtime code opens this folder.
+parity/
 # Extension-host E2E harness (Spike A): compiled scenarios, runner config and
 # the downloaded throwaway VS Code live in the repo but must never ship.
 out-e2e/
