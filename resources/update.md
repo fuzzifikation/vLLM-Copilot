@@ -9,6 +9,8 @@ This means for you: After you installed the DSH-Bridge extension you can install
 The DSH has full access to VS Code and you should be able to work any way you want. No login. No config. No nothing.
 vLLM-Copilot will take care of the models and selectability in the Harness.
 
+<img src="dsh-working.png" alt="DeepSeek Harness running a live session on a vLLM-Copilot model" width="585">
+
 However, not all features are working currently (notably the system prompt extraction and personality replacements) for DSH. 
 
 
