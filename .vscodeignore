@@ -65,6 +65,10 @@ scripts/
 # OR-logo.svg is the build-time source for the U+E002 glyph in vllm-icon.woff2
 # (read by scripts/build-icon-font.py). The runtime only loads the woff2.
 resources/OR-logo.svg
+# The whale SVGs are the build-time sources for dsh-icons.woff2 (read by
+# scripts/harness/build-pill-font.py). The runtime only loads the woff2.
+resources/dsh-icon_whale.svg
+resources/dsh-pill_whale.svg
 
 # The root LICENSE is the BUSL-1.1 source-repository license. The shipped
 # extension is MIT (package.json "license"); the package wrapper copies the
