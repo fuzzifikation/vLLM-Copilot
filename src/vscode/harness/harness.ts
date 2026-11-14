@@ -33,7 +33,7 @@ const SHUTDOWN_DRAIN_BUDGET_MS = 5000
  * (globalState outlives both). The offer is the only automatic word a fresh
  * install gets; every later start is the user's own.
  */
-const ONBOARDED_KEY = 'dshBridge.setupOffered'
+const ONBOARDED_KEY = 'vllm-copilot.harness.setupOffered'
 /**
  * Bridge settings the harness reads at boot, so changing one means a restart.
  * Everything else (`drainTimeoutSeconds` is read per stop, `ingestIntervalSeconds`
@@ -45,7 +45,7 @@ let output: vscode.LogOutputChannel | undefined
 
 function log(): vscode.LogOutputChannel {
   if (!output) {
-    output = vscode.window.createOutputChannel('DeepSeek Harness Bridge', { log: true })
+    output = vscode.window.createOutputChannel('DeepSeek Harness', { log: true })
     applyLogLevel()
   }
   return output
@@ -63,11 +63,11 @@ function log(): vscode.LogOutputChannel {
  */
 function applyLogLevel(): void {
   if (!output) return
-  const setting = vscode.workspace.getConfiguration('dsh-bridge').get<string>('logLevel', 'info')
+  const setting = vscode.workspace.getConfiguration('vllm-copilot.harness').get<string>('logLevel', 'info')
   if ((setting === 'debug' || setting === 'trace') && output.logLevel > vscode.LogLevel.Debug) {
     output.show(false)
     output.info(
-      `dsh-bridge.logLevel is "${setting}", but this channel currently hides Debug lines. ` +
+      `vllm-copilot.harness.logLevel is "${setting}", but this channel currently hides Debug lines. ` +
         'Use the gear control ("Set Log Level…") at the top of this Output channel and pick Debug ' +
         '(the choice persists); harness stdout/stderr mirrors and MCP tool-call lines appear immediately.',
     )
@@ -84,7 +84,7 @@ let knownHarnessUrl: string | undefined
 /** The embed proxy is lazy: only a panel or app-window open needs its door. */
 function ensureEmbed(): Promise<string> {
   embed ??= new EmbedProxy({
-    port: vscode.workspace.getConfiguration('dsh-bridge').get<number>('embedPort', 43171),
+    port: vscode.workspace.getConfiguration('vllm-copilot.harness').get<number>('embedPort', 43171),
     log: log(),
     onTitle: (view, title) => {
       for (const panel of harnessPanels) {
@@ -182,7 +182,7 @@ const KEYBOARD_BRIDGE: Record<string, string> = {
 const lastChordExecuted = new Map<string, number>()
 
 async function runBridgeKey(chord: string): Promise<void> {
-  if (!vscode.workspace.getConfiguration('dsh-bridge').get<boolean>('keyboardBridge', true)) return
+  if (!vscode.workspace.getConfiguration('vllm-copilot.harness').get<boolean>('keyboardBridge', true)) return
   const cmd = KEYBOARD_BRIDGE[chord]
   if (!cmd) return
   const now = Date.now()
@@ -254,7 +254,7 @@ function showHarnessPanel(root: string, fresh: boolean): void {
   // same bus: its own tab, its own session selection, splittable and movable
   // into a window of its own like any editor.
   const panel = vscode.window.createWebviewPanel(
-    'dshBridge.harness',
+    'vllm-copilot.harnessPanel',
     'DSH Harness',
     vscode.ViewColumn.Active,
     { enableScripts: true, retainContextWhenHidden: true },
@@ -276,7 +276,7 @@ function adoptHarnessPanel(panel: vscode.WebviewPanel, root?: string): void {
   panel.webview.html =
     root
       ? harnessPanelHtml(root, view)
-      : '<!doctype html><html><head><meta charset="utf-8"></head><body style="font-family:var(--vscode-font-family, sans-serif);color:var(--vscode-descriptionForeground, #888);padding:2.5rem">Waiting for the harness. Open it via the DSH status item or run \u201cDSH: Start Harness\u201d \u2014 this view reconnects by itself.</body></html>'
+      : '<!doctype html><html><head><meta charset="utf-8"></head><body style="font-family:var(--vscode-font-family, sans-serif);color:var(--vscode-descriptionForeground, #888);padding:2.5rem">Waiting for the harness. Open it via the DSH status item or run \u201cDeepSeek Harness: Start Harness\u201d \u2014 this view reconnects by itself.</body></html>'
   panel.onDidDispose(() => {
     harnessPanels.delete(panel)
     if (harnessPanels.size === 0) panelProxyUrl = undefined
@@ -339,13 +339,13 @@ function openAppWindow(url: string): boolean {
 }
 
 /**
- * Show the harness UI per `dsh-bridge.openIn`.
+ * Show the harness UI per `vllm-copilot.harness.openIn`.
  *
  * `panel` (the default) docks a chromeless webview fed by the embed proxy.
  * The naive iframe this replaces died of `SameSite=Strict` cookies in
  * 0.0.10/0.0.11 — Chromium will not carry the harness session across the
  * webview origin, and that remains true; the proxy simply moves the
- * session server-side (see `bridge/embed-proxy.ts`). Never aim the panel
+ * session server-side (see `harness/embed-proxy.ts`). Never aim the panel
  * at the raw harness URL. `appWindow` opens the same stable proxy root in
  * a bar-less Chromium `--app` window. `embedded` keeps the built-in browser
  * view, toolbar and all (VS Code exposes no way to hide it; 1.140 removed
@@ -355,7 +355,7 @@ function openAppWindow(url: string): boolean {
  * as a function argument; the panel and app window see the proxy root.
  */
 async function openHarnessUrl(url: string, fresh = false): Promise<void> {
-  const mode = vscode.workspace.getConfiguration('dsh-bridge').get<string>('openIn', 'panel')
+  const mode = vscode.workspace.getConfiguration('vllm-copilot.harness').get<string>('openIn', 'panel')
   if (mode === 'panel' || mode === 'appWindow') {
     const root = await embedRootFor(url)
     if (root) {
@@ -411,7 +411,7 @@ export async function activateHarness(context: vscode.ExtensionContext): Promise
   ensureBridgeDirs(paths)
 
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 90)
-  status.command = 'dshBridge.open'
+  status.command = 'vllm-copilot.harness.open'
   context.subscriptions.push(status)
 
   // The editor control channel: the harness's MCP client dials this loopback
@@ -522,7 +522,7 @@ const bridge = new Bridge({
       sweepNow()
       void vscode.window
         .showWarningMessage(
-          `The DeepSeek Harness exited on its own (code ${info.code}, signal ${info.signal}). The bridge log has the last output.`,
+          `The DeepSeek Harness exited on its own (code ${info.code}, signal ${info.signal}). The vLLM-Copilot log has the last output.`,
           'Show Log',
           'Restart Harness',
         )
@@ -567,14 +567,14 @@ const bridge = new Bridge({
     syncHarnessPanel(bridge.supervisor.url)
     // The palette reflects reality. Start hides itself while the harness runs,
     // and nothing offers "Open" before there is a URL to open.
-    void vscode.commands.executeCommand('setContext', 'dshBridge.running', bridge.supervisor.running)
+    void vscode.commands.executeCommand('setContext', 'vllm-copilot.harness.running', bridge.supervisor.running)
     // The stamp file is the whole truth about "installed": it is written by
     // tmp+rename only after npm reported the runtime tree complete, and the
     // uninstall deletes the directory holding it. The palette offers Uninstall
     // exactly when there is something to uninstall.
-    void vscode.commands.executeCommand('setContext', 'dshBridge.installed', existsSync(path.join(paths.runtime, INSTALL_STAMP_FILE)))
+    void vscode.commands.executeCommand('setContext', 'vllm-copilot.harness.installed', existsSync(path.join(paths.runtime, INSTALL_STAMP_FILE)))
     if (bridge.supervisor.running) {
-      status.text = `$(dsh-bridge-whale) DSH${active ? ` $(zap)${active}` : ''}`
+      status.text = `$(vllm-copilot-dsh) DSH${active ? ` $(zap)${active}` : ''}`
       status.tooltip = new vscode.MarkdownString(
         [
           `**DeepSeek Harness: running**`,
@@ -596,7 +596,7 @@ const bridge = new Bridge({
       // open" and the click opened nothing, silently, because starting an
       // already-running harness returns its URL. Every field render claims
       // must be written by every branch that displays it.
-      status.command = 'dshBridge.open'
+      status.command = 'vllm-copilot.harness.open'
       return
     }
     if (starting) {
@@ -609,15 +609,15 @@ const bridge = new Bridge({
         '',
         'The first run after an install downloads and installs the harness once.',
         'That takes a few minutes; later starts take seconds.',
-        'Progress: "DeepSeek Bridge" output channel.',
+        'Progress: "DeepSeek Harness" output channel.',
       ].join('\n'))
-      status.command = 'dshBridge.start'
+      status.command = 'vllm-copilot.harness.start'
       status.backgroundColor = undefined
       return
     }
-    status.text = '$(dsh-bridge-whale-off) DSH: stopped'
+    status.text = '$(vllm-copilot-dsh-off) DSH: stopped'
     status.tooltip = 'The DeepSeek Harness is not running. Click to start it.'
-    status.command = 'dshBridge.start'
+    status.command = 'vllm-copilot.harness.start'
   }
   render()
   status.show()
@@ -878,16 +878,16 @@ const bridge = new Bridge({
         // cadence until the next restart.
         scheduleRestart('the vLLM-Copilot registry changed')
       }
-      if (!event.affectsConfiguration('dsh-bridge')) return
+      if (!event.affectsConfiguration('vllm-copilot.harness')) return
       // The verbosity knob is a channel property, not a boot input: flipping it
       // while a session runs is exactly the moment it earns its keep.
-      if (event.affectsConfiguration('dsh-bridge.logLevel')) applyLogLevel()
+      if (event.affectsConfiguration('vllm-copilot.harness.logLevel')) applyLogLevel()
       // Only boot-time settings justify draining and restarting a live
       // session. The ingest cadence re-arms here so the setting takes effect
       // without a restart; none of these may cut an in-flight turn.
-      if (event.affectsConfiguration('dsh-bridge.ingestIntervalSeconds')) armIngestTimer()
-      if (BRIDGE_RESTART_KEYS.some((key) => event.affectsConfiguration(`dsh-bridge.${key}`))) {
-        scheduleRestart('a bridge setting changed')
+      if (event.affectsConfiguration('vllm-copilot.harness.ingestIntervalSeconds')) armIngestTimer()
+      if (BRIDGE_RESTART_KEYS.some((key) => event.affectsConfiguration(`vllm-copilot.harness.${key}`))) {
+        scheduleRestart('a DeepSeek Harness setting changed')
       }
     }),
   )
@@ -927,7 +927,7 @@ const bridge = new Bridge({
       void vscode.window.showErrorMessage(`DeepSeek Harness: ${(err as Error).message}`, 'Show Log')
       return
     }
-    const cfg = vscode.workspace.getConfiguration('dsh-bridge')
+    const cfg = vscode.workspace.getConfiguration('vllm-copilot.harness')
     const currentSpec = (cfg.get<string>('dshVersion') ?? '').trim()
     const installed = installedDshVersion()
     const targetName = (spec: string): string => (spec === '' ? `certified ${pin}` : spec)
@@ -936,24 +936,24 @@ const bridge = new Bridge({
       {
         label: `$(shield) Certified version ${pin}`,
         description: currentSpec === '' ? 'current choice' : undefined,
-        detail: 'The exact version this bridge was certified against. The safe answer.',
+        detail: 'The exact version vLLM-Copilot was certified against. The safe answer.',
         spec: '',
       },
       {
         label: '$(rocket) Latest from npm (experimental)',
         description: currentSpec === 'latest' ? 'current choice' : undefined,
-        detail: "dsh's semver is decorative: an uncertified release can change its config rows under the bridge.",
+        detail: "dsh's semver is decorative: an uncertified release can change its config rows under vLLM-Copilot.",
         spec: 'latest',
       },
       {
         label: '$(tag) An exact version…',
-        detail: 'Pin a specific release, e.g. to retest one this bridge does not certify.',
+        detail: 'Pin a specific release, e.g. to retest one vLLM-Copilot does not certify.',
       },
     ]
     if (installed) {
       items.push({
         label: `$(tools) Repair ${installed} from scratch`,
-        detail: 'Re-download the current version and restage the bridge files. Sessions, profile choices, and settings are kept.',
+        detail: 'Re-download the current version and restage the harness files. Sessions, profile choices, and settings are kept.',
         repair: true,
       })
     }
@@ -1114,7 +1114,7 @@ const bridge = new Bridge({
         detail:
           `This deletes the harness runtime, its profile, every saved session` +
           `${pendingUsage ? `, and ${pendingUsage} usage record(s) your dashboard has not received yet` : ''} from:\n${paths.root}\n\n` +
-          'Your vLLM-Copilot servers, models, and usage totals are untouched - and so is this bridge. ' +
+          'Your vLLM-Copilot servers, models, and usage totals are untouched - vLLM-Copilot itself stays installed. ' +
           '"Install or Update Harness…" brings the harness back with fresh sessions.',
       },
       'Uninstall',
@@ -1123,7 +1123,7 @@ const bridge = new Bridge({
     // Recursive delete only where the bytes are truly ours: a junction
     // planted at the harness home would hand rmSync whatever it points at.
     if (!deletableWithin(paths.root, path.dirname(paths.root))) {
-      void vscode.window.showErrorMessage('Refusing to delete the harness home: it does not resolve inside the bridge\'s storage directory. Something replaced that folder - look into it before deleting anything by hand.')
+      void vscode.window.showErrorMessage('Refusing to delete the harness home: it does not resolve inside vLLM-Copilot\'s storage directory. Something replaced that folder - look into it before deleting anything by hand.')
       return
     }
     let freed = 0
@@ -1140,7 +1140,7 @@ const bridge = new Bridge({
     void context.globalState.update(ONBOARDED_KEY, undefined)
     render()
     void vscode.window.showInformationMessage(
-      `DeepSeek Harness uninstalled (${formatBytes(freed)} freed). The bridge stays installed; "Install or Update Harness…" brings the harness back.`,
+      `DeepSeek Harness uninstalled (${formatBytes(freed)} freed). vLLM-Copilot stays installed; "Install or Update Harness…" brings the harness back.`,
     )
   }
 
@@ -1212,11 +1212,11 @@ const bridge = new Bridge({
   }
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('dshBridge.start', async () => {
+    vscode.commands.registerCommand('vllm-copilot.harness.start', async () => {
       await guardedStart()
       render()
     }),
-    vscode.commands.registerCommand('dshBridge.stop', async () => {
+    vscode.commands.registerCommand('vllm-copilot.harness.stop', async () => {
       const result = await bridge.stop()
       if (!result.drained) {
         void vscode.window.showWarningMessage(`${result.remaining} in-flight harness request(s) were cut by this stop.`)
@@ -1225,7 +1225,7 @@ const bridge = new Bridge({
       // The tab's server is gone by the user's own hand: close the tab too.
       sweepNow()
     }),
-    vscode.commands.registerCommand('dshBridge.restart', async () => {
+    vscode.commands.registerCommand('vllm-copilot.harness.restart', async () => {
       const result = await bridge.restart()
       if (!result.drained) {
         void vscode.window.showWarningMessage(`${result.remaining} in-flight harness request(s) were cut by this restart.`)
@@ -1233,14 +1233,14 @@ const bridge = new Bridge({
       render()
       sweepNow()
     }),
-    vscode.commands.registerCommand('dshBridge.open', async () => {
+    vscode.commands.registerCommand('vllm-copilot.harness.open', async () => {
       const url = bridge.supervisor.url ?? (await guardedStart())
       if (!url) return
       // The URL carries the UI's auth token, so it is opened programmatically
       // and never printed to a log or a notification a user might paste.
       await openHarnessUrl(url)
     }),
-    vscode.commands.registerCommand('dshBridge.openNewView', async () => {
+    vscode.commands.registerCommand('vllm-copilot.harness.openNewView', async () => {
       const url = bridge.supervisor.url ?? (await guardedStart())
       if (!url) return
       await openHarnessUrl(url, true)
@@ -1248,30 +1248,30 @@ const bridge = new Bridge({
     // Revive harness views the previous window session had open: tabs survive
     // reloads now; the session shown inside cannot, because no URL says which
     // one it was (upstream issues entry 3).
-    vscode.window.registerWebviewPanelSerializer('dshBridge.harness', {
+    vscode.window.registerWebviewPanelSerializer('vllm-copilot.harnessPanel', {
       deserializeWebviewPanel: async (panel) => adoptHarnessPanel(panel),
     }),
-    vscode.commands.registerCommand('dshBridge.showLogs', async () => {
+    vscode.commands.registerCommand('vllm-copilot.harness.showLogs', async () => {
       output?.show()
     }),
-    vscode.commands.registerCommand('dshBridge.report', () => showReport()),
+    vscode.commands.registerCommand('vllm-copilot.harness.report', () => showReport()),
     // Visible on purpose: if a stale harness tab ever eats the menus again
     // (ours or a restored one the sweep missed), this is the recovery button
     // a keyboard user can reach without a mouse menu, and the rail's handle
     // on the exact production path.
-    vscode.commands.registerCommand('dshBridge.sweepStaleTabs', async () => {
+    vscode.commands.registerCommand('vllm-copilot.harness.sweepStaleTabs', async () => {
       await sweepStaleTabs()
     }),
-    vscode.commands.registerCommand('dshBridge.installOrUpdate', async () => {
+    vscode.commands.registerCommand('vllm-copilot.harness.installOrUpdate', async () => {
       await installOrUpdateHarness()
     }),
-    vscode.commands.registerCommand('dshBridge.uninstall', async () => {
+    vscode.commands.registerCommand('vllm-copilot.harness.uninstall', async () => {
       await uninstallHarness()
     }),
     // The settings gear on the extension page does this; a keyboard user
     // reaches it through the palette instead of a mouse menu.
-    vscode.commands.registerCommand('dshBridge.openSettings', () =>
-      void vscode.commands.executeCommand('workbench.action.openSettings', '@ext:system-sciences.dsh-bridge dsh-bridge'),
+    vscode.commands.registerCommand('vllm-copilot.harness.openSettings', () =>
+      void vscode.commands.executeCommand('workbench.action.openSettings', '@ext:system-sciences.vllm-copilot vllm-copilot.harness'),
     ),
   )
 
@@ -1302,8 +1302,8 @@ const bridge = new Bridge({
   if (!context.globalState.get<boolean>(ONBOARDED_KEY)) {
     void vscode.window
       .showInformationMessage(
-        'DeepSeek Harness Bridge is installed, and your vLLM-Copilot registry has models to offer. '
-          + 'The harness itself (@deepseek-ai/dsh) downloads once into the bridge\u2019s own directory: about 2-3 minutes, '
+        'vLLM-Copilot is installed, and your registry has models to offer. '
+          + 'The DeepSeek Harness itself (@deepseek-ai/dsh) downloads once into vLLM-Copilot\u2019s own directory: about 2-3 minutes, '
           + 'and it needs Node.js 22 or newer with npm on PATH. Set it up now?',
         'Check prerequisites and start',
         'Later',

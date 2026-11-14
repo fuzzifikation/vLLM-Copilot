@@ -59,7 +59,7 @@ export async function runPreflight(): Promise<PrereqCheck[]> {
   // execPath is Electron, which dsh's loader refuses, so only a real node on
   // PATH counts there. Outside Electron the caller IS a real node.
   const nodePath = process.versions.electron ? findNodeOnPath(process.env.PATH) : process.execPath
-  const nodeFix = 'Install Node.js 22 or newer from https://nodejs.org and restart the editor. VS Code\'s own runtime cannot run the harness; the bridge launches dsh with the node from your PATH.'
+  const nodeFix = 'Install Node.js 22 or newer from https://nodejs.org and restart the editor. VS Code\'s own runtime cannot run the harness; vLLM-Copilot launches dsh with the node from your PATH.'
   if (!nodePath) {
     checks.push({ name: 'node', ok: false, summary: 'no Node.js found on PATH', fix: nodeFix })
   } else {
@@ -78,7 +78,7 @@ export async function runPreflight(): Promise<PrereqCheck[]> {
           name: 'node',
           ok: false,
           summary: `Node.js ${major} on PATH, but the harness needs ${NODE_MAJOR_MIN}+`,
-          fix: `Upgrade Node.js to 22 or newer (https://nodejs.org) and restart the editor. The bridge found ${nodePath}.`,
+          fix: `Upgrade Node.js to 22 or newer (https://nodejs.org) and restart the editor. vLLM-Copilot found ${nodePath}.`,
         })
       } else {
         checks.push({ name: 'node', ok: true, summary: `${stdout.trim()} at ${nodePath}` })

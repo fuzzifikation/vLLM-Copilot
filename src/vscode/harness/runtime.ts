@@ -136,7 +136,7 @@ export async function ensureDshRuntime(opts: { runtimeDir: string; version: stri
     rmSync(path.join(runtimeDir, 'node_modules'), { recursive: true, force: true })
     const stub = path.join(runtimeDir, 'package.json')
     if (!existsSync(stub)) {
-      writeFileSync(stub, `${JSON.stringify({ name: 'dsh-bridge-runtime', private: true, description: 'Installed dsh runtime for the DeepSeek Harness Bridge. Not a project.' }, null, 2)}\n`)
+      writeFileSync(stub, `${JSON.stringify({ name: 'vllm-copilot-harness-runtime', private: true, description: 'Installed dsh runtime for the DeepSeek Harness. Not a project.' }, null, 2)}\n`)
     }
     log.info(`installing @deepseek-ai/dsh@${version} into the bridge runtime`)
     await npm(['install', '--no-audit', '--no-fund', '--no-save', `@deepseek-ai/dsh@${version}`], runtimeDir)

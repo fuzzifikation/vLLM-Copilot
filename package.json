@@ -21,7 +21,7 @@
   },
   "icon": "docs/images/logo.png",
   "engines": {
-    "vscode": "^1.128.0"
+    "vscode": "^1.140.0"
   },
   "categories": [
     "AI",
@@ -29,6 +29,10 @@
   ],
   "keywords": [
     "vllm",
+    "deepseek",
+    "dsh",
+    "harness",
+    "vscodium",
     "openrouter",
     "copilot",
     "self-hosted",
@@ -52,7 +56,9 @@
     "free-speech"
   ],
   "activationEvents": [
-    "languageModel_chatVendor:vllm-copilot"
+    "languageModel_chatVendor:vllm-copilot",
+    "onStartupFinished",
+    "onWebviewPanel:vllm-copilot.harnessPanel"
   ],
   "main": "./out/extension.js",
   "extensionKind": [
@@ -111,6 +117,20 @@
         "description": "OpenRouter model icon shown in the model picker.",
         "default": {
           "fontPath": "./resources/vllm-icon.woff2",
+          "fontCharacter": "\\E002"
+        }
+      },
+      "vllm-copilot-dsh": {
+        "description": "DSH whale, spouting: the harness is running.",
+        "default": {
+          "fontPath": "./resources/dsh-icons.woff2",
+          "fontCharacter": "\\E001"
+        }
+      },
+      "vllm-copilot-dsh-off": {
+        "description": "DSH whale at rest: the harness is stopped.",
+        "default": {
+          "fontPath": "./resources/dsh-icons.woff2",
           "fontCharacter": "\\E002"
         }
       }
@@ -265,9 +285,74 @@
         "title": "Try the DeepSeek Harness (Alpha)",
         "category": "vLLM-Copilot",
         "icon": "$(rocket)"
+      },
+      {
+        "command": "vllm-copilot.harness.installOrUpdate",
+        "title": "Install or Update Harness…",
+        "category": "DeepSeek Harness"
+      },
+      {
+        "command": "vllm-copilot.harness.uninstall",
+        "title": "Uninstall Harness",
+        "category": "DeepSeek Harness"
+      },
+      {
+        "command": "vllm-copilot.harness.start",
+        "title": "Start Harness",
+        "category": "DeepSeek Harness"
+      },
+      {
+        "command": "vllm-copilot.harness.stop",
+        "title": "Stop Harness",
+        "category": "DeepSeek Harness"
+      },
+      {
+        "command": "vllm-copilot.harness.restart",
+        "title": "Restart Harness (drains in-flight requests)",
+        "category": "DeepSeek Harness"
+      },
+      {
+        "command": "vllm-copilot.harness.open",
+        "title": "Open Harness",
+        "category": "DeepSeek Harness",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "vllm-copilot.harness.openNewView",
+        "title": "Open Another Harness View",
+        "category": "DeepSeek Harness",
+        "icon": "$(plus)"
+      },
+      {
+        "command": "vllm-copilot.harness.showLogs",
+        "title": "Show Harness Logs",
+        "category": "DeepSeek Harness"
+      },
+      {
+        "command": "vllm-copilot.harness.report",
+        "title": "Show Harness Status",
+        "category": "DeepSeek Harness"
+      },
+      {
+        "command": "vllm-copilot.harness.sweepStaleTabs",
+        "title": "Close Stale Harness Browser Tabs",
+        "category": "DeepSeek Harness"
+      },
+      {
+        "command": "vllm-copilot.harness.openSettings",
+        "title": "Open Harness Settings",
+        "category": "DeepSeek Harness",
+        "icon": "$(gear)"
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "vllm-copilot.harness.openNewView",
+          "when": "activeWebviewPanelId == 'vllm-copilot.harnessPanel'",
+          "group": "navigation"
+        }
+      ],
       "commandPalette": [
         {
           "command": "vllm-copilot.setPollInterval",
@@ -312,6 +397,33 @@
         {
           "command": "vllm-copilot.openModelSelector",
           "when": "false"
+        },
+        {
+          "command": "vllm-copilot.harness.installOrUpdate"
+        },
+        {
+          "command": "vllm-copilot.harness.uninstall",
+          "when": "vllm-copilot.harness.installed"
+        },
+        {
+          "command": "vllm-copilot.harness.start",
+          "when": "!vllm-copilot.harness.running"
+        },
+        {
+          "command": "vllm-copilot.harness.stop",
+          "when": "vllm-copilot.harness.running"
+        },
+        {
+          "command": "vllm-copilot.harness.restart",
+          "when": "vllm-copilot.harness.running"
+        },
+        {
+          "command": "vllm-copilot.harness.open",
+          "when": "vllm-copilot.harness.running"
+        },
+        {
+          "command": "vllm-copilot.harness.openNewView",
+          "when": "vllm-copilot.harness.running"
         }
       ],
       "view/item/context": [
@@ -721,6 +833,90 @@
             "order": 1
           }
         }
+      },
+      {
+        "title": "DeepSeek Harness",
+        "properties": {
+          "vllm-copilot.harness.dshVersion": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Run a specific `@deepseek-ai/dsh` version instead of the one vLLM-Copilot was certified against. Accepts `latest` or an exact version like `0.2.0-rc.2`; anything else is ignored. Leave empty unless you are testing a new release: dsh's semver is decorative and an uncertified version can change its config rows under us. The **DeepSeek Harness: Install or Update Harness…** command sets this for you and does the download."
+          },
+          "vllm-copilot.harness.defaultModelId": {
+            "type": "string",
+            "default": "",
+            "description": "Registry model id the harness should use by default. Empty uses the first configured model."
+          },
+          "vllm-copilot.harness.titleModel": {
+            "type": "string",
+            "default": "",
+            "description": "Registry model id for session-title calls. Empty uses the default model."
+          },
+          "vllm-copilot.harness.titleMaxTokens": {
+            "type": "number",
+            "default": 0,
+            "minimum": 0,
+            "description": "Output cap for session-title calls. 0 leaves it to the model's own limit."
+          },
+          "vllm-copilot.harness.compactionModel": {
+            "type": "string",
+            "default": "",
+            "description": "Registry model id for context-compaction calls. Empty uses the default model."
+          },
+          "vllm-copilot.harness.compactionMaxTokens": {
+            "type": "number",
+            "default": 0,
+            "minimum": 0,
+            "description": "Output cap for context-compaction calls. 0 leaves it to the model's own limit."
+          },
+          "vllm-copilot.harness.openIn": {
+            "type": "string",
+            "enum": [
+              "panel",
+              "embedded",
+              "appWindow",
+              "external"
+            ],
+            "default": "panel",
+            "markdownDescription": "Where the harness UI opens. `panel` (default) docks a **chromeless webview** fed by the extension's embed proxy — no address bar, a stable URL that survives harness restarts, and no token in browser history. `appWindow` opens the same stable URL in a bar-less Edge/Chrome `--app` window. `embedded` uses the built-in browser view (its toolbar cannot be hidden; VS Code exposes no setting for it). `external` always uses the system browser. Every embedded door falls back to the next when unavailable."
+          },
+          "vllm-copilot.harness.embedPort": {
+            "type": "number",
+            "default": 43171,
+            "minimum": 0,
+            "maximum": 65535,
+            "description": "Loopback port the embed proxy listens on for the panel and app-window doors. A fixed port gives the chromeless UI one URL that survives every harness restart; if another window holds it, the proxy falls back to an ephemeral port on its own. 0 asks Windows for any free port."
+          },
+          "vllm-copilot.harness.drainTimeoutSeconds": {
+            "type": "number",
+            "default": 120,
+            "minimum": 0,
+            "description": "How long a restart waits for in-flight harness requests to finish before stopping the harness anyway. 0 restarts immediately and cuts live requests."
+          },
+          "vllm-copilot.harness.ingestIntervalSeconds": {
+            "type": "number",
+            "default": 10,
+            "minimum": 2,
+            "description": "How often completed harness requests are folded into the vLLM-Copilot usage ledger."
+          },
+          "vllm-copilot.harness.logLevel": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warn",
+              "info",
+              "debug",
+              "trace"
+            ],
+            "default": "info",
+            "markdownDescription": "Developer verbosity intent for the **DeepSeek Harness** log channel. vLLM-Copilot always emits its Debug-tier lines — every harness stdout/stderr mirror (boot chatter otherwise dropped) and every MCP JSON-RPC method and tool call — but VS Code gates them by the channel's own log level. Setting this to `debug`/`trace` reveals the channel and points at its gear › **Set Log Level…** picker, which persists. Never restarts the harness."
+          },
+          "vllm-copilot.harness.keyboardBridge": {
+            "type": "boolean",
+            "default": true,
+            "description": "Forward keyboard shortcuts that the harness page does not consume (F1, Ctrl+Shift+P, Ctrl+P, Ctrl+B, Ctrl+Shift+E/F, Ctrl+,, Ctrl+W) to VS Code while focus is inside a harness view. The harness keeps any shortcut it handles itself."
+          }
+        }
       }
     ]
   },
@@ -761,7 +957,7 @@
     "@types/jsdom": "^30.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^26.6.6",
-    "@types/vscode": "^1.128.0",
+    "@types/vscode": "^1.140.0",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^4.1.0",

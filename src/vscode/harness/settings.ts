@@ -1,6 +1,5 @@
 /**
- * The harness's own settings (`dsh-bridge.*`, renamed to `vllm-copilot.harness.*`
- * in a later merger step). The model registry is NOT mirrored here: it lives in
+ * The harness's own settings (`vllm-copilot.harness.*`). The model registry is NOT mirrored here: it lives in
  * `vllm-copilot.servers` / `vllm-copilot.models`, and this extension owns both
  * sides, so the registry readers are `state/config.ts` and the core types.
  * Duplicating the registry under a second key would only create a second truth
@@ -47,7 +46,7 @@ function auxChoice(modelId: unknown, maxTokens: unknown): AuxChoice {
   return choice
 }
 
-export function readBridgeSettings(cfg = vscode.workspace.getConfiguration('dsh-bridge')): BridgeSettings {
+export function readBridgeSettings(cfg = vscode.workspace.getConfiguration('vllm-copilot.harness')): BridgeSettings {
   return {
     dshVersion: safeVersionSpec(cfg.get<string>('dshVersion')),
     defaultModelId: cfg.get<string>('defaultModelId')?.trim() ?? '',

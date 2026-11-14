@@ -55,7 +55,7 @@ async function loadShared<T>(extensionRoot: string, file: string): Promise<T> {
     return (await import(target)) as T
   } catch (err) {
     throw new Error(
-      `the bridge cannot load its own ${file} from ${path.join(extensionRoot, 'dsh', 'shared')}. ` +
+      `vLLM-Copilot cannot load its own ${file} from ${path.join(extensionRoot, 'dsh', 'shared')}. ` +
         `That folder is missing from the installed extension, so the package is incomplete: ${(err as Error).message}`,
     )
   }

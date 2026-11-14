@@ -18,8 +18,8 @@ const BRIDGE_ID = 'System-Sciences.dsh-bridge';
 /** Where to send the user if VS Code's in-app extension page is unavailable. */
 const BRIDGE_MARKETPLACE_URL = `https://marketplace.visualstudio.com/items?itemName=${BRIDGE_ID}`;
 
-/** Alpha feedback lands on the bridge's own issue tracker, not on us. */
-const DSH_ISSUES_URL = 'https://github.com/fuzzifikation/dsh-bridge/issues';
+/** Alpha feedback lands on the issue tracker, not on a separate repository. */
+const DSH_ISSUES_URL = 'https://github.com/fuzzifikation/vLLM-Copilot/issues';
 
 /** Our own row inside the bridge's list: this command id opens the issue tracker. */
 const FEEDBACK_COMMAND = 'vllm-copilot.dshFeedback';
@@ -34,33 +34,33 @@ const FEEDBACK_COMMAND = 'vllm-copilot.dshFeedback';
  * **Open Bridge Settings**, so the section can never lose or bury a command.
  */
 const ROW_ORDER = [
-  'dshBridge.open',
-  'dshBridge.openNewView',
-  'dshBridge.start',
-  'dshBridge.stop',
-  'dshBridge.restart',
-  'dshBridge.installOrUpdate',
-  'dshBridge.showLogs',
-  'dshBridge.report',
+  'vllm-copilot.harness.open',
+  'vllm-copilot.harness.openNewView',
+  'vllm-copilot.harness.start',
+  'vllm-copilot.harness.stop',
+  'vllm-copilot.harness.restart',
+  'vllm-copilot.harness.installOrUpdate',
+  'vllm-copilot.harness.showLogs',
+  'vllm-copilot.harness.report',
   FEEDBACK_COMMAND,
-  'dshBridge.sweepStaleTabs',
-  'dshBridge.openSettings',
-  'dshBridge.uninstall',
+  'vllm-copilot.harness.sweepStaleTabs',
+  'vllm-copilot.harness.openSettings',
+  'vllm-copilot.harness.uninstall',
 ];
 
 /** Tree decoration per bridge command; the manifest's icons are tuned for menus, not rows. */
 const BRIDGE_ICONS: Record<string, string> = {
-  'dshBridge.installOrUpdate': 'cloud-download',
-  'dshBridge.uninstall': 'trash',
-  'dshBridge.start': 'play',
-  'dshBridge.stop': 'debug-stop',
-  'dshBridge.restart': 'restart',
-  'dshBridge.open': 'link-external',
-  'dshBridge.openNewView': 'plus',
-  'dshBridge.showLogs': 'output',
-  'dshBridge.report': 'report',
-  'dshBridge.sweepStaleTabs': 'close-all',
-  'dshBridge.openSettings': 'gear',
+  'vllm-copilot.harness.installOrUpdate': 'cloud-download',
+  'vllm-copilot.harness.uninstall': 'trash',
+  'vllm-copilot.harness.start': 'play',
+  'vllm-copilot.harness.stop': 'debug-stop',
+  'vllm-copilot.harness.restart': 'restart',
+  'vllm-copilot.harness.open': 'link-external',
+  'vllm-copilot.harness.openNewView': 'plus',
+  'vllm-copilot.harness.showLogs': 'output',
+  'vllm-copilot.harness.report': 'report',
+  'vllm-copilot.harness.sweepStaleTabs': 'close-all',
+  'vllm-copilot.harness.openSettings': 'gear',
 };
 
 const PITCH = [
@@ -111,7 +111,7 @@ export class HarnessTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
     // nothing in front of them, so the section - which at that instant becomes
     // the bridge's control panel, led by "Open Harness" - opens itself once. It
     // reveals the section only. Launching the harness is not ours to do: the
-    // bridge starts it when the user asks, and calling dshBridge.open here would
+    // bridge starts it when the user asks, and calling vllm-copilot.harness.open here would
     // install a runtime and open a port unsolicited.
     this.subscriptions.push(
       vscode.commands.registerCommand(FEEDBACK_COMMAND, () => {
@@ -156,18 +156,18 @@ export class HarnessTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
       pitch.command = OPEN_BRIDGE;
 
       const install = new vscode.TreeItem(
-        'Install DeepSeek Harness Bridge',
+        'Install the DeepSeek Harness',
         vscode.TreeItemCollapsibleState.None
       );
       install.iconPath = new vscode.ThemeIcon('cloud-download');
       install.tooltip = new vscode.MarkdownString(
-        "Opens the bridge's extension page in VS Code - press **Install** there. The bridge is what runs the harness on the servers you configured here."
+        "Opens the extension's page in VS Code - press **Install** there. The DeepSeek Harness is what runs the agent on the servers you configured here."
       );
       install.command = OPEN_BRIDGE;
       return [pitch, install];
     }
 
-    const head = new vscode.TreeItem('DeepSeek Harness Bridge', vscode.TreeItemCollapsibleState.None);
+    const head = new vscode.TreeItem('DeepSeek Harness', vscode.TreeItemCollapsibleState.None);
     const version = bridge.packageJSON?.version;
     head.description = typeof version === 'string' ? `v${version}` : 'installed';
     head.iconPath = new vscode.ThemeIcon('extensions');
@@ -182,7 +182,7 @@ export class HarnessTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
     // manifest position is, and never between two rows whose order we chose.
     const rank = (id: string) => {
       const at = ROW_ORDER.indexOf(id);
-      return at >= 0 ? at : ROW_ORDER.indexOf('dshBridge.sweepStaleTabs') + 0.5;
+      return at >= 0 ? at : ROW_ORDER.indexOf('vllm-copilot.harness.sweepStaleTabs') + 0.5;
     };
     const contributed: { id: string; title: string }[] = [];
     const manifest: unknown[] = Array.isArray(bridge.packageJSON?.contributes?.commands)
