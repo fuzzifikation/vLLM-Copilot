@@ -308,7 +308,7 @@ export class Bridge {
    * They are never passed as --patch at boot: an include created with a
    * patches config is not recorded as the root Include entry, and every live
    * profile reload (every plugin toggle) then fails with "profile reload
-   * requires the root Include entry" (docs/upstream-issues.md). The patch
+   * requires the root Include entry" (docs/harness-upstream-issues.md). The patch
    * layer is also where the plugin manager writes, so the merge preserves
    * every row the user's toggles created outside the generated block.
    */

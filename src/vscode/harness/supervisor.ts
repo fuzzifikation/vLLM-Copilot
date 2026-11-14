@@ -294,7 +294,7 @@ export interface SupervisorOptions {
    * The profile directory to watch while the harness is live, and the
    * callback fired when one of its plugin-toggle files changes on disk from
    * somewhere else. The plugin manager persists toggles to the profile but
-   * cannot hot-apply them (docs/upstream-issues.md), so the manager's write
+   * cannot hot-apply them (docs/harness-upstream-issues.md), so the manager's write
    * is the moment the user deserves to hear "restart to apply". Only armed
    * by the window that SPAWNS the harness: a borrowing window neither owns
    * the restart nor the restart's own patch-layer writes.
@@ -471,7 +471,7 @@ export class Supervisor {
     // rows in the profile patch layer, even a bundle's own patch) leaves the
     // profile's root Include entry unregistered for the life of the process,
     // and every plugin toggle then dies with "profile reload requires the
-    // root Include entry" (docs/upstream-issues.md entry 6). Dropping the
+    // root Include entry" (docs/harness-upstream-issues.md entry 6). Dropping the
     // flag is one poison source less; the generated rows reach the harness
     // through the profile's own patch layer instead, written by prepare.
     const child = spawn(

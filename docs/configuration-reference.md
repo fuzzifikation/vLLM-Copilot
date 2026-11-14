@@ -6,7 +6,7 @@
 
 > **What the editor rejects:** a model entry may contain only the fields documented below (an unknown field is a squiggle, not a typo the extension tolerates), `id` and `server` must be non-empty, and `model`, `messages`, `stream` and `stream_options` inside `defaultParams` or a `modelModes` entry are forbidden - the extension owns those four and drops them from the request. Any other request-param key is accepted and forwarded to the backend verbatim, and out-of-range sampling values get a warning line in Output rather than a squiggle. One deliberate exception: a **migration-orphan** entry (a pre-registry model whose legacy inline `serverUrl` was unusable, so the registry migration kept it verbatim rather than delete your settings) still carries those old fields and squiggles until you set its `server`.
 
-All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are eight top-level settings: `vllm-copilot.servers` (array of **server entries** - endpoints, auth, backend type), `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), `vllm-copilot.enableFileLogging` (request/response logs), `vllm-copilot.logBodyLimit` (log truncation), `vllm-copilot.fixEmptyToolParameters` (inject empty schema into parameterless tool definitions), `vllm-copilot.dashboard.pollIntervalMs` (metrics polling), and `vllm-copilot.statusBar.enabled` (last-request status bar item).
+All settings are under `vllm-copilot` in VS Code Settings (`Ctrl+,`, search `vllm`). There are eight top-level settings: `vllm-copilot.servers` (array of **server entries** - endpoints, auth, backend type), `vllm-copilot.models` (array of per-model entries), `vllm-copilot.systemMessageCapture` (capture system messages to `.vllm/system-messages.json`), `vllm-copilot.enableFileLogging` (request/response logs), `vllm-copilot.logBodyLimit` (log truncation), `vllm-copilot.fixEmptyToolParameters` (inject empty schema into parameterless tool definitions), `vllm-copilot.dashboard.pollIntervalMs` (metrics polling), and `vllm-copilot.statusBar.enabled` (last-request status bar item). The optional harness keeps its own keys under `vllm-copilot.harness.`: [DeepSeek Harness settings](#deepseek-harness-settings).
 
 **Servers and models are separate.** A server entry owns `serverUrl`, `requestHeaders`, `serverType` and its display label; a model entry references its server by `server` id and owns everything model-scoped (token budgets, capabilities, params). There is no default or global server: a registry entry is used only because a model references it.
 
@@ -491,6 +491,31 @@ Or set either form manually on the model entry:
 
 ---
 
+## DeepSeek Harness settings
+
+The harness is optional and dormant until you install it from the **DeepSeek Harness** sidebar section. Every key lives under `vllm-copilot.harness.`, and the section title in the Settings editor is **DeepSeek Harness**. The retired bridge's `dsh-bridge.*` settings are not migrated: after the merger, set them here again.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `dshVersion` | `""` | Run a specific `@deepseek-ai/dsh` version instead of the certified one in `dsh/dsh.json`. Accepts `latest` or an exact version such as `0.2.2-rc.1`; anything else is ignored. dsh's semver is decorative, so an uncertified version can change its config rows under us. **Install or Update Harness…** sets it for you |
+| `defaultModelId` | `""` | Registry model id the harness uses by default. Empty uses the first configured model |
+| `titleModel` | `""` | Registry model id for the session-title calls dsh fires per new chat. Empty uses the default model |
+| `titleMaxTokens` | `0` | Output cap for session-title calls. `0` leaves it to the model's own limit |
+| `compactionModel` | `""` | Registry model id for context-compaction calls. Empty uses the default model |
+| `compactionMaxTokens` | `0` | Output cap for context-compaction calls. `0` leaves it to the model's own limit |
+| `openIn` | `"panel"` | Where the harness UI opens: `panel` is the chromeless editor tab fed by the local embed proxy, `appWindow` a bar-less Edge/Chrome `--app` window, `embedded` the built-in Browser view, `external` the system browser. A door that cannot be honored says so and hands you the next one |
+| `embedPort` | `43171` | Loopback port of the embed proxy, which gives the chromeless UI one address that survives every harness restart. Busy, the proxy takes an ephemeral port and logs it. `0` asks the OS for a free port |
+| `drainTimeoutSeconds` | `120` | How long a restart waits for in-flight harness requests before stopping the harness anyway. `0` restarts immediately and cuts live requests |
+| `ingestIntervalSeconds` | `10` | How often completed harness requests are folded into the usage ledger. Minimum `2` |
+| `logLevel` | `"info"` | Developer verbosity intent for the **DeepSeek Harness** output channel. `debug` or `trace` reveals the channel and points at its gear › **Set Log Level…** picker, which is what actually persists. Never restarts the harness |
+| `keyboardBridge` | `true` | Forward the shortcuts the harness page does not consume (`F1`, `Ctrl+Shift+P`, `Ctrl+P`, `Ctrl+B`, `Ctrl+Shift+E`/`F`, `Ctrl+,`, `Ctrl+W`) to VS Code while focus is inside a harness view. The harness keeps every shortcut it handles itself |
+
+`dshVersion`, `defaultModelId`, `titleModel`, `titleMaxTokens`, `compactionModel` and `compactionMaxTokens` are read when dsh boots, so changing one triggers a draining restart through `drainTimeoutSeconds`. `ingestIntervalSeconds` re-arms the timer, `drainTimeoutSeconds` takes effect at the next stop, and `logLevel` never restarts anything: a running turn is never cut to satisfy a setting.
+
+Harness commands and the migration from the old bridge extension: [Manual → DeepSeek Harness](manual.md#deepseek-harness). The design law behind these keys is [harness.md](harness.md).
+
+---
+
 ## Troubleshooting
 
 **First, run the right command:**
@@ -565,3 +590,21 @@ The following appear under the **vLLM-Copilot: Utilities** category - maintenanc
 |---------|-------------|
 | **Diagnose Connection** | Deep network diagnostic: compares PowerShell (SChannel) vs Node `fetch` (OpenSSL), checks DNS/TCP, dumps VS Code settings + env vars, builds SChannel cert chain (Windows). Report goes to a dedicated Output channel for copy-pasting |
 | **Clean Copilot Sessions** | Multi-select dialog: pick which workspaces to permanently wipe Copilot session history from, plus optional checkboxes for Copilot memory |
+
+### DeepSeek Harness commands
+
+Palette category **DeepSeek Harness**, all under the `vllm-copilot.harness.` command prefix. What each one does, in the order the sidebar section lists them: [Manual → DeepSeek Harness](manual.md#deepseek-harness).
+
+| Command | Command id |
+|---|---|
+| **Open Harness** | `vllm-copilot.harness.open` |
+| **Open Another Harness View** | `vllm-copilot.harness.openNewView` |
+| **Start Harness** | `vllm-copilot.harness.start` |
+| **Stop Harness** | `vllm-copilot.harness.stop` |
+| **Restart Harness (drains in-flight requests)** | `vllm-copilot.harness.restart` |
+| **Install or Update Harness…** | `vllm-copilot.harness.installOrUpdate` |
+| **Show Harness Logs** | `vllm-copilot.harness.showLogs` |
+| **Show Harness Status** | `vllm-copilot.harness.report` |
+| **Close Stale Harness Browser Tabs** | `vllm-copilot.harness.sweepStaleTabs` |
+| **Open Harness Settings** | `vllm-copilot.harness.openSettings` |
+| **Uninstall Harness** | `vllm-copilot.harness.uninstall` |

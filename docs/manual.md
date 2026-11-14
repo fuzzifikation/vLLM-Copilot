@@ -193,12 +193,32 @@ The implementation holds the rest of the design: `src/core/usage/` (ledger, reco
 
 ## DeepSeek Harness
 
-The second section under the **V** icon, below the Dashboard, titled **DeepSeek Harness (New, Alpha)**. It points at our companion extension, the **DeepSeek Harness Bridge** (`System-Sciences.dsh-bridge`) - an agent harness that runs inside VS Code on the servers you configured here. It is a separate extension, not a setting of this one.
+The second section under the **V** icon, below the Dashboard, titled **DeepSeek Harness (New, Alpha)**. It is this extension's own agent harness: it runs the servers and models you configured here through the upstream DeepSeek Harness (dsh) in a tab inside the editor, with no DeepSeek account and no vendor login. The harness is optional and dormant until you install it, which means that before installation the extension creates no harness folder, shows no status-bar pill, runs no timer and sends no notification.
 
-- **Bridge not installed**: the section shows what the harness is and **Install DeepSeek Harness Bridge**, which opens the bridge's extension page inside VS Code (in the browser, if the workbench refuses) where **Install** waits. Command alternative: **Try the DeepSeek Harness (Alpha)**.
-- **Bridge installed**: the section lists the bridge's own commands, ordered by how often a user reaches for them - **Open Harness** (which installs a missing harness and starts a stopped one before opening it), another view, start, stop, restart, install or update, logs, bridge status, **Report an Issue**, stale-tab cleanup, settings, uninstall. The command list is read from the installed extension's manifest, so it can never offer a command that extension does not have, a command added later sorts into its place, and installing or uninstalling it re-renders the section without reloading the window. The section reveals itself when the install lands; it never launches anything on its own - every row waits to be pressed.
+- **Not installed**: the section says what the harness is and offers **Install DeepSeek Harness…**. Installation checks Node.js 22+, `npm` and `pnpm` and names the missing tool before downloading anything; the extension never installs those for you. Then it downloads the pinned `@deepseek-ai/dsh` once, a few minutes, into this extension's own storage directory.
+- **Installed**: the section is the harness's control panel, ordered by how often a user reaches for a row: **Open Harness** (which installs a missing harness and starts a stopped one before opening it), **Open Another Harness View**, **Start Harness**, **Stop Harness**, **Restart Harness (drains in-flight requests)**, **Install or Update Harness…**, **Show Harness Logs**, **Show Harness Status**, **Report an Issue**, **Close Stale Harness Browser Tabs**, **Open Harness Settings**, **Uninstall Harness**. The rows are read from this extension's own command list, so a command added in a later release sorts itself in without an edit somewhere else.
 
-The bridge declares this extension as a dependency and reaches its configuration and usage ledger through the published companion API - which is why harness usage lands in the same tracker. The harness is in alpha, which is what the section title says; **Report an Issue** opens the bridge's issue list on GitHub, and the bridge's own status bar pill reaches a harness view from anywhere in the window.
+The whale pill in the status bar is the short route to a harness view once something is installed: it reads stopped, starting (with an honest first-run tooltip), or running, and clicking a running pill reveals an existing view rather than opening a second one.
+
+| Command (palette category **DeepSeek Harness**) | Command id | What it does |
+|---|---|---|
+| Install or Update Harness… | `vllm-copilot.harness.installOrUpdate` | Checks the prerequisites, then downloads the certified dsh version into this extension's storage |
+| Uninstall Harness | `vllm-copilot.harness.uninstall` | Deletes the harness runtime, after confirming, and only inside this extension's own storage folder |
+| Start Harness | `vllm-copilot.harness.start` | Boots `dsh web` under a dedicated `DSH_HOME`, adopting a harness another window already started |
+| Stop Harness | `vllm-copilot.harness.stop` | Stops it and clears the pid record |
+| Restart Harness (drains in-flight requests) | `vllm-copilot.harness.restart` | Waits up to `vllm-copilot.harness.drainTimeoutSeconds` for in-flight requests, then restarts the harness anyway. This is what applies a plugin toggle made inside the harness GUI, which dsh cannot hot-apply |
+| Open Harness | `vllm-copilot.harness.open` | Installs a missing harness, starts a stopped one, and shows the harness in an editor tab |
+| Open Another Harness View | `vllm-copilot.harness.openNewView` | A second complete harness GUI on the same harness, its own session selection |
+| Show Harness Logs | `vllm-copilot.harness.showLogs` | Opens the **DeepSeek Harness** output channel |
+| Show Harness Status | `vllm-copilot.harness.report` | One report: running or stopped, the dsh and core versions in use, the snapshot version, whether the privacy rows are disabled, in-flight requests, pending usage records, the control channel address. Harness URL tokens and server ids never appear in it |
+| Close Stale Harness Browser Tabs | `vllm-copilot.harness.sweepStaleTabs` | Closes built-in Browser tabs pointing at a dead harness (only the `embedded` door uses that view) |
+| Open Harness Settings | `vllm-copilot.harness.openSettings` | Opens the settings filtered to `vllm-copilot.harness.` |
+
+Settings, their defaults and their meaning: [Configuration Reference → DeepSeek Harness settings](configuration-reference.md#deepseek-harness-settings). Harness traffic is metered into the same dashboard totals as Copilot traffic. Providers you add inside dsh itself never pass through us, so they stay out of those totals ([README FAQ](../README.md#can-i-add-other-providers-inside-the-harness)).
+
+**Coming from the old bridge extension:** uninstall the separate **DeepSeek Harness Bridge** (`System-Sciences.dsh-bridge`) first. While it is installed, vLLM-Copilot says so and refuses to install or start its own harness, because two harnesses would fight over one runtime directory, one pid record and one port. Old harness sessions stay in the bridge's storage folder and do not come over; the settings were renamed from `dsh-bridge.*` to `vllm-copilot.harness.*` and are not migrated, so set them again. Then install the harness from the sidebar: one download, a few minutes.
+
+Design law, architecture and verification gates: [harness.md](harness.md). Surface spec: [harness-ui.md](harness-ui.md).
 
 ---
 
@@ -284,7 +304,7 @@ Deep dive into how the extension plugs into Copilot, sessions, and tool calls: [
 | **Remove Model** | Remove a single configured model (button in Model Settings). |
 | **Delete** | Remove the right-clicked server entry only (with confirm). Refuses while any model still references it; other registry entries on the same URL are untouched. |
 | **Move ↑ / Move ↓** | Reorder server rows from the server's right-click menu, or drag one server row onto another (it lands there; dropping below the list moves it to the bottom). The order lives in the `vllm-copilot.servers` array itself - the Dashboard and Model Settings follow it. |
-| **Try the DeepSeek Harness (Alpha)** | Open the DeepSeek Harness Bridge extension page inside VS Code, from where it installs. The **DeepSeek Harness** sidebar section shows the same action until the bridge is installed, and the bridge's own commands after that. |
+| **DeepSeek Harness: Open Harness** | Start a stopped harness, installing a missing one first, and show its editor tab. The whole harness command set lives in the **DeepSeek Harness** palette category: [DeepSeek Harness](#deepseek-harness). |
 | **Open Log File** | Open today's debug log. |
 | **Clear Log Files** | Delete all debug logs except the active one. |
 | **Diagnose Connection** | Deep TLS/proxy/DNS/cert diagnostic report (utilities). |

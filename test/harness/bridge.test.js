@@ -1193,7 +1193,7 @@ describe('supervisor lifecycle around window close', () => {
 
   it('announces a plugin-toggle write to the profile but never its own regeneration', async () => {
     // The plugin manager persists a toggle but cannot hot-apply it
-    // (docs/upstream-issues.md); the spawning window watches for that write
+    // (docs/harness-upstream-issues.md); the spawning window watches for that write
     // and offers the restart that converges, while the bridge's own
     // patch-layer regeneration stays silent.
     writeFileSync(

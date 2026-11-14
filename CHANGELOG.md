@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+One extension, two interfaces: the agent harness that used to be a separate extension is now built into vLLM-Copilot, so the people who already run the servers get the agent with them, including in editors that ship no Copilot at all.
+
+### Added
+
+- **The DeepSeek Harness is built in.** The **DeepSeek Harness** section under the Dashboard now installs and runs the harness itself: **Install DeepSeek Harness…** checks Node.js 22+, `npm` and `pnpm` and names what is missing before downloading anything, then downloads the certified harness once (a few minutes). After that the section is the control panel - open, another view, start, stop, restart that drains in-flight requests, install or update, logs, status, settings, uninstall - and the whale pill reaches a harness view from anywhere in the window. Nothing of the harness exists before you install it: no folders, no pill, no timers, no notifications.
+- **It works without Copilot.** Editors such as VSCodium, installed from Open VSX, get the harness as a complete agent on your own servers: add a model, install the harness from the sidebar, and the agent runs with its tools and your personalities.
+- **Built-in personalities reach the harness.** A personality you picked in Model Settings is now applied to harness requests too. The separate bridge could only use a personality file you had given an absolute path to, so every preset was silently ignored there.
+
+### Changed
+
+- **The harness commands and settings are renamed.** Commands are `vllm-copilot.harness.*` under the **DeepSeek Harness** palette category, settings are `vllm-copilot.harness.*`. Nothing is migrated from the old `dsh-bridge.*` settings: set them again.
+- **Bridge users: uninstall the old extension.** While the separate **DeepSeek Harness Bridge** (`System-Sciences.dsh-bridge`) is installed, vLLM-Copilot says so and refuses to install or start its own harness, because two harnesses would fight over one runtime directory, one pid record and one port. Old harness sessions stay in the bridge's own storage and are not carried over; install the harness again from the sidebar.
+- **VS Code 1.140 is the minimum.** That is the harness's floor, and this repository supports current editor versions only.
+
 ## v1.39.0
 
 Model-mode coverage for this year's coding models, so thinking depth comes from the picker instead of hand-edited JSON, with mode names each Copilot harness can actually display - and our own agent harness moved into the sidebar, where the people who already run the servers for it see it without opening an update page.

@@ -1,20 +1,20 @@
-# vLLM-Copilot 1.39.0: The harness you were missing, one click from your servers.
+# The DeepSeek Harness is now built into vLLM-Copilot.
 
-Distribution. The DeepSeek Harness has existed for weeks and most of you never heard of it, so it now lives where you already work.
+One extension, two interfaces. The agent harness that used to be a separate extension now lives here, on the servers you already configured - and in editors with no Copilot at all.
 
-**What DeepSeek Harness means for current vllm-copilot users**
-You do not need to install it if you are happy right now. The DSH harness is in early alpha and still testing.
-There are maybe hundreds of other DSH extensions in the marketplace. This one is tightly integrated with vLLM-Copilot and needs no sign-in anywhere: no login, no password, no config - not even DeepSeek knows what you are doing locally.
-To run it: install the [DeepSeek Harness Bridge](https://marketplace.visualstudio.com/items?itemName=System-Sciences.dsh-bridge), install the harness from its sidebar commands, then click the little whale pill in the status bar - all of your models work in DSH. DSH has full access to VS Code; vLLM-Copilot takes care of the models and their selectability.
+**If you never installed the bridge, nothing changed for you.** The harness is optional and dormant: until you install it there are no harness folders, no status-bar pill, no timers and no notifications. When you want it, open the **DeepSeek Harness** section under the **V** icon and press **Install DeepSeek Harness…**.
+
+**If you used the DeepSeek Harness Bridge: uninstall it.** While that extension (`System-Sciences.dsh-bridge`) is installed, vLLM-Copilot tells you so and refuses to install or start its own harness, because two harnesses on one machine would fight over one runtime directory, one pid record and one port. Your old harness sessions stay in the bridge's own storage folder and are not carried over. Then install the harness from the sidebar: it checks Node.js 22+, `npm` and `pnpm`, names whatever is missing, and downloads the certified harness once - a few minutes, and later starts take seconds.
+
+**Your harness settings did not move.** They were renamed from `dsh-bridge.*` to `vllm-copilot.harness.*`, and nothing is migrated: set them again in the **DeepSeek Harness** settings section, or run **DeepSeek Harness: Open Harness Settings**.
+
+**It works without Copilot.** In VSCodium or any editor with no Copilot, install this extension from Open VSX, add a model, install the harness from the sidebar, and the agent runs on your servers with its tools, its sessions and your personalities.
+
+**Personalities finally reach the harness.** A personality you picked in Model Settings now applies to harness requests too; the old bridge could only pass a personality file you had given an absolute path to, so every built-in preset was ignored there. Harness traffic still lands in the same dashboard totals. Providers you add inside the harness itself do not - see the [README FAQ](https://github.com/fuzzifikation/vLLM-Copilot#can-i-add-other-providers-inside-the-harness).
+
+**VS Code 1.140 is the new minimum**, the harness's floor, because this extension supports current editor versions only.
 
 <img src="dsh-working.png" alt="DeepSeek Harness running a live session on a vLLM-Copilot model" width="585">
-
-However, not all features are working currently (notably the system prompt extraction and personality replacements) for DSH. 
-
-
-**A new sidebar section: DeepSeek Harness**, under the Dashboard, behind the **V** icon. Without the bridge it explains the harness and offers **Install DeepSeek Harness Bridge** - the bridge page opens inside VS Code, where Install waits; the command **vLLM-Copilot: Try the DeepSeek Harness (Alpha)** does the same. With the bridge installed, the section becomes its control panel: install or update the harness, start, stop, restart (draining in-flight requests), open a harness view, logs, status, settings. Its rows come from the installed bridge itself, so it can never offer a command that bridge does not have - and installing or uninstalling updates the section without a window reload.
-
-**What the harness is.** Copilot keeps taking controls away, so we stopped waiting. The DeepSeek Harness (DSH) is our replacement for the Copilot agent: it runs inside VS Code with your own vLLM model doing the thinking, takes your models, modes, parameters and personalities along, and lands its usage in the same tracker. In our testing it beats the Copilot harness today. The bridge ([`System-Sciences.dsh-bridge`](https://marketplace.visualstudio.com/items?itemName=System-Sciences.dsh-bridge)) requires this extension and declares it as a dependency - the servers you configured here are the servers it runs on. Alpha, and testers are what it needs.
 
 ## If you skipped 1.38
 

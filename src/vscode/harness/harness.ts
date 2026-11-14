@@ -1383,7 +1383,7 @@ const bridge = new Bridge({
     dispose: () => {
       // Tabs die with the session, unconditionally and first: a restored
       // fail-load browser view poisons the window's menus before any
-      // extension can react (docs/upstream-issues.md section 3), and menu
+      // extension can react (docs/harness-upstream-issues.md section 3), and menu
       // damage latches until a reload, so prevention is the only cure.
       void closeOwnEmbeddedTabs().catch(() => {})
       // A borrowed harness belongs to a window that is still open: closing

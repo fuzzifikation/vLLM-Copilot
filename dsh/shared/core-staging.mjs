@@ -1,10 +1,10 @@
 /**
  * Core staging: turn a compiled vLLM-Copilot `out/core` tree into a local npm
- * package the dsh profile can install. Used by `scripts/stage-core.mjs` (dev,
- * from a git tag) and by the extension (production, from the installed
- * extension's own `out/`). Both paths must produce a byte-equivalent package or
- * the certified boot check certifies a layout the user never gets, so the math
- * lives here once.
+ * package the dsh profile can install. Used by `scripts/harness/stage-core.mjs`
+ * (dev and the rails, from this repository's own compiled `out/core`) and by the
+ * extension (production, from the installed extension's own `out/`). Both paths
+ * must produce a byte-equivalent package or the certified boot check certifies a
+ * layout the user never gets, so the math lives here once.
  *
  * The generated manifest derives its dependencies from the staged tree's own
  * bare imports: tsc emits one import per line, so a line-anchored scan is

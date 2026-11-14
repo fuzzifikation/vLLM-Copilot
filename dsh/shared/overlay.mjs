@@ -306,7 +306,7 @@ export function buildOverlay(dumpText, { provider = 'vllmc', model, mcpEndpoint 
  * between these markers, and the boot must never pass \`--patch\`: an include
  * created with a \`patches\` config is not recorded as the root Include entry,
  * and every live profile reload afterwards fails with "profile reload requires
- * the root Include entry" (upstream dsh-app-boot; docs/upstream-issues.md).
+ * the root Include entry" (upstream dsh-app-boot; docs/harness-upstream-issues.md).
  * The patch layer is also the file the plugin manager edits comment-
  * preservingly when the user toggles a plugin, so regeneration preserves
  * everything outside the generated block.

@@ -2,7 +2,7 @@
 
 vLLM-Copilot absorbs the DeepSeek Harness Bridge. The result is one extension, `System-Sciences.vllm-copilot`, that serves your models to GitHub Copilot and, when the user asks, installs and runs the DeepSeek Harness (dsh) on the same models. Editors without Copilot, such as VSCodium, get a working agent through the harness.
 
-Status: plan, 2026-11-14. Nothing is implemented. Sources read: vLLM-Copilot `586ef87`, dsh-bridge `b5f862f`.
+Status: implemented through steps 3 to 6 on 2026-11-14: `d24594a` (move the bridge code in), `e346711` (delete the two-extension seams and add the dependency rule), `24b1201` (rename to `vllm-copilot.harness.*` and contribute it in the manifest), `2a545ff` (dormant until installed, sidebar as the entry point), `49e0b47` (the `harness:*` rails), `eeb3a52` (the stale-tab and embedded e2e scenarios). Steps 1 and 2 (the VSCodium baseline and whatever it finds), the packaged-VSX verification above (WSL, SSH, the Agents window, and a clean install from each gallery) and step 8 (publish to the Marketplace and Open VSX, then retire the bridge listing and repository) are still open. Sources read: vLLM-Copilot `586ef87`, dsh-bridge `b5f862f`.
 
 The merger is a move, not a redesign. The bridge's harness code works and is tested, so it moves into this repository mostly unchanged. The real work is deleting what existed only because there were two extensions, keeping the harness dormant until a user asks for it, and testing in VSCodium.
 

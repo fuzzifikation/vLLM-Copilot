@@ -1,7 +1,7 @@
 {
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
-  "description": "vLLM (& OpenRouter) integration for GitHub Copilot & Agents window on self-hosted and remote servers (supports full featureset of vLLM, OpenRouter and Copilot). No subscription, no telemetry, no work content to any third party. Dashboard UI with full statistics of your servers",
+  "description": "vLLM (& OpenRouter) integration for GitHub Copilot & Agents window on self-hosted and remote servers (supports full featureset of vLLM, OpenRouter and Copilot). No subscription, no telemetry, no work content to any third party. Dashboard UI with full statistics of your servers. Optionally runs the same models in the built-in DeepSeek Harness agent, Copilot not required.",
   "version": "1.39.0",
   "type": "module",
   "license": "MIT",

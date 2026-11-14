@@ -10,6 +10,7 @@
 **Your vLLM-served models inside GitHub Copilot and the VS Code Agents window.**
 GitHub Copilot provides the familiar chat, tools, and model picker; you provide the model. Requests to your models (prompts, code, context) are never sent to Copilot!
 **Multi-server, multi-user.** Full vLLM request control, live observability. Also works with OpenRouter (400+ cloud models, no local infrastructure, many free options), llama.cpp, LM Studio, and Ollama.
+**Optional second interface:** the built-in **DeepSeek Harness** runs those same models through a real agent loop inside the editor, Copilot not required.
 </div>
 
 > **Disclaimer.** This extension does not protect against misuse, does not provide security or safety guardrails, and does not guarantee the absence of bugs. Language models may produce harmful or incorrect output and may misuse this extension (tools, file edits, commands). Paid models cost real money and any price this extension shows is a best-guess estimate: the bill is yours. You own the consequences. Source is public: [github.com/fuzzifikation/vLLM-Copilot](https://github.com/fuzzifikation/vLLM-Copilot). Full text: [DISCLAIMER.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/DISCLAIMER.md).
@@ -57,6 +58,7 @@ For teams running AI on their own vLLM servers for many users, this gives you th
 - **Bring your own personality**: write your own find/replace personality file (a template is one click away in Model Settings), keep it wherever you want, even in your repo, attach it with "Load", and every edit applies on the next request.
 - **OpenRouter**: add any of **~415 cloud models** in a few clicks. Useful for teams without GPU capacity. Real context window, capabilities, pricing, and **actual spend** (`usage.cost`) show on the dashboard. See [Using OpenRouter](#using-openrouter).
 - **Other backends supported**: llama.cpp, LM Studio, and Ollama alongside vLLM, each with core features like chat, streaming, tools, personalities, and usage tracking.
+- **Two interfaces, one registry**: Copilot is the first one. The second is the built-in [DeepSeek Harness](#deepseek-harness), an optional agent that runs the same servers, models, modes and personalities in its own editor tab and answers to you instead of to Microsoft's picker. It is dormant until you install it, and it is the whole product in an editor with no Copilot, VSCodium included.
 
 <div align="center">
 For full view expand the details-arrow:
@@ -227,12 +229,40 @@ Models and providers misbehave. The extension makes bounded recovery attempts fo
 ### DeepSeek Harness
 Open it with the **V** icon in the activity bar (left sidebar); it sits under the Dashboard.
 
-Copilot keeps taking controls away from you, so we stopped waiting and built our own agent harness: the **DeepSeek Harness (DSH)** runs inside VS Code with your own vLLM model doing the thinking. Your models, modes, parameters and personalities come along, and its usage lands in the same tracker. It ships as a separate extension, and this section is where you reach it:
+Copilot keeps taking controls away, and editors such as VSCodium ship no Copilot at all, so this extension carries its own agent. The **DeepSeek Harness (DSH)** runs the models you configured here through the upstream DeepSeek Harness agent loop, in a tab inside the editor. Your servers, modes, parameters and personalities come along, and its usage lands in the same dashboard totals. It is optional and it stays out of your way until you ask: before installation there is no harness folder on disk, no status-bar pill, no timer and no notification.
 
-- **Bridge not installed** - the section explains what it is and offers **Install DeepSeek Harness Bridge**, which opens the extension page inside VS Code. It is in alpha, and testers are what it needs.
-- **Bridge installed** - the section becomes the bridge's control panel, ordered by how often you reach for a row: **Open Harness** leads - it starts a stopped harness and installs a missing one, so that row alone is the whole session - then a second view, start, stop, restart, install or update, logs, bridge status, **Report an Issue**, stale-tab cleanup, settings, and uninstall last. The rows are read from the installed bridge itself, so a command it adds later appears on its own; only the order and **Report an Issue** (the bridge's issue list on GitHub - an alpha lives on the reports it gets) are ours. The section opens itself the moment the bridge finishes installing, so those rows are in front of you instead of an empty editor; later the bridge's own status bar pill is the short route to a harness view.
+**Quick start**
 
-The harness needs a model server - the same servers you configure here - and declares this extension as a dependency.
+1. **Prerequisites:** Node.js 22+ with `npm` **and** `pnpm` on PATH (npm installs the pinned harness; dsh installs its profile plugins through pnpm, which npm does not ship). No C/C++ compiler is needed on any platform: every native dependency (terminal, FFI, image, speech) ships prebuilt binaries for Windows, macOS and Linux x64/arm64. Linux caveat: the prebuilds are glibc, so Debian and Ubuntu-family (Raspberry Pi OS included) is the verified road. The install checks all three tools and names the missing one before any download; this extension never installs Node.js, npm or pnpm for you.
+2. **Install:** press **Install DeepSeek Harness…** in the section. That is one download of the pinned `@deepseek-ai/dsh` into vLLM-Copilot's own storage directory, a few minutes the first time; later starts take seconds. The palette's **DeepSeek Harness: Install or Update Harness…** does the same thing.
+3. **Open:** press **Open Harness** in the section, or click the whale pill in the status bar. The harness arrives as a tab in the editor with no browser chrome, its tab named after the conversation it shows. A registry or harness-setting change reaches it through a draining restart that waits for your in-flight request; **Open Another Harness View** gives you a second conversation on the same harness, and **Show Harness Logs** shows what it is doing.
+4. **It needs no Copilot:** in VSCodium, installed from Open VSX, the same four steps give you a complete agent on your own servers.
+
+**What it is.** Plain `@deepseek-ai/dsh`, never forked and never patched, running in its own Node process and loading one adapter plugin from this extension. That adapter routes every generation through the same request pipeline Copilot uses, which is where your model modes, sampling parameters, output budgets, headers, personalities and token accounting live. The agent can also reach your editor: open files and diffs, read diagnostics, run commands in your terminal, ask you a question. It is in alpha, and **Report an Issue** in that section is what it runs on. Architecture, owner rulings and verification gates: [docs/harness.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/harness.md).
+
+#### Can I add other providers inside the harness?
+
+Yes, **as extra doors, never as a replacement.** The harness is plain dsh, and dsh ships a multi-provider adapter (`@deepseek-ai/dsh-llm-pi-ai`) that stays enabled with **zero routes**: nothing phones out until you add one. Models you add this way appear in the same picker, grouped beside "vLLM-Copilot"; our adapter owns the route name `vllmc`, and dsh refuses colliding route names at load, so the two doors cannot clobber each other.
+
+The verified door is the profile's own patch layer, `dsh-home/profiles/vllmc/cordis.patch.yml` inside vLLM-Copilot's storage directory. Edit it **outside** the generated markers, in the space the file itself reserves for you:
+
+```yaml
+- name: '@deepseek-ai/dsh-llm-pi-ai'
+  config:
+    providers:
+      my-gateway:
+        displayName: My Gateway
+        api: openai-completions          # any OpenAI-compatible server
+        baseURL: http://my-gateway.example:8080/v1   # a placeholder; point it at your own server
+        apiKeyEnv: MY_GATEWAY_KEY        # a credential reference; no secret in the file
+        models:
+          - id: my-model
+            contextWindow: 131072
+```
+
+Routes apply on the next request, no harness restart needed. The installed pi-ai catalogs (OpenAI, Anthropic, and the rest) are configured the same way, and dsh has a Models settings page too; the patch layer is the path we verified end to end.
+
+The honest boundary: **usage accounting only sees traffic that passes through vLLM-Copilot.** The dashboard totals come from our adapter, so a turn routed through pi-ai spends tokens you track on your own side. The registry also stays first-class by architecture rather than marketing: the harness boots through it, so zero-config personalities, served-model filtering and the token ledger ride that door alone.
 
 ### Model Settings
 Open it with the **V** icon in the activity bar (left sidebar); it sits below the DeepSeek Harness section.
@@ -395,7 +425,7 @@ Right-click a **vLLM** server node → **vLLM Deep-Dive** opens a per-server web
 | **vLLM Deep-Dive** | Open per-server webview with full metrics and histograms (right-click a **vLLM** server node) |
 | **Diagnose Connection** | Deep TLS/proxy/DNS/cert diagnostic report |
 
-The full command list, including auth rotation, model/server removal, log tools, and session cleanup: [Manual → Commands](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md#commands).
+The full command list, including auth rotation, model/server removal, log tools, and session cleanup: [Manual → Commands](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/docs/manual.md#commands). The harness has its own palette category, **DeepSeek Harness**: install or update, start, stop, restart (drains in-flight requests), open, another view, logs, status, stale-tab cleanup, settings, uninstall.
 
 ---
 
@@ -416,8 +446,6 @@ On upgrade, recognized old mode names and compatible harness mappings migrate au
 ## Development
 
 Dev setup, project rules, and the dependency license policy (permissive-only allowlist enforced by `npm run license:check` in the build, `THIRD-PARTY-NOTICES.txt` regenerated with `npm run license:notices`): [CONTRIBUTING.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/CONTRIBUTING.md).
-
-Planned merger of the DeepSeek Harness Bridge into this extension, including Copilot-free use in VSCodium: [extension merger plan](docs/extension-merger-plan.md). The current two-extension setup remains unchanged until implementation.
 
 ---
 

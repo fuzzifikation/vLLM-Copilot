@@ -2,8 +2,8 @@
  * The served-model verdict: does a server RIGHT NOW serve this configured model?
  *
  * One verdict, exported once; the REACTIONS stay with each consumer and are
- * deliberately different (this is the P1 ruling from the dsh bridge,
- * dsh-vllm-bridge repo docs/dsh-bridge-plan.md): the Copilot picker drops `absent` AND `unknown`
+ * deliberately different (this is the P1 ruling from the retired dsh bridge,
+ * now docs/harness.md): the Copilot picker drops `absent` AND `unknown`
  * models — the live-inventory ruling in `describe.ts` — while the harness
  * prunes only `absent`, because refusing to boot over a network hiccup
  * punishes the user for a fact nobody verified. What lives here is the answer

@@ -12,14 +12,27 @@
 
 ## This Repository: vLLM-Copilot
 
-### Scope law (owner ruling 2026-10-08): one thing, done for years
+### Scope law (owner ruling 2026-10-08, merged scope 2026-11-14): one product, two interfaces
 
-This repository is a vLLM-Copilot extension — **that and only that**: vLLM (and OpenRouter) models, inside GitHub Copilot, in VS Code — kept working while upstream moves the floor under us. A tidy repository that aims to do one thing.
+This repository is vLLM-Copilot: vLLM (and OpenRouter) models inside GitHub Copilot in VS Code, kept working while upstream moves the floor under us, plus, on the user's request, the DeepSeek Harness running those same models in VS Code or in an editor with no Copilot at all. One product, one registry, one core, two optional interfaces.
 
-- **This is the test for every proposal:** does it make *Copilot with a vLLM server* better or keep it working? If the sentence can't be completed, the idea belongs to another product — the DSH bridge (`dsh-vllm-bridge`) and the Unified Mixers gateway (`unifiedmixers/gateway`) have their own repos, ledgers, and plans.
-- **No plans of other products rest here, not even as copies.** Cross-repo references cite the owning repo by name; `docs/` holds documents about this one job, nothing else (verified by sweep 2026-10-08: all 17 docs serve the extension).
-- **The host-neutral core layout stays** because it earns its rent *inside* this mission (clean seams, testability); the bridge consuming that boundary does not justify it, and nothing else may consume it by default.
-- When Microsoft reshapes Copilot again, the response lives here: provider facts get re-verified, the picker policy adapts, the wire format holds. Surviving Copilot churn is the mission, not a side effect.
+- **This is the test for every proposal:** does it make *Copilot with a vLLM server* better or keep it working, or does it make *the harness on that same registry* better or keep it working? If neither sentence completes, the idea belongs to another product; the Unified Mixers gateway (`unifiedmixers/gateway`) has its own repo, ledger, and plan.
+- **The harness is a feature, not a second product (owner ruling 2026-11-14).** It is dormant until the user installs it, it has no model registry of its own, and it has no listing of its own: the separate `dsh-bridge` extension is retired, with no compatibility layer, no settings migration and no revival. `docs/` holds this product's documents, the harness law (`docs/harness.md`) among them.
+- **The host-neutral core layout stays** because it earns its rent twice inside this mission: the Copilot request path and the harness adapter both run on it, and `npm run core:proof` certifies a plain Node consumer. Nothing else may consume it by default.
+- When Microsoft reshapes Copilot again, the response lives here: provider facts get re-verified, the picker policy adapts, the wire format holds. Surviving Copilot churn is the mission, not a side effect. The harness is the answer to the same churn, so it is not a throwaway.
+
+### DeepSeek Harness: standing rulings (do not re-propose around them)
+
+The full law, the architecture drawings and the verification gates are [docs/harness.md](../docs/harness.md); the surface spec is [docs/harness-ui.md](../docs/harness-ui.md); the retired bridge's dated decision journal is [docs/harness-journal.md](../docs/harness-journal.md). The rulings that bind every code change:
+
+- **dsh stays 100% upstream**: overlays and supervision only, never a fork, never a patched install. The certified version is the pin in `dsh/dsh.json`, and `npm run harness:fresh` is what moves it.
+- **The harness owns the conversation, vLLM-Copilot owns the request.** dsh's model `compat` keys stay unset in the route profile; every model behaviour comes from our model configs on the way out.
+- **The core reaches dsh only by staging.** The extension stages its own compiled `out/core` into the harness home under a version stamp, and the adapter plugin installs beside it as a `file:` package. No npm publish pipeline, no git-tag dependency, and no re-implemented core decision inside `src/vscode/harness/` (duplicated decision logic caused the retired bridge's 0.0.12 catalog wipe).
+- **Dormant until installed.** Before the harness runtime exists, the feature contributes commands, the sidebar section and the panel serializer, and nothing else: no folders, no status-bar pill, no ingest timer, no prerequisite probes, no notifications. `src/extension.ts` wraps the harness setup in its own `try`/`catch`, so a harness failure never reports vLLM-Copilot as failed.
+- **No dependency on other dsh extensions** (`NEXTINDIE/DeepSeek-Harness-for-VS-Code`, MIT): copy with attribution into `THIRD-PARTY-NOTICES.txt`, never import.
+- **No hostnames, private URLs, keys or prompt text in fixtures and logs.** Config ids and server ids embed hostnames, so harness output prints only wire model ids and user-chosen display names.
+- **Layout and imports.** `src/vscode/harness/harness.ts`, `settings.ts` and `editor-tools.ts` are the editor glue; every other module there is Node-only and must stay importable from `scripts/harness/` and the unit tests with no editor. `dsh/plugin` is the plugin loaded inside dsh, `dsh/shared` the overlay and staging helpers, `dsh/dsh.json` the pin. The dependency-cruiser rules `copilot-not-harness`, `harness-not-copilot`, `harness-node-only` and `harness-node-only-no-packages` enforce the boundary: the two adapters never import each other, and shared logic moves down into `src/core` or `src/vscode/state`, never sideways.
+- **Harness traffic is metered** into the same dashboard totals through `recordExternalRequests`; providers the user adds inside dsh itself (its own pi-ai adapter) never pass through us and never appear there. The README FAQ owns that recipe and its caveat.
 
 ### Architecture: Server Registry, Models Reference It
 - **Servers are registry entries.** The top-level `vllm-copilot.servers` setting is an explicit lookup table of server entries (`id`, `serverUrl`, optional `requestHeaders`, `serverType`, `displayName`). Each model entry in `vllm-copilot.models` has a required `id` and `server` (the registry entry's id) — models never carry URLs, auth headers, server types, or server labels.
@@ -38,6 +51,7 @@ This repository is a vLLM-Copilot extension — **that and only that**: vLLM (an
 - **Package a VSIX:** `npm run build` = compile + vitest + **test typecheck** (`tsc -p test/tsconfig.json`) + vsce package. `test/tsconfig.json` extends the root tsconfig, so any compiler flag added at root also applies to `test/**`.
 - **Gauntlet rule:** any tsconfig/compiler-flag change must be verified with `npm run build` (or at least `npx tsc -p test/tsconfig.json --noEmit`). Verifying only compile+test+dep:check once shipped an rc that failed its own build (35 dead test symbols, 2026-09-05). Neither `npm run rent` nor `npm run dep:check` type-checks `test/**`.
 - **`typescript` is pinned to ^6 on purpose (verified 2026-11-06).** The TS 7 native port exports only `version` from the root import (`npm view typescript@7 exports`); `createProgram`, the checker and the canonical printer are gone. `scripts/core-api-surface.mjs`, `rent-census.mjs` and `cluster-census.mjs` are built on that legacy JS API, so `npm update` to TS 7 turns `tsc` green while killing the rails. Do not bump the pin until Microsoft ships a stable JS API (or a legacy shim) and the three scripts are ported; `core-api-surface` additionally re-renders `docs/core-api.txt`, so any port needs a fresh `--update` snapshot in the same unit.
+- **Harness rails (all outside `npm run build`, because they touch the network):** `npm run harness:stage` stages this repository's `out/core` as the package the dsh profile installs; `npm run harness:boot-check` boots the pinned dsh with our composition; `npm run harness:bridge-check` downloads the real dsh and drives prepare, boot, adoption, outbox handoff and stop; `npm run harness:live` (`up`/`status`/`ingest`/`down`) runs the supervised harness against the developer's own registry; `npm run harness:fresh` reports drift from the `dsh/dsh.json` pin and adopts a certified one with `--adopt`; `npm run harness:font` rebuilds the pill font and the gallery icon from their SVG sources. The harness unit suites in `test/harness/` run inside `npm test` against source; the editor scenarios are in `test/e2e/`. Law and gates: [docs/harness.md](../docs/harness.md).
 
 ### Changelog Policy
 - **Only issues a user actually experienced in a SHIPPED version get a `Fixed` entry.** A bug that was introduced and fixed within the same unreleased cycle is work-in-progress, not news — no entry, ever. This includes bugs seen only during the author's own rc/VSIX testing: an unpublished rc is not a shipped version.
@@ -62,11 +76,14 @@ This repository is a vLLM-Copilot extension — **that and only that**: vLLM (an
 
 ## Project Architecture
 
-This is a **VS Code Language Model Chat Provider extension** that routes Copilot requests through a local vLLM server. Data flow:
+This is a **VS Code Language Model Chat Provider extension** that routes Copilot requests through a local vLLM server, plus an optional DeepSeek Harness that runs the same registry through dsh's own agent loop. Data flow:
 
 ```
 Copilot → vscode/copilot/provider.ts (VllmChatModelProvider) → vscode/copilot/vllmClient.ts → core execute/transport → vLLM server
+dsh → dsh/plugin/adapter.js (LlmAdapter) → staged copy of the same core → the same servers
 ```
+
+Neither interface imports the other; both read `src/core` and `src/vscode/state`.
 
 ### Extension placement invariant
 
@@ -78,10 +95,13 @@ Copilot → vscode/copilot/provider.ts (VllmChatModelProvider) → vscode/copilo
 | `src/extension.ts` | Activation, command registration, lifecycle |
 | `src/core/` | Host-neutral core — no `vscode` import, no settings reads, no host paths (enforced by `core-no-host` + `core-no-undeclared-deps` in both cruiser configs; public barrel `index.ts` is consumed by the host adapters): `types.ts` (wire-format types & SSE events only), `shared/` (errors, error envelope, token budget, fetch retry, JSONC, `trace.ts` logging hooks), `config/` (`config.ts` pure policy/validation, `serverCore.ts`/`serverRegistry.ts` URL/identity rules), `catalog/` (neutral descriptors, limits), `request/` (`assemble.ts` neutral request assembly, `chatTransport.ts`, `streamReader.ts` + `sseParser.ts` SSE, `execute.ts` retry loop + events), `backends/` (OpenRouter catalog/aliases/endpoints, runtime limits), `personality/` (rules/transform/capture), `usage/` (ledger, record, money) |
 | `src/vscode/copilot/` | Copilot request path: `provider.ts` (`LanguageModelChatProvider` impl, streams to Copilot), `vllmClient.ts` (facade, config cache owner, CancellationToken→AbortSignal boundary), `requestBuilder.ts` (`buildRequest` adapter over core `assembleRequest`), `streamOrchestrator.ts`/`consumeStream.ts`, `messageConverter.ts` (VS Code ↔ OpenAI/vLLM formats), `modelInfo.ts` (picker info + family detection), `systemMessagePipeline.ts` (personality/capture), `discovery.ts`, `postStream.ts`, `sessionManager.ts` (Copilot session janitor), `configSchemaTool.ts` (LM tool) |
-| `src/vscode/state/` | `config.ts` (the vscode settings reader, composite `validateConfig`, picker selection, path-root adapter), `configStore.ts` (the sole settings.json writer), `usageStore.ts`/`usageReporting.ts` (usage.json persistence + Copilot accounting), `personalityStore.ts` (personality selection over core persona) |
+| `src/vscode/state/` | `config.ts` (the vscode settings reader, composite `validateConfig`, picker selection, path-root adapter), `configStore.ts` (the sole settings.json writer), `usageStore.ts`/`usageReporting.ts` (usage.json persistence + Copilot accounting), `externalUsage.ts` (the harness outbox handoff: file I/O, live-ledger application, reset subscription), `personalityStore.ts` (personality selection over core persona) |
 | `src/vscode/commands/` | User-facing commands: add server/model flows, auto-configure + HF discovery, auth rotation, presets (bundled + remote), personalities, Test & Refresh |
 | `src/vscode/migrations/` | One-shot config migrations at activation (registry migration, output-length offer) |
-| `src/vscode/ui/` | Dashboard tree, Deep-Dive + Server Settings webviews, Connection Diagnostics |
+| `src/vscode/harness/` | The DeepSeek Harness interface (law: `docs/harness.md`). Editor glue: `harness.ts` (commands, lifecycle, panels, `activateHarness`), `settings.ts` (the `vllm-copilot.harness.*` reads), `editor-tools.ts` (MCP tools). Node-only, no `vscode` import, no npm package: `bridge.ts`, `supervisor.ts`, `start-lock.ts`, `runtime.ts`, `preflight.ts`, `paths.ts`, `disk.ts`, `snapshot.ts`, `snapshot-writer.ts`, `ingest.ts`, `embed-proxy.ts`, `control-server.ts`, `mcp.ts`, `served-urls.ts`, `shared-modules.ts`, `dsh-cli.ts`, `workspace.ts` |
+| `dsh/` | What composes the dsh runtime, not extension code: `plugin/` (the adapter dsh loads in its own process, plain Node, zero `vscode` imports), `shared/` (`overlay.mjs` overlay composition, `core-staging.mjs` staging math), `dsh.json` (the certified `@deepseek-ai/dsh` pin) |
+| `scripts/harness/` | The harness rails behind `npm run harness:*` |
+| `src/vscode/ui/` | Dashboard tree, Deep-Dive + Server Settings webviews, Connection Diagnostics, `harnessView.ts` (the **DeepSeek Harness** sidebar section, read from this extension's own manifest) |
 | `src/vscode/logging/` | `logger.ts` — editor-owned file/output logging (`[INFO]`/`[WARN]`/`[ERROR]`) |
 
 ### Key patterns:
@@ -92,6 +112,8 @@ Copilot → vscode/copilot/provider.ts (VllmChatModelProvider) → vscode/copilo
 
 ### Test structure:
 - Unit tests in `test/*.test.ts`. Tests exist only as tripwires for real breakage (wire format, settings.json writes, provider lifecycle, shipped-bug canaries) — no coverage metric, no ceremony tests.
+- Harness unit suites in `test/harness/`, run by the same `npm test` against source, no compile and no staging step.
+- Editor-driven scenarios in `test/e2e/` (`npm run test:e2e`), stale-tab and embedded-browser included.
 - Integration tests in `test/integration/`.
 - Mocks in `test/__mocks__/vscode.ts` — VS Code API is mocked at the module level.
 
@@ -117,8 +139,8 @@ The `get_vscode_api` doc tool returns stale proposal-era docs. Source of truth: 
 - `TreeDragAndDropController<T>` requires BOTH `dragMimeTypes` and `dropMimeTypes`; `handleDrag` MUTATES the transfer (no return). Self-drop (reorder) needs the tree's own mime `application/vnd.code.tree.<viewidlowercase>` in `dropMimeTypes`. Full autopsy incl. impossible-API bans (no between-row indicator, ghost-gap hack forbidden): `docs/dashboard-dnd.md`.
 - Static `arguments` in `view/item/context` menu contributions do NOT reach the command (silent no-op with undefined args). Encode variants in separate command identities, never in contribution arguments.
 - Menu-contribution `title` overrides in `view/item/context` are IGNORED (VS Code 1.128, tested). The `contributes.commands` title is the single source of truth for tree context-menu labels.
-- **The built-in `extensionEnabled:<lowercased-id>` when-clause key is too young for us.** It is real (`extensionEnablementContext.ts`) but landed 2026-07-15, so it postdates our `engines.vscode: ^1.128.0` floor: UI gated on it silently vanishes for users below that build. Detect the companion in code with `vscode.extensions.getExtension(id)` (synchronous, no activation of the other extension) and re-render on `vscode.extensions.onDidChange`.
-- **`Extension.packageJSON` is public API — read a companion's commands from its own manifest.** `packageJSON.contributes.commands` gives the real ids, titles (plain string or `{ value }`) and icons of an installed extension, so a sidebar built from it can never offer a command that extension dropped. Titles may be l10n objects; handle both. Executing a command contributed by a dormant extension activates it, so rows work while the other extension sleeps.
+- **The built-in `extensionEnabled:<lowercased-id>` when-clause key is too young for us.** It is real (`extensionEnablementContext.ts`) but landed 2026-07-15, so it postdates our `engines.vscode` floor: UI gated on it silently vanishes for users below that build. Detect another extension's presence in code with `vscode.extensions.getExtension(id)` (synchronous, no activation of the other extension); that is how the harness finds the retired `System-Sciences.dsh-bridge` and refuses to run a second harness beside it.
+- **`Extension.packageJSON` is public API, and the harness sidebar reads this extension's own manifest.** `packageJSON.contributes.commands` gives the real ids and titles (plain string or `{ value }`, l10n objects included), so the **DeepSeek Harness** section can never offer a command the manifest dropped; a command a later release adds lands in the row order on its own.
 - **`extension.open` (workbench-internal) opens an extension page for extensions that are NOT installed** — it queries the gallery, falls back to `_extensions.manage`, and does not throw on an unknown id. `workbench.extensions.installExtension` installs by id or VSIX uri. Both are undocumented but used by VS Code's own built-ins; keep a `vscode.env.openExternal` fallback when you rely on either.
 - **`resources/update.md` is shown once per extension version** (globalState key `vllmCopilot.updatePage.<version>`). Bumping `package.json` without rewriting that page serves the PREVIOUS release's notes to every updater as "what's new".
 - **Harness routing (verified 2026-11-11 against 1.143/1.146 notes, `docs/agents/run/move-to-copilot.md`, and tag `1.146.0` source).** New chats default to the Copilot harness in the editor Chat view as well as the Agents window, and its sessions run in the Agent Host process; the window is a client. The Local harness (extension host, our provider called directly) is deprecated as of 1.146 and removed February 2027, `vscode.temporaryDefaultToLocalHarness` with it, and is functionally frozen meanwhile. The normal request path therefore reaches us as an Agent Host **BYOK backend**, so picker, tool and metadata quirks there belong to that bridge, not to our transport.
