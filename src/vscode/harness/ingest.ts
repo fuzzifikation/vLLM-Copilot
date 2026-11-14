@@ -1,17 +1,64 @@
 /**
  * Outbox ingestion: move completed harness requests from the adapter's outbox
- * into the main extension's ledger.
+ * into the usage ledger (`state/externalUsage.ts` does the accounting).
  *
- * Durability rule: a record file is deleted only AFTER the ledger owner has
- * acknowledged it. If the bridge dies in between, the same `recordId` is
- * replayed and the owner reports it as a duplicate, so the worst case is a
+ * Durability rule: a record file is deleted only AFTER the ledger has
+ * acknowledged it. If the harness or the extension dies in between, the same
+ * `recordId` is replayed and reported as a duplicate, so the worst case is a
  * redundant call, never a lost or double-counted request.
+ *
+ * Records are validated here even though the ledger re-checks them: the writer
+ * is another PROCESS (the adapter inside dsh), and an id the ledger answers
+ * `rejected` for is a SETTLED id, meaning its file gets deleted. Anything we
+ * can tell is poison must be quarantined here, not mailed for deletion.
  *
  * Nothing here imports `vscode`, so the whole thing is testable in plain node.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import path from 'node:path'
-import { parseOutboxRecord, type ExternalRequestRecord, type LedgerPort } from './api.js'
+import type { ExternalRequestOutcome, ExternalRequestRecord } from '../../core/index.js'
+
+/**
+ * The floor mirrors the core's own accountability check (core/usage/ingest.ts
+ * toRequest): non-empty urls, finite non-negative counters, a positive
+ * timestamp. A record below this floor would come back `rejected`, and
+ * rejected ids are settled, meaning the queue file gets DELETED.
+ */
+function isRecord(value: unknown): value is ExternalRequestRecord {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Record<string, unknown>
+  if (typeof v.recordId !== 'string' || v.recordId.length === 0) return false
+  const r = v.request
+  if (typeof r !== 'object' || r === null) return false
+  const req = r as Record<string, unknown>
+  const counter = (key: string): boolean => typeof req[key] !== 'number' || (Number.isFinite(req[key] as number) && (req[key] as number) >= 0)
+  return (
+    typeof req.serverUrl === 'string' &&
+    req.serverUrl.length > 0 &&
+    typeof req.modelId === 'string' &&
+    req.modelId.length > 0 &&
+    typeof req.timestamp === 'number' &&
+    Number.isFinite(req.timestamp) &&
+    req.timestamp > 0 &&
+    typeof req.promptTokens === 'number' &&
+    typeof req.completionTokens === 'number' &&
+    counter('promptTokens') &&
+    counter('completionTokens') &&
+    counter('totalTokens')
+  )
+}
+
+/** Validate one outbox file's payload before it is handed over. */
+function parseOutboxRecord(raw: unknown): ExternalRequestRecord | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const v = raw as Record<string, unknown>
+  const candidate = {
+    recordId: typeof v.recordId === 'string' ? v.recordId : '',
+    recordedAt: typeof v.recordedAt === 'string' ? v.recordedAt : new Date().toISOString(),
+    request: v.lastRequest,
+  }
+  return isRecord(candidate) ? candidate : undefined
+}
 
 export interface IngestLog {
   info(message: string): void
@@ -106,11 +153,20 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 /**
  * One ingestion pass. Returns counters for the status bar and the boot rail.
- * A rejected batch leaves its files in place for the next pass: the ledger may
- * still be activating, and that is a reason to wait, not a reason to discard.
+ * A batch whose handoff threw leaves its files in place for the next pass: a
+ * transient failure is a reason to wait, not a reason to discard.
+ *
+ * @param record the ledger's own handoff (`recordExternalRequests`). Every id
+ * it names in accepted/duplicate/preReset/rejected is settled and its file
+ * deleted; an id it does not mention stays queued.
  */
 export async function ingestOutbox(
-  opts: { outboxDir: string; quarantineDir: string; port: LedgerPort | undefined; log?: IngestLog },
+  opts: {
+    outboxDir: string
+    quarantineDir: string
+    record: (records: readonly ExternalRequestRecord[]) => Promise<ExternalRequestOutcome>
+    log?: IngestLog
+  },
 ): Promise<IngestOutcome> {
   const log = opts.log ?? { info() {}, warn() {} }
   const outcome = emptyOutcome()
@@ -127,42 +183,21 @@ export async function ingestOutbox(
   const valid = pending.filter((p): p is Pending & { record: ExternalRequestRecord } => p.record !== undefined)
   if (valid.length === 0) return outcome
 
-  if (!opts.port) {
-    outcome.deferred = valid.length
-    return outcome
-  }
-
   for (const batch of chunk(valid, BATCH_SIZE)) {
-    let result
+    let result: ExternalRequestOutcome
     try {
-      result = await opts.port.recordExternalRequests(batch.map((b) => b.record))
+      result = await opts.record(batch.map((b) => b.record))
     } catch (err) {
       log.warn(`ledger handoff failed, keeping ${batch.length} record(s) for retry: ${(err as Error).message}`)
       outcome.deferred += batch.length
       continue
     }
-    // A cross-extension call can return anything. Parsing a nonsense answer
-    // must not throw out of the whole pass: unreadable verdict means "nothing
-    // settled", keep the records, retry later.
-    let settled: Set<string>
-    try {
-      if (typeof result !== 'object' || result === null) throw new Error('the ledger returned no result object')
-      settled = new Set([
-        ...(result.accepted ?? []),
-        ...(result.duplicate ?? []),
-        ...(result.preReset ?? []),
-        ...(result.rejected ?? []),
-      ])
-      outcome.accepted += result.accepted?.length ?? 0
-      outcome.duplicate += result.duplicate?.length ?? 0
-      outcome.preReset += result.preReset?.length ?? 0
-      outcome.rejected += result.rejected?.length ?? 0
-    } catch (err) {
-      log.warn(`ledger returned an unusable answer, keeping ${batch.length} record(s) for retry: ${(err as Error).message}`)
-      outcome.deferred += batch.length
-      continue
-    }
-    if (result.rejected?.length) {
+    const settled = new Set([...result.accepted, ...result.duplicate, ...result.preReset, ...result.rejected])
+    outcome.accepted += result.accepted.length
+    outcome.duplicate += result.duplicate.length
+    outcome.preReset += result.preReset.length
+    outcome.rejected += result.rejected.length
+    if (result.rejected.length) {
       log.warn(`ledger refused ${result.rejected.length} usage record(s) as unaccountable: ${result.rejected.join(', ')}`)
     }
     for (const item of batch) {

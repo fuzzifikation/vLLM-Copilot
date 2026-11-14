@@ -1,6 +1,6 @@
 /**
- * Tripwires for the external usage handoff (the DeepSeek Harness bridge's
- * entry point into the ledger). Named for the breakage each one catches:
+ * Tripwires for the external usage handoff (the DeepSeek Harness's entry point
+ * into the ledger). Named for the breakage each one catches:
  * double-counted money, a dashboard that refuses to stay reset, and a corrupt
  * record being folded into totals as a negative number.
  */
@@ -14,7 +14,6 @@ vi.mock('../src/vscode/state/usageStore.js', () => ({
 }));
 
 import {
-  EXTERNAL_USAGE_API_VERSION,
   initExternalUsage,
   noteUsageReset,
   recordExternalRequests,
@@ -55,10 +54,6 @@ beforeEach(async () => {
 });
 
 describe('external usage handoff', () => {
-  it('publishes the api version the companion expects', () => {
-    expect(EXTERNAL_USAGE_API_VERSION).toBe(1);
-  });
-
   it('counts a replayed record once, so a caller may retry safely', async () => {
     const first = await recordExternalRequests([record('r-1')]);
     expect(first.accepted).toEqual(['r-1']);

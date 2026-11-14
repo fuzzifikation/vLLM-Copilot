@@ -8,21 +8,22 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import * as path from 'node:path'
 import { Bridge } from './bridge.js'
-import { bridgePaths, ensureBridgeDirs, legacyHomeDirs } from './paths.js'
+import { bridgePaths, ensureBridgeDirs } from './paths.js'
 import { acquireStartLock } from './start-lock.js'
 import { INSTALL_STAMP_FILE, isSafeVersionSpec } from './runtime.js'
 import { readPidRecord, probeHarness } from './supervisor.js'
 import { deletableWithin, directorySize, formatBytes } from './disk.js'
-import { asLedgerPort, type LedgerPort } from './api.js'
 import { spawn } from 'node:child_process'
 import { ControlServer } from './control-server.js'
 import { EmbedProxy } from './embed-proxy.js'
-import { createCoreCatalogSource } from './core-catalog.js'
 import { createEditorTools } from './editor-tools.js'
-import { readBridgeSettings, readMainRegistry, mainExtensionInstalled, MAIN_EXT_ID } from './settings.js'
+import { readBridgeSettings } from './settings.js'
 import { drainActiveRequests } from './ingest.js'
 import { originAnswers, readServedHostPorts, servedUrlsFile } from './served-urls.js'
 import { runPreflight, type PrereqCheck } from './preflight.js'
+import { getConfig } from '../state/config.js'
+import { resolveModelReplacements } from '../state/personalityStore.js'
+import { recordExternalRequests } from '../state/externalUsage.js'
 
 const RESTART_DEBOUNCE_MS = 1500
 /** Deactivate must not hold the extension host hostage, unlike a deliberate restart. */
@@ -72,22 +73,6 @@ function applyLogLevel(): void {
     )
   }
 }
-/**
- * The ledger port, re-resolved per pass: the main extension may activate after
- * us, or be updated/reloaded, and a port captured once at activation would keep
- * pointing at a stale or absent export forever.
- */
-function resolveLedgerPort(): LedgerPort | undefined {
-  const ext = vscode.extensions.getExtension(MAIN_EXT_ID)
-  if (!ext) return undefined
-  try {
-    return asLedgerPort(ext.isActive ? ext.exports : undefined)
-  } catch (err) {
-    log().warn(`could not read the vLLM-Copilot API: ${(err as Error).message}`)
-    return undefined
-  }
-}
-
 let embed: EmbedProxy | undefined
 let embedStart: Promise<string> | undefined
 const harnessPanels = new Set<vscode.WebviewPanel>()
@@ -450,18 +435,6 @@ export async function activateHarness(context: vscode.ExtensionContext): Promise
     return controlStart
   }
 
-  /**
-   * The staged core's catalog surface, through the same loader the node rails
-   * build, so `bridge:check` exercises the code this window actually runs.
-   * The PROFILE's installed copy, not vendor/: pnpm resolved the core's bare
-   * dependencies beside it, while the vendor staging has no node_modules and
-   * would fail on the core's own imports.
-   */
-  const catalogSource = createCoreCatalogSource({
-    entryFile: () => path.join(paths.profileModules, 'vllm-copilot-core', 'core', 'index.js'),
-    log: logger,
-  })
-
   // One plugin-toggle notice at a time; back-to-back toggles all land in
 // the same restart, and a stack of identical cards is noise.
 let profileEditNoticeOpen = false
@@ -494,21 +467,22 @@ const bridge = new Bridge({
         })
     },
     dshVersion: () => readBridgeSettings().dshVersion || readBundledPin(),
-    registry: () => {
-      const registry = readMainRegistry()
+    registry: async () => {
+      const config = await getConfig()
       // A configured personality only reaches the harness through the
-      // snapshot's `personalityFile`, so resolve each model's file here.
-      // Relative or missing paths are skipped: a guess at a personality path
-      // is how the wrong persona gets attached to a model.
+      // snapshot's `personalityFile`. `resolveModelReplacements` is the one
+      // resolver the chat pipeline uses, so it answers BOTH references a model
+      // can carry: a stored `systemMessageReplacementsFile` path and a
+      // built-in personality stored by name in `model.personality`. The old
+      // absolute-path-only lookup silently dropped every built-in.
       const personalityFiles: Record<string, string> = {}
-      for (const model of registry.models) {
-        const file = model.systemMessageReplacementsFile
-        if (typeof file === 'string' && file.trim() && path.isAbsolute(file) && existsSync(file)) {
-          personalityFiles[model.id] = file
-        }
+      for (const model of config.models) {
+        const resolved = await resolveModelReplacements(context, model, (message) => logger.info(message))
+        if (resolved) personalityFiles[model.id] = resolved.sourcePath
       }
       return {
-        ...registry,
+        servers: config.servers,
+        models: config.models,
         personalityFiles,
         fixEmptyToolParameters: vscode.workspace.getConfiguration('vllm-copilot').get<boolean>('fixEmptyToolParameters'),
       }
@@ -522,11 +496,7 @@ const bridge = new Bridge({
         drainTimeoutMs: s.drainTimeoutSeconds * 1000,
       }
     },
-    ledgerPort: resolveLedgerPort,
-    mainExtension: () => {
-      const ext = vscode.extensions.getExtension(MAIN_EXT_ID)
-      return ext ? { path: ext.extensionPath, version: String(ext.packageJSON.version ?? 'unknown') } : undefined
-    },
+    recordUsage: recordExternalRequests,
     editorWorkspaceFolder: () => {
       const [first, second] = vscode.workspace.workspaceFolders ?? []
       if (!first) return undefined
@@ -539,7 +509,6 @@ const bridge = new Bridge({
       const url = control?.url
       return url ? { url, token: controlToken } : undefined
     },
-    coreCatalog: catalogSource,
     progress: (message, increment) => {
       // Null unless a start is in flight: the same Bridge instance also
       // prepares behind restarts, and an unrequested notification card on a
@@ -599,7 +568,6 @@ const bridge = new Bridge({
     // The palette reflects reality. Start hides itself while the harness runs,
     // and nothing offers "Open" before there is a URL to open.
     void vscode.commands.executeCommand('setContext', 'dshBridge.running', bridge.supervisor.running)
-    void vscode.commands.executeCommand('setContext', 'dshBridge.ownerAvailable', mainExtensionInstalled())
     // The stamp file is the whole truth about "installed": it is written by
     // tmp+rename only after npm reported the runtime tree complete, and the
     // uninstall deletes the directory holding it. The palette offers Uninstall
@@ -645,12 +613,6 @@ const bridge = new Bridge({
       ].join('\n'))
       status.command = 'dshBridge.start'
       status.backgroundColor = undefined
-      return
-    }
-    if (!mainExtensionInstalled()) {
-      status.text = '$(debug-disconnect) DSH: no vLLM-Copilot'
-      status.tooltip = 'Install the vLLM-Copilot extension to point the DeepSeek Harness at your own models. Until then the bridge does nothing.'
-      status.command = 'workbench.view.extensions'
       return
     }
     status.text = '$(dsh-bridge-whale-off) DSH: stopped'
@@ -1171,11 +1133,6 @@ const bridge = new Bridge({
         async () => {
           freed = directorySize(paths.root)
           rmSync(paths.root, { recursive: true, force: true })
-          // The version-keyed homes of bridges up to 0.0.3 have the same
-          // owner, hold sessions nobody can reach, and get the same answer.
-          for (const legacy of legacyHomeDirs(context.globalStorageUri.fsPath, paths.root)) {
-            if (deletableWithin(legacy, context.globalStorageUri.fsPath)) rmSync(legacy, { recursive: true, force: true })
-          }
         },
       ),
     )
@@ -1204,20 +1161,6 @@ const bridge = new Bridge({
             `${outcome.rejected ? `, ${outcome.rejected} refused` : ''}` +
             `${outcome.deferred ? `, ${outcome.deferred} deferred` : ''}`,
         )
-      } else if (outcome.deferred && !ingestTimerWarned) {
-        ingestTimerWarned = true
-        logger.warn(
-          `${outcome.deferred} harness request(s) are waiting for a vLLM-Copilot version that accepts them. ` +
-            'Update vLLM-Copilot to see this traffic in your dashboard totals.',
-        )
-        void vscode.window
-          .showWarningMessage(
-            'Harness traffic is not reaching your dashboard totals: this vLLM-Copilot version does not accept external usage yet. Update it to fix this.',
-            'Show Log',
-          )
-          .then((choice) => {
-            if (choice === 'Show Log') void output?.show()
-          })
       }
     } catch (err) {
       logger.warn(`usage ingest pass failed: ${(err as Error).message}`)
@@ -1226,7 +1169,6 @@ const bridge = new Bridge({
       render()
     }
   }
-  let ingestTimerWarned = false
 
   function armIngestTimer(): void {
     const seconds = Math.max(2, readBridgeSettings().ingestIntervalSeconds)
@@ -1262,7 +1204,6 @@ const bridge = new Bridge({
       `in-flight requests: ${bridge.activeRequests()}`,
       `pending usage records: ${readdirSync(paths.outbox).filter((n) => n.endsWith('.json')).length}`,
       `editor control channel: ${control?.url ? `listening on ${control.url}` : 'not started'}`,
-      `ledger handoff: ${resolveLedgerPort() ? 'available' : 'not offered by this vLLM-Copilot version'}`,
       '',
       'Harness URL tokens and server ids are never shown here.',
     ]
@@ -1334,7 +1275,7 @@ const bridge = new Bridge({
     ),
   )
 
-  const registry = readMainRegistry()
+  const registry = await getConfig()
   if (registry.models.length === 0) {
     logger.warn('the vLLM-Copilot registry has no models; the harness is not launched')
     void vscode.window
@@ -1351,9 +1292,9 @@ const bridge = new Bridge({
   // installs a runtime, opens a port, or spends tokens on its own.
   render()
 
-  // First run after an install, reached only when the companion is present and
-  // its registry offers models (the early returns above own those gaps). The
-  // offer asks for the one thing the user has not been offered yet: the dsh
+  // First run after an install, reached only when the registry offers models
+  // (the early return above owns that gap). The offer asks for the one thing
+  // the user has not been offered yet: the dsh
   // download. Pressing the button IS the manual ask the ruling above demands;
   // "Later" says nothing again, forever, and the pill stays. An install that
   // booted into a broken environment keeps the flag unset, so the offer lands

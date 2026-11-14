@@ -1,13 +1,12 @@
 /**
  * External usage ingest: completed requests that finished in ANOTHER runtime
- * (today the DeepSeek Harness bridge) and must fold into this package owner's
- * ledger. The owner decides what happens to every record — the caller never
- * decides by writing the ledger itself — and this module is where those
- * decisions live: idempotence by caller-generated `recordId`, the reset
- * barriers, and payload accountability. Pure plan, zero I/O: the host
- * (`vscode/state/externalUsage.ts`) owns the seen-id file, the live ledger
- * application and the persist scheduling, and a companion's own tests can
- * wrap THIS function instead of mirroring the contract.
+ * (today the DeepSeek Harness, which runs in its own process) and must fold
+ * into this package owner's ledger. The owner decides what happens to every
+ * record — the caller never decides by writing the ledger itself — and this
+ * module is where those decisions live: idempotence by caller-generated
+ * `recordId`, the reset barriers, and payload accountability. Pure plan, zero
+ * I/O: the host (`vscode/state/externalUsage.ts`) owns the seen-id file, the
+ * live ledger application and the persist scheduling.
  *
  * Two decisions worth their salt (unchanged since the handoff shipped):
  *   - Idempotence by caller-generated `recordId`. A caller that dies between

@@ -1,6 +1,7 @@
 /**
- * The published handoff for usage that completed somewhere other than this
- * extension's own provider path, today the DeepSeek Harness bridge.
+ * The handoff for usage that completed outside this extension's own provider
+ * path: today the DeepSeek Harness, which runs in its own process (dsh) and
+ * drops completed requests in the harness's outbox.
  *
  * Why the owner does the accounting instead of the caller: this extension owns
  * `usage.json`, its delta merge, its reset semantics and its cost derivation.
@@ -9,8 +10,7 @@
  * happens to each one (`core/usage/ingest.ts` — idempotence by recordId, the
  * reset barriers, payload accountability); this module is transport glue: the
  * durable seen-id file, application to the live ledger, and the reset
- * subscription that stamps barriers. The split exists so a companion's own
- * tests can wrap the real ingest function instead of mirroring it.
+ * subscription that stamps barriers.
  */
 
 import * as fs from 'fs';
@@ -21,9 +21,6 @@ import type { ExternalRequestRecord, ExternalRequestOutcome, ExternalUsageState 
 import { onUsageDidReset, recordExternalRequest } from './usageStore.js';
 
 export type { ExternalRequestRecord, ExternalRequestOutcome } from '../../core/usage/ingest.js';
-
-/** Version of the handoff, matched against the caller's expectation. */
-export const EXTERNAL_USAGE_API_VERSION = 1;
 
 const STORE_FILE = 'external-usage.json';
 

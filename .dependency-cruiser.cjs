@@ -61,6 +61,38 @@ module.exports = {
       },
     },
     {
+      name: 'copilot-not-harness',
+      severity: 'error',
+      comment:
+        'The Copilot provider (src/vscode/copilot/) and the DeepSeek Harness (src/vscode/harness/) are two interfaces over the same core; neither may reach into the other. Both build on src/core and src/vscode/state. Harness code additionally runs in plain Node from scripts/, which has no editor to lean on.',
+      from: { path: '^src/vscode/copilot/' },
+      to: { path: '^src/vscode/harness/' },
+    },
+    {
+      name: 'harness-not-copilot',
+      severity: 'error',
+      comment:
+        'Mirror of copilot-not-harness: the harness never imports the Copilot provider. Shared logic goes down (src/core or src/vscode/state), never sideways.',
+      from: { path: '^src/vscode/harness/' },
+      to: { path: '^src/vscode/copilot/' },
+    },
+    {
+      name: 'harness-node-only',
+      severity: 'error',
+      comment:
+        'Every harness module except the three editor-glue files (harness.ts, settings.ts, editor-tools.ts) runs in plain Node from scripts/ and the unit tests, with no extension host. It must not import host source outside src/vscode/harness/ (src/core and its own directory are fine).',
+      from: { path: '^src/vscode/harness/', pathNot: '^src/vscode/harness/(harness|settings|editor-tools)\\.ts$' },
+      to: { path: '^src/(?!core/|vscode/harness/)' },
+    },
+    {
+      name: 'harness-node-only-no-packages',
+      severity: 'error',
+      comment:
+        'The Node-only half of the harness may pull no npm package at all, which is also how the editor itself is banned: `vscode` resolves to node_modules/@types/vscode as npm-dev (same trick as core-no-undeclared-deps). Anything the harness needs from npm belongs in the core or in the dsh runtime it drives.',
+      from: { path: '^src/vscode/harness/', pathNot: '^src/vscode/harness/(harness|settings|editor-tools)\\.ts$' },
+      to: { dependencyTypes: ['npm', 'npm-dev', 'npm-optional', 'npm-peer', 'npm-no-pkg', 'npm-unknown'] },
+    },
+    {
       name: 'copilot-no-ui',
       severity: 'error',
       comment:

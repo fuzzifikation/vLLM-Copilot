@@ -15,19 +15,19 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { resolveServedModels } from '../../core/index.js'
+import type { ExternalRequestOutcome, ExternalRequestRecord, ModelConfig, ServerEntry } from '../../core/index.js'
 import { ensureDshRuntime, type DshRuntime } from './runtime.js'
 import { ensureAdapterInstalled, ensureProfile, requireDsh } from './dsh-cli.js'
-import { buildSnapshot, type AuxChoice, type ServedVerdict, type SnapshotModel, type SnapshotServer } from './snapshot.js'
+import { buildSnapshot, type AuxChoice, type ServedVerdict } from './snapshot.js'
 import { writeSnapshot } from './snapshot-writer.js'
-import type { CoreCatalogSource } from './core-catalog.js'
 import { loadOverlay, loadPluginSnapshotModule, loadStaging, type OverlayModule } from './shared-modules.js'
-import { classifyPidRecord, probeHarness, sweepDetachedHarnesses, Supervisor, type PidRecord } from './supervisor.js'
+import { classifyPidRecord, probeHarness, Supervisor, type PidRecord } from './supervisor.js'
 import { acquireStartLock } from './start-lock.js'
 import { ingestOutbox, type IngestOutcome } from './ingest.js'
 import { registerDefaultWorkspace } from './workspace.js'
-import type { LedgerPort } from './api.js'
 import type { BridgePaths } from './paths.js'
-import { ensureBridgeDirs, legacyHomeDirs } from './paths.js'
+import { ensureBridgeDirs } from './paths.js'
 import { appendServedUrl, servedUrlsFile } from './served-urls.js'
 
 export interface BridgeLog {
@@ -37,15 +37,15 @@ export interface BridgeLog {
 }
 
 export interface RegistryView {
-  servers: SnapshotServer[]
-  models: SnapshotModel[]
+  servers: ServerEntry[]
+  models: ModelConfig[]
   /** Mirrored from `vllm-copilot.fixEmptyToolParameters`. */
   fixEmptyToolParameters?: boolean
   /**
    * Absolute, readable personality file per model id (resolved from each
-   * model's `systemMessageReplacementsFile`). Without this the snapshot
-   * carries no `personalityFile` and configured personalities silently never
-   * reach the harness.
+   * model's personality reference). Without this the snapshot carries no
+   * `personalityFile` and configured personalities silently never reach the
+   * harness.
    */
   personalityFiles?: Readonly<Record<string, string>>
 }
@@ -58,7 +58,7 @@ export interface BridgeChoices {
 }
 
 export interface BridgeDeps {
-  /** Extension install root: holds `dsh/shared/` and `dsh/plugin/`. */
+  /** Extension install root: holds `out/core`, `dsh/shared/` and `dsh/plugin/`. */
   extensionRoot: string
   extensionVersion: string
   paths: BridgePaths
@@ -69,12 +69,10 @@ export interface BridgeDeps {
    * restart instead of being frozen at activation.
    */
   dshVersion: string | (() => string)
-  registry: () => RegistryView
+  registry: () => Promise<RegistryView>
   choices: () => BridgeChoices
-  /** undefined while the main extension cannot accept records; keeps the outbox. */
-  ledgerPort: () => LedgerPort | undefined
-  /** The installed vLLM-Copilot extension, or undefined when absent. */
-  mainExtension: () => { path: string; version: string } | undefined
+  /** The ledger's own handoff: `recordExternalRequests` from `state/externalUsage.ts`. */
+  recordUsage: (records: readonly ExternalRequestRecord[]) => Promise<ExternalRequestOutcome>
   /**
    * The editor's primary folder, when there is one. Registered as the
    * harness's default workspace immediately before our own spawn, so dsh
@@ -103,16 +101,6 @@ export interface BridgeDeps {
    * a cold start and races ahead on a warm one, which is the honest picture.
    */
   progress?(message: string, increment?: number): void
-  /**
-   * The staged core's catalog resolver (`resolveServedModels`, plus
-   * `buildDisplayKeys` when present) as a shared, invalidatable source, loaded
-   * lazily per prepare and reset whenever staging restages the core, so a
-   * same-window extension update cannot keep serving the previous build's
-   * verdicts. Absent (or a core too old to export it), every server's models
-   * are offered unfiltered and re-keyed by the writer's own fallback: the same
-   * posture as a probe that cannot reach the server.
-   */
-  coreCatalog?: CoreCatalogSource
   onUnexpectedExit?(info: { code: number | null; signal: string | null }): void
 }
 
@@ -145,7 +133,6 @@ export function compositionIsCurrent(
 export class Bridge {
   readonly supervisor: Supervisor
   private prepared: PreparedBridge | undefined
-  private legacyHomesRetired = false
 
   constructor(private readonly deps: BridgeDeps) {
     this.supervisor = new Supervisor({
@@ -173,47 +160,44 @@ export class Bridge {
   }
 
   /**
-   * Copy the compiled core out of the installed extension and stage the adapter
-   * beside it, so the profile's `file:../vllm-copilot-core` resolves. Skipped
-   * when the stamp already matches the installed extension version, which is
-   * what keeps an editor restart from re-copying 2 MB of JavaScript.
+   * Copy this extension's compiled core out of its install directory and stage
+   * the adapter beside it, so the profile's `file:../vllm-copilot-core`
+   * resolves. Skipped when the stamp already matches this extension's version,
+   * which is what keeps an editor restart from re-copying 2 MB of JavaScript.
    */
-  private async stage(): Promise<{ coreVersion: string; recompileNeeded: boolean }> {
+  private async stage(): Promise<{ coreVersion: string }> {
     const { paths, deps } = { paths: this.deps.paths, deps: this.deps }
     const staging = await loadStaging(this.deps.extensionRoot)
-    const main = this.deps.mainExtension()
-    if (!main) throw new Error('vLLM-Copilot is not installed, so there is no core to stage')
-    const manifest = JSON.parse(readFileSync(path.join(main.path, 'package.json'), 'utf8')) as { version?: string }
+    const manifest = JSON.parse(readFileSync(path.join(this.deps.extensionRoot, 'package.json'), 'utf8')) as { version?: string }
     const stamp = staging.readCoreStamp(paths.coreVersion)
     const fingerprint = this.pluginFingerprint()
     if (
       compositionIsCurrent(stamp, {
-        extensionVersion: main.version,
+        extensionVersion: this.deps.extensionVersion,
         pluginFingerprint: fingerprint,
         vendorCoreExists: existsSync(path.join(paths.vendor.core, 'core', 'index.js')),
       })
     ) {
-      return { coreVersion: String(stamp?.coreVersion ?? main.version), recompileNeeded: false }
+      return { coreVersion: String(stamp?.coreVersion ?? this.deps.extensionVersion) }
     }
-    this.deps.log.info(`staging vLLM-Copilot core ${main.version} for the harness`)
+    this.deps.log.info(`staging the vLLM-Copilot core ${this.deps.extensionVersion} for the harness`)
     staging.stageCore({
-      coreDir: path.join(main.path, 'out', 'core'),
+      coreDir: path.join(this.deps.extensionRoot, 'out', 'core'),
       sourceManifest: manifest,
       targetDir: paths.vendor.core,
-      docsDir: main.path,
-      description: `vLLM-Copilot editor-free core (compiled out/core of vLLM-Copilot ${main.version}, staged by the bridge).`,
+      docsDir: this.deps.extensionRoot,
+      description: `vLLM-Copilot editor-free core (compiled out/core of vLLM-Copilot ${this.deps.extensionVersion}).`,
     })
     staging.stageAdapter({ pluginDir: path.join(this.deps.extensionRoot, 'dsh', 'plugin'), targetDir: paths.vendor.adapter })
     staging.writeCoreStamp(paths.coreVersion, {
       coreVersion: manifest.version ?? 'unknown',
-      extensionVersion: main.version,
-      bridgeVersion: this.deps.extensionVersion,
+      extensionVersion: this.deps.extensionVersion,
       pluginFingerprint: fingerprint,
       stagedAt: new Date().toISOString(),
     })
     // The profile pinned the previous adapter build; force a reinstall.
     rmSync(deps.paths.adapterStamp, { force: true })
-    return { coreVersion: String(manifest.version ?? 'unknown'), recompileNeeded: true }
+    return { coreVersion: String(manifest.version ?? 'unknown') }
   }
 
   /**
@@ -243,29 +227,22 @@ export class Bridge {
   }
 
   /**
-   * Ask the staged core for served verdicts and display keys. The resolver
-   * never throws for probe failures — that is what `unknown` exists for — so
-   * anything landing in the catch is a broken stage or a misbehaving core,
-   * and the answer is the certified no-verdict posture: offer everything,
-   * re-key locally. Same posture a probe failure always had.
+   * Ask the core which configured models their servers actually serve. The
+   * resolver never throws for probe failures — that is what `unknown` exists
+   * for — so anything landing in the catch is a misbehaving core, and the
+   * answer is the certified no-verdict posture: offer everything. Same posture
+   * a probe failure always had.
    */
-  private async resolveCatalog(
-    registry: RegistryView,
-  ): Promise<{ served?: Record<string, ServedVerdict>; displayKeys?: Record<string, string> }> {
-    const catalog = await this.deps.coreCatalog?.load()
-    if (!catalog) return {}
+  private async resolveServed(registry: RegistryView): Promise<Record<string, ServedVerdict>> {
     try {
       const served: Record<string, ServedVerdict> = {}
-      for (const [id, verdict] of await catalog.resolveServedModels(registry.models, registry.servers)) {
+      for (const [id, verdict] of await resolveServedModels(registry.models, registry.servers)) {
         served[id] = verdict
       }
-      if (!catalog.buildDisplayKeys) return { served }
-      const displayKeys: Record<string, string> = {}
-      for (const [id, key] of catalog.buildDisplayKeys(registry.models)) displayKeys[id] = key
-      return { served, displayKeys }
+      return served
     } catch (err) {
       this.deps.log.warn(
-        `the staged core could not resolve the served models (${(err as Error).message}); offering every model unfiltered`,
+        `the core could not resolve the served models (${(err as Error).message}); offering every model unfiltered`,
       )
       return {}
     }
@@ -277,17 +254,11 @@ export class Bridge {
    * already current.
    */
   async prepare(): Promise<PreparedBridge> {
-    await this.retireLegacyHomes()
     ensureBridgeDirs(this.deps.paths)
     this.deps.progress?.('installing the harness runtime (first start only, about 1-2 minutes)')
     const runtime = await this.runtime()
     this.deps.progress?.('staging the vLLM-Copilot core for the harness', 45)
-    const { coreVersion, recompileNeeded } = await this.stage()
-    // The trees under the profile changed, so any module the catalog source
-    // cached from the previous build is stale. Node caches dynamic imports by
-    // URL, which is exactly why the source takes an invalidate() instead of
-    // trusting the extension host to restart.
-    if (recompileNeeded) this.deps.coreCatalog?.invalidate()
+    const { coreVersion } = await this.stage()
 
     this.deps.progress?.('creating the dsh profile (first start only, about a minute)', 2)
     await ensureProfile({ binPath: runtime.binPath, dshHome: this.deps.paths.root, profile: 'vllmc', manifestFile: path.join(this.deps.paths.profile, 'package.json') })
@@ -303,13 +274,11 @@ export class Bridge {
     })
 
     this.deps.progress?.('asking your servers which models they serve', 15)
-    const registry = this.deps.registry()
-    const { served, displayKeys } = await this.resolveCatalog(registry)
+    const registry = await this.deps.registry()
     const payload = buildSnapshot({
       ...registry,
       ...this.deps.choices(),
-      ...(served ? { served } : {}),
-      ...(displayKeys ? { displayKeys } : {}),
+      served: await this.resolveServed(registry),
       onWarning: (message) => this.deps.log.warn(message),
     })
     const plugin = await loadPluginSnapshotModule(this.deps.paths.vendor.adapter)
@@ -527,29 +496,12 @@ export class Bridge {
    * running harness may be reused.
    */
   private async needsRestage(): Promise<boolean> {
-    const main = this.deps.mainExtension()
-    if (!main) return false
     const staging = await loadStaging(this.deps.extensionRoot)
     return !compositionIsCurrent(staging.readCoreStamp(this.deps.paths.coreVersion), {
-      extensionVersion: main.version,
+      extensionVersion: this.deps.extensionVersion,
       pluginFingerprint: this.pluginFingerprint(),
       vendorCoreExists: existsSync(path.join(this.deps.paths.vendor.core, 'core', 'index.js')),
     })
-  }
-
-  /**
-   * Bridges up to 0.0.3 keyed the harness home to the extension version, so an
-   * updated install can find old homes whose harnesses nothing will ever sweep
-   * again (every later sweep matches on the new home path). Reap their process
-   * trees once; the directories stay for the user to delete.
-   */
-  private async retireLegacyHomes(): Promise<void> {
-    if (this.legacyHomesRetired) return
-    this.legacyHomesRetired = true
-    for (const dir of legacyHomeDirs(path.dirname(this.deps.paths.root), this.deps.paths.root)) {
-      this.deps.log.info(`retiring the harness home left by an older bridge: ${path.basename(dir)}`)
-      await sweepDetachedHarnesses(dir)
-    }
   }
 
   /**
@@ -571,12 +523,12 @@ export class Bridge {
     return { url, drained: stop.drained, remaining: stop.remaining }
   }
 
-  /** Fold completed harness requests into the main extension's ledger. */
+  /** Fold completed harness requests into the usage ledger. */
   async ingest(): Promise<IngestOutcome> {
     return ingestOutbox({
       outboxDir: this.deps.paths.outbox,
       quarantineDir: this.deps.paths.quarantine,
-      port: this.deps.ledgerPort(),
+      record: this.deps.recordUsage,
       log: this.deps.log,
     })
   }

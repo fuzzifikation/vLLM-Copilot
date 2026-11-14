@@ -43,6 +43,38 @@ module.exports = {
         pathNot: 'node_modules[/\\\\](eventsource-parser|jsonrepair|best-effort-json-parser)[/\\\\]',
       },
     },
+    {
+      name: 'copilot-not-harness',
+      severity: 'error',
+      comment:
+        'Pre-compilation variant of the layering rule in .dependency-cruiser.cjs: a type-only import between src/vscode/copilot/ and src/vscode/harness/ still welds the two interfaces together even though the edge vanishes at runtime. They share src/core and src/vscode/state, nothing else.',
+      from: { path: '^src/vscode/copilot/' },
+      to: { path: '^src/vscode/harness/' },
+    },
+    {
+      name: 'harness-not-copilot',
+      severity: 'error',
+      comment:
+        'Pre-compilation mirror: the harness may not import the Copilot provider, not even for types. Shared logic goes down (src/core or src/vscode/state), never sideways.',
+      from: { path: '^src/vscode/harness/' },
+      to: { path: '^src/vscode/copilot/' },
+    },
+    {
+      name: 'harness-node-only',
+      severity: 'error',
+      comment:
+        'Pre-compilation variant: harness modules other than the three editor-glue files (harness.ts, settings.ts, editor-tools.ts) run in plain Node from scripts/ and the unit tests, so a type-only import of host source would still drag the editor into their graph. src/core and their own directory are fine.',
+      from: { path: '^src/vscode/harness/', pathNot: '^src/vscode/harness/(harness|settings|editor-tools)\\.ts$' },
+      to: { path: '^src/(?!core/|vscode/harness/)' },
+    },
+    {
+      name: 'harness-node-only-no-packages',
+      severity: 'error',
+      comment:
+        'Pre-compilation package gate for the same Node-only modules: no npm dependency of any kind, which is also how `vscode` is banned — it resolves to node_modules/@types/vscode as npm-dev (same trick as core-no-undeclared-deps).',
+      from: { path: '^src/vscode/harness/', pathNot: '^src/vscode/harness/(harness|settings|editor-tools)\\.ts$' },
+      to: { dependencyTypes: ['npm', 'npm-dev', 'npm-optional', 'npm-peer', 'npm-no-pkg', 'npm-unknown'] },
+    },
   ],
   options: {
     tsConfig: { fileName: 'tsconfig.json' },

@@ -12,7 +12,7 @@
  * compares the running composition's stamp with the current build and
  * replaces a harness that predates the upgrade.
  */
-import { mkdirSync, readdirSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 
 /** Layout inside `$DSH_HOME`; dsh owns the rest of the tree (profiles, sessions). */
@@ -92,24 +92,4 @@ export function ensureBridgeDirs(paths: BridgePaths): void {
 /** Where the staged vendor pair goes: the core, plus the adapter beside it. */
 export function vendorPaths(root: string): { core: string; adapter: string } {
   return { core: path.join(root, 'vendor', 'vllm-copilot-core'), adapter: path.join(root, 'vendor', 'dsh-adapter-vllmc') }
-}
-
-/**
- * Version-keyed `dsh-home-<version>` directories from the old layout, the
- * current root excluded. Bridges up to 0.0.3 created one per installed
- * version; their harnesses must be reaped or they hold their ports and model
- * sessions until the end of time, invisible to every later sweep.
- */
-export function legacyHomeDirs(dataDir: string, currentRoot: string): string[] {
-  let entries
-  try {
-    entries = readdirSync(dataDir, { withFileTypes: true })
-  } catch {
-    return []
-  }
-  return entries
-    .filter((e) => e.isDirectory() && e.name.startsWith('dsh-home-'))
-    .map((e) => path.join(dataDir, e.name))
-    .filter((dir) => path.resolve(dir) !== path.resolve(currentRoot))
-    .sort()
 }

@@ -13,7 +13,7 @@ import { delimiter, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 
-import { bridgePaths, ensureBridgeDirs, legacyHomeDirs } from '../../src/vscode/harness/paths.js'
+import { bridgePaths, ensureBridgeDirs } from '../../src/vscode/harness/paths.js'
 import { compositionIsCurrent } from '../../src/vscode/harness/bridge.js'
 import { acquireStartLock } from '../../src/vscode/harness/start-lock.js'
 import { buildSnapshot } from '../../src/vscode/harness/snapshot.js'
@@ -209,15 +209,21 @@ describe('snapshot: bridge writes what the plugin reads', () => {
     expect(payload.config.models.map((m) => m.id)).toEqual(['Same', 'Same (2)', 'wire-c'])
   })
 
-  it('honors core-built display keys, guarding collisions anyway', () => {
-    // With the core's buildDisplayKeys passed in, ITS names are the ids —
-    // identity is one rule shared with the Copilot picker. The local suffix
-    // guard stays armed no matter who supplied the names.
+  it('keys models by the core rule, and a pruned neighbour cannot rename the survivor', () => {
+    // The core's `buildDisplayKeys` is the ONE keying rule, so the Copilot
+    // picker, the harness picker and the adapter all say the same name. It
+    // runs over every usable model BEFORE the absent-pruning, so the model
+    // that stayed keeps the key it always had instead of sliding up a number
+    // every time a neighbour goes offline.
     const payload = buildSnapshot({
-      ...registry,
-      displayKeys: { 'm-1': 'Chosen Name', 'm-2': 'Chosen Name' },
+      servers: registry.servers,
+      models: [
+        { id: 'a', vllmModelId: 'wire-a', server: 'srv-a', displayName: 'Same' },
+        { id: 'b', vllmModelId: 'wire-b', server: 'srv-a', displayName: 'Same' },
+      ],
+      served: { a: { state: 'absent' } },
     })
-    expect(payload.config.models.map((m) => m.id)).toEqual(['Chosen Name', 'Chosen Name (2)'])
+    expect(payload.config.models.map((m) => m.id)).toEqual(['Same (2)'])
   })
 
   it('refuses to write an empty registry instead of a harness with no models', () => {
@@ -336,65 +342,59 @@ describe('usage outbox: exactly-once handoff to the ledger owner', () => {
   function drop(outboxDir, id, payload = record(id)) {
     writeFileSync(join(outboxDir, `${id}.json`), JSON.stringify(payload))
   }
-  /** A ledger stand-in with the same dedup and reset-barrier contract the real owner implements. */
+  /** The ledger's own handoff, with the dedup and reset-barrier contract
+   *  `state/externalUsage.ts` implements. State rides on the function so a
+   *  test can read what the pass actually mailed. */
   function ledger({ reset = false, throws = false } = {}) {
     const seen = new Set()
-    const calls = []
-    return {
-      apiVersion: 1,
-      calls,
-      acceptedIds: [],
-      async recordExternalRequests(records) {
-        if (throws) throw new Error('ledger busy')
-        calls.push(records.map((r) => r.recordId))
-        const out = { accepted: [], duplicate: [], preReset: [] }
-        for (const r of records) {
-          if (reset) out.preReset.push(r.recordId)
-          else if (seen.has(r.recordId)) out.duplicate.push(r.recordId)
-          else {
-            seen.add(r.recordId)
-            out.accepted.push(r.recordId)
-          }
+    const record = async (records) => {
+      if (throws) throw new Error('ledger busy')
+      record.calls.push(records.map((r) => r.recordId))
+      const out = { accepted: [], duplicate: [], preReset: [], rejected: [] }
+      for (const r of records) {
+        if (reset) out.preReset.push(r.recordId)
+        else if (seen.has(r.recordId)) out.duplicate.push(r.recordId)
+        else {
+          seen.add(r.recordId)
+          out.accepted.push(r.recordId)
         }
-        this.acceptedIds = [...this.acceptedIds, ...out.accepted]
-        return out
-      },
+      }
+      record.acceptedIds = [...record.acceptedIds, ...out.accepted]
+      return out
     }
+    record.calls = []
+    record.acceptedIds = []
+    return record
   }
 
   it('deletes a record only after the owner acknowledges it, exactly once', async () => {
     const p = paths()
     drop(p.outbox, 'r-1')
     drop(p.outbox, 'r-2')
-    const port = ledger()
-    const first = await ingestOutbox({ outboxDir: p.outbox, quarantineDir: p.quarantine, port })
+    const record = ledger()
+    const first = await ingestOutbox({ outboxDir: p.outbox, quarantineDir: p.quarantine, record })
     expect(first).toMatchObject({ accepted: 2, duplicate: 0, deferred: 0, malformed: 0 })
     expect(readdirSync(p.outbox)).toEqual([])
-    expect(port.acceptedIds.sort()).toEqual(['r-1', 'r-2'])
+    expect(record.acceptedIds.sort()).toEqual(['r-1', 'r-2'])
 
     // Replayed records (crash between ack and delete, or a duplicated write)
     // must be counted once. Double counting would corrupt the user's dashboard.
     drop(p.outbox, 'r-1')
-    const replay = await ingestOutbox({ outboxDir: p.outbox, quarantineDir: p.quarantine, port })
+    const replay = await ingestOutbox({ outboxDir: p.outbox, quarantineDir: p.quarantine, record })
     expect(replay).toMatchObject({ accepted: 0, duplicate: 1 })
-    expect(port.acceptedIds).toEqual(['r-1', 'r-2'])
+    expect(record.acceptedIds).toEqual(['r-1', 'r-2'])
     expect(readdirSync(p.outbox)).toEqual([])
   })
 
-  it('keeps records when the ledger rejects the batch instead of eating them', async () => {
+  it('keeps records when the ledger handoff throws instead of eating them', async () => {
     const p = paths()
     drop(p.outbox, 'r-9')
     const busy = await ingestOutbox({
       outboxDir: p.outbox,
       quarantineDir: p.quarantine,
-      port: ledger({ throws: true }),
+      record: ledger({ throws: true }),
     })
     expect(busy).toMatchObject({ deferred: 1, accepted: 0 })
-    expect(readdirSync(p.outbox)).toEqual(['r-9.json'])
-
-    // No ledger at all (main extension absent or too old): wait, never discard.
-    const none = await ingestOutbox({ outboxDir: p.outbox, quarantineDir: p.quarantine, port: undefined })
-    expect(none).toMatchObject({ deferred: 1 })
     expect(readdirSync(p.outbox)).toEqual(['r-9.json'])
   })
 
@@ -404,7 +404,7 @@ describe('usage outbox: exactly-once handoff to the ledger owner', () => {
     const outcome = await ingestOutbox({
       outboxDir: p.outbox,
       quarantineDir: p.quarantine,
-      port: ledger({ reset: true }),
+      record: ledger({ reset: true }),
     })
     expect(outcome).toMatchObject({ preReset: 1, accepted: 0 })
     expect(readdirSync(p.outbox)).toEqual([])
@@ -418,10 +418,10 @@ describe('usage outbox: exactly-once handoff to the ledger owner', () => {
     // must catch it HERE, because the ledger counts rejected ids as settled
     // and a mailed poison record is a deleted poison record.
     drop(p.outbox, 'negative', record('negative', -1))
-    const port = ledger()
-    const outcome = await ingestOutbox({ outboxDir: p.outbox, quarantineDir: p.quarantine, port })
+    const handoff = ledger()
+    const outcome = await ingestOutbox({ outboxDir: p.outbox, quarantineDir: p.quarantine, record: handoff })
     expect(outcome.malformed).toBe(3)
-    expect(port.calls).toEqual([]) // nothing half-read reaches the ledger
+    expect(handoff.calls).toEqual([]) // nothing half-read reaches the ledger
     expect(readdirSync(p.outbox)).toEqual([])
     expect(readdirSync(p.quarantine).sort()).toEqual(['broken.json', 'half.json', 'negative.json'])
     // Still readable for a human to inspect after the fact.
@@ -432,16 +432,11 @@ describe('usage outbox: exactly-once handoff to the ledger owner', () => {
     const p = paths()
     drop(p.outbox, 'poison')
     const warnings = []
-    const refusing = {
-      apiVersion: 1,
-      async recordExternalRequests(records) {
-        return { accepted: [], duplicate: [], preReset: [], rejected: records.map((r) => r.recordId) }
-      },
-    }
+    const refusing = async (records) => ({ accepted: [], duplicate: [], preReset: [], rejected: records.map((r) => r.recordId) })
     const outcome = await ingestOutbox({
       outboxDir: p.outbox,
       quarantineDir: p.quarantine,
-      port: refusing,
+      record: refusing,
       log: { info() {}, warn: (m) => warnings.push(m) },
     })
     expect(outcome).toMatchObject({ accepted: 0, rejected: 1, deferred: 0 })
@@ -454,7 +449,7 @@ describe('usage outbox: exactly-once handoff to the ledger owner', () => {
   it('is silent and harmless when there is no outbox yet', async () => {
     const p = paths()
     rmSync(p.outbox, { recursive: true, force: true })
-    expect(await ingestOutbox({ outboxDir: p.outbox, quarantineDir: p.quarantine, port: ledger() })).toEqual(emptyOutcome())
+    expect(await ingestOutbox({ outboxDir: p.outbox, quarantineDir: p.quarantine, record: ledger() })).toEqual(emptyOutcome())
   })
 })
 
@@ -1317,7 +1312,7 @@ describe('profile patch layer merge', () => {
   })
 })
 
-describe('composition and legacy home bookkeeping', () => {
+describe('composition: one build, one harness', () => {
   const current = { extensionVersion: '1.2.3', pluginFingerprint: 'abc', vendorCoreExists: true }
 
   it('refuses adoption when the running composition predates this build', () => {
@@ -1326,16 +1321,6 @@ describe('composition and legacy home bookkeeping', () => {
     expect(compositionIsCurrent({ extensionVersion: '1.2.3', pluginFingerprint: 'old' }, current)).toBe(false)
     expect(compositionIsCurrent(undefined, current)).toBe(false)
     expect(compositionIsCurrent({ extensionVersion: '1.2.3', pluginFingerprint: 'abc' }, { ...current, vendorCoreExists: false })).toBe(false)
-  })
-
-  it('lists versioned homes from the old layout and never the stable root', () => {
-    mkdirSync(join(dir, 'dsh-home-0.0.1'), { recursive: true })
-    mkdirSync(join(dir, 'dsh-home-0.0.2'), { recursive: true })
-    mkdirSync(join(dir, 'dsh-home', 'runtime'), { recursive: true })
-    mkdirSync(join(dir, 'unrelated'), { recursive: true })
-    expect(legacyHomeDirs(dir, join(dir, 'dsh-home'))).toEqual([join(dir, 'dsh-home-0.0.1'), join(dir, 'dsh-home-0.0.2')])
-    // Rails still run versioned roots: self-exclusion must be by resolve, not name.
-    expect(legacyHomeDirs(dir, join(dir, 'dsh-home-0.0.1'))).toEqual([join(dir, 'dsh-home-0.0.2')])
   })
 })
 

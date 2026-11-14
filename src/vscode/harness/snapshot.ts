@@ -13,25 +13,8 @@
  * consumes `ModelConfig[]` / `ServerEntry[]` as-is, and cherry-picking fields
  * here would silently strip a capability the moment upstream adds one.
  */
-
-export interface SnapshotServer {
-  id: string
-  serverUrl: string
-  serverType?: string
-  displayName?: string
-  requestHeaders?: Record<string, string>
-  [key: string]: unknown
-}
-
-export interface SnapshotModel {
-  id: string
-  server: string
-  /** Carried verbatim from the registry entry (see RegistryModel): the
-   *  adapter gates vision on `capabilities.imageInput`, so a build step that
-   *  cherry-picked fields would silently blind every vision model. */
-  capabilities?: { toolCalling?: boolean; imageInput?: boolean }
-  [key: string]: unknown
-}
+import { buildDisplayKeys } from '../../core/index.js'
+import type { ModelConfig, ServerEntry } from '../../core/index.js'
 
 export interface AuxChoice {
   modelId?: string
@@ -39,12 +22,12 @@ export interface AuxChoice {
 }
 
 /**
- * The core's served-model verdict (`resolveServedModels` in the staged core,
- * shipped since vLLM-Copilot 1.37.1). The core answers; the reaction here is
- * the bridge's own posture: only a demonstrated `absent` prunes. `unknown`
- * ("could not ask", including an empty answer) keeps the model offered — a
- * network hiccup must never empty the harness catalog, and "could not ask"
- * is never "serves nothing" (the 0.0.12 accident the core now enforces).
+ * The core's served-model verdict (`resolveServedModels`). The core answers;
+ * the reaction here is the harness's own posture: only a demonstrated `absent`
+ * prunes. `unknown` ("could not ask", including an empty answer) keeps the
+ * model offered — a network hiccup must never empty the harness catalog, and
+ * "could not ask" is never "serves nothing" (the 0.0.12 accident the core now
+ * enforces).
  */
 export interface ServedVerdict {
   readonly state: 'served' | 'absent' | 'unknown'
@@ -52,8 +35,8 @@ export interface ServedVerdict {
 }
 
 export interface SnapshotInput {
-  servers: readonly SnapshotServer[]
-  models: readonly SnapshotModel[]
+  servers: readonly ServerEntry[]
+  models: readonly ModelConfig[]
   /** User preference; falls back to the first usable model when unusable. */
   defaultModelId?: string
   title?: AuxChoice
@@ -68,18 +51,10 @@ export interface SnapshotInput {
    * registry, and Copilot's own picker hides it while the raw config would
    * happily offer it to dsh, where selecting it only produces an error toast
    * (the Space Bunny incident, 2026-10-06). A model with NO entry here got no
-   * verdict (no core, or a core too old to answer): everything is offered —
-   * the same posture as a probe that cannot reach the server.
+   * verdict (the resolver could not run at all): everything is offered — the
+   * same posture as a probe that cannot reach the server.
    */
   served?: Readonly<Record<string, ServedVerdict | undefined>>
-  /**
-   * Display-safe keys from the core's `buildDisplayKeys`, keyed by registry
-   * model id. When present they ARE the re-key base, so harness identity is
-   * the core's one rule; the writer's own name fallback below is the same
-   * rule, kept for cores too old to export the helper. The collision suffix
-   * stays as a guard no matter where base names come from.
-   */
-  displayKeys?: Readonly<Record<string, string | undefined>>
   /** Absolute path per model id, already resolved to a readable file. */
   personalityFiles?: Readonly<Record<string, string>>
   /** Reasons surfaced to the user rather than dropped silently. */
@@ -87,7 +62,7 @@ export interface SnapshotInput {
 }
 
 export interface SnapshotPayload {
-  config: { servers: SnapshotServer[]; models: SnapshotModel[] }
+  config: { servers: ServerEntry[]; models: ModelConfig[] }
   defaultModelId: string
   aux: Record<string, AuxChoice>
   fixEmptyToolParameters?: boolean
@@ -149,11 +124,9 @@ export function buildSnapshot(input: SnapshotInput): SnapshotPayload {
     )
   }
 
-  // The wire id is what a server's model list reports; the config id is ours.
-  const wireOf = (m: SnapshotModel): string => (typeof m.vllmModelId === 'string' && m.vllmModelId ? m.vllmModelId : m.id)
-  // Registry entries are open records, so `displayName` needs a runtime check
+  // Settings are hand-editable JSON, so `displayName` needs a runtime check
   // before it may pretend to be a label.
-  const displayNameOf = (m: SnapshotModel | undefined): string | undefined =>
+  const displayNameOf = (m: ModelConfig | undefined): string | undefined =>
     typeof m?.displayName === 'string' && m.displayName.trim() ? m.displayName.trim() : undefined
   // Friendly text for warnings: users know display names, not generated ids.
   const registryLabel = (modelId: string): string => displayNameOf(models.find((m) => m.id === modelId)) ?? modelId
@@ -183,18 +156,20 @@ export function buildSnapshot(input: SnapshotInput): SnapshotPayload {
   // dsh displays the model id wherever it shows the active model, and our
   // registry ids embed hostnames (`<wire> on <host>`), which put private
   // server names on screen in the harness UI. The snapshot's id namespace is
-  // ours: re-key to the user-chosen display name, uniquified. Requests still
+  // the CORE's one display-key rule (`buildDisplayKeys`), so the harness
+  // picker, the Copilot picker and the adapter agree on one name per model.
+  // It runs over every usable model, before the absent-pruning below, so a
+  // neighbour going offline cannot rename a model that stayed. Requests still
   // carry `vllmModelId`; this is display hygiene and hostname scrubbing at
   // once. Old sessions that stored a previous id re-pick once, same as any
   // model removal.
-  const takenKeys = new Set<string>()
+  const displayKeys = buildDisplayKeys(models)
   const oldToNew = new Map<string, string>()
   const newToOld = new Map<string, string>()
-  const rekeyed: SnapshotModel[] = offered.map((m) => {
-    const named = input.displayKeys?.[m.id] || displayNameOf(m) || wireOf(m)
-    let key = named
-    for (let n = 2; takenKeys.has(key); n++) key = `${named} (${n})`
-    takenKeys.add(key)
+  const rekeyed: ModelConfig[] = offered.map((m) => {
+    // Every model the filter above let through has a non-empty id, which is
+    // exactly what buildDisplayKeys keys on, so the `??` never fires.
+    const key = displayKeys.get(m.id) ?? m.id
     oldToNew.set(m.id, key)
     newToOld.set(key, m.id)
     return { ...m, id: key }
