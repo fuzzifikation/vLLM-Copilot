@@ -1,6 +1,6 @@
-# BIG NEWS: the DeepSeek Harness is built into this extension.
+# BIG NEWS for vLLM-Copilot: the DeepSeek Harness (DSH) is built into this extension.
 
-The agent harness that used to be a separate extension now lives here. It runs the servers and models you configured in this extension, in a tab, with no vendor login - and every request it makes lands in your dashboard totals like any other model.
+The agent harness that used to be a separate extension now lives here. It runs the servers and models you configured in this extension, in a tab, with **no vendor login** - and every request it makes lands in your dashboard totals like any other model. DSH is fully VS Code aware, but still in beta. It is already super usable!
 
 **Open a folder, then press Install DeepSeek Harness…** in the **DeepSeek Harness** section under the **V** icon. It checks Node.js 24.9.0+, `npm` and `pnpm` and names what is missing, downloads the certified harness once (a few minutes; later starts take seconds), and opens the agent. The folder you have open is the project it works on: sessions start there, and its tools read your files and diagnostics and drive your terminal.
 
