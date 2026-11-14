@@ -43,6 +43,7 @@ import { ServerSettingsViewProvider } from './vscode/ui/serverSettingsView.js';
 import { registerOpenDeepDiveCommand } from './vscode/ui/deepDiveView.js';
 import { registerOpenModelSelectorCommand } from './vscode/ui/modelSelectorView.js';
 import { registerConfigSchemaTool } from './vscode/copilot/configSchemaTool.js';
+import { activateHarness } from './vscode/harness/harness.js';
 
 const VENDOR_ID = 'vllm-copilot';
 let provider: VllmChatModelProvider | undefined;
@@ -357,6 +358,13 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider('vllm-copilot.serverSettings', serverSettingsView)
     );
+
+    // The DeepSeek Harness is an optional feature: its failure must not fail vLLM-Copilot.
+    try {
+      await activateHarness(context);
+    } catch (err) {
+      outputChannel.appendLine(`[ERROR] DeepSeek Harness failed to activate: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     // Published API. Companion extensions reach this through
     // `extensions.getExtension('system-sciences.vllm-copilot').exports`;

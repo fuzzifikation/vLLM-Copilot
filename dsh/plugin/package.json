@@ -1,0 +1,28 @@
+{
+  "name": "@fuzzifikation/dsh-adapter-vllmc",
+  "version": "0.0.2",
+  "description": "dsh adapter plugin routing every generation through the vLLM-Copilot core.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "vllm-copilot-core": "file:../vllm-copilot-core"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.1"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

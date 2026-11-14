@@ -1,0 +1,4 @@
+{
+  "pinned": "0.2.2-rc.1",
+  "comment": "Single source of truth for the certified dsh version. scripts/dsh-fresh.mjs fails when npm latest drifts from this, and scripts/dsh-fresh.mjs --adopt certifies a new version with the boot check before rewriting it. dsh semver is decorative: nothing else in this repo may hardcode a version."
+}

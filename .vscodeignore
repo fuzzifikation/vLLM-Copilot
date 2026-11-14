@@ -26,6 +26,9 @@ out/**/*.map
 # instead of duck-typing. The gitignore-style `*.ts` rule above matches
 # `.d.ts` too, so this negation is load-bearing, not decoration.
 !out/core/**/*.d.ts
+# Declaration helper for the harness's shared ESM helpers (dsh/shared/overlay.mjs).
+# Type-only: nothing loads it at runtime, in the editor or in the harness.
+**/*.d.mts
 
 # Dev docs (not needed at runtime)
 docs/

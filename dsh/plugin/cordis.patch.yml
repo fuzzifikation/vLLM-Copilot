@@ -1,0 +1,11 @@
+# Bundle patch (the row shape is dsh-base's own: one insert over the empty
+# profile root). This row is the adapter's mount: proven on 0.2.0-rc.2, the
+# profile's dsh.profile.bundles entry alone does NOT instantiate the module.
+# Editor tools are deliberately NOT here: model-visible tools mount only as
+# agent preset children, so the upstream dsh-mcp-client rides the generated
+# overlay as a preset child (shared/overlay.mjs), the way upstream mounts
+# plugin-manager/tools.
+- insert:
+    - id: vllmc-adapter
+      name: '@fuzzifikation/dsh-adapter-vllmc'
+      config: {}
