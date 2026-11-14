@@ -64,6 +64,10 @@ extension/
 
 # Dev scripts and tools
 scripts/
+# The news page links its screenshot from GitHub, so the PNG stays a repo file
+# and out of the artifact: 204 KB of pixels in every VSIX bought nothing. VS Code's
+# markdown preview allows `img-src ... https:`, so the remote image renders.
+resources/dsh-working.png
 # OR-logo.svg is the build-time source for the U+E002 glyph in vllm-icon.woff2
 # (read by scripts/build-icon-font.py). The runtime only loads the woff2.
 resources/OR-logo.svg

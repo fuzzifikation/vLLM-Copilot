@@ -7,7 +7,7 @@ One extension, two interfaces: the agent harness that used to be a separate exte
 ### Added
 
 - **The DeepSeek Harness is built in.** The **DeepSeek Harness** section under the Dashboard now installs and runs the harness itself: **Install DeepSeek Harness…** checks Node.js 24.9.0+, `npm` and `pnpm` and names what is missing before downloading anything, then downloads the certified harness once (a few minutes). After that the section is the control panel - open, another view, start, stop, restart that drains in-flight requests, install or update, logs, status, settings, uninstall - and the whale pill reaches a harness view from anywhere in the window. Nothing of the harness exists before you install it: no folders, no pill, no timers, no notifications.
-- **It works without Copilot.** Editors such as VSCodium, installed from Open VSX, get the harness as a complete agent on your own servers: add a model, install the harness from the sidebar, and the agent runs with its tools and its own session personality control.
+- **It works without Copilot.** Editors such as VSCodium, installed from Open VSX, get the harness as a complete agent on your own servers: add a model, install the harness from the sidebar, and the agent runs with its tools and its own session personality control. It works in the folder you have open - that folder is the project its sessions run in and its editor tools act on.
 - **The harness has its own personality - and its own recording.** **Set Harness Personality…** gives the DeepSeek Harness its own session-wide personality: Default (upstream prompt untouched), one of four bundled voices - **Supportive Mentor**, **Critical Senior Dev**, **Sarcastic Robot** and **Spartan**, each one rule on the prompt identity line and nothing else: two append a style sentence under it, two replace it with a voice block - stored by portable name so it survives updates - or one of your own find/replace files, fully independent of Copilot's per-model presets. **Toggle Harness Prompt Recording** and **Open Harness Recording** add an opt-in recording of the harness's own system prompts, local-only in the workspace at `.vllm\dsh-system-messages.json` - your file (uninstalling the harness runtime leaves it be), separate from Copilot's `.vllm\system-messages.json` - how you build harness rules from what dsh actually sends. Copilot's personalities, capture file and per-model choices are unchanged; Model Settings labels them **Copilot** and routes to the harness controls. Details: [manual](docs/manual.md#session-personality--prompt-recording).
 
 ### Changed
@@ -15,6 +15,10 @@ One extension, two interfaces: the agent harness that used to be a separate exte
 - **The harness commands and settings are renamed.** Commands are `vllm-copilot.harness.*` under the **DeepSeek Harness** palette category, settings are `vllm-copilot.harness.*`. Nothing is migrated from the old `dsh-bridge.*` settings: set them again.
 - **Bridge users: uninstall the old extension, then reload the window.** While the separate **DeepSeek Harness Bridge** (`System-Sciences.dsh-bridge`) is installed, vLLM-Copilot says so and refuses to install or start its own harness. The two keep separate storage, so nothing of yours is overwritten, and old harness sessions stay in the bridge's storage and are not carried over. Install the harness again from the sidebar.
 - **VS Code 1.140 is the minimum.** That is the harness's floor, and this repository supports current editor versions only.
+
+### Fixed
+
+- **The whale pill now opens what it always promised.** Clicking it while the harness was stopped started the harness and left you looking at a status bar, so the window you had asked for cost a second click. One click now means one thing in every state: running reveals the view, stopped starts and opens it, and clicking during a start joins that boot and opens when it lands.
 
 ## v1.39.0
 

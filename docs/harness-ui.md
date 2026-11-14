@@ -10,8 +10,8 @@ The harness is not a webpage you visit inside the editor; it is a **tab in the e
 
 ### Status pill
 - One item in the status bar: stopped / starting (spinner, with an honest first-run tooltip) / running. The pill exists only once the harness runtime is installed; until then the **DeepSeek Harness** sidebar section is the whole surface, and it shows the install row.
-- Clicking a running pill **reveals** the existing harness view; it never opens a second one. This is intentional (owner ruling, 2026-11-07): the pill is "where is my harness", not "new harness". New views are the `+` or the command.
-- The pill's click command re-arms with state; a stale command after state changes is a bug the surface fixed once (journal, 2026-10-05).
+- One command behind the click in every state — `harness.open` — because the pill is "give me my harness", and a stopped pill that only CONNECTED made the user click twice for the window they had already asked for (owner ruling, 2026-11-14). Running: **reveals** the existing view, never a second one (that ruling stands; new views are the `+` or the command). Stopped: starts, then opens. Starting: clicking joins that boot and opens when it lands.
+- The click is therefore set ONCE at pill creation. Per-state command assignment is how this pill once fired a silent no-op Start behind a "click to open" tooltip (journal, 2026-10-05); the fix then was to re-arm per state, this fix removes the per-state half of the bug class instead.
 
 ### The harness view (panel, the default)
 - A `WebviewPanel` whose entire pane is the harness GUI. No toolbar, no address bar, no reload button: the editor tab **is** the surface.

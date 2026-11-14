@@ -1,33 +1,18 @@
-# The DeepSeek Harness is now built into vLLM-Copilot.
+# BIG NEWS: the DeepSeek Harness is built into this extension.
 
-> **Migrating from `dsh-bridge`?** Uninstall **DeepSeek Harness Bridge** (`System-Sciences.dsh-bridge`) and reload this window. Until it is gone, vLLM-Copilot refuses to install or start its own harness, and the notice returns in every window. Nothing is uninstalled or deleted for you.
+The agent harness that used to be a separate extension now lives here. It runs the servers and models you configured in this extension, in a tab, with no vendor login - and every request it makes lands in your dashboard totals like any other model.
 
-One extension, two interfaces. The agent harness that used to be a separate extension now lives here, on the servers you already configured - and in editors with no Copilot at all.
+**Open a folder, then press Install DeepSeek Harness…** in the **DeepSeek Harness** section under the **V** icon. It checks Node.js 24.9.0+, `npm` and `pnpm` and names what is missing, downloads the certified harness once (a few minutes; later starts take seconds), and opens the agent. The folder you have open is the project it works on: sessions start there, and its tools read your files and diagnostics and drive your terminal.
 
-**If you never installed the bridge, nothing changed for you.** The harness is optional and dormant: until you install it there are no harness folders, no status-bar pill, no timers and no notifications. When you want it, configure a model first (**Add or Reconfigure Server/Model**), then open the **DeepSeek Harness** section under the **V** icon and press **Install DeepSeek Harness…**: with no usable model configured, Install, Start and Restart download nothing and offer that setup command instead.
+**Used the DeepSeek Harness Bridge extension? Uninstall it, then reload this window.** Until it is gone, vLLM-Copilot refuses to run its own harness. Nothing of yours is deleted and nothing is migrated: your old sessions stay in the bridge's folder, and the settings were renamed to `vllm-copilot.harness.*`, so set them again.
 
-**If you used the DeepSeek Harness Bridge: uninstall it, then reload the window.** While that extension (`System-Sciences.dsh-bridge`) is installed, vLLM-Copilot tells you so and refuses to install or start its own harness. The two keep separate storage, so nothing of yours is overwritten, and nothing is migrated: your old sessions stay in the bridge's folder. Then install the harness from the sidebar: it checks Node.js 24.9.0 or newer, `npm` and `pnpm`, names whatever is missing, and downloads the certified harness once - a few minutes, and later starts take seconds.
+**No Copilot? Same story.** In VSCodium or any editor without it, install this extension from Open VSX, add a model, install the harness: a complete agent on your own servers.
 
-**Your harness settings did not move.** They were renamed from `dsh-bridge.*` to `vllm-copilot.harness.*`, and nothing is migrated: set them again in the **DeepSeek Harness** settings section, or run **DeepSeek Harness: Open Harness Settings**.
-
-**It works without Copilot.** In VSCodium or any editor with no Copilot, install this extension from Open VSX, add a model, install the harness from the sidebar, and the agent runs on your servers with its tools, its sessions and its own personality control.
-
-**The harness gets its own personality and prompt recording.** **DeepSeek Harness: Set Harness Personality…** picks the voice for the whole harness session: four bundled voices (Supportive Mentor and Spartan append one style sentence to the prompt identity line, Critical Senior Dev and Sarcastic Robot replace that line with a short voice block), a find/replace file of yours applies instead, Default leaves the upstream prompt untouched, and Create opens a template; Copilot presets target Microsoft's prompt and are never selected automatically for dsh - record the harness prompt and anchor your rules on what it actually shows. **Toggle Harness Prompt Recording** and **Open Harness Recording** capture the harness's system prompts (received, delivered, matched rules) into vLLM-Copilot's harness folder - off the machine, never in Copilot's workspace file, and the running harness obeys an OFF on the spot: queued writes are dropped and the next request records nothing. Harness traffic still lands in the same dashboard totals. Providers you add inside the harness itself do not - see the [README FAQ](https://github.com/fuzzifikation/vLLM-Copilot#can-i-add-other-providers-inside-the-harness).
+**Don't want it? It stays out of your way.** Nothing exists on disk until you press Install - no folders, no status-bar pill, no timers, no notifications.
 
 **VS Code 1.140 is the new minimum**, the harness's floor, because this extension supports current editor versions only.
 
-<img src="dsh-working.png" alt="DeepSeek Harness running a live session on a vLLM-Copilot model" width="585">
-
-## If you missed recent updates
-
-This page opens once per installed version, so for most of you it is the only news you get. What 1.38.0 to 1.39.0 changed, and still holds:
-
-- Sixteen presets for this year's releases - Nemotron-3 and 3.5, Gemma 4, Tencent Hy4, inclusionAI Ling, Qwen3.8, Mistral Large 4 and Small 4, Poolside Laguna, Ornith, StepFun Step-3.5-Flash - each with the thinking-off switch and effort rungs its own chat template accepts, and an output ladder from its documented window. Presets are served live from the repository, so new ones reach you the day they land.
-- A mode that is an effort level answers to Microsoft's own name (`none` through `max`), so the picker shows VS Code's wording and the Agents window stops hiding choices it cannot render; a mode that is a behavior keeps its name (`Think-Coding`, `Agent`, `Chat-Fast`). Your entries renamed themselves on the next start, every parameter intact; an older chat needs one mode reselection.
-- No preset value is a guess: each came from that model's `chat_template.jinja`, its config files, or one explicit sentence on its card. Where a card gave only a range, the preset sets nothing and your checkpoint keeps authority - which is why Qwen3.8-2.4T and Mistral Large 4 ship no thinking-off mode: both reject a reasoning-off request outright.
-- Selecting a mode the model does not offer now falls back to that model's default mode and logs the substitution; before, it applied no mode parameters at all and a thinking model silently stopped thinking.
-- Personalities strip Microsoft's boilerplate again, and their rules anchor the prompt wording the Agents window ships today - a rename on Microsoft's side no longer leaves your persona unapplied.
-- Local chat stays the complete experience: Output Length needs it, and so does any tool list longer than the 128 tools the Agents window sends for BYOK.
+<img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/resources/dsh-working.png" alt="DeepSeek Harness running a live session on a vLLM-Copilot model" width="585">
 
 ## Microsoft still owes you six fixes
 

@@ -458,6 +458,13 @@ export async function activateHarness(context: vscode.ExtensionContext): Promise
   if (oldBridgeInstalled()) announceOldBridge()
 
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 90)
+  // The pill's click means one thing in every state: give me the harness UI.
+  // `harness.open` starts a stopped harness on the way there, because a pill
+  // that only ever CONNECTED left users clicking a second time for the window
+  // they actually wanted — and it never failed loudly, only emptily. Set once
+  // here instead of per render branch: a state-specific command is how the
+  // running pill once ended up firing a no-op Start behind a "click to open"
+  // tooltip.
   status.command = 'vllm-copilot.harness.open'
   context.subscriptions.push(status)
 
@@ -658,13 +665,6 @@ const bridge = new Bridge({
           .join('\n'),
       )
       status.backgroundColor = undefined
-      // Re-arm the click on every transition INTO running. The command was
-      // set to "start" while stopped (below), and a stale one made the
-      // running pill execute a no-op Start: the tooltip said "click to
-      // open" and the click opened nothing, silently, because starting an
-      // already-running harness returns its URL. Every field render claims
-      // must be written by every branch that displays it.
-      status.command = 'vllm-copilot.harness.open'
       return
     }
     if (starting) {
@@ -678,14 +678,14 @@ const bridge = new Bridge({
         'The first run after an install downloads and installs the harness once.',
         'That takes a few minutes; later starts take seconds.',
         'Progress: "DeepSeek Harness" output channel.',
+        '',
+        'Click to open the harness as soon as it is up.',
       ].join('\n'))
-      status.command = 'vllm-copilot.harness.start'
       status.backgroundColor = undefined
       return
     }
     status.text = '$(vllm-copilot-dsh-off) DSH: stopped'
-    status.tooltip = 'The DeepSeek Harness is not running. Click to start it.'
-    status.command = 'vllm-copilot.harness.start'
+    status.tooltip = 'The DeepSeek Harness is not running. Click to start it and open it here.'
   }
 
   /**
@@ -930,6 +930,10 @@ const bridge = new Bridge({
 
   async function guardedStart(): Promise<string | undefined> {
     if (bridge.supervisor.running && bridge.supervisor.url) return bridge.supervisor.url
+    // A boot already in flight IS this request: hand back the same promise and
+    // its URL, so a second click (the pill during a slow first start) waits for
+    // that boot and opens it instead of re-running the gates behind it.
+    if (starting) return starting
     // The built-in harness replaces the standalone bridge: while that extension
     // is installed this window starts nothing and says what to uninstall.
     if (oldBridgeInstalled()) {

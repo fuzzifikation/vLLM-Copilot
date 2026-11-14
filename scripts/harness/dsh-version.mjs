@@ -62,6 +62,41 @@ export function writePin(version, nodeFloor, file = pinFile) {
   return version
 }
 
+/**
+ * Order two exact versions the way npm does, over exactly the shapes
+ * `assertExact` admits: `X.Y.Z` and `X.Y.Z-prerelease`. The rail needs ordering
+ * because a certified pin is allowed to sit AHEAD of `latest`: `--adopt` is the
+ * only writer of the pin and it writes nothing a real boot has not streamed,
+ * so adopting a prerelease published under another dist-tag is a legitimate
+ * state. A rail that reads "newer than upstream" as drift tells the next human
+ * to paste a command that downgrades a deliberate decision.
+ */
+export function compareVersions(a, b) {
+  const parse = (v) => {
+    assertExact(v, 'compareVersions')
+    const [core, pre = ''] = v.split(/-(.*)/s)
+    return { core: core.split('.').map(Number), pre: pre ? pre.split('.') : [] }
+  }
+  const [x, y] = [parse(a), parse(b)]
+  for (let i = 0; i < 3; i++) {
+    if (x.core[i] !== y.core[i]) return x.core[i] < y.core[i] ? -1 : 1
+  }
+  // Semver: a version carrying a prerelease sorts BELOW the same version bare.
+  if (!x.pre.length || !y.pre.length) return x.pre.length === y.pre.length ? 0 : x.pre.length ? -1 : 1
+  for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
+    const [p, q] = [x.pre[i], y.pre[i]]
+    if (p === undefined) return -1
+    if (q === undefined) return 1
+    if (p === q) continue
+    const [numericP, numericQ] = [/^\d+$/.test(p), /^\d+$/.test(q)]
+    if (numericP && numericQ) return Number(p) < Number(q) ? -1 : 1
+    // Numeric identifiers rank below alphanumeric ones; equal-length text is lexical.
+    if (numericP !== numericQ) return numericP ? -1 : 1
+    return p < q ? -1 : 1
+  }
+  return 0
+}
+
 /** Effective version for this process, with any override made visible. */
 export function describeDshVersion(env = process.env) {
   const override = env.DSH_VERSION?.trim()

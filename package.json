@@ -431,7 +431,7 @@
         },
         {
           "command": "vllm-copilot.harness.open",
-          "when": "vllm-copilot.harness.running"
+          "when": "vllm-copilot.harness.running || vllm-copilot.harness.installed"
         },
         {
           "command": "vllm-copilot.harness.openNewView",
@@ -930,7 +930,13 @@
           },
           "vllm-copilot.harness.personality": {
             "type": "string",
-            "enum": ["", "Supportive Mentor", "Critical Senior Dev", "Sarcastic Robot", "Spartan"],
+            "enum": [
+              "",
+              "Supportive Mentor",
+              "Critical Senior Dev",
+              "Sarcastic Robot",
+              "Spartan"
+            ],
             "enumDescriptions": [
               "Default - the upstream DeepSeek Harness prompt, untouched",
               "Be patient and encouraging; explain without patronizing.",
@@ -939,7 +945,7 @@
               "Be terse and concrete; omit filler."
             ],
             "default": "",
-            "markdownDescription": "**DeepSeek Harness only, session-wide** - one of the four bundled HARNESS voices. Every voice is exactly one rule on the prompt identity line and touches nothing else: **Supportive Mentor** and **Spartan** append one style sentence under it, **Critical Senior Dev** and **Sarcastic Robot** replace that line with a few sentences of voice. Empty (default) = no voice. This is the harness's OWN choice - Copilot's per-model `personality` never flows here. The preset name wins over `#vllm-copilot.harness.personalityFile#` when both are set (Default and attaching a custom file clear it). The value is a portable NAME, never an install path, so it survives updates and other machines. Pick it with **DeepSeek Harness: Set Harness Personality\u2026**; changing it applies at the next drained restart."
+            "markdownDescription": "**DeepSeek Harness only, session-wide** - one of the four bundled HARNESS voices. Every voice is exactly one rule on the prompt identity line and touches nothing else: **Supportive Mentor** and **Spartan** append one style sentence under it, **Critical Senior Dev** and **Sarcastic Robot** replace that line with a few sentences of voice. Empty (default) = no voice. This is the harness's OWN choice - Copilot's per-model `personality` never flows here. The preset name wins over `#vllm-copilot.harness.personalityFile#` when both are set (Default and attaching a custom file clear it). The value is a portable NAME, never an install path, so it survives updates and other machines. Pick it with **DeepSeek Harness: Set Harness Personality…**; changing it applies at the next drained restart."
           },
           "vllm-copilot.harness.personalityFile": {
             "type": "string",
@@ -994,7 +1000,7 @@
   },
   "devDependencies": {
     "@babel/parser": "^8.1.0",
-    "@deepseek-ai/dsh-llm": "^0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.2.2-rc.3",
     "@types/jsdom": "^30.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^26.6.6",
@@ -1015,6 +1021,6 @@
     "jsonrepair": "^3.15.0"
   },
   "allowScripts": {
-    "@vscode/vsce-sign@2.1.0": true
+    "@vscode/vsce-sign@2.1.1": true
   }
 }

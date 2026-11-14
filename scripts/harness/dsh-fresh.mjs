@@ -3,9 +3,14 @@
  * dsh freshness and adoption rail.
  *
  * `npm run harness:fresh`  (node scripts/harness/dsh-fresh.mjs)
- *   Reports npm `latest`/`alpha` against our certified pin and FAILS when
- *   `latest` drifts, so upstream movement becomes a red rail, not a production
- *   surprise. dsh's semver is decorative; never trust it silently.
+ *   Reports every npm dist-tag against our certified pin. FAILS when upstream
+ *   `latest` is NEWER than the pin, so upstream movement becomes a red rail, not
+ *   a production surprise. A pin NEWER than `latest` is the opposite case — only
+ *   `--adopt` writes the pin and only behind a real boot — so it gets a stated
+ *   verdict instead of a command that would undo it. Other tags (`next`,
+ *   `alpha`) are named for canary value: 0.2.2-rc.3 sat on `next` while a
+ *   latest-only rail called rc.1 current. dsh's semver is decorative; never
+ *   trust it silently.
  *
  * `node scripts/harness/dsh-fresh.mjs --probe <version>`
  *   Certify a candidate WITHOUT adopting: temporarily point the plugin's
@@ -26,7 +31,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describeDshVersion, readPin, readNodeFloor, writePin, assertExact, assertNodeFloor } from './dsh-version.mjs'
+import { describeDshVersion, readPin, readNodeFloor, writePin, assertExact, assertNodeFloor, compareVersions } from './dsh-version.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DSH_PKG = '@deepseek-ai/dsh'
@@ -201,33 +206,59 @@ try {
 }
 const { pinned, overridden } = describeDshVersion()
 const tags = distTags()
-console.log(`${DSH_PKG}: latest=${tags.latest} alpha=${tags.alpha ?? '-'} | certified pin=${pinned}${overridden ? ' (DSH_VERSION override active)' : ''} | requires node ${certifiedFloor}`)
+console.log(`${DSH_PKG}: latest=${tags.latest} alpha=${tags.alpha ?? '-'} next=${tags.next ?? '-'} | certified pin=${pinned}${overridden ? ' (DSH_VERSION override active)' : ''} | requires node ${certifiedFloor}`)
 if (overridden) {
   console.log('DSH_VERSION is set: this run certifies a candidate, it does not move the pin.')
   process.exit(0)
 }
-if (tags.latest !== pinned) {
-  console.error(`DRIFT: upstream latest ${JSON.stringify(tags.latest)} != certified pin ${pinned}.`)
-  // The suggested lines below are made to be pasted into a shell, and their
-  // version comes from the registry: only an exact semver gets printed.
-  let exactLatest
+if (tags.latest === pinned) {
+  console.log(`up to date: certified pin equals upstream latest (${pinned})`)
+} else {
+  // Ordering is what separates drift from a decision. `--adopt` is the only
+  // writer of the pin and it writes nothing a real boot has not certified, so a
+  // pin NEWER than `latest` means this repo deliberately adopted a release
+  // upstream publishes under another tag. Shouting DRIFT there and offering a
+  // copy-paste `--adopt <older latest>` is a rail recommending that its own
+  // certification be undone.
+  let ahead = false
   try {
-    exactLatest = assertExact(tags.latest, 'registry dist-tag "latest"')
+    ahead = compareVersions(pinned, tags.latest) > 0
   } catch {
-    console.error('  the registry served a dist-tag that is not an exact version; refusing to print a copy-paste command for it.')
+    ahead = false // an unparsable tag leaves only the drift reading, which is the loud one
+  }
+  if (ahead) {
+    console.log(`ahead of upstream: certified pin ${pinned} is newer than latest ${tags.latest}.`)
+    console.log('  A deliberate adoption, not drift: the pin only moves through --adopt, and --adopt demands a real boot.')
+    console.log(`  Nothing to do until upstream publishes ${pinned} or newer as "latest".`)
+  } else {
+    console.error(`DRIFT: upstream latest ${JSON.stringify(tags.latest)} != certified pin ${pinned}.`)
+    // The suggested lines below are made to be pasted into a shell, and their
+    // version comes from the registry: only an exact semver gets printed.
+    let exactLatest
+    try {
+      exactLatest = assertExact(tags.latest, 'registry dist-tag "latest"')
+    } catch {
+      console.error('  the registry served a dist-tag that is not an exact version; refusing to print a copy-paste command for it.')
+      process.exit(1)
+    }
+    console.error(`  probe:  node scripts/harness/dsh-fresh.mjs --probe ${exactLatest}`)
+    console.error(`  adopt:  node scripts/harness/dsh-fresh.mjs --adopt ${exactLatest}`)
     process.exit(1)
   }
-  console.error(`  probe:  node scripts/harness/dsh-fresh.mjs --probe ${exactLatest}`)
-  console.error(`  adopt:  node scripts/harness/dsh-fresh.mjs --adopt ${exactLatest}`)
-  process.exit(1)
 }
-console.log(`up to date: certified pin equals upstream latest (${pinned})`)
-if (tags.alpha && tags.alpha !== tags.latest) {
-  let exactAlpha
+// The other tags, on the record. Upstream parks releases on `next`/`alpha` for
+// weeks, and a rail that watches only `latest` prints "up to date" while a
+// version nobody looked at sits one tag away (observed 2026-11-14: 0.2.2-rc.3 on
+// `next` while the rail called rc.1 current). This is visibility, not red: a
+// prerelease is a prerelease, so it gets a line and a probe command, never a
+// failing exit. Anything already certified is skipped.
+for (const [tag, version] of Object.entries(tags)) {
+  if (tag === 'latest' || !version || version === pinned) continue
+  let exact
   try {
-    exactAlpha = assertExact(tags.alpha, 'registry dist-tag "alpha"')
+    exact = assertExact(version, `registry dist-tag "${tag}"`)
   } catch {
-    exactAlpha = undefined
+    continue // a malformed tag is not worth a canary line
   }
-  if (exactAlpha) console.log(`alpha available for a canary: node scripts/harness/dsh-fresh.mjs --probe ${exactAlpha}`)
+  console.log(`${tag} available for a canary: node scripts/harness/dsh-fresh.mjs --probe ${exact}`)
 }

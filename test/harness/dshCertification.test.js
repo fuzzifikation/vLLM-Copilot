@@ -10,7 +10,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rm
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { assertNodeFloor, readNodeFloor, readPin, writePin } from '../../scripts/harness/dsh-version.mjs'
+import { assertNodeFloor, compareVersions, readNodeFloor, readPin, writePin } from '../../scripts/harness/dsh-version.mjs'
 
 const repo = path.resolve(import.meta.dirname, '..', '..')
 
@@ -122,16 +122,68 @@ describe('the freshness rail against its own certification', () => {
   })
 
   it('lets a certified tree through the gate and all the way to its drift verdict', () => {
-    // The stub answers a different version, so the only way this run exits 1
-    // with a drift line is by getting past the certification gate, and the mark
-    // says the answer came from the fixture rather than the registry.
-    const fixture = railFixture({ pinned: '0.2.2-rc.1', requiresNode: '>=24.9.0' }, '[{"latest":"0.0.1"}]')
+    // The stub answers a NEWER version, so the only way this run exits 1 with a
+    // drift line is by getting past the certification gate, and the mark says
+    // the answer came from the fixture rather than the registry. (It used to
+    // answer an OLDER one: with ordering understood, an older `latest` is a
+    // deliberately adopted pin, not drift — see the describe below.)
+    const fixture = railFixture({ pinned: '0.2.2-rc.1', requiresNode: '>=24.9.0' }, '[{"latest":"9.9.9"}]')
     const out = spawnSync(process.execPath, [fixture.script], { encoding: 'utf8', env: fixture.env })
     expect(out.status).toBe(1)
     expect(existsSync(fixture.marker)).toBe(true)
     expect(out.stderr).not.toMatch(/certified Node requirement/)
     expect(out.stdout).toMatch(/requires node >=24\.9\.0/)
-    expect(out.stderr).toMatch(/DRIFT: upstream latest "0\.0\.1"/)
-    expect(out.stderr).toMatch(/--adopt 0\.0\.1/)
+    expect(out.stderr).toMatch(/DRIFT: upstream latest "9\.9\.9"/)
+    expect(out.stderr).toMatch(/--adopt 9\.9\.9/)
+  })
+})
+
+describe('the drift verdict separates upstream movement from a decision', () => {
+  it('orders prereleases the way npm does', () => {
+    const below = (a, b) => expect(compareVersions(a, b), `${a} should sort below ${b}`).toBe(-1)
+    below('0.2.2-rc.1', '0.2.2-rc.3') // the adoption this repo actually made
+    below('0.2.2-rc.2', '0.2.2-rc.10') // numerically, not lexically: rc.10 > rc.2
+    below('0.2.2-alpha.3', '0.2.2-rc.1') // alpha < rc
+    below('0.2.2-rc.3', '0.2.2') // a prerelease sorts below the release it precedes
+    below('0.2.9', '0.10.0') // and the core is numeric too
+    expect(compareVersions('0.2.2-rc.3', '0.2.2-rc.3')).toBe(0)
+    expect(compareVersions('0.2.2', '0.2.2-rc.3')).toBe(1)
+    // A range is not a version: the exactness rule that guards the pin guards
+    // this comparison too, rather than guessing an order from garbage.
+    expect(() => compareVersions('>=0.2.2', '0.2.2')).toThrow(/compareVersions/)
+  })
+
+  it('calls a pin newer than latest a decision, and never offers to undo it', () => {
+    // The state after adopting a prerelease: certified pin rc.3, upstream latest
+    // still rc.1. Downgrade advice here is a rail arguing with its own result.
+    const fixture = railFixture({ pinned: '0.2.2-rc.3', requiresNode: '>=24.9.0' }, '[{"latest":"0.2.2-rc.1","next":"0.2.2-rc.3"}]')
+    const out = spawnSync(process.execPath, [fixture.script], { encoding: 'utf8', env: fixture.env })
+    expect(out.status, out.stderr).toBe(0)
+    expect(out.stdout).toMatch(/newer than latest 0\.2\.2-rc\.1/)
+    expect(out.stdout).toMatch(/deliberate adoption/)
+    expect(out.stdout + out.stderr).not.toMatch(/--adopt 0\.2\.2-rc\.1/)
+    // rc.3 is what we run, so it is not a canary either.
+    expect(out.stdout).not.toMatch(/canary: node scripts\/harness\/dsh-fresh\.mjs --probe 0\.2\.2-rc\.3/)
+  })
+
+  it('names a prerelease parked on another tag instead of calling itself current', () => {
+    // The real 2026-11-14 blind spot: rc.1 certified and current, rc.3 published
+    // under `next`, and a latest-only rail printing "up to date" while a release
+    // nobody had looked at sat one tag away.
+    const fixture = railFixture({ pinned: '0.2.2-rc.1', requiresNode: '>=24.9.0' }, '[{"latest":"0.2.2-rc.1","next":"0.2.2-rc.3","alpha":"0.2.2-alpha.3"}]')
+    const out = spawnSync(process.execPath, [fixture.script], { encoding: 'utf8', env: fixture.env })
+    expect(out.status, out.stderr).toBe(0)
+    expect(out.stdout).toMatch(/up to date/)
+    expect(out.stdout).toMatch(/next available for a canary: node scripts\/harness\/dsh-fresh\.mjs --probe 0\.2\.2-rc\.3/)
+    expect(out.stdout).toMatch(/alpha available for a canary: node scripts\/harness\/dsh-fresh\.mjs --probe 0\.2\.2-alpha\.3/)
+  })
+
+  it('stays red, with the same commands, when upstream really is newer', () => {
+    const fixture = railFixture({ pinned: '0.2.2-rc.3', requiresNode: '>=24.9.0' }, '[{"latest":"0.2.3"}]')
+    const out = spawnSync(process.execPath, [fixture.script], { encoding: 'utf8', env: fixture.env })
+    expect(out.status).toBe(1)
+    expect(out.stderr).toMatch(/DRIFT: upstream latest "0\.2\.3"/)
+    expect(out.stderr).toMatch(/--probe 0\.2\.3/)
+    expect(out.stderr).toMatch(/--adopt 0\.2\.3/)
   })
 })

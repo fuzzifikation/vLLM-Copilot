@@ -17,7 +17,7 @@
     "vllm-copilot-core": "file:../vllm-copilot-core"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-llm": "0.2.2-rc.1"
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.3"
   },
   "dsh": {
     "manifestVersion": 1,

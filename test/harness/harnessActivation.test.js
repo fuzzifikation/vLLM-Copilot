@@ -28,7 +28,7 @@ const mock = vi.hoisted(() => {
   /** The retired standalone bridge, looked up the way `harness.ts` looks it up. */
   const OLD_BRIDGE_ID = 'System-Sciences.dsh-bridge'
   const rec = {
-    pill: { shown: false, text: '' },
+    pill: { shown: false, text: '', tooltip: '', command: '' },
     refreshes: 0,
     treeProvider: undefined,
     listeners: {},
@@ -145,9 +145,19 @@ const mock = vi.hoisted(() => {
     createOutputChannel,
     createStatusBarItem: () => ({
       name: '',
-      tooltip: '',
-      command: '',
       backgroundColor: undefined,
+      get tooltip() {
+        return rec.pill.tooltip
+      },
+      set tooltip(value) {
+        rec.pill.tooltip = value
+      },
+      get command() {
+        return rec.pill.command
+      },
+      set command(value) {
+        rec.pill.command = value
+      },
       get text() {
         return rec.pill.text
       },
@@ -496,6 +506,12 @@ describe('a window that activated before the harness existed', () => {
     expect(recorder.refreshes).toBeGreaterThan(0)
     expect(recorder.pill.shown).toBe(true)
     expect(recorder.pill.text).toContain('DSH: stopped')
+    // The stopped pill is wired to `open`, not `start`: one click gives the
+    // user the harness WINDOW, starting it on the way. A pill that merely
+    // connected left a second click for the prompt they had just asked for,
+    // and the tooltip has to promise the same thing the click delivers.
+    expect(recorder.pill.command).toBe('vllm-copilot.harness.open')
+    expect(recorder.pill.tooltip).toContain('start it and open it')
     const listed = rows()
     expect(listed[0]).toBe('Open Harness')
     expect(listed.at(-1)).toBe('Uninstall Harness')
@@ -667,6 +683,16 @@ describe('a harness with nothing to run on', () => {
     expect(recorder.warnings).toHaveLength(1)
     // No button clicked, so the shipped wizard was never launched.
     expect(recorder.executed.filter(([name]) => name === 'vllm-copilot.addServerModel')).toEqual([])
+    assertNoHarnessWork()
+  })
+
+  it('answers a pill click with the same offer, since the pill opens through a start', async () => {
+    // `open` is the pill's command in every state, so it must pass the same
+    // model gate before it boots anything: opening a window on a registry with
+    // nothing to run on opens a corpse, not a chat.
+    clearNotices()
+    await runCommand('vllm-copilot.harness.open')
+    expect(recorder.warnings).toEqual([{ message: SETUP_MESSAGE, items: [SETUP] }])
     assertNoHarnessWork()
   })
 
