@@ -417,6 +417,8 @@ On upgrade, recognized old mode names and compatible harness mappings migrate au
 
 Dev setup, project rules, and the dependency license policy (permissive-only allowlist enforced by `npm run license:check` in the build, `THIRD-PARTY-NOTICES.txt` regenerated with `npm run license:notices`): [CONTRIBUTING.md](https://github.com/fuzzifikation/vLLM-Copilot/blob/main/CONTRIBUTING.md).
 
+Planned merger of the DeepSeek Harness Bridge into this extension, including Copilot-free use in VSCodium: [extension merger plan](docs/extension-merger-plan.md). The current two-extension setup remains unchanged until implementation.
+
 ---
 
 ## Support
