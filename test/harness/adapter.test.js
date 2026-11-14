@@ -49,7 +49,7 @@ function buildSnapshot(baseUrl) {
       ],
     },
     defaultModelId: 'm1',
-    aux: { 'session-title': { modelId: 'cheap', maxTokens: 64 } },
+    aux: { 'session-title': { modelId: 'cheap', maxTokens: 32 } },
     maxRetries: 0,
   }
 }
@@ -103,7 +103,7 @@ afterEach(() => {
 })
 
 describe('request ownership (ruling 6)', () => {
-  it('catches unconfigured passthrough: our params, headers, and budget reach the wire; harness vocabulary does not', async () => {
+  it('catches unconfigured passthrough: our params and headers reach the wire; harness vocabulary and output caps do not', async () => {
     await setup()
     const frozen = options()
     const before = JSON.stringify(frozen.messages)
@@ -114,7 +114,9 @@ describe('request ownership (ruling 6)', () => {
     expect(body.temperature).toBe(0.55)
     expect(body.top_k).toBe(20)
     expect(body.chat_template_kwargs).toEqual({ thinking: true })
-    expect(body.max_tokens).toBe(256)
+    // The harness route carries no output cap unless the config or an aux
+    // purpose sets one explicitly: vLLM grows the response into the window.
+    expect('max_tokens' in body).toBe(false)
     expect(body.stream).toBe(true)
     expect(headers['x-test-header']).toBe('header-proof')
     expect('compat' in body).toBe(false)
@@ -135,6 +137,28 @@ describe('request ownership (ruling 6)', () => {
 
     await collect(adapter.stream(options({ model: 'modes', reasoningEffort: 'fast' })))
     expect(backend.requests.at(-1).body.temperature).toBe(0.2)
+  })
+
+  it('catches a harness-capped turn: dsh-supplied maxTokens never reaches vllm', async () => {
+    await setup()
+    await collect(adapter.stream(options({ maxTokens: 4000 })))
+    expect('max_tokens' in backend.requests.at(-1).body).toBe(false)
+  })
+
+  it('catches configured-budget loss: defaultParams max_tokens still rides the wire', async () => {
+    await setup((snapshot) => {
+      snapshot.config.models[0].defaultParams = { ...snapshot.config.models[0].defaultParams, max_tokens: 128 }
+    })
+    await collect(adapter.stream(options()))
+    expect(backend.requests.at(-1).body.max_tokens).toBe(128)
+  })
+
+  it('catches budget loss on effort fallback: the default mode max_tokens rides when the effort names no mode', async () => {
+    await setup((snapshot) => {
+      snapshot.config.models[2].modelModes.smart.max_tokens = 96
+    })
+    await collect(adapter.stream(options({ model: 'modes', reasoningEffort: 'high' })))
+    expect(backend.requests.at(-1).body.max_tokens).toBe(96)
   })
 })
 
@@ -539,11 +563,13 @@ describe('retried turns (core attemptRestart contract)', () => {
 })
 
 describe('auxiliary calls', () => {
-  it('catches premium-title burn: session-title routes to the snapshot cheap model and stays metered', async () => {
+  it('catches premium-title burn: session-title routes to the snapshot cheap model and its purpose budget lands on the wire', async () => {
     await setup()
     await collect(adapter.stream(options({ purpose: 'session-title' })))
     expect(backend.requests.at(-1).body.model).toBe('cheap-model')
-    expect(backend.requests.at(-1).body.max_tokens).toBe(64)
+    // 32 (the purpose budget) outranks 64 (the advertised model budget): the
+    // aux cap used to be buried by the core's re-assertion; now it IS the cap.
+    expect(backend.requests.at(-1).body.max_tokens).toBe(32)
     const record = JSON.parse(readFileSync(path.join(outbox, readdirSync(outbox)[0]), 'utf8'))
     expect(record.purpose).toBe('session-title')
     expect(record.model).toBe('cheap')
@@ -630,7 +656,9 @@ describe('catalog for the GUI', () => {
 
     const resolved = await adapter.resolveModel('vllmc', 'm1')
     expect(resolved.context.contextWindow).toBe(200000)
-    expect(resolved.defaultMaxTokens).toBe(256)
+    // No output budget is ever reported to dsh: a reported cap materializes
+    // into every harness request and reserves compaction room there.
+    expect('defaultMaxTokens' in resolved).toBe(false)
     expect(resolved.name).toBe('Demo One')
 
     const withModes = await adapter.resolveModel('vllmc', 'modes')

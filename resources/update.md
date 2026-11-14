@@ -14,6 +14,8 @@ The agent harness that used to be a separate extension now lives here. It runs t
 
 <img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/resources/dsh-working.png" alt="DeepSeek Harness running a live session on a vLLM-Copilot model" width="585">
 
+**One cool fact**: The enshittified Copilot Harness uses 55k tokens for system prompt for the first reply. DeepSeek Harness between 10k and 15k depending on the tool settings. So.. if you want to save tokens: Use DSH.
+
 ## Microsoft still owes you five fixes
 
 Five of the six reports we filed are still open at microsoft/vscode. Add your reproduction; Microsoft moves when reports pile up:

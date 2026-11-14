@@ -161,7 +161,12 @@ export function createVllmcAdapter({ core, snapshot, deps = {} }) {
         name: descriptor.name,
         inputModalities: modalitiesOf(descriptor.capabilities?.imageInput),
         context: { contextWindow: descriptor.contextWindow },
-        defaultMaxTokens: descriptor.maxOutputTokens,
+        // No `defaultMaxTokens` - the harness is never told an output budget.
+        // dsh materializes a reported cap into every request config (reserves
+        // it in the compaction math and echoes it back as options.maxTokens),
+        // and an output cap is exactly what this route must not carry: vLLM
+        // grows the response into the remaining context, and compaction keeps
+        // its own headroom. Explicit budgets live gateway-side only.
         reasoning: descriptor.modeNames
           ? {
               efforts: descriptor.modeNames.map((mode) => ({ id: mode, name: mode })),
@@ -229,8 +234,6 @@ export function createVllmcAdapter({ core, snapshot, deps = {} }) {
         }
 
         const runtimeOptions = {}
-        const maxTokens = options.maxTokens ?? aux?.maxTokens
-        if (maxTokens) runtimeOptions.max_tokens = maxTokens
         if (typeof options.temperature === 'number') runtimeOptions.temperature = options.temperature
         if (Array.isArray(options.stop) && options.stop.length > 0) runtimeOptions.stop = options.stop
 
@@ -248,6 +251,34 @@ export function createVllmcAdapter({ core, snapshot, deps = {} }) {
           snapshot.config,
           log,
         )
+
+        // Harness-route output budget - gateway-owned, dsh never decides it
+        // (options.maxTokens is deliberately not read anywhere above).
+        // - Our own purpose budget (titleMaxTokens / compactionMaxTokens via
+        //   snapshot.aux) wins and finally reaches the wire - the core's
+        //   re-assertion used to bury it behind the advertised budget;
+        // - the model config's own mode/defaultParams `max_tokens` still
+        //   applies (ruling 6: snapshot config decides model behavior),
+        //   probed through the core's own resolver with an unclamped sentinel
+        //   so this adapter never re-implements the layering;
+        // - a server-reported hard output ceiling (e.g. OpenRouter) still
+        //   rides as assembled: upstream providers reject above their cap;
+        // - otherwise max_tokens is OMITTED: an unset output budget on vLLM is
+        //   exactly "grow into the remaining context", and the prompt guard
+        //   still reserves the advertised room on the input side.
+        const sentinel = Number.MAX_SAFE_INTEGER
+        const probeMode = modeNames && !modeNames.includes(selectedMode) ? defaultMode : selectedMode
+        const configuredTokens = core.resolveMaxTokensForRequest(entry, probeMode, sentinel)
+        if (aux?.maxTokens) {
+          const auxCeiling = descriptor.reportedMaxOutputTokens ?? sentinel
+          assembled.mergedOptions.max_tokens = Math.min(
+            Math.max(1, Math.floor(aux.maxTokens)),
+            Math.max(1, descriptor.contextWindow - 1),
+            auxCeiling,
+          )
+        } else if (configuredTokens === sentinel && descriptor.reportedMaxOutputTokens === undefined) {
+          delete assembled.mergedOptions.max_tokens
+        }
 
         const state = core.createExecutionState(Date.now())
         const iterator = core.executeChatRequest(
