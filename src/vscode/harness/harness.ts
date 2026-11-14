@@ -24,16 +24,35 @@ import { runPreflight, type PrereqCheck } from './preflight.js'
 import { getConfig } from '../state/config.js'
 import { resolveModelReplacements } from '../state/personalityStore.js'
 import { recordExternalRequests } from '../state/externalUsage.js'
+import { HarnessTreeProvider } from '../ui/harnessView.js'
 
 const RESTART_DEBOUNCE_MS = 1500
 /** Deactivate must not hold the extension host hostage, unlike a deliberate restart. */
 const SHUTDOWN_DRAIN_BUDGET_MS = 5000
+
 /**
- * One setup offer per install, surviving window reloads and extension updates
- * (globalState outlives both). The offer is the only automatic word a fresh
- * install gets; every later start is the user's own.
+ * RETIRE LATER: the harness used to be the separate
+ * `System-Sciences.dsh-bridge` extension. Two harnesses on one machine share a
+ * runtime directory, a pid record and a port, and they will fight over all
+ * three, so nothing here installs or starts while that extension is present.
+ * One check, not a compatibility layer - delete it once the old listing has
+ * died out.
  */
-const ONBOARDED_KEY = 'vllm-copilot.harness.setupOffered'
+const OLD_BRIDGE_ID = 'System-Sciences.dsh-bridge'
+const OLD_BRIDGE_MESSAGE =
+  'The DeepSeek Harness is now part of vLLM-Copilot. Uninstall the separate DeepSeek Harness Bridge extension, then reload the window.'
+
+/** Is the retired standalone bridge extension still installed here? */
+function oldBridgeInstalled(): boolean {
+  return vscode.extensions.getExtension(OLD_BRIDGE_ID) !== undefined
+}
+
+/** The one sentence that replaces an install or a start while the old bridge lives here. */
+function announceOldBridge(): void {
+  void vscode.window.showWarningMessage(OLD_BRIDGE_MESSAGE, 'Show Extension').then((choice) => {
+    if (choice === 'Show Extension') void vscode.commands.executeCommand('extension.open', OLD_BRIDGE_ID)
+  })
+}
 /**
  * Bridge settings the harness reads at boot, so changing one means a restart.
  * Everything else (`drainTimeoutSeconds` is read per stop, `ingestIntervalSeconds`
@@ -408,11 +427,25 @@ export async function activateHarness(context: vscode.ExtensionContext): Promise
   const logger = log()
   const version = String(context.extension.packageJSON.version ?? '0.0.0')
   const paths = bridgePaths(context.globalStorageUri.fsPath)
-  ensureBridgeDirs(paths)
+
+  // Dormant until installed: activation creates no folders, shows no pill and
+  // arms no timer. The runtime stamp is the whole of the installed state, so it
+  // gets exactly one reader, and that reader drives the pill, the ingest timer
+  // and the sidebar section.
+  const isInstalled = (): boolean => existsSync(path.join(paths.runtime, INSTALL_STAMP_FILE))
+  if (oldBridgeInstalled()) announceOldBridge()
 
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 90)
   status.command = 'vllm-copilot.harness.open'
   context.subscriptions.push(status)
+
+  // The sidebar section is this extension's own entry point: the pitch until the
+  // runtime exists, the harness's command rows from then on.
+  const harnessTree = new HarnessTreeProvider(context.extension, isInstalled)
+  context.subscriptions.push(
+    harnessTree,
+    vscode.window.createTreeView('vllm-copilot.harness', { treeDataProvider: harnessTree }),
+  )
 
   // The editor control channel: the harness's MCP client dials this loopback
   // server to reach the editor tools. Token per activation, handed to the
@@ -556,6 +589,12 @@ const bridge = new Bridge({
   // Declared before render(): the pill reads this promise to show the
   // starting state, and render() runs at activation, before any start.
   let starting: Promise<string | undefined> | undefined
+  // Declared here for the same reason: syncInstalledState reads the timer to
+  // decide whether to arm or clear it, and it runs at activation, long before
+  // the ingest code below. A `let` read above its declaration is a
+  // ReferenceError, not undefined.
+  let ingestTimer: NodeJS.Timeout | undefined
+  let ingesting = false
   // The active start's progress card, if any: bridge phases land here while
   // guardedStart holds the notification open.
   let startProgress: ((message: string, increment?: number) => void) | undefined
@@ -572,7 +611,7 @@ const bridge = new Bridge({
     // tmp+rename only after npm reported the runtime tree complete, and the
     // uninstall deletes the directory holding it. The palette offers Uninstall
     // exactly when there is something to uninstall.
-    void vscode.commands.executeCommand('setContext', 'vllm-copilot.harness.installed', existsSync(path.join(paths.runtime, INSTALL_STAMP_FILE)))
+    void vscode.commands.executeCommand('setContext', 'vllm-copilot.harness.installed', isInstalled())
     if (bridge.supervisor.running) {
       status.text = `$(vllm-copilot-dsh) DSH${active ? ` $(zap)${active}` : ''}`
       status.tooltip = new vscode.MarkdownString(
@@ -619,8 +658,29 @@ const bridge = new Bridge({
     status.tooltip = 'The DeepSeek Harness is not running. Click to start it.'
     status.command = 'vllm-copilot.harness.start'
   }
-  render()
-  status.show()
+
+  /**
+   * What the dormant/installed divide looks like, in one place: the pill is
+   * there when there is something to say, the ingest timer only runs over a real
+   * install, and the sidebar section repaints its rows. Called at activation and
+   * after everything that can write or delete the runtime stamp - an install, a
+   * start that prepared one, an uninstall.
+   */
+  function syncInstalledState(): void {
+    const installed = isInstalled()
+    if (installed) {
+      if (!ingestTimer) armIngestTimer()
+    } else if (ingestTimer) {
+      clearInterval(ingestTimer)
+      ingestTimer = undefined
+    }
+    render()
+    if (installed || bridge.supervisor.running || starting) status.show()
+    else status.hide()
+    harnessTree.refresh()
+  }
+
+  syncInstalledState()
 
   /**
    * Stale embedded tabs kill the window's menus, and the harness manufactures
@@ -761,6 +821,12 @@ const bridge = new Bridge({
 
   async function guardedStart(): Promise<string | undefined> {
     if (bridge.supervisor.running && bridge.supervisor.url) return bridge.supervisor.url
+    // Never two harnesses side by side: the retired bridge extension owns this
+    // runtime directory, pid record and port the moment it is installed.
+    if (oldBridgeInstalled()) {
+      announceOldBridge()
+      return undefined
+    }
     // Prerequisites are named before any download starts. Without this gate a
     // missing npm surfaced as cmd.exe's "not recognized as an internal or
     // external command" inside a start failure, and a Node older than dsh's
@@ -787,11 +853,7 @@ const bridge = new Bridge({
           startProgress = (message, increment) =>
             progress.report(increment === undefined ? { message } : { message, increment })
           try {
-            const url = await bridge.start()
-            // A start that completed IS the setup offer's acceptance, whether
-            // it came from the button, the pill or the palette.
-            void context.globalState.update(ONBOARDED_KEY, true)
-            return url
+            return await bridge.start()
           } finally {
             startProgress = undefined
           }
@@ -807,11 +869,15 @@ const bridge = new Bridge({
       })
       .finally(() => {
         starting = undefined
-        render()
+        // A start that prepared a runtime changed the installed state: the pill,
+        // the ingest timer and the sidebar rows all follow from that.
+        syncInstalledState()
       })
     // The pill only learns about the flight if we paint it now; the finally
-    // above repaints when it lands.
-    render()
+    // above repaints when it lands. A palette-only Start on a dormant install is
+    // exactly the case that needs it: the pill would otherwise stay hidden
+    // through the whole install-and-boot.
+    syncInstalledState()
     return starting
   }
 
@@ -885,7 +951,7 @@ const bridge = new Bridge({
       // Only boot-time settings justify draining and restarting a live
       // session. The ingest cadence re-arms here so the setting takes effect
       // without a restart; none of these may cut an in-flight turn.
-      if (event.affectsConfiguration('vllm-copilot.harness.ingestIntervalSeconds')) armIngestTimer()
+      if (event.affectsConfiguration('vllm-copilot.harness.ingestIntervalSeconds') && ingestTimer) armIngestTimer()
       if (BRIDGE_RESTART_KEYS.some((key) => event.affectsConfiguration(`vllm-copilot.harness.${key}`))) {
         scheduleRestart('a DeepSeek Harness setting changed')
       }
@@ -903,6 +969,19 @@ const bridge = new Bridge({
   }
 
   /**
+   * Usage records waiting to be ingested. A dormant install has no outbox at
+   * all - the tree only exists once the harness has been installed - so a
+   * missing directory reads as "nothing pending", never as a crash.
+   */
+  function pendingUsageRecords(): number {
+    try {
+      return readdirSync(paths.outbox).filter((n) => n.endsWith('.json')).length
+    } catch {
+      return 0
+    }
+  }
+
+  /**
    * Install, update, or repair the harness WITHOUT ever spawning it: Start
    * owns running, this owns having. The version choice is written to the one
    * setting every window's restart listener already obeys (dshVersion is a
@@ -915,6 +994,12 @@ const bridge = new Bridge({
    * into one runtime tree is the exact corruption start-lock.ts exists for.
    */
   async function installOrUpdateHarness(): Promise<void> {
+    // The old standalone bridge owns the harness install as far as this version
+    // is concerned; an install here would land in the same tree it runs from.
+    if (oldBridgeInstalled()) {
+      announceOldBridge()
+      return
+    }
     const missing = await missingPrereqs()
     if (missing.length) {
       announceMissingPrereqs(missing, 'be installed')
@@ -1012,6 +1097,11 @@ const bridge = new Bridge({
         rmSync(paths.adapterStamp, { force: true })
       }
     }
+    // The tree the installer writes into is created here, not at activation: a
+    // dormant vLLM-Copilot owns no harness folders. Under the start lock is the
+    // first moment anything is written (acquireStartLock itself writes the lock
+    // file into `vllmc`), so it is also the last moment they may appear.
+    ensureBridgeDirs(paths)
     const held = await acquireStartLock({ lockFile: paths.startLock, pidFile: paths.pid, log: logger })
     if (held.kind === 'adopt') {
       void vscode.window.showInformationMessage('A harness started while you were choosing; its next restart picks up your choice.')
@@ -1037,9 +1127,9 @@ const bridge = new Bridge({
           },
         ),
       )
-      // The download the first-run offer asks permission for has now been
-      // given and spent: the offer has nothing left to ask.
-      void context.globalState.update(ONBOARDED_KEY, true)
+      // The download the user just asked for has landed: the pill, the ingest
+      // timer and the sidebar rows all switch over on the stamp it wrote.
+      syncInstalledState()
       void vscode.window
         .showInformationMessage(
           `DeepSeek Harness ${prepared.dshVersion} is installed and ready, not running. Start it from the pill whenever you like.`,
@@ -1057,7 +1147,7 @@ const bridge = new Bridge({
         })
     } finally {
       held.lock.release()
-      render()
+      syncInstalledState()
     }
   }
 
@@ -1106,7 +1196,7 @@ const bridge = new Bridge({
       // restore, and the sweep is the only thing that knows these URLs.
       await sweepStaleTabs()
     }
-    const pendingUsage = readdirSync(paths.outbox).filter((n) => n.endsWith('.json')).length
+    const pendingUsage = pendingUsageRecords()
     const confirm = await vscode.window.showWarningMessage(
       'Uninstall the DeepSeek Harness?',
       {
@@ -1136,9 +1226,9 @@ const bridge = new Bridge({
         },
       ),
     )
-    // The offer is a first-run promise: a reinstall owes the user the ask.
-    void context.globalState.update(ONBOARDED_KEY, undefined)
-    render()
+    // Gone is gone: the pill hides, the ingest timer stops, the sidebar section
+    // falls back to the pitch.
+    syncInstalledState()
     void vscode.window.showInformationMessage(
       `DeepSeek Harness uninstalled (${formatBytes(freed)} freed). vLLM-Copilot stays installed; "Install or Update Harness…" brings the harness back.`,
     )
@@ -1147,8 +1237,7 @@ const bridge = new Bridge({
   // Ingestion runs on a timer rather than on a file watch: the outbox is a
   // directory the harness writes into from another process, and polling a
   // directory is portable in a way that reliable inotify events are not.
-  let ingestTimer: NodeJS.Timeout | undefined
-  let ingesting = false
+  // (`ingestTimer` / `ingesting` are declared above, next to `starting`.)
   async function ingestPass(): Promise<void> {
     if (ingesting) return
     ingesting = true
@@ -1176,12 +1265,9 @@ const bridge = new Bridge({
     ingestTimer = setInterval(() => void ingestPass(), seconds * 1000)
     ingestTimer.unref?.()
   }
-  armIngestTimer()
-  void ingestPass()
 
-  // Registered before any early return below: activation can bail out early
-  // (no vLLM-Copilot, empty registry) and a timer armed before that would
-  // otherwise outlive the extension with nothing left to clear it.
+  // Registered before anything can be armed or started: whatever this window
+  // touched has to be let go when the extension deactivates.
   context.subscriptions.push({
     dispose: () => {
       if (ingestTimer) clearInterval(ingestTimer)
@@ -1202,7 +1288,7 @@ const bridge = new Bridge({
       `snapshot version: ${info?.snapshotVersion ?? 'not written'}`,
       `privacy rows disabled: ${info?.rowsDisabled ?? 'unknown'}`,
       `in-flight requests: ${bridge.activeRequests()}`,
-      `pending usage records: ${readdirSync(paths.outbox).filter((n) => n.endsWith('.json')).length}`,
+      `pending usage records: ${pendingUsageRecords()}`,
       `editor control channel: ${control?.url ? `listening on ${control.url}` : 'not started'}`,
       '',
       'Harness URL tokens and server ids are never shown here.',
@@ -1226,6 +1312,12 @@ const bridge = new Bridge({
       sweepNow()
     }),
     vscode.commands.registerCommand('vllm-copilot.harness.restart', async () => {
+      // Restarting a harness that is not running spawns one, which is the start
+      // path by another name: the old bridge rule applies to it too.
+      if (!bridge.supervisor.running && oldBridgeInstalled()) {
+        announceOldBridge()
+        return
+      }
       const result = await bridge.restart()
       if (!result.drained) {
         void vscode.window.showWarningMessage(`${result.remaining} in-flight harness request(s) were cut by this restart.`)
@@ -1275,47 +1367,15 @@ const bridge = new Bridge({
     ),
   )
 
-  const registry = await getConfig()
-  if (registry.models.length === 0) {
-    logger.warn('the vLLM-Copilot registry has no models; the harness is not launched')
-    void vscode.window
-      .showInformationMessage('Add a server and a model in vLLM-Copilot settings, then start the DeepSeek Harness.', 'Open vLLM-Copilot Settings', 'Start Harness')
-      .then((choice) => {
-        if (choice === 'Open vLLM-Copilot Settings') void vscode.commands.executeCommand('workbench.action.openSettings', '@ext:system-sciences.vllm-copilot vllm-copilot')
-        if (choice === 'Start Harness') void guardedStart()
-      })
-    return
-  }
-
-  // Starting is manual by design: the pill, the command palette, or the
-  // buttons in the notices above. A harness the user did not ask for never
-  // installs a runtime, opens a port, or spends tokens on its own.
-  render()
-
-  // First run after an install, reached only when the registry offers models
-  // (the early return above owns that gap). The offer asks for the one thing
-  // the user has not been offered yet: the dsh
-  // download. Pressing the button IS the manual ask the ruling above demands;
-  // "Later" says nothing again, forever, and the pill stays. An install that
-  // booted into a broken environment keeps the flag unset, so the offer lands
-  // on the first window where the notice can actually be acted on.
-  if (!context.globalState.get<boolean>(ONBOARDED_KEY)) {
-    void vscode.window
-      .showInformationMessage(
-        'vLLM-Copilot is installed, and your registry has models to offer. '
-          + 'The DeepSeek Harness itself (@deepseek-ai/dsh) downloads once into vLLM-Copilot\u2019s own directory: about 2-3 minutes, '
-          + 'and it needs Node.js 22 or newer with npm on PATH. Set it up now?',
-        'Check prerequisites and start',
-        'Later',
-      )
-      .then(async (choice) => {
-        await context.globalState.update(ONBOARDED_KEY, true)
-        if (choice === 'Check prerequisites and start') {
-          await guardedStart()
-          render()
-        }
-      })
-  }
+  // Starting is manual by design: the sidebar section, the command palette, or
+  // the pill. A harness the user did not ask for never installs a runtime, opens
+  // a port, or spends tokens on its own - and with no models configured there is
+  // nothing to ask for, so activation says nothing either.
+  // One pass over the outbox before the timer: usage the harness wrote while
+  // this window was closed reaches the dashboard without waiting a whole
+  // interval. Only a real install has an outbox to read.
+  if (isInstalled()) void ingestPass()
+  syncInstalledState()
 
   context.subscriptions.push({
     // Deactivate is best effort: it does not run at all when the host dies,

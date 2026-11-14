@@ -383,6 +383,11 @@ export class Bridge {
    * and shoot each other's harness through the sweep.
    */
   async start(): Promise<string> {
+    // The folders the harness writes into are created here, on the first path
+    // that actually needs them: an extension that ships to everyone and sits
+    // dormant must not leave a harness tree behind on a machine that never
+    // installed one. Idempotent, and prepare() repeats it for its own callers.
+    ensureBridgeDirs(this.deps.paths)
     const url = await this.acquire()
     // Remember every URL this harness answers on. Port and token die with
     // every boot, so the NEXT boot's restored browser tab points here, cannot

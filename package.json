@@ -281,12 +281,6 @@
         "category": "vLLM-Copilot"
       },
       {
-        "command": "vllm-copilot.tryDeepSeekHarness",
-        "title": "Try the DeepSeek Harness (Alpha)",
-        "category": "vLLM-Copilot",
-        "icon": "$(rocket)"
-      },
-      {
         "command": "vllm-copilot.harness.installOrUpdate",
         "title": "Install or Update Harness…",
         "category": "DeepSeek Harness"
