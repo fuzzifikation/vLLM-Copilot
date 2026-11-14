@@ -322,6 +322,9 @@ The retry check uses the full content buffer (not the last chunk) so a trailing 
 
 2. **VS Code reads `configurationSchema.properties`** - but NOT freely: the model picker renders exactly **two** sections, hardcoded to the groups `navigation` and `tokens` (`modelPickerConfiguration.ts::_buildItems`), and each section reads only the **first** property whose `group` matches and which has a non-empty `enum`. A third property, or a second one inside an already-filled group, is silently dropped from the main picker (it still appears in the "Configure..." management panel via `createModelConfigurationActions`). This is not theoretical - v1.35 shipped two `navigation` properties and the second (Output Length) never rendered. One control per group. Period.
 
+   - **The group names are wire values, not labels, and VS Code renamed only the constants.** As of 1.146, `modelPickerModelConfig.ts` exports `MODEL_CONFIG_GROUP_EFFORT = 'navigation'` and `MODEL_CONFIG_GROUP_CONTEXT = 'tokens'` - thinking effort and context window, respectively. Grepping upstream for `navigation` now finds nothing that looks like our groups; the strings are unchanged, so our `group:` values are correct and must not be "modernized".
+   - **How the schema reaches the picker changed in 1.140.0** (closing our [microsoft/vscode#333413](https://github.com/microsoft/vscode/issues/333413)): `getModelConfigProperty` now asks `configurationAccess.getModelConfigurationSchema(model.identifier)` - a live `lookupLanguageModel()` against the provider's current registration - and only falls back to `model.metadata.configurationSchema` when that accessor is absent. Before it, the row carried a metadata snapshot taken at registration, so a property we added afterwards stayed invisible in the dropdown until something forced a configuration write (the hover chip already showed it, which is how we localized the bug). Our minimum is 1.140.0, so assume the live path.
+
 3. **User selection is persisted** in VS Code's `_modelConfigurations` store (per model ID).
 
 4. **On request, VS Code passes the resolved config** as `options.modelConfiguration`:
@@ -396,6 +399,7 @@ The model **hover** card mirrors this: `SUPPORTED_CONFIG_GROUPS = ['navigation',
 - To implement: add `contextSize` property to `configurationSchema.properties` with enum of token counts
 - On request, read `options.modelConfiguration.contextSize` and use it to adjust `maxInputTokens`/`maxOutputTokens`
 - Caveat: vLLM's `max_model_len` is fixed at server startup; changing context size would require re-loading the model
+- **Do not build on Microsoft's `contextSize` bridge yet** (checked 2026-11-14): a maintainer described [microsoft/vscode#341913](https://github.com/microsoft/vscode/issues/341913) as forwarding a numeric `contextSize` enum from the provider schema so the Agent Host synthesizes a Context Size picker that drives compaction. The PR is **open, unmerged, no milestone** - that text reads like shipped code and is not. Related: the same thread confirms the Agent Host bridge maps host-understood keys one at a time and drops everything else, which is exactly [microsoft/vscode#340138](https://github.com/microsoft/vscode/issues/340138) (still open): no `configurationSchema`, `statusIcon`, `tooltip` or `detail` in Agents-window rows.
 
 **Caveats:**
 - This is NOT a public VS Code API - it could change without notice

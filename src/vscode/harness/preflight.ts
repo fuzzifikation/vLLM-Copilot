@@ -10,7 +10,8 @@
  *
  * The Node floor is not ours to guess. The certified dsh states it:
  * `dsh/dsh.json` carries `requiresNode`, written by the adoption rail from that
- * exact version's `engines.node` (0.2.2-rc.1 states `>=24.9.0`). Reading it here
+ * exact version's `engines.node`, so it is current by construction (`>=24.9.0`
+ * today). Reading it here
  * instead of hardcoding a number means a new pin moves the floor with it, and a
  * metadata file that cannot be read fails THIS check loudly rather than quietly
  * reusing a stale number. It is read when a check is asked for, never at module

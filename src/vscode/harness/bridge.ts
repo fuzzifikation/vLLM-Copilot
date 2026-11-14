@@ -310,7 +310,7 @@ export class Bridge {
   async prepare(): Promise<PreparedBridge> {
     ensureBridgeDirs(this.deps.paths)
     await this.syncConsent()
-    this.deps.progress?.('installing the harness runtime (first start only, about 1-2 minutes)')
+    this.deps.progress?.('installing the harness runtime (about 1-2 minutes, once per harness version)')
     const runtime = await this.runtime()
     this.deps.progress?.('staging the vLLM-Copilot core for the harness', 45)
     const { coreVersion } = await this.stage()

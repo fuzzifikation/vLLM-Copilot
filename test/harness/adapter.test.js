@@ -190,6 +190,42 @@ describe('harness personality and recording', () => {
     writeFileSync(personalityFile, JSON.stringify({ meta: { name: 'Test Voice', description: 'synthetic' }, rules }), 'utf8')
   }
 
+  /**
+   * The flush promises the adapter deliberately drops on the floor. Production
+   * must never block a turn on a disk write (adapter.js fires the capture and
+   * only logs a rejection), so the ONLY honest wait for a record is the
+   * recorder's own completion - the real signal, which the wrapper below
+   * keeps a handle on.
+   *
+   * Polling the recording file instead is NOT a neutral read. The commit is an
+   * atomic `rename(tmp -> target)` running on the libuv threadpool, and on
+   * Windows a replace is refused outright while any handle has the target open:
+   * a waitFor that reads the file every 50 ms is therefore a writer-racing
+   * reader that can kill the commit it is waiting for (EPERM, and before the
+   * commit retry landed, that dropped the record for good). Measured: 18/25
+   * captures lost with a 1 ms poll loop, 0/25 awaiting the flush - which is
+   * also why raising the waitFor timeout could never have fixed this: the
+   * record was gone, not slow (worst observed flush, 22 ms).
+   */
+  let flushes
+  beforeEach(() => {
+    flushes = []
+  })
+
+  function trackFlushes(recorder) {
+    return (entries) => {
+      const done = recorder(entries)
+      flushes.push(done)
+      return done
+    }
+  }
+
+  /** Await every capture this test has fired, then forget them. */
+  async function awaitFlushes() {
+    await Promise.all(flushes)
+    flushes = []
+  }
+
   async function withRecorder(snapshotMutate) {
     const { createRecorder } = await import('../../dsh/plugin/capture.js')
     const lines = []
@@ -197,7 +233,7 @@ describe('harness personality and recording', () => {
     // The recorder AND the adapter share the tap, so warnings are assertable.
     await setup(snapshotMutate, {
       log,
-      capture: createRecorder({ core, flagFile, snapshotFile, log }),
+      capture: trackFlushes(createRecorder({ core, flagFile, snapshotFile, log })),
     })
     return lines
   }
@@ -213,17 +249,19 @@ describe('harness personality and recording', () => {
     await collect(adapter.stream(options({ system: 'UPSTREAM PERSONA stays honest' })))
     expect(backend.requests.at(-1).body.messages[0].content).toBe('TEST VOICE stays honest')
 
-    // Recording: before/after/rulesApplied at the real seam.
-    await vi.waitFor(() => expect(existsSync(targetFile)).toBe(true))
+    // Recording: before/after/rulesApplied at the real seam. Awaiting the
+    // recorder's own completion, not a guess about how long the disk takes.
+    await awaitFlushes()
     expect(readCapture()).toEqual([
       { receivedContent: 'UPSTREAM PERSONA stays honest', deliveredContent: 'TEST VOICE stays honest', rulesApplied: ['persona'] },
     ])
 
     // No persona (Default): the wire prompt is untouched AND still recorded,
     // rulesApplied empty - that is what lets users build rules from recordings.
-    const adapter2 = createVllmcAdapter({ core, snapshot: buildSnapshot(backend.url), deps: { outboxDir: outbox, activeDir, log: quietLog, capture: (await import('../../dsh/plugin/capture.js')).createRecorder({ core, flagFile, snapshotFile, log: quietLog }) } })
+    const adapter2 = createVllmcAdapter({ core, snapshot: buildSnapshot(backend.url), deps: { outboxDir: outbox, activeDir, log: quietLog, capture: trackFlushes((await import('../../dsh/plugin/capture.js')).createRecorder({ core, flagFile, snapshotFile, log: quietLog })) } })
     await collect(adapter2.stream(options({ system: 'VANILLA PROMPT' })))
-    await vi.waitFor(() => expect(readCapture().length).toBe(2))
+    await awaitFlushes()
+    expect(readCapture().length).toBe(2)
     expect(backend.requests.at(-1).body.messages[0].content).toBe('VANILLA PROMPT')
     expect(readCapture()[1]).toEqual({ receivedContent: 'VANILLA PROMPT', deliveredContent: 'VANILLA PROMPT', rulesApplied: [] })
   })
@@ -234,6 +272,9 @@ describe('harness personality and recording', () => {
     await withRecorder((s) => { s.personalityFile = personalityFile })
     await collect(adapter.stream(options({ system: 'UPSTREAM PERSONA' })))
     expect(backend.requests.at(-1).body.messages[0].content).toBe('TEST VOICE')
+    // The recorder ran and DID NOT WRITE: awaiting it means "nothing on disk"
+    // is a verdict, not a race the late write might lose later.
+    await awaitFlushes()
     expect(existsSync(targetFile)).toBe(false)
   })
 
@@ -246,7 +287,8 @@ describe('harness personality and recording', () => {
     expect(lines.some((l) => /personality rules could not load/.test(l))).toBe(true)
     // The recording still happens (no rules applied), so the user can SEE the
     // untouched prompt; the warning carries no prompt bytes.
-    await vi.waitFor(() => expect(readCapture().length).toBe(1))
+    await awaitFlushes()
+    expect(readCapture().length).toBe(1)
     expect(readCapture()[0].rulesApplied).toEqual([])
   })
 

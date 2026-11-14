@@ -108,6 +108,56 @@ describe('CaptureQueue against awaited I/O', () => {
     expect(lines.some((l) => /Failed to write capture file/.test(l))).toBe(true)
   })
 
+  it('a reader holding the target open costs a retry, not the record', async () => {
+    // The Windows shape of a shared file: replacing the target is refused
+    // OUTRIGHT while any handle has it open - an antivirus scan, a sync client,
+    // an editor showing the recording (which is the whole point of the file),
+    // or a test polling it. That handle closes in microseconds, so treating the
+    // refusal as fatal deletes a user's captured prompt over a 50µs read. The
+    // commit is all-or-nothing, so retrying the SAME rename can only land the
+    // new bytes or leave the old ones: no partial state to reason about.
+    const eperm = (): NodeJS.ErrnoException =>
+      Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
+    fsMock.rename.mockRejectedValueOnce(eperm())
+    const { lines, log } = mkLog()
+    await new CaptureQueue().enqueueWrite(TARGET, [entry], log, { mode: 0o600 })
+    expect(fsMock.rename.mock.calls.length).toBeGreaterThan(1)
+    expect(JSON.parse(fsMock.store.get(TARGET)!)).toEqual([entry]) // the record SURVIVED
+    // Said once, not per attempt - and never as a write failure.
+    expect(lines.filter((l) => /Capture commit waiting for a reader/.test(l))).toHaveLength(1)
+    expect(lines.some((l) => /Failed to write capture file/.test(l))).toBe(false)
+    expect(fsMock.unlink).not.toHaveBeenCalled() // the temp was committed, not abandoned
+  })
+
+  it('a persistent refusal gives up on schedule: bounded retries, temp cleaned, failure said', async () => {
+    // A wedged reader must not pin the queue - and the capture lock behind it -
+    // forever, so the patience is capped and the old fatal path still runs.
+    const eperm = (): NodeJS.ErrnoException =>
+      Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
+    for (let attempt = 0; attempt < 8; attempt++) fsMock.rename.mockRejectedValueOnce(eperm())
+    const { lines, log } = mkLog()
+    await new CaptureQueue().enqueueWrite(TARGET, [entry], log, { mode: 0o600 })
+    expect(fsMock.rename.mock.calls.length).toBe(8)
+    expect(lines.some((l) => /Failed to write capture file/.test(l))).toBe(true)
+    expect(fsMock.unlink).toHaveBeenCalledWith(expect.stringMatching(TMP_RE))
+  })
+
+  it('consent dying during a commit retry abandons the write like one before the first attempt', async () => {
+    // The flip lands INSIDE the refused commit (the seam decides, no sleeps
+    // guessed), so the retry must notice consent is gone and stop.
+    let consent = true
+    fsMock.rename.mockImplementationOnce(async () => {
+      consent = false
+      throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
+    })
+    const { lines, log } = mkLog()
+    await new CaptureQueue().enqueueWrite(TARGET, [entry], log, { gate: () => consent, mode: 0o600 })
+    expect(fsMock.rename).toHaveBeenCalledTimes(1) // never tried again with consent dead
+    expect(fsMock.store.has(TARGET)).toBe(false) // nothing persisted after the flip
+    expect(fsMock.unlink).toHaveBeenCalledWith(expect.stringMatching(TMP_RE))
+    expect(lines.some((l) => /abandoned before commit/.test(l))).toBe(true)
+  })
+
   it('gate false at task start touches no I/O at all', async () => {
     const { log } = mkLog()
     await new CaptureQueue().enqueueWrite(TARGET, [entry], log, { gate: () => false })

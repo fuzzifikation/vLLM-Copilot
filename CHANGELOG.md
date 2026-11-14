@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.40.1
+
+A cleanup release that turned up a real one: the workaround for a VS Code quirk that no longer exists is gone, the quirks that still exist are counted honestly, and holding your own recording open could silently eat a captured prompt.
+
+### Fixed
+
+- **A prompt no longer vanishes because you had the recording open.** Both capture files are replaced by renaming a temp file over them, and Windows refuses that replace outright while any other program holds the target open — the editor showing the file, antivirus, a sync client, a workspace indexer. That refusal was swallowed into a `[WARN]` line in Output and the turn's prompt was gone for good, so recording that looked enabled had holes in it and the personality engine got the blame. A sharing refusal now waits briefly for the handle to close before committing; a real failure (no space, read-only volume) still fails at once, and consent that flips off during the wait still abandons the write instead of persisting it.
+
+- **The Output Length menu arrives by itself.** VS Code used to render a model's settings menu from a metadata snapshot taken when the model was registered, so a newly added **Output Length** dropdown stayed hidden until something forced a configuration write — the old advice was to open the model list once and click the **Output Length** chip on the model. VS Code now asks the provider for its live registration instead ([microsoft/vscode#333413](https://github.com/microsoft/vscode/issues/333413), closed), and that landed in 1.140.0 — already this extension's minimum — so the menu appears the moment a model gets one. The chip dance is retired from the migration notice, the README, the manual and the update page. Where the menu still never appears — the **Copilot harness**, whose Agent Host bridge drops provider metadata outright ([microsoft/vscode#340138](https://github.com/microsoft/vscode/issues/340138), open) — no click ever fixed it, and that is where it is tracked.
+
+### Changed
+
+- **The count of Microsoft's outstanding fixes is honest.** Five of the six reports this project filed are open, not six; the closed one is named where the list lives, so adding a reproduction goes to a bug that still bites.
+- **The harness install step says what it costs.** "about 1-2 minutes, once per harness version" replaces "first start only": a harness version change reinstalls the runtime, and that progress line is not only for the first start.
+
 ## v1.40.0
 
 One extension, two interfaces: the agent harness that used to be a separate extension is now built into vLLM-Copilot, so the people who already run the servers get the agent with them, including in editors that ship no Copilot at all.

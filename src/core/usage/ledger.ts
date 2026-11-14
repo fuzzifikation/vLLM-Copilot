@@ -300,7 +300,12 @@ async function readUsageFile(p: string): Promise<PersistedUsage | undefined> {
 
 /** Temp-file + rename: the replace is atomic (Windows included), so a window
  *  reading mid-write sees either the old or the new blob, never a half file.
- *  The tmp name carries the pid so two windows never share a scratch file. */
+ *  The tmp name carries the pid so two windows never share a scratch file.
+ *  Atomicity is not the same as acceptance: while another program holds `p`
+ *  open, Windows REFUSES the replace with EPERM (see CAPTURE_COMMIT_ATTEMPTS in
+ *  core/personality/capture.ts, which is where that costs data and so retries).
+ *  Here it costs nothing to refuse: the caller leaves `lastWritten` stale and
+ *  the next persist replays the delta, so this stays one honest attempt. */
 async function writeUsageFile(p: string, data: PersistedUsage): Promise<void> {
   await fs.mkdir(path.dirname(p), { recursive: true });
   const tmp = `${p}.${process.pid}.tmp`;

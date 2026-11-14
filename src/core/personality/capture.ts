@@ -91,6 +91,22 @@ const CAPTURE_LOCK_POLL_MS = 25;
 /** Default contention budget before a locked capture is skipped. */
 const CAPTURE_LOCK_WAIT_MS = 4000;
 
+/**
+ * Attempts the atomic commit gets when the target turns out to be OPEN.
+ * Replacing a file is not a "one try" operation on Windows: while ANY reader
+ * holds the target, the replace is refused outright (EPERM/EACCES/EBUSY), and
+ * the reader's handle closes in microseconds. A capture file is exactly the
+ * kind of file people have open - it exists so they can read their prompts and
+ * write rules from them - and antivirus, sync clients and editors open it
+ * without asking. The handle is transient; the record must not be.
+ */
+const CAPTURE_COMMIT_ATTEMPTS = 8;
+/** Spacing between commit retries: background recording, not a hot loop. */
+const CAPTURE_COMMIT_RETRY_MS = 25;
+/** errno codes meaning "a reader is standing in the way RIGHT NOW", not
+ *  "never". Anything else (ENOENT, ENOSPC, a read-only volume) is fatal. */
+const TRANSIENT_COMMIT_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
 /** File name of the live capture-consent marker inside the harness home. */
 export const CAPTURE_FLAG_FILENAME = 'capture.flag';
 /** Legacy file-name prefix of the per-process harness recordings
@@ -161,6 +177,53 @@ async function unlinkOrWarn(tmpPath: string, log: RequestLog): Promise<void> {
   }
 }
 
+/** Consent died before the commit landed: drop this operation's temp (it holds
+ *  raw prompt text) and say out loud how many entries were lost. */
+async function abandonCommit(tmpPath: string, entryCount: number, log: RequestLog): Promise<void> {
+  await unlinkOrWarn(tmpPath, log);
+  log.appendLine(`[DIAG] Capture write abandoned before commit (consent off): ${entryCount} entry(ies) dropped`);
+}
+
+/**
+ * The atomic commit, with the patience a shared file deserves. One
+ * `rename(tmp → target)` replaces the whole file, so there is no partial
+ * failure to reason about: either the new bytes are the file or the old ones
+ * still are, and a retry re-attempts that same all-or-nothing step. A sharing
+ * violation ({@link TRANSIENT_COMMIT_CODES}) means a reader is mid-open on the
+ * target, which resolves itself as soon as that read finishes, so wait briefly
+ * and try again; every other error is fatal and rethrown after the caller has
+ * cleaned the temp. Consent is re-checked before EVERY attempt, so a flip to
+ * off during the retry window abandons the write exactly like a flip before the
+ * first one. A successful commit is still exactly one rename and zero sleeps.
+ */
+async function commitWithRetry(
+  tmpPath: string,
+  targetPath: string,
+  entryCount: number,
+  log: RequestLog,
+  gate?: () => boolean
+): Promise<void> {
+  let warned = false;
+  for (let attempt = 1; ; attempt++) {
+    if (gate && !gate()) {
+      await abandonCommit(tmpPath, entryCount, log);
+      return;
+    }
+    try {
+      await fs.rename(tmpPath, targetPath);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (attempt >= CAPTURE_COMMIT_ATTEMPTS || !TRANSIENT_COMMIT_CODES.has(code ?? '')) throw err;
+      if (!warned) {
+        warned = true;
+        log.appendLine(`[DIAG] Capture commit waiting for a reader holding ${targetPath} open (${code}) - ${CAPTURE_COMMIT_ATTEMPTS - attempt} retries left`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, CAPTURE_COMMIT_RETRY_MS));
+    }
+  }
+}
+
 /** Path of the per-process capture recording for `pid` inside `dir`. */
 export function captureRecordingFile(dir: string, pid: number): string {
   return path.join(dir, `${CAPTURE_FILE_PREFIX}${pid}.json`);
@@ -218,7 +281,9 @@ export class CaptureQueue {
    * bytes or they wait for ours, which is the only honest serialization a
    * filesystem offers without pretending to be a database. Without a lock
    * (Copilot) this is the historical single attempt, unchanged: one read,
-   * merge, unique temp, final consent gate, rename. A write that renamed
+   * merge, unique temp, final consent gate, rename - the rename itself just
+   * has the patience a file people read deserves ({@link commitWithRetry}),
+   * which changes nothing when no reader is in the way. A write that renamed
    * BEFORE a consent flip already committed and is not undone.
    */
   async #mergeAndCommit(
@@ -286,13 +351,9 @@ export class CaptureQueue {
       await fs.writeFile(tmpPath, JSON.stringify(allEntries, null, 2), { encoding: 'utf-8', ...writeMode });
       // Last gate before the rename: the read+merge awaited I/O, and consent may
       // have flipped while it ran. Abandon - and clean the temp - rather than
-      // persist a capture whose consent died during the RMW.
-      if (options?.gate && !options.gate()) {
-        await unlinkOrWarn(tmpPath, log);
-        log.appendLine(`[DIAG] Capture write abandoned before commit (consent off): ${newEntries.length} entry(ies) dropped`);
-        return;
-      }
-      await fs.rename(tmpPath, targetPath);
+      // persist a capture whose consent died during the RMW. commitWithRetry
+      // re-checks that gate before the first attempt AND before every retry.
+      await commitWithRetry(tmpPath, targetPath, newEntries.length, log, options?.gate);
     } catch (err) {
       // The temp can hold raw prompt text; never leave it behind silently on
       // the way out - a failed cleanup is logged by unlinkOrWarn.

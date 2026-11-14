@@ -14,16 +14,17 @@ The agent harness that used to be a separate extension now lives here. It runs t
 
 <img src="https://github.com/fuzzifikation/vLLM-Copilot/raw/main/resources/dsh-working.png" alt="DeepSeek Harness running a live session on a vLLM-Copilot model" width="585">
 
-## Microsoft still owes you six fixes
+## Microsoft still owes you five fixes
 
-All six have open reports at microsoft/vscode, filed by us. Add your reproduction; Microsoft moves when reports pile up:
+Five of the six reports we filed are still open at microsoft/vscode. Add your reproduction; Microsoft moves when reports pile up:
 
 - [microsoft/vscode#347351](https://github.com/microsoft/vscode/issues/347351) - the 128-tool ceiling
 - [microsoft/vscode#340138](https://github.com/microsoft/vscode/issues/340138) - model modes and Output Length missing from the picker
-- [microsoft/vscode#333413](https://github.com/microsoft/vscode/issues/333413) - picker settings stale after an update
 - [microsoft/vscode#333802](https://github.com/microsoft/vscode/issues/333802) - subagents reject your BYOK models
 - [microsoft/vscode#326597](https://github.com/microsoft/vscode/issues/326597) - historical thinking dropped before we see it
 - [microsoft/vscode#321761](https://github.com/microsoft/vscode/issues/321761) - reserved output room ignores your output cap
+
+One is fixed: [microsoft/vscode#333413](https://github.com/microsoft/vscode/issues/333413) - the picker read model settings from a stale snapshot, so a new **Output Length** menu needed a config write before it showed. VS Code 1.140.0 asks the provider for its live registration instead, so the menu appears by itself. 1.140.0 is this extension's minimum, so you already have the fix.
 
 Everything else that bites you is ours: [report it](https://github.com/fuzzifikation/vLLM-Copilot/issues) and we take it from there.
 
