@@ -1,22 +1,24 @@
 # The DeepSeek Harness is now built into vLLM-Copilot.
 
+> **Migrating from `dsh-bridge`?** Uninstall **DeepSeek Harness Bridge** (`System-Sciences.dsh-bridge`) and reload this window. Until it is gone, vLLM-Copilot refuses to install or start its own harness, and the notice returns in every window. Nothing is uninstalled or deleted for you.
+
 One extension, two interfaces. The agent harness that used to be a separate extension now lives here, on the servers you already configured - and in editors with no Copilot at all.
 
-**If you never installed the bridge, nothing changed for you.** The harness is optional and dormant: until you install it there are no harness folders, no status-bar pill, no timers and no notifications. When you want it, open the **DeepSeek Harness** section under the **V** icon and press **Install DeepSeek Harness…**.
+**If you never installed the bridge, nothing changed for you.** The harness is optional and dormant: until you install it there are no harness folders, no status-bar pill, no timers and no notifications. When you want it, configure a model first (**Add or Reconfigure Server/Model**), then open the **DeepSeek Harness** section under the **V** icon and press **Install DeepSeek Harness…**: with no usable model configured, Install, Start and Restart download nothing and offer that setup command instead.
 
-**If you used the DeepSeek Harness Bridge: uninstall it.** While that extension (`System-Sciences.dsh-bridge`) is installed, vLLM-Copilot tells you so and refuses to install or start its own harness, because two harnesses on one machine would fight over one runtime directory, one pid record and one port. Your old harness sessions stay in the bridge's own storage folder and are not carried over. Then install the harness from the sidebar: it checks Node.js 22+, `npm` and `pnpm`, names whatever is missing, and downloads the certified harness once - a few minutes, and later starts take seconds.
+**If you used the DeepSeek Harness Bridge: uninstall it, then reload the window.** While that extension (`System-Sciences.dsh-bridge`) is installed, vLLM-Copilot tells you so and refuses to install or start its own harness. The two keep separate storage, so nothing of yours is overwritten, and nothing is migrated: your old sessions stay in the bridge's folder. Then install the harness from the sidebar: it checks Node.js 24.9.0 or newer, `npm` and `pnpm`, names whatever is missing, and downloads the certified harness once - a few minutes, and later starts take seconds.
 
 **Your harness settings did not move.** They were renamed from `dsh-bridge.*` to `vllm-copilot.harness.*`, and nothing is migrated: set them again in the **DeepSeek Harness** settings section, or run **DeepSeek Harness: Open Harness Settings**.
 
-**It works without Copilot.** In VSCodium or any editor with no Copilot, install this extension from Open VSX, add a model, install the harness from the sidebar, and the agent runs on your servers with its tools, its sessions and your personalities.
+**It works without Copilot.** In VSCodium or any editor with no Copilot, install this extension from Open VSX, add a model, install the harness from the sidebar, and the agent runs on your servers with its tools, its sessions and its own personality control.
 
-**Personalities finally reach the harness.** A personality you picked in Model Settings now applies to harness requests too; the old bridge could only pass a personality file you had given an absolute path to, so every built-in preset was ignored there. Harness traffic still lands in the same dashboard totals. Providers you add inside the harness itself do not - see the [README FAQ](https://github.com/fuzzifikation/vLLM-Copilot#can-i-add-other-providers-inside-the-harness).
+**The harness gets its own personality and prompt recording.** **DeepSeek Harness: Set Harness Personality…** picks the voice for the whole harness session: four bundled voices (Supportive Mentor and Spartan append one style sentence to the prompt identity line, Critical Senior Dev and Sarcastic Robot replace that line with a short voice block), a find/replace file of yours applies instead, Default leaves the upstream prompt untouched, and Create opens a template; Copilot presets target Microsoft's prompt and are never selected automatically for dsh - record the harness prompt and anchor your rules on what it actually shows. **Toggle Harness Prompt Recording** and **Open Harness Recording** capture the harness's system prompts (received, delivered, matched rules) into vLLM-Copilot's harness folder - off the machine, never in Copilot's workspace file, and the running harness obeys an OFF on the spot: queued writes are dropped and the next request records nothing. Harness traffic still lands in the same dashboard totals. Providers you add inside the harness itself do not - see the [README FAQ](https://github.com/fuzzifikation/vLLM-Copilot#can-i-add-other-providers-inside-the-harness).
 
 **VS Code 1.140 is the new minimum**, the harness's floor, because this extension supports current editor versions only.
 
 <img src="dsh-working.png" alt="DeepSeek Harness running a live session on a vLLM-Copilot model" width="585">
 
-## If you skipped 1.38
+## If you missed recent updates
 
 This page opens once per installed version, so for most of you it is the only news you get. What 1.38.0 to 1.39.0 changed, and still holds:
 

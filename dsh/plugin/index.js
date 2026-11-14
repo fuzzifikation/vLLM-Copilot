@@ -17,6 +17,7 @@
 import path from 'node:path'
 import { loadSnapshot, snapshotPathFrom } from './snapshot.js'
 import { createVllmcAdapter } from './adapter.js'
+import { flagFileFrom, createRecorder } from './capture.js'
 
 export const inject = ['llm']
 
@@ -50,6 +51,10 @@ export function apply(ctx) {
   }
   return import('vllm-copilot-core')
     .then((core) => {
+      // Recording: the consent marker lives beside the snapshot, the target
+      // is the workspace file the snapshot names (capture.js for the rules -
+      // no destination in the snapshot means no recording, ever).
+      adapterDeps.capture = createRecorder({ core, flagFile: flagFileFrom(file), snapshotFile: file, log: adapterDeps.log })
       const adapter = createVllmcAdapter({ core, snapshot, deps: adapterDeps })
       const registration = ctx.llm.registerAdapter(['vllmc'], adapter)
       ctx.effect(() => () => registration())

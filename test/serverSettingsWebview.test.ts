@@ -162,6 +162,150 @@ describe('Model Settings webview', () => {
   });
 });
 
+// The DeepSeek Harness section in Model Settings: session-wide rows that only
+// ROUTE to harness commands. It never holds model state, and a harness click
+// must never post a model save - the two interfaces have independent truths.
+describe('DeepSeek Harness session section (routing only)', () => {
+  function loadWithHarness(harness: unknown) {
+    const dom = new JSDOM('<!doctype html><body><div id="root"></div></body>', {
+      runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://webview.test/',
+    });
+    const posted: any[] = [];
+    (dom.window as any).acquireVsCodeApi = () => ({ postMessage: (m: unknown) => posted.push(m) });
+    dom.window.eval(script);
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'data',
+        servers: [{
+          key: 'srv-k1', serverId: 'entry-1', url: 'http://server:8000', serverModelIds: ['wire-model'],
+          models: [{ id: 'model-config', vllmModelId: 'wire-model', server: 'entry-1', modelModes: {} }],
+        }],
+        selectedServerKey: 'srv-k1', selectedModelId: 'model-config',
+        knownParams: {}, providersByModel: {}, personalities: [], activePersonalities: {},
+        systemMessageCapture: false,
+        ...(harness !== undefined ? { harness } : {}),
+      },
+    }));
+    return { dom, posted };
+  }
+
+  it('labels Copilot controls as Copilot and routes harness rows to the three commands', () => {
+    const { dom, posted } = loadWithHarness({
+      personality: 'My Harness Personality', isDefault: false, personalityPath: 'G:/files/my-harness-personality.json',
+      recording: true, recordingMarker: 'on',
+    });
+    const document = dom.window.document;
+    const text = document.body.textContent || '';
+    expect(text).toContain('Copilot Personality');
+    expect(text).toContain('Record Copilot system prompts');
+    expect(text).toContain('My Harness Personality');
+    expect(text).toContain('ON - stored locally');
+    document.getElementById('harnessPersBtn')!.click();
+    document.getElementById('harnessRecBtn')!.click();
+    document.getElementById('harnessRecOpenBtn')!.click();
+    expect(posted.filter((m: any) => m.type === 'harnessCommand').map((m: any) => m.command)).toEqual([
+      'vllm-copilot.harness.setPersonality',
+      'vllm-copilot.harness.toggleRecording',
+      'vllm-copilot.harness.openRecording',
+    ]);
+    // Routing only: no model-form write rides along with a harness click.
+    expect(posted.some((m: any) => m.type === 'save' || m.type === 'applyPersonality' || m.type === 'setSystemMessageCapture')).toBe(false);
+    // A running toggle offers the honest next state as its button text.
+    expect((document.getElementById('harnessRecBtn') as HTMLButtonElement).textContent).toContain('OFF');
+  });
+
+  it('renders Default/OFF when the payload carries no harness state at all', () => {
+    const { dom } = loadWithHarness(undefined);
+    const text = dom.window.document.body.textContent || '';
+    expect(text).toContain('Default (upstream DeepSeek Harness prompt)');
+    expect(text).toContain('OFF - nothing is recorded');
+  });
+
+  it('refreshes the harness card while a dirty Copilot draft survives unsaved', () => {
+    const servers = [{
+      key: 'srv-k1', serverId: 'entry-1', url: 'http://server:8000', serverModelIds: ['wire-model'],
+      models: [{ id: 'model-config', vllmModelId: 'wire-model', server: 'entry-1', modelModes: {} }],
+    }];
+    const { dom, posted } = loadWithHarness({
+      personality: 'Default (upstream DeepSeek Harness prompt)', isDefault: true, personalityPath: '', recording: false,
+    });
+    const document = dom.window.document;
+    expect(document.body.textContent || '').toContain('OFF - nothing is recorded');
+    // Dirty the Copilot form with an unsaved edit (delegated markDirty input).
+    const field = document.querySelector('#root input[data-f]') as HTMLInputElement;
+    expect(field).not.toBeNull();
+    const draftValue = field.value + '-DRAFT';
+    field.value = draftValue;
+    field.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    // Host answers a harness toggle with a fresh payload while the form is dirty.
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'data', servers, selectedServerKey: 'srv-k1', selectedModelId: 'model-config',
+        knownParams: {}, providersByModel: {}, personalities: [], activePersonalities: {},
+        systemMessageCapture: false,
+        harness: { personality: 'My Voice', isDefault: false, personalityPath: 'my-voice.json', recording: true, recordingMarker: 'on' },
+      },
+    }));
+    // The source-independent harness section refreshed...
+    const text = document.body.textContent || '';
+    expect(text).toContain('ON - stored locally');
+    expect(text).toContain('My Voice');
+    // ...while the draft survived the partial update (no full re-render).
+    expect((document.querySelector('#root input[data-f]') as HTMLInputElement).value).toBe(draftValue);
+    // And the re-wired buttons still route to the real command.
+    document.getElementById('harnessRecBtn')!.click();
+    expect(posted.some((m: any) => m.type === 'harnessCommand' && m.command === 'vllm-copilot.harness.toggleRecording')).toBe(true);
+  });
+
+  it('never claims "nothing is recorded" while a stale ON marker still records', () => {
+    // Setting OFF, marker write failed, live marker ON: the card must name the
+    // mismatch - the setting alone would lie about privacy.
+    const { dom } = loadWithHarness({
+      personality: 'Default (upstream DeepSeek Harness prompt)', isDefault: true, personalityPath: '',
+      recording: false, recordingMarker: 'on',
+    });
+    const text = dom.window.document.body.textContent || '';
+    expect(text).toContain('OFF requested; the live marker is still ON');
+    expect(text).not.toContain('OFF - nothing is recorded');
+  });
+
+  it('pre-install ON says "starts when the harness next starts", not "recording"', () => {
+    const { dom } = loadWithHarness({
+      personality: 'Default (upstream DeepSeek Harness prompt)', isDefault: true, personalityPath: '',
+      recording: true, recordingMarker: 'absent',
+    });
+    const text = dom.window.document.body.textContent || '';
+    expect(text).toContain('Enabled - starts recording when the harness next starts');
+    expect(text).not.toContain('ON - stored locally');
+  });
+
+  it('renders the session harness card even with no server configured', () => {
+    // The card needs no model, no server and no harness install - the
+    // empty-state early return must not swallow it.
+    const dom = new JSDOM('<!doctype html><body><div id="root"></div></body>', {
+      runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://webview.test/',
+    });
+    const posted: any[] = [];
+    (dom.window as any).acquireVsCodeApi = () => ({ postMessage: (m: unknown) => posted.push(m) });
+    dom.window.eval(script);
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'data', servers: [], selectedServerKey: '', selectedModelId: '',
+        knownParams: {}, providersByModel: {}, personalities: [], activePersonalities: {},
+        systemMessageCapture: false,
+        harness: { personality: 'Default (upstream DeepSeek Harness prompt)', isDefault: true, personalityPath: '', recording: false },
+      },
+    }));
+    const document = dom.window.document;
+    const text = document.body.textContent || '';
+    expect(text).toContain('No servers configured');
+    expect(document.getElementById('harnessSection')).not.toBeNull();
+    expect(text).toContain('OFF - nothing is recorded');
+    document.getElementById('harnessPersBtn')!.click();
+    expect(posted.some((m: any) => m.type === 'harnessCommand' && m.command === 'vllm-copilot.harness.setPersonality')).toBe(true);
+  });
+});
+
 // The cross-OS personality bug, pinned at the dropdown: a shipped preset is
 // identified by NAME (data-name), not by the machine-bound path - the same
 // settings entry must select the right option on every OS, and applying it

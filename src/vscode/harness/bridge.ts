@@ -15,11 +15,11 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { resolveServedModels } from '../../core/index.js'
+import { resolveServedModels, writeCaptureConsent } from '../../core/index.js'
 import type { ExternalRequestOutcome, ExternalRequestRecord, ModelConfig, ServerEntry } from '../../core/index.js'
 import { ensureDshRuntime, type DshRuntime } from './runtime.js'
 import { ensureAdapterInstalled, ensureProfile, requireDsh } from './dsh-cli.js'
-import { buildSnapshot, type AuxChoice, type ServedVerdict } from './snapshot.js'
+import { buildSnapshot, harnessRecordingFileFor, type AuxChoice, type ServedVerdict } from './snapshot.js'
 import { writeSnapshot } from './snapshot-writer.js'
 import { loadOverlay, loadPluginSnapshotModule, loadStaging, type OverlayModule } from './shared-modules.js'
 import { classifyPidRecord, probeHarness, Supervisor, type PidRecord } from './supervisor.js'
@@ -42,12 +42,13 @@ export interface RegistryView {
   /** Mirrored from `vllm-copilot.fixEmptyToolParameters`. */
   fixEmptyToolParameters?: boolean
   /**
-   * Absolute, readable personality file per model id (resolved from each
-   * model's personality reference). Without this the snapshot carries no
-   * `personalityFile` and configured personalities silently never reach the
-   * harness.
+   * The harness's own personality file (absolute, readable), resolved from
+   * `vllm-copilot.harness.personalityFile` by the editor glue. Without it the
+   * snapshot carries no `personalityFile` and the harness runs the upstream
+   * prompt untouched - which is Default, not a failure. Copilot's per-model
+   * personalities are NOT the source and never re-enter through here.
    */
-  personalityFiles?: Readonly<Record<string, string>>
+  personalityFile?: string
 }
 
 export interface BridgeChoices {
@@ -71,6 +72,18 @@ export interface BridgeDeps {
   dshVersion: string | (() => string)
   registry: () => Promise<RegistryView>
   choices: () => BridgeChoices
+  /**
+   * Reader of `vllm-copilot.harness.captureSystemMessages`. Both `start()`
+   * (before any adoption or spawn) and `prepare()` push it into the on-disk
+   * consent marker (`capture.flag`), so neither a fresh boot nor an ADOPTED
+   * survivor can outlive an OFF issued after its own start, and a boot after
+   * a toggle reads exactly the setting's truth. When the marker write fails,
+   * the start/prepare FAILS: proceeding on a stale ON while the setting says
+   * OFF is the one lie this boundary never tells. Without the hook (non-editor
+   * rails) the marker is left untouched. The adapter re-reads the marker at
+   * every capture; this is the only host consent write outside the commands.
+   */
+  captureEnabled?: () => boolean | Promise<boolean>
   /** The ledger's own handoff: `recordExternalRequests` from `state/externalUsage.ts`. */
   recordUsage: (records: readonly ExternalRequestRecord[]) => Promise<ExternalRequestOutcome>
   /**
@@ -249,12 +262,54 @@ export class Bridge {
   }
 
   /**
+   * Where harness prompt recordings go: `.vllm\dsh-system-messages.json` in
+   * THIS window's first workspace folder - the same first-folder rule the
+   * Copilot capture uses, delivered to the plugin as an explicit snapshot
+   * field instead of a cwd/home guess. No folder means no destination: the
+   * plugin records nothing and says so, and there is deliberately no fallback
+   * into the harness home. Ownership follows the last window to prepare -
+   * an adopted harness keeps recording into the preparing window's workspace
+   * until a re-prepare or fresh start rebinds the snapshot (one shared dsh,
+   * one recording target at a time; said out loud, not silently rerouted).
+   */
+  private recordingTarget(): string | undefined {
+    const folder = this.deps.editorWorkspaceFolder?.()
+    if (folder) return harnessRecordingFileFor(folder)
+    if (this.deps.captureEnabled?.()) {
+      this.deps.log.warn('prompt recording is ON but this window has no workspace folder: the snapshot names no destination, so the harness records nothing (it never falls back to the harness home) - open a folder to give recordings a home')
+    }
+    return undefined
+  }
+
+  /**
+   * Push the capture setting into the live consent marker. Shared by start()
+   * and prepare() BEFORE any adoption or spawn: an adopted survivor must not
+   * keep recording by the marker its own boot wrote while the user has since
+   * switched recording off, and a fresh spawn must not boot under a stranger's
+   * marker either. Consent is not best-effort: a failed write fails the start.
+   */
+  private async syncConsent(): Promise<void> {
+    if (this.deps.captureEnabled === undefined) return
+    try {
+      writeCaptureConsent(this.deps.paths.captureFlag, await this.deps.captureEnabled())
+    } catch (err) {
+      // Consent is not best-effort. A marker the disk refuses leaves the
+      // harness free to follow a stale ON while the setting says OFF - the
+      // one lie this boundary exists to never tell. Refuse to launch.
+      const message = err instanceof Error ? err.message : String(err);
+      this.deps.log.error(`could not set the capture-consent marker: ${message}`);
+      throw new Error(`Cannot start the harness: the recording consent marker could not be written (${message}). Fix disk space/permissions for ${this.deps.paths.captureFlag} and start again.`);
+    }
+  }
+
+  /**
    * Bring everything up to date: runtime, vendor staging, profile, adapter
    * install, snapshot, overlay. Safe to call repeatedly; each step no-ops when
    * already current.
    */
   async prepare(): Promise<PreparedBridge> {
     ensureBridgeDirs(this.deps.paths)
+    await this.syncConsent()
     this.deps.progress?.('installing the harness runtime (first start only, about 1-2 minutes)')
     const runtime = await this.runtime()
     this.deps.progress?.('staging the vLLM-Copilot core for the harness', 45)
@@ -278,13 +333,13 @@ export class Bridge {
     const payload = buildSnapshot({
       ...registry,
       ...this.deps.choices(),
+      captureFile: this.recordingTarget(),
       served: await this.resolveServed(registry),
       onWarning: (message) => this.deps.log.warn(message),
     })
     const plugin = await loadPluginSnapshotModule(this.deps.paths.vendor.adapter)
     const written = writeSnapshot({ snapshotFile: this.deps.paths.snapshot, payload, plugin })
     if (written.written) this.deps.log.info(`snapshot rewritten (v${written.version}, ${payload.config.models.length} model(s))`)
-
     this.deps.progress?.('composing the harness configuration', 3)
     const overlay = await this.buildOverlay(runtime)
     this.deps.progress?.('configuration ready', 4)
@@ -388,6 +443,9 @@ export class Bridge {
     // dormant must not leave a harness tree behind on a machine that never
     // installed one. Idempotent, and prepare() repeats it for its own callers.
     ensureBridgeDirs(this.deps.paths)
+    // Consent BEFORE adoption or spawn: acquire() may adopt a survivor that
+    // booted under a different marker, and a failed sync must stop it there.
+    await this.syncConsent()
     const url = await this.acquire()
     // Remember every URL this harness answers on. Port and token die with
     // every boot, so the NEXT boot's restored browser tab points here, cannot

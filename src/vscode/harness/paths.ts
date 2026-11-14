@@ -30,6 +30,8 @@ export const OUTBOX_DIR = 'usage-outbox'
 export const ACTIVE_DIR = 'active'
 export const CORE_VERSION_FILE = 'core-version.json'
 export const START_LOCK_FILE = 'start.lock'
+/** Live capture-consent marker (`on`/`off`) the dsh process re-reads at every capture. */
+export const CAPTURE_FLAG_FILE = 'capture.flag'
 
 /** Relative to the `dsh-home` root: where the profile's pnpm install puts the adapter. */
 export const PROFILE_DIR_PREFIX = 'profiles'
@@ -52,6 +54,8 @@ export interface BridgePaths {
   runtime: string
   /** Records that `dsh plugin add` ran against the currently staged adapter. */
   adapterStamp: string
+  /** Live capture-consent marker beside the snapshot; the dsh process re-reads it per capture. */
+  captureFlag: string
   vendor: { core: string; adapter: string }
 }
 
@@ -78,6 +82,7 @@ export function bridgePaths(dataDir: string): BridgePaths {
     startLock: path.join(vllmc, START_LOCK_FILE),
     runtime: path.join(root, 'runtime'),
     adapterStamp: path.join(vllmc, 'adapter-installed.txt'),
+    captureFlag: path.join(vllmc, CAPTURE_FLAG_FILE),
     vendor,
   }
 }

@@ -28,12 +28,20 @@ export function createVllmcAdapter({ core, snapshot, deps = {} }) {
       chatTransport.stream(model, messages, options, signal, serverConfig),
   }
 
-  let personalityRules = null
-
+  // Rules are loaded per request through the core's mtime+size cache: a save
+  // to the personality file changes the next request, no restart and no
+  // restart-lie. The file path itself is frozen at snapshot init (that half
+  // converges with the drained restart, which the editor discloses).
   async function personality() {
     if (!snapshot.personalityFile) return []
-    if (!personalityRules) personalityRules = await core.loadPromptReplacements(snapshot.personalityFile)
-    return personalityRules
+    try {
+      return await core.loadPromptReplacements(snapshot.personalityFile)
+    } catch (err) {
+      // A broken personality file must not eat the user's turn: warn and run
+      // the prompt untouched (the Copilot pipeline's degradation doctrine).
+      log.appendLine(`personality rules could not load from ${snapshot.personalityFile} (${err?.name === 'SyntaxError' ? 'invalid JSON' : (err?.code ?? 'invalid rules')}); sending the prompt untouched`)
+      return []
+    }
   }
 
   function entryFor(modelId) {
@@ -198,10 +206,26 @@ export function createVllmcAdapter({ core, snapshot, deps = {} }) {
         const imageUrls = await collectImageDataUrls(options, descriptor.capabilities?.imageInput, signal)
         const { messages } = toWireMessages(options, imageResolverFrom(imageUrls))
         const rules = await personality()
-        if (rules.length > 0) {
-          for (const message of messages) {
-            if (message.role === 'system') message.content = core.applyPromptReplacements(message.content, rules).result
+        // Capture pre/post and matched rules for every non-empty system
+        // message - rules or no rules, so a Default session's recording still
+        // shows what upstream actually sent. The recorder owns consent (flag +
+        // queue gate) and the per-pid target; failure here never eats the turn.
+        const captureEntries = []
+        for (const message of messages) {
+          if (message.role !== 'system' || typeof message.content !== 'string' || !message.content) continue
+          if (!rules.length) {
+            captureEntries.push({ receivedContent: message.content, deliveredContent: message.content, rulesApplied: [] })
+            continue
           }
+          const received = message.content
+          const applied = core.applyPromptReplacements(received, rules)
+          message.content = applied.result
+          captureEntries.push({ receivedContent: received, deliveredContent: applied.result, rulesApplied: applied.matchedRuleNames })
+        }
+        if (captureEntries.length > 0 && deps.capture) {
+          Promise.resolve(deps.capture(captureEntries)).catch((err) =>
+            log.appendLine(`system prompt capture failed (${err?.message ?? err}); recording skipped - the replacements already applied to the delivered prompt stand`),
+          )
         }
 
         const runtimeOptions = {}

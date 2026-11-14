@@ -45,6 +45,18 @@
       serverConfig: ServerConfig;
   }
 
+## CAPTURE_FILE_PREFIX
+  CAPTURE_FILE_PREFIX = "system-messages-"
+
+## CAPTURE_FLAG_FILENAME
+  CAPTURE_FLAG_FILENAME = "capture.flag"
+
+## CaptureConsent
+  interface CaptureConsent {
+      enabled: boolean;
+      reason: 'on' | 'off' | 'absent' | 'unreadable' | 'malformed';
+  }
+
 ## CaptureEntry
   interface CaptureEntry {
       receivedContent: string;
@@ -55,7 +67,15 @@
 ## CaptureQueue
   class CaptureQueue {
       #private;
-      enqueueWrite(targetPath: string, newEntries: CaptureEntry[], log: RequestLog): Promise<void>;
+      enqueueWrite(targetPath: string, newEntries: CaptureEntry[], log: RequestLog, options?: CaptureWriteOptions): Promise<void>;
+  }
+
+## CaptureWriteOptions
+  interface CaptureWriteOptions {
+      gate?: () => boolean;
+      mode?: number;
+      lockFile?: string;
+      lockWaitMs?: number;
   }
 
 ## ChatTransport
@@ -700,6 +720,9 @@
 ## buildOutputLengthLadder
   function buildOutputLengthLadder(offered: number, contextWindow: number): number[] | undefined;
 
+## captureRecordingFile
+  function captureRecordingFile(dir: string, pid: number): string;
+
 ## clearPersonalityCache
   function clearPersonalityCache(): void;
 
@@ -808,6 +831,9 @@
 ## processSSEChunk
   function processSSEChunk(data: string, pendingToolCalls: Map<number, PendingToolCall>): StreamEvent | null;
 
+## readCaptureConsent
+  function readCaptureConsent(flagFile: string): CaptureConsent;
+
 ## readSseStream
   function readSseStream(reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal, options: StreamReaderOptions): AsyncGenerator<StreamEvent>;
 
@@ -872,3 +898,6 @@
 
 ## validateConfig
   function validateConfig(config: VllmConfig): string[];
+
+## writeCaptureConsent
+  function writeCaptureConsent(flagFile: string, enabled: boolean): void;

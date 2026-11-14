@@ -13,6 +13,7 @@
  * consumes `ModelConfig[]` / `ServerEntry[]` as-is, and cherry-picking fields
  * here would silently strip a capability the moment upstream adds one.
  */
+import path from 'node:path'
 import { buildDisplayKeys } from '../../core/index.js'
 import type { ModelConfig, ServerEntry } from '../../core/index.js'
 
@@ -55,8 +56,27 @@ export interface SnapshotInput {
    * same posture as a probe that cannot reach the server.
    */
   served?: Readonly<Record<string, ServedVerdict | undefined>>
-  /** Absolute path per model id, already resolved to a readable file. */
-  personalityFiles?: Readonly<Record<string, string>>
+  /**
+   * The harness personality: an absolute, readable find/replace file resolved
+   * from the HARNESS's own session choice (vllm-copilot.harness.personalityFile),
+   * or undefined/empty for Default (upstream prompt untouched). Copilot's
+   * per-model personality references are NOT input here and must never be -
+   * the two interfaces own independent prompt choices.
+   */
+  personalityFile?: string
+  /**
+   * The RAW PROMPT RECORDING target: an ABSOLUTE path inside the window's
+   * workspace (`<workspace>/\.vllm\dsh-system-messages.json`), named
+   * explicitly by the extension preparing the snapshot - never guessed from
+   * cwd or a user home by the plugin. Absent = no destination: recording
+   * fails closed (nothing is written anywhere) and chat proceeds untouched.
+   * The snapshot carries the PATH only, never prompt text. Ownership follows
+   * the last window to prepare: a harness adopted by another window keeps
+   * recording into the PREPARING window's workspace until a re-prepare or a
+   * fresh start rebinds the snapshot. One shared dsh therefore has exactly
+   * one recording destination at a time.
+   */
+  captureFile?: string
   /** Reasons surfaced to the user rather than dropped silently. */
   onWarning?(message: string): void
 }
@@ -66,7 +86,11 @@ export interface SnapshotPayload {
   defaultModelId: string
   aux: Record<string, AuxChoice>
   fixEmptyToolParameters?: boolean
+  /** The harness personality file, verbatim from SnapshotInput (absent = Default). */
   personalityFile?: string
+  /** The workspace recording target, verbatim from SnapshotInput when it was
+   *  an absolute path (absent = recording has no destination and stays off). */
+  captureFile?: string
   warnings: string[]
 }
 
@@ -96,6 +120,49 @@ function usableAux(
   return Object.keys(out).length ? out : undefined
 }
 
+/** Folder inside a workspace that holds BOTH capture files. Copilot writes
+ *  its `system-messages.json` there; the harness writes its own file below. */
+export const HARNESS_CAPTURE_DIRNAME = '.vllm'
+/** Harness prompt-recording file name inside the workspace. Deliberately
+ *  distinct from Copilot's `system-messages.json` - the two interfaces keep
+ *  separate recordings, and neither one's file is ever the other's target. */
+export const HARNESS_RECORDING_FILENAME = 'dsh-system-messages.json'
+
+/** The harness recording target for a workspace folder: an explicit, fixed
+ *  path under `.vllm\`, beside (never inside) Copilot's recording. */
+export function harnessRecordingFileFor(workspaceFolder: string): string {
+  return path.join(workspaceFolder, HARNESS_CAPTURE_DIRNAME, HARNESS_RECORDING_FILENAME)
+}
+
+/**
+ * Which registry entries the harness may offer at all: a server needs an id and
+ * a URL, a model needs an id and a server that is still in the registry. Pure
+ * configuration admission, no network and no served-model verdict: "could not
+ * ask" is never "serves nothing" (see `ServedVerdict`).
+ *
+ * This is the snapshot's own rule, exported so the install and start paths can
+ * ask BEFORE they download anything. The writer below stays the authority: a
+ * registry that empties between the guard and `buildSnapshot` still fails there.
+ */
+export function registryAdmission(
+  servers: readonly ServerEntry[],
+  models: readonly ModelConfig[],
+): { servers: ServerEntry[]; models: ModelConfig[]; dangling: ModelConfig[] } {
+  const usable = servers.filter((s) => typeof s?.id === 'string' && typeof s?.serverUrl === 'string')
+  const serverIds = new Set(usable.map((s) => s.id))
+  const kept: ModelConfig[] = []
+  const dangling: ModelConfig[] = []
+  for (const model of models) {
+    if (typeof model?.id !== 'string') continue
+    if (!serverIds.has(model.server)) {
+      dangling.push(model)
+      continue
+    }
+    kept.push(model)
+  }
+  return { servers: usable, models: kept, dangling }
+}
+
 /**
  * @throws when no usable model survives, because a snapshot with empty `models`
  * is rejected by the plugin and would leave the harness with no provider at all.
@@ -107,16 +174,10 @@ export function buildSnapshot(input: SnapshotInput): SnapshotPayload {
     input.onWarning?.(message)
   }
 
-  const servers = input.servers.filter((s) => typeof s?.id === 'string' && typeof s?.serverUrl === 'string')
-  const serverIds = new Set(servers.map((s) => s.id))
-  const models = input.models.filter((m) => {
-    if (typeof m?.id !== 'string') return false
-    if (!serverIds.has(m.server)) {
-      warn(`model "${m.displayName ?? m.id}" points at server "${String(m.server)}", which no longer exists; it is not offered to the harness`)
-      return false
-    }
-    return true
-  })
+  const { servers, models, dangling } = registryAdmission(input.servers, input.models)
+  for (const model of dangling) {
+    warn(`model "${model.displayName ?? model.id}" points at server "${String(model.server)}", which no longer exists; it is not offered to the harness`)
+  }
   if (models.length === 0) {
     throw new Error(
       'the vLLM-Copilot registry has no model whose server still exists, so there is nothing to offer the harness. ' +
@@ -186,24 +247,21 @@ export function buildSnapshot(input: SnapshotInput): SnapshotPayload {
     warn(`default model "${label(input.defaultModelId)}" is not usable; the harness will use "${label(defaultModelId)}"`)
   }
 
-  const personalityFiles = input.personalityFiles ?? {}
-  const registryIdOf = (key: string): string => newToOld.get(key) ?? key
-  const wanted = rekeyed.map((m) => ({ model: m, file: personalityFiles[registryIdOf(m.id)] })).filter((x) => x.file !== undefined)
-  // `personalityFiles` arrives keyed by REGISTRY id; the default is a display
-  // key, so the lookup crosses back through the re-key map.
-  const personalityFile = personalityFiles[registryIdOf(defaultModelId)]
-  if (wanted.length > 1) {
-    // The harness applies one personality per session. Which sentence is
-    // true depends on whether the DEFAULT carries a file: with one, it wins;
-    // without one, no personality applies at all, and saying "the default
-    // wins" would be a fairy tale.
-    warn(
-      personalityFile
-        ? `several models carry their own personality file; the harness applies one personality per session, so "${label(defaultModelId)}" wins. Other models run without their personality file.`
-        : `several models carry their own personality file, but the default model carries none; the harness applies one personality per session, so no personality takes effect. Move the personality file onto the default model.`,
-    )
+  // The personality rides along verbatim - host-resolved, readable, absolute.
+  // It comes from the harness's own session choice; model entries are not
+  // consulted (their personality/systemMessageReplacementsFile fields belong
+  // to the Copilot interface and never flow to dsh through this file).
+  const personalityFile = input.personalityFile?.trim() ? input.personalityFile.trim() : undefined
+  // The recording target rides the snapshot as a bare, validated path. A
+  // non-absolute string is an upstream bug, and guessing a location for raw
+  // prompts is not the plugin's job - recordings fail closed (chat is
+  // untouched) and the user hears about it through the warning.
+  let captureFile: string | undefined
+  if (typeof input.captureFile === 'string' && input.captureFile.trim()) {
+    const candidate = input.captureFile.trim()
+    if (path.isAbsolute(candidate)) captureFile = candidate
+    else warn(`harness recording target "${candidate}" is not an absolute path; prompt recording stays off`)
   }
-
   const snapshot: SnapshotPayload = {
     config: { servers, models: rekeyed },
     defaultModelId,
@@ -219,6 +277,7 @@ export function buildSnapshot(input: SnapshotInput): SnapshotPayload {
   if (compaction) snapshot.aux['compaction'] = compaction
   if (typeof input.fixEmptyToolParameters === 'boolean') snapshot.fixEmptyToolParameters = input.fixEmptyToolParameters
   if (personalityFile) snapshot.personalityFile = personalityFile
+  if (captureFile) snapshot.captureFile = captureFile
   return snapshot
 }
 

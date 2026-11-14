@@ -3,10 +3,10 @@
  * that named failure becomes shippable again. Backend: loopback wiretap mock,
  * never proof of real-backend compatibility (gate 4 owns that).
  */
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as core from 'vllm-copilot-core'
 import { LlmError } from '@deepseek-ai/dsh-llm'
 import { createVllmcAdapter } from '../../dsh/plugin/adapter.js'
@@ -159,6 +159,165 @@ describe('system prompt projection', () => {
     await setup()
     await collect(adapter.stream(options({ system: 'ONE SHOT' })))
     expect(backend.requests.at(-1).body.messages[0]).toEqual({ role: 'system', content: 'ONE SHOT' })
+  })
+})
+
+// Harness personality + prompt recording, through the real adapter transform.
+// Synthetic strings only. The personality file is the HARNESS session choice
+// (snapshot.personalityFile); Copilot's per-model fields play no part here.
+describe('harness personality and recording', () => {
+  let workDir
+  let flagFile
+  let snapshotFile
+  let targetFile
+  let personalityFile
+
+  beforeEach(() => {
+    workDir = mkdtempSync(path.join(tmpdir(), 'vllmc-rec-'))
+    flagFile = path.join(workDir, 'capture.flag')
+    // The recorder resolves its target from the snapshot, exactly like the
+    // real plugin: a workspace path named by the bridge, not a home guess.
+    targetFile = path.join(workDir, 'ws', '.vllm', 'dsh-system-messages.json')
+    snapshotFile = path.join(workDir, 'snapshot.json')
+    writeFileSync(snapshotFile, JSON.stringify({ version: 1, captureFile: targetFile }), 'utf8')
+    personalityFile = path.join(workDir, 'harness-personality.json')
+  })
+  afterEach(() => {
+    rmSync(workDir, { recursive: true, force: true })
+  })
+
+  function writeRules(rules) {
+    writeFileSync(personalityFile, JSON.stringify({ meta: { name: 'Test Voice', description: 'synthetic' }, rules }), 'utf8')
+  }
+
+  async function withRecorder(snapshotMutate) {
+    const { createRecorder } = await import('../../dsh/plugin/capture.js')
+    const lines = []
+    const log = { appendLine: (l) => lines.push(l) }
+    // The recorder AND the adapter share the tap, so warnings are assertable.
+    await setup(snapshotMutate, {
+      log,
+      capture: createRecorder({ core, flagFile, snapshotFile, log }),
+    })
+    return lines
+  }
+
+  function readCapture() {
+    return JSON.parse(readFileSync(targetFile, 'utf8'))
+  }
+
+  it('applies the personality per request and records before/after/rules even with no persona', async () => {
+    core.writeCaptureConsent(flagFile, true)
+    writeRules([{ ruleName: 'persona', find: 'UPSTREAM PERSONA', replace: 'TEST VOICE' }])
+    await withRecorder((s) => { s.personalityFile = personalityFile })
+    await collect(adapter.stream(options({ system: 'UPSTREAM PERSONA stays honest' })))
+    expect(backend.requests.at(-1).body.messages[0].content).toBe('TEST VOICE stays honest')
+
+    // Recording: before/after/rulesApplied at the real seam.
+    await vi.waitFor(() => expect(existsSync(targetFile)).toBe(true))
+    expect(readCapture()).toEqual([
+      { receivedContent: 'UPSTREAM PERSONA stays honest', deliveredContent: 'TEST VOICE stays honest', rulesApplied: ['persona'] },
+    ])
+
+    // No persona (Default): the wire prompt is untouched AND still recorded,
+    // rulesApplied empty - that is what lets users build rules from recordings.
+    const adapter2 = createVllmcAdapter({ core, snapshot: buildSnapshot(backend.url), deps: { outboxDir: outbox, activeDir, log: quietLog, capture: (await import('../../dsh/plugin/capture.js')).createRecorder({ core, flagFile, snapshotFile, log: quietLog }) } })
+    await collect(adapter2.stream(options({ system: 'VANILLA PROMPT' })))
+    await vi.waitFor(() => expect(readCapture().length).toBe(2))
+    expect(backend.requests.at(-1).body.messages[0].content).toBe('VANILLA PROMPT')
+    expect(readCapture()[1]).toEqual({ receivedContent: 'VANILLA PROMPT', deliveredContent: 'VANILLA PROMPT', rulesApplied: [] })
+  })
+
+  it('consent off means NOTHING on disk - the request still gets its personality', async () => {
+    writeRules([{ ruleName: 'persona', find: 'UPSTREAM PERSONA', replace: 'TEST VOICE' }])
+    // No capture.flag at all = fail closed (absent is off, never a fallback to on).
+    await withRecorder((s) => { s.personalityFile = personalityFile })
+    await collect(adapter.stream(options({ system: 'UPSTREAM PERSONA' })))
+    expect(backend.requests.at(-1).body.messages[0].content).toBe('TEST VOICE')
+    expect(existsSync(targetFile)).toBe(false)
+  })
+
+  it('a broken personality file warns and sends the prompt untouched - the turn survives', async () => {
+    core.writeCaptureConsent(flagFile, true)
+    writeFileSync(personalityFile, '{ this is not json', 'utf8')
+    const lines = await withRecorder((s) => { s.personalityFile = personalityFile })
+    await collect(adapter.stream(options({ system: 'UPSTREAM PERSONA' })))
+    expect(backend.requests.at(-1).body.messages[0].content).toBe('UPSTREAM PERSONA')
+    expect(lines.some((l) => /personality rules could not load/.test(l))).toBe(true)
+    // The recording still happens (no rules applied), so the user can SEE the
+    // untouched prompt; the warning carries no prompt bytes.
+    await vi.waitFor(() => expect(readCapture().length).toBe(1))
+    expect(readCapture()[0].rulesApplied).toEqual([])
+  })
+
+  it('a corrupt personality file logs class and path - never the file contents', async () => {
+    core.writeCaptureConsent(flagFile, true)
+    const RED = 'ZZRED-7731' // short: the V8 excerpt must quote it IN FULL to be red
+    // Bare-token array: V8 QUOTES the excerpt ("Unexpected token 'Z',
+    // \"[ZZ-RED...\" is not valid JSON"), so a raw err.message here really
+    // would copy file content into the harness log - the red-capable shape.
+    writeFileSync(personalityFile, `[${RED} squishy meatbags]`, 'utf8')
+    const lines = await withRecorder((s) => { s.personalityFile = personalityFile })
+    await collect(adapter.stream(options({ system: 'UPSTREAM PERSONA' })))
+    expect(backend.requests.at(-1).body.messages[0].content).toBe('UPSTREAM PERSONA')
+    expect(lines.some((l) => /personality rules could not load .*\(invalid JSON\)/.test(l))).toBe(true)
+    expect(lines.join('\n')).not.toContain(RED)
+  })
+
+  it('a rule-validation failure names the class without echoing the rule text', async () => {
+    core.writeCaptureConsent(flagFile, true)
+    const RED = 'ZZRED-4419'
+    // Entry missing "replace": core's validation error JSON-stringifies the
+    // entry - the log line must carry the class, not that echo.
+    writeFileSync(personalityFile, JSON.stringify({ rules: [{ find: RED + ' secret voice anchor' }] }), 'utf8')
+    const lines = await withRecorder((s) => { s.personalityFile = personalityFile })
+    await collect(adapter.stream(options({ system: 'UPSTREAM PERSONA' })))
+    expect(backend.requests.at(-1).body.messages[0].content).toBe('UPSTREAM PERSONA')
+    expect(lines.some((l) => /personality rules could not load .*\(invalid rules\)/.test(l))).toBe(true)
+    expect(lines.join('\n')).not.toContain(RED)
+  })
+
+  it('edits to the personality file apply on the NEXT request - no restart, no re-attach', async () => {
+    core.writeCaptureConsent(flagFile, true)
+    writeRules([{ ruleName: 'persona', find: 'AHHH', replace: 'FIRST VOICE' }])
+    await withRecorder((s) => { s.personalityFile = personalityFile })
+    await collect(adapter.stream(options({ system: 'AHHH prompt' })))
+    expect(backend.requests.at(-1).body.messages[0].content).toBe('FIRST VOICE prompt')
+    // Different LENGTH, so the mtime+size cache re-reads even on coarse clocks.
+    writeRules([{ ruleName: 'persona', find: 'AHHH', replace: 'A MUCH SHORTER SECOND VOICE' }])
+    await collect(adapter.stream(options({ system: 'AHHH prompt' })))
+    expect(backend.requests.at(-1).body.messages[0].content).toBe('A MUCH SHORTER SECOND VOICE prompt')
+  })
+
+  it('Copilot per-model personality fields reach NOTHING here - the harness file or nothing', async () => {
+    core.writeCaptureConsent(flagFile, true)
+    // Copilot's OWN references, valid on disk, pointing at real rules. The
+    // harness snapshot must ignore both: only snapshot.personalityFile (the
+    // session choice) may apply. This is the leak the whole feature closed.
+    writeRules([{ ruleName: 'persona', find: 'UPSTREAM PERSONA', replace: 'TEST VOICE' }])
+    await withRecorder((s) => {
+      const m = s.config.models[0]
+      m.personality = 'Sarcastic Robot'
+      m.systemMessageReplacementsFile = personalityFile
+    })
+    await collect(adapter.stream(options({ system: 'UPSTREAM PERSONA' })))
+    expect(backend.requests.at(-1).body.messages[0].content).toBe('UPSTREAM PERSONA')
+    await vi.waitFor(() => expect(existsSync(targetFile)).toBe(true))
+    // And the recording proves it: no rule applied, prompt delivered as sent.
+    expect(readCapture()[0]).toEqual({ receivedContent: 'UPSTREAM PERSONA', deliveredContent: 'UPSTREAM PERSONA', rulesApplied: [] })
+  })
+
+  it('a dying recorder never eats the turn and never erases applied replacements', async () => {
+    writeRules([{ ruleName: 'persona', find: 'UPSTREAM PERSONA', replace: 'TEST VOICE' }])
+    const lines = []
+    const log = { appendLine: (l) => lines.push(l) }
+    await setup((s) => { s.personalityFile = personalityFile }, { log, capture: async () => { throw new Error('recorder died') } })
+    await collect(adapter.stream(options({ system: 'UPSTREAM PERSONA' })))
+    // The delivered prompt keeps its replacements - a recording failure is a
+    // recording failure, not a personality rollback.
+    expect(backend.requests.at(-1).body.messages[0].content).toBe('TEST VOICE')
+    await vi.waitFor(() => expect(lines.some((l) => /capture failed .*recording skipped/.test(l))).toBe(true))
+    expect(lines.some((l) => /proceeds untouched/.test(l))).toBe(false)
   })
 })
 

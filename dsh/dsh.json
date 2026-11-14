@@ -1,4 +1,5 @@
 {
   "pinned": "0.2.2-rc.1",
-  "comment": "Single source of truth for the certified dsh version. scripts/harness/dsh-fresh.mjs fails when npm latest drifts from this, and scripts/harness/dsh-fresh.mjs --adopt certifies a new version with the boot check before rewriting it. dsh semver is decorative: nothing else in this repo may hardcode a version."
+  "requiresNode": ">=24.9.0",
+  "comment": "Single source of truth for the certified dsh version and the Node version that version requires. scripts/harness/dsh-fresh.mjs fails when npm latest drifts from this, and scripts/harness/dsh-fresh.mjs --adopt certifies a new version with the boot check before rewriting both fields from that version's own engines.node. Preflight reads requiresNode and never falls back to a remembered number. dsh semver is decorative: nothing else in this repo may hardcode a version."
 }

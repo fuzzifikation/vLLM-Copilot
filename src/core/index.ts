@@ -126,8 +126,11 @@ export type { ApplyResult, PersonalityMeta, PromptReplacement } from './personal
 export { applyPromptReplacements, clearPersonalityCache, loadPromptReplacements } from './personality/promptReplacer.js';
 export type { PersonalityDirs, PersonalityEntry, ResolvedReplacements, ResolveReplacementsOptions } from './personality/store.js';
 export { discoverPersonalities, resolveModelReplacements, syncBundledPersonalities } from './personality/store.js';
-export type { CaptureEntry } from './personality/capture.js';
-export { CaptureQueue, isCaptureEntry } from './personality/capture.js';
+export type { CaptureEntry, CaptureWriteOptions, CaptureConsent } from './personality/capture.js';
+export {
+  CaptureQueue, isCaptureEntry, readCaptureConsent, writeCaptureConsent, captureRecordingFile,
+  CAPTURE_FLAG_FILENAME, CAPTURE_FILE_PREFIX,
+} from './personality/capture.js';
 
 // ─── Accounting: ledger, records, money ──────────────────────────────────
 export type {

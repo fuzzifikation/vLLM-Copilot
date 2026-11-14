@@ -3,6 +3,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { stageForVsce } from '../scripts/package-vsix.mjs';
 
 const ROOT = join(import.meta.dirname, '..');
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
@@ -18,15 +19,31 @@ const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
  * direct edit of it.
  */
 describe('dual-license invariants', () => {
-  // One `vsce ls` costs 4.6-4.7 s on an idle machine (measured 2026-11-11),
-  // and Vitest's default budget is 5000 ms: the tripwire went red from load
-  // alone, on a subprocess whose speed is not what the assertion is about.
-  // Everything the packager must hand to the runtime is asserted in THIS one
-  // run, because a second `vsce ls` would double the cost for no new signal.
+  // VSCE cannot be told what to skip: it globs the ENTIRE cwd (the glob only
+  // excludes node_modules) and applies `.vscodeignore` afterwards, recompiling
+  // every pattern from scratch for every path it walked. At the repository root
+  // that is O(scratch files x ignore rules): 66-75 s measured here, with 145k
+  // gitignored files under ./temp alone feeding 51 patterns (a CPU profile of
+  // the run is all minimatch parsing) — the "4.6-4.7 s on an idle machine" this
+  // comment once claimed was only ever true of an unusually clean tree, and the
+  // 30 s budget below is a speed limit on local clutter, not on the assertion.
+  // So the tripwire asks VSCE about the SAME staged copy the packager hands it
+  // (`stageForVsce` is the packager's own staging step, imported, not
+  // duplicated): the exact payload that ships, in well under a second, on any
+  // machine. Everything the packager must hand to the runtime is asserted in
+  // THIS one run, because a second `vsce ls` would double the cost for no new
+  // signal.
   it('includes the runtime update page and the harness payload in the actual VSCE payload list', { timeout: 30_000 }, () => {
-    const result = spawnSync(process.execPath, [
-      join(ROOT, 'node_modules', '@vscode', 'vsce', 'vsce'), 'ls', '--no-dependencies',
-    ], { cwd: ROOT, encoding: 'utf8' });
+    const stage = mkdtempSync(join(tmpdir(), 'vllm-copilot-payloadcheck-'));
+    let result;
+    try {
+      stageForVsce(ROOT, stage);
+      result = spawnSync(process.execPath, [
+        join(ROOT, 'node_modules', '@vscode', 'vsce', 'vsce'), 'ls', '--no-dependencies',
+      ], { cwd: stage, encoding: 'utf8' });
+    } finally {
+      rmSync(stage, { recursive: true, force: true });
+    }
     expect(result.status, result.stderr).toBe(0);
     const lines = result.stdout.split(/\r?\n/);
     expect(lines).toContain('resources/update.md');
@@ -39,16 +56,27 @@ describe('dual-license invariants', () => {
       'dsh/dsh.json',
       'dsh/plugin/index.js',
       'dsh/plugin/adapter.js',
+      'dsh/plugin/capture.js',
+      'out/vscode/harness/promptCommands.js',
       'dsh/plugin/package.json',
       'dsh/plugin/cordis.patch.yml',
       'dsh/shared/overlay.mjs',
       'dsh/shared/core-staging.mjs',
       'resources/dsh-icons.woff2',
+      'harness-personalities/supportive-mentor.json',
+      'harness-personalities/critical-senior-dev.json',
+      'harness-personalities/sarcastic-robot.json',
+      'harness-personalities/spartan.json',
     ]) {
       expect(lines, `${required} missing from the VSIX payload`).toContain(required);
     }
     // Type-only and never loaded: the `**/*.d.mts` rule must keep it out.
     expect(lines).not.toContain('dsh/shared/overlay.d.mts');
+    // Scratch directories the staging copy skips. Listed as payload when the
+    // question was asked at the repo root — untracked tool files that never
+    // ship. In the stage they cannot appear, and this pins that the stage is
+    // the tree being asked about.
+    expect(lines.some(l => /^(temp|\.tools|\.vscode-test)\//.test(l))).toBe(false);
   });
 
   it('keeps the root LICENSE byte-identical to the BUSL source of truth', () => {

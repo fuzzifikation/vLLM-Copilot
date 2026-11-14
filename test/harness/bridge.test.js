@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 
 import { bridgePaths, ensureBridgeDirs } from '../../src/vscode/harness/paths.js'
-import { compositionIsCurrent } from '../../src/vscode/harness/bridge.js'
+import { compositionIsCurrent, Bridge } from '../../src/vscode/harness/bridge.js'
 import { acquireStartLock } from '../../src/vscode/harness/start-lock.js'
 import { buildSnapshot } from '../../src/vscode/harness/snapshot.js'
 import { writeSnapshot } from '../../src/vscode/harness/snapshot-writer.js'
@@ -185,16 +185,50 @@ describe('snapshot: bridge writes what the plugin reads', () => {
       ...registry,
       defaultModelId: 'm-1',
       title: { modelId: 'm-2', maxTokens: 256 },
-      personalityFiles: { 'm-1': 'C:\\p.txt' },
+      personalityFile: 'C:\\harness-personality.json',
     })
     expect(payload.config.models.map((m) => m.id)).toEqual(['Big Model', 'Small Model'])
     expect(payload.defaultModelId).toBe('Big Model')
     // Aux choices are written with the NEW key so the plugin can resolve them.
     expect(payload.aux['session-title'].modelId).toBe('Small Model')
-    // Personality files arrive keyed by registry id and must still attach.
-    expect(payload.personalityFile).toBe('C:\\p.txt')
+    // The harness personality rides along verbatim - host-resolved and absolute.
+    expect(payload.personalityFile).toBe('C:\\harness-personality.json')
     // Requests still carry the wire id untouched (adapter reads vllmModelId).
     expect(payload.config.models[0].vllmModelId).toBe('wire-one')
+  })
+
+  it('keeps Copilot personality references OUT of the snapshot (source independence)', () => {
+    // The old leak: per-model Copilot personality references flowed into the
+    // harness through a resolved map. Now the snapshot personality is ONLY the
+    // harness's own session choice. A model entry carrying Copilot fields must
+    // not move it, whitespace is Default (no empty path on disk), and absent
+    // input means the upstream prompt untouched.
+    const models = registry.models.map((m) =>
+      m.id === 'm-1' ? { ...m, personality: 'Sarcastic Robot', systemMessageReplacementsFile: 'C:\\copilot.txt' } : m,
+    )
+    expect(buildSnapshot({ ...registry, models }).personalityFile).toBeUndefined()
+    expect(buildSnapshot({ ...registry, models, personalityFile: '  ' }).personalityFile).toBeUndefined()
+    const chosen = buildSnapshot({ ...registry, models, personalityFile: 'C:\\harness.txt' })
+    expect(chosen.personalityFile).toBe('C:\\harness.txt')
+    // The Copilot fields still ride along INSIDE the model entries (the core
+    // request path owns them); they simply never become snapshot.personalityFile.
+    expect(chosen.config.models.some((m) => m.personality === 'Sarcastic Robot')).toBe(true)
+  })
+
+  it('carries the workspace recording target verbatim; guesses fail closed (chat unaffected)', () => {
+    const target = join(process.cwd(), 'synthetic-ws', '.vllm', 'dsh-system-messages.json')
+    expect(buildSnapshot({ ...registry, captureFile: target }).captureFile).toBe(target)
+    expect(buildSnapshot({ ...registry }).captureFile).toBeUndefined()
+    expect(buildSnapshot({ ...registry, captureFile: '   ' }).captureFile).toBeUndefined()
+    // Relative is a guess about WHERE raw prompts land - refused, with a word.
+    const warned = []
+    const guess = buildSnapshot({ ...registry, captureFile: join('.vllm', 'dsh-system-messages.json'), onWarning: (m) => warned.push(m) })
+    expect(guess.captureFile).toBeUndefined()
+    expect(warned.some((m) => m.includes('absolute') && m.includes('recording'))).toBe(true)
+    // Source isolation at the contract level: the harness names its OWN file,
+    // never the one Copilot's systemMessageCapture writes.
+    expect(target).toContain('dsh-system-messages.json')
+    expect(target).not.toContain(join('.vllm', 'system-messages.json'))
   })
 
   it('uniquifies colliding display names and falls back to the wire id', () => {
@@ -1512,5 +1546,64 @@ describe('embed proxy (the chromeless-panel door)', () => {
     harness = await startHarness('B2')
     proxy.setTarget(enterUrl(harness))
     expect(await (await fetch(`${root}/app`)).text()).toBe('APP:B2')
+  })
+})
+
+
+describe('capture consent gates start and adoption', () => {
+  let cdir
+  let cpaths
+  beforeEach(() => {
+    cdir = mkdtempSync(join(tmpdir(), 'vllmc-consent-'))
+    cpaths = bridgePaths(cdir)
+  })
+  afterEach(() => rmSync(cdir, { recursive: true, force: true }))
+
+  const consentBridge = ({ captureEnabled, progress }) =>
+    new Bridge({
+      paths: cpaths,
+      dshVersion: '0.0.0',
+      registry: async () => {
+        throw new Error('registry must not be reached')
+      },
+      choices: () => ({}),
+      recordUsage: async () => emptyOutcome,
+      log: { info: () => {}, warn: () => {}, error: () => {} },
+      captureEnabled,
+      progress,
+    })
+
+  it('refuses to start when the consent marker cannot be written - before any adoption or spawn', async () => {
+    ensureBridgeDirs(cpaths)
+    mkdirSync(cpaths.captureFlag) // a DIRECTORY where the marker belongs: every write fails
+    const errs = []
+    const bridge = new Bridge({
+      paths: cpaths,
+      dshVersion: '0.0.0',
+      registry: async () => {
+        throw new Error('nope')
+      },
+      choices: () => ({}),
+      recordUsage: async () => emptyOutcome,
+      log: { info: () => {}, warn: () => {}, error: (m) => errs.push(m) },
+      captureEnabled: () => false,
+    })
+    await expect(bridge.start()).rejects.toThrow(/recording consent marker could not be written/)
+    expect(errs.some((m) => m.includes('could not set the capture-consent marker'))).toBe(true)
+  })
+
+  it('writes the marker BEFORE any runtime work when the setting says on', async () => {
+    // The progress callback is prepare()'s first step after the consent sync:
+    // throwing there proves the marker was already written when the deepest
+    // possible failure point was still ahead.
+    const bridge = consentBridge({ captureEnabled: () => true, progress: () => { throw new Error('stop-after-consent') } })
+    await expect(bridge.start()).rejects.toThrow(/stop-after-consent/)
+    expect(readFileSync(cpaths.captureFlag, 'utf8')).toBe('on')
+  })
+
+  it('leaves the marker untouched without the editor hook (non-editor rails)', async () => {
+    const bridge = consentBridge({ captureEnabled: undefined, progress: () => { throw new Error('stop') } })
+    await expect(bridge.start()).rejects.toThrow(/stop/)
+    expect(existsSync(cpaths.captureFlag)).toBe(false)
   })
 })

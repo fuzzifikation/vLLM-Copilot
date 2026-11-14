@@ -6,7 +6,10 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { getConfig } from '../state/config.js';
+import { getConfig, resolveWorkspaceRelativePath } from '../state/config.js';
+import { readBridgeSettings } from '../harness/settings.js';
+import { bridgePaths } from '../harness/paths.js';
+import { readCaptureConsent } from '../../core/personality/capture.js';
 import { findModelConfigIndex, toPublicModelConfig, resolveConfigId, resolveVllmModelId, type ModelConfig } from '../../core/config/config.js';
 import { normalizeServerUrl, KNOWN_SERVER_TYPES, type ServerType } from '../../core/config/serverCore.js';
 import { patchModelConfig, readModels, readServers, writeServers, type ModelIdentity } from '../state/configStore.js';
@@ -21,6 +24,7 @@ import {
   getBundledPersonalitiesDir,
 } from '../state/personalityStore.js';
 import { loadPersonalityMeta, loadPromptReplacements, COMMON_REPLACEMENTS_FILENAME } from '../../core/personality/promptReplacer.js';
+import { harnessBundledPersonalitiesDir, resolveHarnessPersonality } from '../harness/harnessPersonalities.js';
 
 // Dropdown order = key order. Ordered by frequency of use in this product's
 // own configs and typical Copilot-over-vLLM requests: sampling → thinking
@@ -230,6 +234,23 @@ interface SetSystemMessageCaptureMessage {
   enabled: boolean;
 }
 
+/**
+ * Routing rows for the session-wide DeepSeek Harness controls. The webview
+ * executes NOTHING arbitrary: only these three command ids are accepted, and
+ * the harness commands themselves own all state changes (this webview is a
+ * launcher, not a second settings truth).
+ */
+interface HarnessCommandMessage {
+  type: 'harnessCommand';
+  command: string;
+}
+
+const HARNESS_ROUTED_COMMANDS = new Set([
+  'vllm-copilot.harness.setPersonality',
+  'vllm-copilot.harness.toggleRecording',
+  'vllm-copilot.harness.openRecording',
+]);
+
 interface WebviewAction {
   type: 'autoConfigure' | 'removeModel';
   /** Registry entry id of the selected server — anchors both actions. */
@@ -238,7 +259,7 @@ interface WebviewAction {
   id?: string;
 }
 
-type FromWebviewMessage = ReadyMessage | SaveMessage | ApplyPersonalityMessage | NewPersonalityMessage | PickPersonalityFileMessage | SetServerTypeMessage | SetSystemMessageCaptureMessage | WebviewAction;
+type FromWebviewMessage = ReadyMessage | SaveMessage | ApplyPersonalityMessage | NewPersonalityMessage | PickPersonalityFileMessage | SetServerTypeMessage | SetSystemMessageCaptureMessage | HarnessCommandMessage | WebviewAction;
 
 export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
@@ -320,6 +341,14 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
             await this.setServerType(msg);
           } else if (msg.type === 'setSystemMessageCapture') {
             await this.setSystemMessageCapture(msg.enabled);
+          } else if (msg.type === 'harnessCommand') {
+            if (HARNESS_ROUTED_COMMANDS.has(msg.command)) {
+              await vscode.commands.executeCommand(msg.command);
+              // The command moved harness state (setting/marker); re-post so
+              // the section's truth follows the button press, including when
+              // the picker was dismissed unchanged (cheap, idempotent).
+              await this.refreshWebview();
+            }
           } else if (msg.type === 'autoConfigure') {
             await vscode.commands.executeCommand('vllm-copilot.autoConfigureModel', {
               server: msg.server,
@@ -562,9 +591,31 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    // The session-wide harness section: current personality (bundled voice name, file name, or Default)
+    // and recording state, read from the harness's own settings - it never
+    // reads or writes a model entry, and the model form never writes these.
+    // Computed BEFORE the final guard: it awaits, and the promise of this
+    // function is that nothing awaits between the last disposed/generation
+    // check and postMessage.
+    const harnessSettings = readBridgeSettings();
+    const harnessPersonality = resolveHarnessPersonality(
+      harnessSettings,
+      harnessBundledPersonalitiesDir(this.context.extensionUri.fsPath),
+      { resolveRelativePath: resolveWorkspaceRelativePath },
+    );
+    let harnessPersonalityLabel = 'Default (upstream DeepSeek Harness prompt)';
+    if (harnessPersonality?.preset) harnessPersonalityLabel = harnessPersonality.preset;
+    else if (harnessPersonality) harnessPersonalityLabel = (await loadPersonalityMeta(harnessPersonality.sourcePath))?.name ?? harnessPersonality.sourcePath;
+    // The LIVE marker verdict beside the setting: after a failed marker write
+    // the setting alone would let the UI claim "nothing is recorded" while a
+    // stale ON still records. Same core reader the harness uses - no second
+    // truth; an absent harness home honestly reads 'absent'. Never creates.
+    const recordingMarker = readCaptureConsent(bridgePaths(this.context.globalStorageUri.fsPath).captureFlag).reason;
+
     // The view may have been disposed during the awaits above (entry guard
-    // passed, then the config/server/personality fetches ran). Posting to a
-    // dead webview throws, so re-check before the single postMessage.
+    // passed, then the config/server/personality/harness fetches ran).
+    // Posting to a dead webview throws, so re-check right before the single
+    // postMessage - and after this point, no awaits.
     if (this.view !== view || !this.isWebviewReady || generation !== this.refreshGeneration) return;
     view.webview.postMessage({
       type: 'data',
@@ -576,6 +627,13 @@ export class ServerSettingsViewProvider implements vscode.WebviewViewProvider {
       personalities,
       activePersonalities,
       systemMessageCapture,
+      harness: {
+        personality: harnessPersonalityLabel,
+        isDefault: !harnessPersonality,
+        personalityPath: harnessPersonality?.preset ? '' : harnessSettings.personalityFile,
+        recording: harnessSettings.captureSystemMessages,
+        recordingMarker,
+      },
     });
     this.outputChannel.appendLine(`[SETTINGS] Data sent via postMessage, ${servers.length} servers`);
   }

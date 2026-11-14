@@ -61,7 +61,10 @@ export function resolveHarnessNode(): string {
   const found = findNodeOnPath(process.env.PATH)
   if (!found) {
     throw new Error(
-      'the DeepSeek Harness needs a real Node.js on PATH; the editor\'s embedded runtime is an Electron build and dsh refuses to run on it. Install Node 22 or newer and restart the editor.',
+      // No version number here on purpose: this fires when PATH has no node at
+      // all, and the version a given certified dsh wants is preflight's to say,
+      // read from the certified metadata rather than remembered in two files.
+      'the DeepSeek Harness needs a real Node.js on PATH; the editor\'s embedded runtime is an Electron build and dsh refuses to run on it. Install Node.js from https://nodejs.org and restart the editor.',
     )
   }
   return found

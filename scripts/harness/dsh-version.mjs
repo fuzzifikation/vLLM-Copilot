@@ -1,10 +1,11 @@
 /**
- * The one place this repo reads a dsh version from.
+ * The one place this repo reads a dsh version, and the Node version that
+ * version requires, from `dsh/dsh.json`.
  *
- * `dsh/dsh.json` carries the certified pin. `DSH_VERSION` overrides it for a
- * one-off certification run (a canary against a candidate release), and
- * `describeDshVersion()` reports the override so no log silently lies about
- * which build produced a result.
+ * `dsh/dsh.json` carries the certified pin and its `requiresNode`. `DSH_VERSION`
+ * overrides the pin for a one-off certification run (a canary against a
+ * candidate release), and `describeDshVersion()` reports the override so no log
+ * silently lies about which build produced a result.
  */
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -13,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const pinFile = path.join(repoRoot, 'dsh', 'dsh.json')
 const EXACT = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/
+const FLOOR = /^>=(\d+)\.(\d+)\.(\d+)$/
 
 export function assertExact(version, label) {
   if (!EXACT.test(version)) {
@@ -25,11 +27,36 @@ export function readPin(file = pinFile) {
   return assertExact(JSON.parse(readFileSync(file, 'utf8')).pinned, file)
 }
 
-/** Adopt a version only after it has been certified by the boot check. */
-export function writePin(version, file = pinFile) {
+/**
+ * The Node requirement this repo can act on: `>=MAJOR.MINOR.PATCH`, the spelling
+ * dsh uses in `engines.node`. Anything else is refused with the value quoted,
+ * because a half-read range would turn into a floor nobody certified.
+ */
+export function assertNodeFloor(stated, label) {
+  const text = typeof stated === 'string' ? stated.trim() : ''
+  if (!FLOOR.test(text)) {
+    throw new Error(`${label}: expected a Node requirement of the form ">=MAJOR.MINOR.PATCH", got ${JSON.stringify(stated ?? null)}`)
+  }
+  return text
+}
+
+/** The certified Node requirement, as adopt() wrote it beside the pin. */
+export function readNodeFloor(file = pinFile) {
+  return assertNodeFloor(JSON.parse(readFileSync(file, 'utf8')).requiresNode, `${file} requiresNode`)
+}
+
+/**
+ * Adopt a version only after the boot check certified it. Pin and Node
+ * requirement are ONE write: a new pin beside an old floor (or the reverse) is a
+ * file that lies, so anything thrown before the rename leaves the previous
+ * certification standing untouched.
+ */
+export function writePin(version, nodeFloor, file = pinFile) {
   assertExact(version, 'writePin')
+  const floor = assertNodeFloor(nodeFloor, 'writePin')
   const raw = JSON.parse(readFileSync(file, 'utf8'))
   raw.pinned = version
+  raw.requiresNode = floor
   writeFileSync(`${file}.tmp`, JSON.stringify(raw, null, 2) + '\n')
   renameSync(`${file}.tmp`, file)
   return version

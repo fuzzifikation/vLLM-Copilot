@@ -13,7 +13,7 @@
  * Requires Node >= 22, npm, pnpm on PATH.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startDemoBackend } from '../../test/harness/demo-backend.mjs'
@@ -68,6 +68,11 @@ const backend = await startDemoBackend({
 })
 backend.script({ reply: 'VLLMC-STEP2-MARKER: bridge reached the wiretap through the real core' }, { reply: 'short title' })
 
+// Prompt recording rides the REAL integration: the snapshot names a
+// WORKSPACE target file (the bridge's job in production) and consent is the
+// bare `on` marker beside the snapshot. The staged plugin must land records
+// in the workspace file and write NOTHING into the harness home.
+const workspaceRec = path.join(work, 'workspace', '.vllm', 'dsh-system-messages.json')
 const snapshot = {
   version: 1,
   config: {
@@ -80,10 +85,12 @@ const snapshot = {
   defaultModelId: 'probe',
   aux: { 'session-title': { modelId: 'cheap', maxTokens: 64 } },
   maxRetries: 0,
+  captureFile: workspaceRec,
 }
 const snapDir = path.join(dshHome, 'vllmc')
 mkdirSync(snapDir, { recursive: true })
 writeFileSync(path.join(snapDir, 'snapshot.json'), JSON.stringify(snapshot, null, 2))
+writeFileSync(path.join(snapDir, 'capture.flag'), 'on')
 
 const outboxDir = path.join(snapDir, 'usage-outbox')
 
@@ -154,8 +161,30 @@ try {
   if (main.headers['x-vllmc-boot'] !== '1') fail('configured server header did not reach the wire', boot)
   if ('compat' in body) fail('dsh compat leaked into the outbound body (ruling 6 violation)', boot)
 
-  const records = existsSync(outboxDir) ? (await import('node:fs')).readdirSync(outboxDir).filter((f) => f.endsWith('.json')) : []
+  const records = existsSync(outboxDir) ? readdirSync(outboxDir).filter((f) => f.endsWith('.json')) : []
   if (records.length === 0) fail('usage outbox received no completed-request record', boot)
+
+  // Recording, end to end through the staged plugin: consent `on` beside the
+  // snapshot + a workspace target named IN the snapshot must produce the
+  // workspace file, and the harness home must stay free of recording debris.
+  const systemMessages = (body.messages ?? []).filter((m) => m.role === 'system')
+  if (systemMessages.length > 0) {
+    if (!existsSync(workspaceRec)) fail('recording was ON and the snapshot named a workspace target, but nothing was recorded', workspaceRec)
+    const recorded = JSON.parse(readFileSync(workspaceRec, 'utf8'))
+    if (!Array.isArray(recorded) || recorded.length === 0) fail('the workspace recording file holds no entries', recorded)
+    if (!recorded.every((e) => typeof e.receivedContent === 'string' && typeof e.deliveredContent === 'string' && Array.isArray(e.rulesApplied))) fail('workspace recording entries malformed', recorded)
+    if (!recorded.some((e) => systemMessages.some((m) => m.content === e.receivedContent))) fail('recorded receivedContent matches no system message the wiretap saw', recorded.map((e) => e.receivedContent.slice(0, 60)))
+    console.log(`       prompt recording: ${recorded.length} entry(ies) in ${path.relative(work, workspaceRec)} (workspace target from the snapshot)`)
+  }
+  const homeStrays = readdirSync(snapDir).filter((f) => f.startsWith('system-messages-') || f === 'dsh-system-messages.json' || f.endsWith('.tmp'))
+  if (homeStrays.length > 0) fail('the harness home caught recording debris - the workspace target must be the ONLY destination', homeStrays)
+  // The capture lock is a gate, not decoration: after a quiet harness, the
+  // recording folder holds NEITHER a lock NOR a temp.
+  const recDir = path.dirname(workspaceRec)
+  if (existsSync(recDir)) {
+    const recStrays = readdirSync(recDir).filter((f) => f.endsWith('.lock') || f.endsWith('.tmp'))
+    if (recStrays.length > 0) fail('capture lock/temp debris in the workspace recording folder - a writer did not release cleanly', recStrays)
+  }
 
   console.log('PASS: real dsh routed a turn through the staged vLLM-Copilot core')
   console.log(`       wire body: model=${body.model} temperature=${body.temperature} top_k=${body.top_k}, server header present, compat unset`)

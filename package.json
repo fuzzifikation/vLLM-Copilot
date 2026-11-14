@@ -2,7 +2,7 @@
   "name": "vllm-copilot",
   "displayName": "vLLM-Copilot",
   "description": "vLLM (& OpenRouter) integration for GitHub Copilot & Agents window on self-hosted and remote servers (supports full featureset of vLLM, OpenRouter and Copilot). No subscription, no telemetry, no work content to any third party. Dashboard UI with full statistics of your servers. Optionally runs the same models in the built-in DeepSeek Harness agent, Copilot not required.",
-  "version": "1.39.0",
+  "version": "1.40.0",
   "type": "module",
   "license": "MIT",
   "author": "Dieter Schwarzmann <info@systemwissenschaften.de>",
@@ -337,6 +337,24 @@
         "title": "Open Harness Settings",
         "category": "DeepSeek Harness",
         "icon": "$(gear)"
+      },
+      {
+        "command": "vllm-copilot.harness.setPersonality",
+        "title": "Set Harness Personality…",
+        "category": "DeepSeek Harness",
+        "icon": "$(person)"
+      },
+      {
+        "command": "vllm-copilot.harness.toggleRecording",
+        "title": "Toggle Harness Prompt Recording",
+        "category": "DeepSeek Harness",
+        "icon": "$(record)"
+      },
+      {
+        "command": "vllm-copilot.harness.openRecording",
+        "title": "Open Harness Recording",
+        "category": "DeepSeek Harness",
+        "icon": "$(output)"
       }
     ],
     "menus": {
@@ -909,6 +927,29 @@
             "type": "boolean",
             "default": true,
             "description": "Forward keyboard shortcuts that the harness page does not consume (F1, Ctrl+Shift+P, Ctrl+P, Ctrl+B, Ctrl+Shift+E/F, Ctrl+,, Ctrl+W) to VS Code while focus is inside a harness view. The harness keeps any shortcut it handles itself."
+          },
+          "vllm-copilot.harness.personality": {
+            "type": "string",
+            "enum": ["", "Supportive Mentor", "Critical Senior Dev", "Sarcastic Robot", "Spartan"],
+            "enumDescriptions": [
+              "Default - the upstream DeepSeek Harness prompt, untouched",
+              "Be patient and encouraging; explain without patronizing.",
+              "Replaces the identity line with a blunt senior engineer: names the defect and the trade-off, no empty praise.",
+              "Replaces the identity line with an arrogant robot: dark humor, foul-mouthed about the code, never about the person.",
+              "Be terse and concrete; omit filler."
+            ],
+            "default": "",
+            "markdownDescription": "**DeepSeek Harness only, session-wide** - one of the four bundled HARNESS voices. Every voice is exactly one rule on the prompt identity line and touches nothing else: **Supportive Mentor** and **Spartan** append one style sentence under it, **Critical Senior Dev** and **Sarcastic Robot** replace that line with a few sentences of voice. Empty (default) = no voice. This is the harness's OWN choice - Copilot's per-model `personality` never flows here. The preset name wins over `#vllm-copilot.harness.personalityFile#` when both are set (Default and attaching a custom file clear it). The value is a portable NAME, never an install path, so it survives updates and other machines. Pick it with **DeepSeek Harness: Set Harness Personality\u2026**; changing it applies at the next drained restart."
+          },
+          "vllm-copilot.harness.personalityFile": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "**DeepSeek Harness only, session-wide** - a find/replace rules file applied to every system message the harness sends. Empty (default) = the upstream DeepSeek Harness prompt, untouched. This choice is INDEPENDENT of Copilot's per-model `personality` / `systemMessageReplacementsFile`: neither interface borrows the other's persona. Set it with **DeepSeek Harness: Set Harness Personality…** (which also creates a template file for you); relative paths resolve against the workspace root. A bundled voice in `#vllm-copilot.harness.personality#` wins when both are set. File edits apply on the next request; changing the FILE applies at the next drained restart. Recording (`vllm-copilot.harness.captureSystemMessages`) shows you the exact harness prompt text to anchor rules on."
+          },
+          "vllm-copilot.harness.captureSystemMessages": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "**DeepSeek Harness only** - record the harness's system prompts (received text, delivered text, matched rules) to the workspace file `.vllm/dsh-system-messages.json` - the harness' own recording, kept strictly separate from Copilot's `#vllm-copilot.systemMessageCapture#`, which keeps writing the workspace's `.vllm/system-messages.json`. Recordings belong to your workspace: with no folder open there is no destination and recording stays off (never written to some other location as a fallback), and uninstalling the harness runtime does NOT delete them. Nothing leaves this machine; the running harness re-checks consent at every request, so switching OFF stops recording with the next request - no restart. Use **DeepSeek Harness: Toggle Harness Prompt Recording** / **Open Harness Recording** instead of editing this by hand."
           }
         }
       }

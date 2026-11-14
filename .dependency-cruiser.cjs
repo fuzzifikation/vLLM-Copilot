@@ -80,8 +80,8 @@ module.exports = {
       name: 'harness-node-only',
       severity: 'error',
       comment:
-        'Every harness module except the three editor-glue files (harness.ts, settings.ts, editor-tools.ts) runs in plain Node from scripts/ and the unit tests, with no extension host. It must not import host source outside src/vscode/harness/ (src/core and its own directory are fine).',
-      from: { path: '^src/vscode/harness/', pathNot: '^src/vscode/harness/(harness|settings|editor-tools)\\.ts$' },
+        'Every harness module except the four editor-glue files (harness.ts, settings.ts, editor-tools.ts, promptCommands.ts) runs in plain Node from scripts/ and the unit tests, with no extension host. It must not import host source outside src/vscode/harness/ (src/core and its own directory are fine).',
+      from: { path: '^src/vscode/harness/', pathNot: '^src/vscode/harness/(harness|settings|editor-tools|promptCommands)\\.ts$' },
       to: { path: '^src/(?!core/|vscode/harness/)' },
     },
     {
@@ -89,7 +89,7 @@ module.exports = {
       severity: 'error',
       comment:
         'The Node-only half of the harness may pull no npm package at all, which is also how the editor itself is banned: `vscode` resolves to node_modules/@types/vscode as npm-dev (same trick as core-no-undeclared-deps). Anything the harness needs from npm belongs in the core or in the dsh runtime it drives.',
-      from: { path: '^src/vscode/harness/', pathNot: '^src/vscode/harness/(harness|settings|editor-tools)\\.ts$' },
+      from: { path: '^src/vscode/harness/', pathNot: '^src/vscode/harness/(harness|settings|editor-tools|promptCommands)\\.ts$' },
       to: { dependencyTypes: ['npm', 'npm-dev', 'npm-optional', 'npm-peer', 'npm-no-pkg', 'npm-unknown'] },
     },
     {

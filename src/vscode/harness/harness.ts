@@ -18,11 +18,13 @@ import { ControlServer } from './control-server.js'
 import { EmbedProxy } from './embed-proxy.js'
 import { createEditorTools } from './editor-tools.js'
 import { readBridgeSettings } from './settings.js'
+import { harnessBundledPersonalitiesDir, resolveHarnessPersonality } from './harnessPersonalities.js'
 import { drainActiveRequests } from './ingest.js'
 import { originAnswers, readServedHostPorts, servedUrlsFile } from './served-urls.js'
 import { runPreflight, type PrereqCheck } from './preflight.js'
-import { getConfig } from '../state/config.js'
-import { resolveModelReplacements } from '../state/personalityStore.js'
+import { registryAdmission } from './snapshot.js'
+import { getConfig, resolveWorkspaceRelativePath } from '../state/config.js'
+import { registerHarnessPromptCommands, syncCaptureMarker } from './promptCommands.js'
 import { recordExternalRequests } from '../state/externalUsage.js'
 import { HarnessTreeProvider } from '../ui/harnessView.js'
 
@@ -31,34 +33,54 @@ const RESTART_DEBOUNCE_MS = 1500
 const SHUTDOWN_DRAIN_BUDGET_MS = 5000
 
 /**
- * RETIRE LATER: the harness used to be the separate
- * `System-Sciences.dsh-bridge` extension. Two harnesses on one machine share a
- * runtime directory, a pid record and a port, and they will fight over all
- * three, so nothing here installs or starts while that extension is present.
- * One check, not a compatibility layer - delete it once the old listing has
- * died out.
+ * RETIRE LATER: the built-in harness replaces the standalone
+ * `System-Sciences.dsh-bridge` extension. Uninstall that one and reload this
+ * window before using this one. The two keep separate storage, and settings and
+ * sessions are not migrated. One check, not a compatibility layer - delete it
+ * once the old listing has died out.
  */
 const OLD_BRIDGE_ID = 'System-Sciences.dsh-bridge'
-const OLD_BRIDGE_MESSAGE =
-  'The DeepSeek Harness is now part of vLLM-Copilot. Uninstall the separate DeepSeek Harness Bridge extension, then reload the window.'
+const OLD_BRIDGE_TITLE = 'The DeepSeek Harness Bridge has been replaced'
+const OLD_BRIDGE_DETAIL =
+  'DeepSeek Harness is built into vLLM-Copilot. Uninstall the separate DeepSeek Harness Bridge extension, then reload this window. Until then, the built-in harness cannot be installed or started. Existing bridge sessions and settings are not imported or deleted by this migration.'
+const OLD_BRIDGE_ACTION = 'Open Bridge Extension Page'
 
 /** Is the retired standalone bridge extension still installed here? */
 function oldBridgeInstalled(): boolean {
   return vscode.extensions.getExtension(OLD_BRIDGE_ID) !== undefined
 }
 
-/** The one sentence that replaces an install or a start while the old bridge lives here. */
+/**
+ * The notice that stands in for an install or a start while the old bridge lives
+ * here. Modal, because the toast this replaces sat beside the tray and users
+ * reported never seeing it. Nothing suppresses it and nothing remembers it: the
+ * bridge's presence alone decides, so it returns on every activation and every
+ * refused action until the bridge is gone. Dismissing it removes nothing and
+ * reloads nothing, and the button opens the bridge's own page, where its
+ * Uninstall lives: this extension is never the target, because the bridge
+ * declares a dependency on it.
+ */
 function announceOldBridge(): void {
-  void vscode.window.showWarningMessage(OLD_BRIDGE_MESSAGE, 'Show Extension').then((choice) => {
-    if (choice === 'Show Extension') void vscode.commands.executeCommand('extension.open', OLD_BRIDGE_ID)
-  })
+  void vscode.window
+    .showWarningMessage(OLD_BRIDGE_TITLE, { modal: true, detail: OLD_BRIDGE_DETAIL }, OLD_BRIDGE_ACTION)
+    .then(async (choice) => {
+      if (choice !== OLD_BRIDGE_ACTION) return
+      try {
+        await vscode.commands.executeCommand('extension.open', OLD_BRIDGE_ID)
+      } catch (err) {
+        log().warn(`old bridge: extension.open ${OLD_BRIDGE_ID} failed: ${(err as Error).message}`)
+        void vscode.window.showErrorMessage(
+          `DeepSeek Harness could not open the bridge's extension page. Open the Extensions view, search for ${OLD_BRIDGE_ID}, uninstall it, and reload the window.`,
+        )
+      }
+    })
 }
 /**
  * Bridge settings the harness reads at boot, so changing one means a restart.
  * Everything else (`drainTimeoutSeconds` is read per stop, `ingestIntervalSeconds`
  * just re-arms a timer) must never cut a live turn.
  */
-const BRIDGE_RESTART_KEYS = ['defaultModelId', 'titleModel', 'titleMaxTokens', 'compactionModel', 'compactionMaxTokens', 'dshVersion'] as const
+const BRIDGE_RESTART_KEYS = ['defaultModelId', 'titleModel', 'titleMaxTokens', 'compactionModel', 'compactionMaxTokens', 'dshVersion', 'personality', 'personalityFile'] as const
 
 let output: vscode.LogOutputChannel | undefined
 
@@ -502,21 +524,27 @@ const bridge = new Bridge({
     dshVersion: () => readBridgeSettings().dshVersion || readBundledPin(),
     registry: async () => {
       const config = await getConfig()
-      // A configured personality only reaches the harness through the
-      // snapshot's `personalityFile`. `resolveModelReplacements` is the one
-      // resolver the chat pipeline uses, so it answers BOTH references a model
-      // can carry: a stored `systemMessageReplacementsFile` path and a
-      // built-in personality stored by name in `model.personality`. The old
-      // absolute-path-only lookup silently dropped every built-in.
-      const personalityFiles: Record<string, string> = {}
-      for (const model of config.models) {
-        const resolved = await resolveModelReplacements(context, model, (message) => logger.info(message))
-        if (resolved) personalityFiles[model.id] = resolved.sourcePath
+      // The harness personality is the HARNESS's own session choice: a bundled
+      // voice NAME (`vllm-copilot.harness.personality`, wins when both are set)
+      // or a find/replace file (`vllm-copilot.harness.personalityFile`).
+      // Copilot's per-model `personality` / `systemMessageReplacementsFile`
+      // references do not reach dsh through here anymore - the two interfaces
+      // carry independent prompt choices, and the old per-model leak made the
+      // harness apply a persona nobody picked for it. Nothing usable = Default:
+      // the upstream dsh prompt, untouched, and an honest log line.
+      const harnessSettings = readBridgeSettings()
+      const harnessPersonality = resolveHarnessPersonality(
+        harnessSettings,
+        harnessBundledPersonalitiesDir(context.extensionUri.fsPath),
+        { resolveRelativePath: resolveWorkspaceRelativePath, onLog: (message) => logger.warn(message) },
+      )
+      if (!harnessPersonality && (harnessSettings.personality || harnessSettings.personalityFile)) {
+        logger.warn(`harness personality "${harnessSettings.personality || harnessSettings.personalityFile}" is not usable; the harness runs the upstream prompt (Default)`)
       }
       return {
         servers: config.servers,
         models: config.models,
-        personalityFiles,
+        personalityFile: harnessPersonality?.sourcePath,
         fixEmptyToolParameters: vscode.workspace.getConfiguration('vllm-copilot').get<boolean>('fixEmptyToolParameters'),
       }
     },
@@ -529,6 +557,7 @@ const bridge = new Bridge({
         drainTimeoutMs: s.drainTimeoutSeconds * 1000,
       }
     },
+    captureEnabled: () => readBridgeSettings().captureSystemMessages,
     recordUsage: recordExternalRequests,
     editorWorkspaceFolder: () => {
       const [first, second] = vscode.workspace.workspaceFolders ?? []
@@ -662,9 +691,10 @@ const bridge = new Bridge({
   /**
    * What the dormant/installed divide looks like, in one place: the pill is
    * there when there is something to say, the ingest timer only runs over a real
-   * install, and the sidebar section repaints its rows. Called at activation and
-   * after everything that can write or delete the runtime stamp - an install, a
-   * start that prepared one, an uninstall.
+   * install, and the sidebar section repaints its rows. Called at activation,
+   * after everything this window does that writes or deletes the runtime stamp
+   * (an install, a start that prepared one, an uninstall), and when the window
+   * regains focus, because another window shares that stamp.
    */
   function syncInstalledState(): void {
     const installed = isInstalled()
@@ -681,6 +711,15 @@ const bridge = new Bridge({
   }
 
   syncInstalledState()
+
+  // Another window of this extension installs and uninstalls into the same
+  // storage, and none of its commands run here. Regaining focus is when a stale
+  // row gets looked at, so focus re-reads the stamp; nothing watches disk.
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState((state) => {
+      if (state.focused) syncInstalledState()
+    }),
+  )
 
   /**
    * Stale embedded tabs kill the window's menus, and the harness manufactures
@@ -791,7 +830,7 @@ const bridge = new Bridge({
    */
   let preflightChecks: Promise<PrereqCheck[]> | undefined
   async function missingPrereqs(): Promise<PrereqCheck[]> {
-    preflightChecks ??= runPreflight().then((checks) => {
+    preflightChecks ??= runPreflight(path.join(context.extensionPath, 'dsh')).then((checks) => {
       for (const check of checks) (check.ok ? logger.info : logger.warn)(`prerequisite ${check.name}: ${check.summary}`)
       return checks
     })
@@ -819,18 +858,90 @@ const bridge = new Bridge({
       })
   }
 
+  /**
+   * Does the harness have anything to run on? A model must exist AND its server
+   * entry must still be in the registry, which is exactly the snapshot writer's
+   * own rule (`registryAdmission`), so this can never disagree with the check
+   * that enforces it later. Configuration only: a server nobody can reach is
+   * still a configured server, and an unknown served-model verdict is still an
+   * offer.
+   *
+   * Asked before the prerequisite probes, the version picker and any download,
+   * because a fresh install otherwise spends minutes fetching a runtime, then
+   * reports a failed install for what is really a first-run setup step. It
+   * offers the existing Add or Reconfigure Server/Model wizard, and continues
+   * only if a usable model exists when that ends: nothing is installed, started
+   * or promised otherwise, and no offer is repeated behind the user's back.
+   *
+   * @returns whether the caller may proceed with what the user asked for
+   */
+  async function ensureConfiguredModel(verb: string): Promise<boolean> {
+    const SETUP = 'Configure a server and model…'
+    const usable = async (): Promise<{ count: number; dangling: number }> => {
+      const config = await getConfig()
+      const { models, dangling } = registryAdmission(config.servers, config.models)
+      return { count: models.length, dangling: dangling.length }
+    }
+    // Every read of your own configuration can fail: log it, say it out loud with
+    // a route to the log, and let the caller do nothing rather than guess.
+    const blocked = (what: string, err: unknown): false => {
+      const message = (err as Error).message
+      logger.error(`${what}: ${message}`)
+      void vscode.window
+        .showErrorMessage(`DeepSeek Harness: ${what}: ${message}`, 'Show Log')
+        .then((reply) => {
+          if (reply === 'Show Log') void output?.show()
+        })
+      return false
+    }
+    let before: { count: number; dangling: number }
+    try {
+      before = await usable()
+    } catch (err) {
+      return blocked('could not read your vLLM-Copilot servers and models', err)
+    }
+    if (before.count) return true
+    logger.warn(`the harness has no model to offer (${before.dangling} registry model(s) point at a missing server)`)
+    const choice = await vscode.window.showWarningMessage(
+      'The DeepSeek Harness needs a model with a configured server. Configure one to continue.',
+      SETUP,
+    )
+    if (choice !== SETUP) return false
+    try {
+      await vscode.commands.executeCommand('vllm-copilot.addServerModel')
+    } catch (err) {
+      return blocked('the server and model setup did not finish', err)
+    }
+    let after: { count: number; dangling: number }
+    try {
+      after = await usable()
+    } catch (err) {
+      return blocked('could not re-read your vLLM-Copilot servers and models after the setup', err)
+    }
+    if (!after.count) {
+      // The wizard ended without a usable model: say so plainly and stop. No
+      // retry loop, no second offer, and nothing that reads like a success.
+      void vscode.window.showInformationMessage(`No usable model was configured, so the DeepSeek Harness will not ${verb} yet.`)
+      return false
+    }
+    logger.info(`setup wizard configured ${after.count} usable model(s); continuing`)
+    return true
+  }
+
   async function guardedStart(): Promise<string | undefined> {
     if (bridge.supervisor.running && bridge.supervisor.url) return bridge.supervisor.url
-    // Never two harnesses side by side: the retired bridge extension owns this
-    // runtime directory, pid record and port the moment it is installed.
+    // The built-in harness replaces the standalone bridge: while that extension
+    // is installed this window starts nothing and says what to uninstall.
     if (oldBridgeInstalled()) {
       announceOldBridge()
       return undefined
     }
+    // Nothing to run on is a setup step, not a failed download.
+    if (!(await ensureConfiguredModel('start'))) return undefined
     // Prerequisites are named before any download starts. Without this gate a
     // missing npm surfaced as cmd.exe's "not recognized as an internal or
-    // external command" inside a start failure, and a Node older than dsh's
-    // engine floor installed the whole tree before dying downstream.
+    // external command" inside a start failure, and a Node below the certified
+    // floor completed the whole download, npm not policing engines here.
     const missing = await missingPrereqs()
     if (missing.length) {
       announceMissingPrereqs(missing, 'start')
@@ -952,6 +1063,20 @@ const bridge = new Bridge({
       // session. The ingest cadence re-arms here so the setting takes effect
       // without a restart; none of these may cut an in-flight turn.
       if (event.affectsConfiguration('vllm-copilot.harness.ingestIntervalSeconds') && ingestTimer) armIngestTimer()
+      // Capture consent is deliberately NOT a restart key: the adapter re-reads
+      // the on-disk marker at every capture and inside the write queue, so an
+      // OFF stops the NEXT request instead of recording through a long drain.
+      // No harness home = dormant = no folders; prepare seeds the marker later.
+      if (event.affectsConfiguration('vllm-copilot.harness.captureSystemMessages')) {
+        const enabled = readBridgeSettings().captureSystemMessages
+        const sync = syncCaptureMarker(paths, enabled, logger)
+        if (sync.error) {
+          void vscode.window.showWarningMessage(
+            `DeepSeek Harness recording setting saved, but the live consent marker could not be updated (${sync.error}). ` +
+              'A running harness keeps its previous recording state until a marker write succeeds.',
+          )
+        }
+      }
       if (BRIDGE_RESTART_KEYS.some((key) => event.affectsConfiguration(`vllm-copilot.harness.${key}`))) {
         scheduleRestart('a DeepSeek Harness setting changed')
       }
@@ -994,12 +1119,15 @@ const bridge = new Bridge({
    * into one runtime tree is the exact corruption start-lock.ts exists for.
    */
   async function installOrUpdateHarness(): Promise<void> {
-    // The old standalone bridge owns the harness install as far as this version
-    // is concerned; an install here would land in the same tree it runs from.
+    // The built-in harness replaces the standalone bridge: while that extension
+    // is installed this window installs nothing.
     if (oldBridgeInstalled()) {
       announceOldBridge()
       return
     }
+    // The same setup step ahead of the version picker: choosing a dsh version is
+    // a download decision, and there is nothing to download for yet.
+    if (!(await ensureConfiguredModel('be installed'))) return
     const missing = await missingPrereqs()
     if (missing.length) {
       announceMissingPrereqs(missing, 'be installed')
@@ -1202,8 +1330,10 @@ const bridge = new Bridge({
       {
         modal: true,
         detail:
-          `This deletes the harness runtime, its profile, every saved session` +
-          `${pendingUsage ? `, and ${pendingUsage} usage record(s) your dashboard has not received yet` : ''} from:\n${paths.root}\n\n` +
+          `This deletes the harness runtime, its profile and every saved session` +
+          `${pendingUsage ? `, plus ${pendingUsage} usage record(s) your dashboard has not received yet` : ''} from:\n${paths.root}\n\n` +
+          'Workspace prompt recordings (.vllm\\dsh-system-messages.json) and harness personality files live OUTSIDE this folder and survive the uninstall. ' +
+          'Only recording files older versions left inside this folder go with it. ' +
           'Your vLLM-Copilot servers, models, and usage totals are untouched - vLLM-Copilot itself stays installed. ' +
           '"Install or Update Harness…" brings the harness back with fresh sessions.',
       },
@@ -1318,6 +1448,10 @@ const bridge = new Bridge({
         announceOldBridge()
         return
       }
+      // The same setup step: an explicit Restart that turns into a start needs a
+      // model too, and the user hears that here instead of meeting a raw snapshot
+      // complaint from inside the bridge.
+      if (!(await ensureConfiguredModel('restart'))) return
       const result = await bridge.restart()
       if (!result.drained) {
         void vscode.window.showWarningMessage(`${result.remaining} in-flight harness request(s) were cut by this restart.`)
@@ -1365,7 +1499,35 @@ const bridge = new Bridge({
     vscode.commands.registerCommand('vllm-copilot.harness.openSettings', () =>
       void vscode.commands.executeCommand('workbench.action.openSettings', '@ext:system-sciences.vllm-copilot vllm-copilot.harness'),
     ),
+    // The session-wide prompt controls - personality and recording - live with
+    // the harness, not on the per-model form. They answer even while the
+    // harness is uninstalled (files and settings only; nothing starts itself).
+    ...registerHarnessPromptCommands({ context, paths, log: logger, isInstalled }),
   )
+
+  // Consent reconciliation, folder-existing only (dormant stays dormant -
+  // nothing here creates a folder): the capture setting can flip while this
+  // extension was inactive and a survivor harness - one this window only
+  // adopts, never re-prepares - keeps recording by whatever marker its own
+  // boot wrote. Re-assert the setting's truth at activation, before any
+  // adoption or start can ride on the stale marker. A failed write, OFF
+  // above all, is said out loud: claiming stopped while the pen still
+  // writes is the exact lie this feature exists to never tell.
+  if (existsSync(paths.vllmc)) {
+    const wanted = readBridgeSettings().captureSystemMessages
+    const consent = syncCaptureMarker(paths, wanted, logger)
+    if (consent.error) {
+      void vscode.window
+        .showWarningMessage(
+          `DeepSeek Harness: the recording consent marker could not be set to "${wanted ? 'on' : 'off'}" (${consent.error}). ` +
+            'A running harness follows its previous marker until a write succeeds - check the recording state before trusting it.',
+          'Show Log',
+        )
+        .then((choice) => {
+          if (choice === 'Show Log') void output?.show()
+        })
+    }
+  }
 
   // Starting is manual by design: the sidebar section, the command palette, or
   // the pill. A harness the user did not ask for never installs a runtime, opens

@@ -92,6 +92,7 @@
       S.personalities = e.data.personalities || [];
       S.activePersonalities = e.data.activePersonalities || {};
       S.systemMessageCapture = e.data.systemMessageCapture === true;
+      S.harness = e.data.harness || S.harness || null;
       // External change while the form is dirty (unsaved edits) must not be wiped by
       // a full re-render. After a 'save' (pendingSave), or when the form is clean,
       // re-render so the form reflects the latest persisted state.
@@ -109,6 +110,15 @@
         if (sv && sv.models) {
           const freshMc = sv.models.find(m => (m.id || m.vllmModelId) === S.selModel);
           if (freshMc) S.mc = freshMc;
+        }
+        // The harness card is independent of the Copilot draft: refresh that
+        // section alone and re-wire its three buttons, so a recording toggle
+        // issued while this form is dirty cannot leave a stale ON/OFF on the
+        // screen. A full render() would throw the unsaved edits away.
+        const harnessSection = document.getElementById('harnessSection');
+        if (harnessSection) {
+          harnessSection.innerHTML = sec('DeepSeek Harness (session)', harnessCard());
+          wireHarness();
         }
       } else {
         try { render(); } catch(err) {
@@ -256,7 +266,13 @@
     if (mChoices) { mChoices.destroy(); mChoices = null; }
     const r = document.getElementById('root');
     if (!S.servers.length) {
-      r.innerHTML = '<p class="empty-state">No servers configured. Run "Add or Reconfigure Server/Model" first.</p>';
+      // No model form to show - but the session-wide harness card needs no
+      // model at all, so it renders here too: the same builder and the same
+      // wiring, never a second harness truth. (The sidebar section stays the
+      // primary route before install.)
+      r.innerHTML = '<p class="empty-state">No servers configured. Run "Add or Reconfigure Server/Model" first.</p>'
+        + '<div id="harnessSection">' + sec('DeepSeek Harness (session)', harnessCard()) + '</div>';
+      wireHarness();
       return;
     }
     const sv = S.servers.find(s => s.key === S.selServer) || S.servers[0];
@@ -462,13 +478,13 @@
       // raw system-prompt controls (what gets injected / recorded). The card
       // siblings share the identity card's visual language so the section
       // reads as two blocks instead of one card plus stray fields.
-      h += sec('Personality and System Prompt',
+      h += sec('Copilot Personality and System Prompt',
         personalityCard(isConfigured) +
-        '<div class="subcard"><label>System prompt</label>' +
+        '<div class="subcard"><label>Copilot System Prompt</label>' +
         '<div class="field"><label>systemMessageReplacementsFile</label>' +
         '<input type="text" data-f="systemMessageReplacementsFile" value="' + E(String(m.systemMessageReplacementsFile || '')) + '">' +
         '<div class="field-hint">Path to JSON find/replace rules file (relative paths resolve against the workspace root)</div></div>' +
-        '<div class="checkbox-row"><input type="checkbox" id="captureCb" ' + (S.systemMessageCapture ? 'checked' : '') + '><label>Record system prompts</label></div>' +
+        '<div class="checkbox-row"><input type="checkbox" id="captureCb" ' + (S.systemMessageCapture ? 'checked' : '') + '><label>Record Copilot system prompts</label></div>' +
         '<div class="field-hint">Capture Copilot system prompts to the workspace\'s .vllm/system-messages.json - used to build replacement rules</div>' +
         '</div>');
       h += sec('Token Budget',
@@ -486,6 +502,11 @@
         { k: 'autoContinueRetries', t: 'number', v: m.autoContinueRetries ?? 1, h: 'Auto-retry count (default: 1)' }]));
       h += sec('Model Modes', modesSection(m));
     }
+    // Session-wide, not per-model: the harness personality and its recording
+    // belong to the whole harness session. The rows sit OUTSIDE the model form
+    // so they cannot be mistaken for model settings, and every button routes
+    // to a harness command - this form never holds a second harness truth.
+    h += '<div id="harnessSection">' + sec('DeepSeek Harness (session)', harnessCard()) + '</div>';
     r.innerHTML = h;
 
     if (S.mc) {
@@ -551,6 +572,9 @@
       providerSelect.onchange = () => syncRoutingMode();
       syncRoutingMode();
     }
+    // Harness session rows: pure routers to the three harness commands; the
+    // host answers with a fresh 'data' post, so the rows track reality.
+    wireHarness();
     const pSel = document.getElementById('personalitySel');
     if (pSel) {
       const activeName = S.activePersonalities[S.selModel] || '';
@@ -693,9 +717,58 @@
     }
   }
 
+  // The three harness buttons exist in every render path (full form, empty
+  // state, and the draft-preserving partial refresh below), so the wiring is
+  // one function instead of three copies.
+  function wireHarness() {
+    const post = (command) => () => vscode.postMessage({ type: 'harnessCommand', command });
+    const hPersBtn = document.getElementById('harnessPersBtn');
+    if (hPersBtn) hPersBtn.onclick = post('vllm-copilot.harness.setPersonality');
+    const hRecBtn = document.getElementById('harnessRecBtn');
+    if (hRecBtn) hRecBtn.onclick = post('vllm-copilot.harness.toggleRecording');
+    const hRecOpenBtn = document.getElementById('harnessRecOpenBtn');
+    if (hRecOpenBtn) hRecOpenBtn.onclick = post('vllm-copilot.harness.openRecording');
+  }
+
+  // The recording line tells the SETTING and the LIVE MARKER apart: after a
+  // failed marker write the two disagree, and only the mismatch phrasing is
+  // honest. A pre-install ON is "enabled for the next harness start", never
+  // an implied "currently recording".
+  function recordingStatusLine(hst) {
+    const live = hst.recordingMarker || 'absent';
+    if (hst.recording) {
+      if (live === 'on') return 'ON - stored locally, never leaves this machine';
+      if (live === 'absent') return 'Enabled - starts recording when the harness next starts';
+      if (live === 'off') return 'ON requested; the live marker is still OFF - recording state could not be updated';
+      return 'ON requested; the live marker is ' + E(live) + ' - the harness records nothing until it is fixed';
+    }
+    return live === 'on'
+      ? 'OFF requested; the live marker is still ON - recording state could not be updated'
+      : 'OFF - nothing is recorded';
+  }
+
+  function harnessCard() {
+    const hst = S.harness || {};
+    let h = '<div class="subcard"><label>DeepSeek Harness session prompt</label>';
+    h += '<div class="field-hint">Session-wide and independent of Copilot: the harness runs its own personality file and its own recording - neither reads this model\'s personality, and nothing here changes Copilot.</div>';
+    h += '<div class="field-hint"><strong>Personality:</strong> ' + E(hst.personality || 'Default (upstream DeepSeek Harness prompt)') + '</div>';
+    h += '<div class="field-hint"><strong>Prompt recording:</strong> ' + recordingStatusLine(hst) + '</div>';
+    h += '<div class="personality-actions" style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">';
+    h += '<button class="secondary" id="harnessPersBtn" title="Default, one of your harness personality files, Load or Create a new one (session-wide)">Set Harness Personality\u2026</button>';
+    h += '<button class="secondary" id="harnessRecBtn" title="Records the harness system prompts to this workspace\'s .vllm\\dsh-system-messages.json - a file of yours; uninstalling the harness runtime does not delete it. Needs a folder open. A running harness starts or stops recording with its next request; OFF also drops queued, not-yet-committed writes on the spot.">' + (hst.recording ? 'Turn Recording OFF' : 'Turn Recording ON') + '</button>';
+    h += '<button class="secondary" id="harnessRecOpenBtn" title="Open this workspace\'s .vllm\\dsh-system-messages.json harness recording">Open Recording</button>';
+    h += '</div>';
+    if (hst.personalityPath) {
+      h += '<div class="field-hint">File: ' + E(hst.personalityPath) + '</div>';
+    }
+    h += '<div class="field-hint">Changing the file applies at the next drained restart; edits inside the current file apply on the next request.</div>';
+    h += '</div>';
+    return h;
+  }
+
   function personalityCard(isConfigured) {
     let h = '<div class="personality-card">';
-    h += '<label>Personality</label>';
+    h += '<label>Copilot Personality</label>';
     h += '<select id="personalitySel"' + (isConfigured ? '' : ' disabled') + '>';
     h += '<option value="">Default (no personality)</option>';
     S.personalities.forEach(p => {

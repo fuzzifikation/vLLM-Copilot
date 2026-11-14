@@ -31,6 +31,12 @@ The harness is not a webpage you visit inside the editor; it is a **tab in the e
 - Known edges (accepted): two-key chords (`Ctrl+K x`) are not forwarded; a chord the harness acts on without swallowing also fires in VS Code. `vllm-copilot.harness.keyboardBridge` turns the whole bridge off.
 - This is a bridge, not a workaround to remove: 1.145 removed the webview keyboard protocol and DOM events cannot cross frames. The only future upgrade path is upstream telling the page which chords it consumes.
 
+### Prompt controls (session-scoped)
+Three commands, three sidebar rows, one truth each - available before install (the rows sit in the section; nothing on disk is created until the user asks):
+- **Set Harness Personality…** (`harness.setPersonality`): Default (upstream prompt untouched) / **Bundled voices** - the four shipped presets (Supportive Mentor, Critical Senior Dev, Sarcastic Robot, Spartan), each touching only the prompt identity line (Supportive Mentor and Spartan append one style sentence under it, Critical Senior Dev and Sarcastic Robot replace it with a short voice block) and stored by portable name in `harness.personality` (never an install path; wins over the file reference) / a detected file under `<globalStorage>/harness-personalities/` / **Load…** any replacements JSON / **Create…** an empty-rule template in an unsaved editor (nothing is written until the user saves) / **Edit** the current file. Session-wide, not per model: dsh carries one personality per session. Model Settings shows the current choice in a clearly separate **DeepSeek Harness (session)** section whose buttons route to these same commands - its personality card and record checkbox are labelled **Copilot**, and there is no second settings truth.
+- **Toggle Harness Prompt Recording** (`harness.toggleRecording`): flips `harness.captureSystemMessages` and the live consent marker together; answers with the honest resulting state and the exact workspace file (`.vllm\dsh-system-messages.json`). Refuses to enable with no workspace folder - a recording with no destination is a lie, not a maybe. Never creates the harness folder on a machine where the harness was never installed.
+- **Open Harness Recording** (`harness.openRecording`): opens this window's workspace `.vllm\dsh-system-messages.json` directly; a missing file gets the "turn recording ON and send a message" answer, a window without a folder gets "open a folder", and a RUNNING harness bound to another (or to no) workspace is NAMED with the honest answer - another window's file is named, never auto-opened, and rebinding is spelled **Restart** (a Start adopts the survivor and rebinds nothing) - never an empty success, never a pid scan.
+
 ### Ways in (`vllm-copilot.harness.openIn`)
 | mode | surface | why you would pick it |
 |---|---|---|
@@ -50,6 +56,8 @@ The harness settings that decide how the surface behaves. Every `vllm-copilot.ha
 | `embedPort` | `43171` | stable panel address; busy → ephemeral fallback with a log line |
 | `keyboardBridge` | `true` | forward unconsumed chords to VS Code |
 | `logLevel` | `info` | `debug` mirrors harness chatter into the **DeepSeek Harness** output channel |
+| `personalityFile` | `""` | session-wide personality file; empty = upstream prompt untouched; path change → draining restart, content edits → next request |
+| `captureSystemMessages` | `false` | recording on/off; never restarts anything - the marker is re-read per request, so OFF bites immediately |
 
 ## Feel invariants (regressions of these are bugs, not preferences)
 1. No browser chrome is ever visible in panel mode, including on reload, restart, and revival.
@@ -58,6 +66,7 @@ The harness settings that decide how the surface behaves. Every `vllm-copilot.ha
 4. The pill reveals; the `+` creates.
 5. DSH keeps every shortcut it handles; VS Code keeps the palette.
 6. Every failure mode tells the truth in words a user can act on (waiting card, fallback notice, honest stopped state).
+7. Recording consent is the marker, the whole marker and nothing but the marker: it must read exactly `on`, everything else means off, and **OFF cancels every queued, not-yet-committed write on the spot** - a user is never made to wait out a 120 s drain to stop the pen (files already on disk stay). Starting refuses to launch when the marker cannot be written, activation re-asserts it from the setting, and a toggle command never announces success before the marker agrees.
 
 ## Known edges (documented, owned)
 - Session deep links do not exist upstream (docs/harness-upstream-issues.md entry 3): per-session tabs and "open this chat" from outside are blocked on it; per-view titles work around it and stay correct after restarts.

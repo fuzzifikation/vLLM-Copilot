@@ -3,8 +3,10 @@
  * package the dsh profile can install. Used by `scripts/harness/stage-core.mjs`
  * (dev and the rails, from this repository's own compiled `out/core`) and by the
  * extension (production, from the installed extension's own `out/`). Both paths
- * must produce a byte-equivalent package or the certified boot check certifies a
- * layout the user never gets, so the math lives here once.
+ * must produce the same layout or the certified boot check certifies a layout
+ * the user never gets, so the math lives here once. The license is the one
+ * deliberate difference between them: each stage carries the text of the tree it
+ * was staged from.
  *
  * The generated manifest derives its dependencies from the staged tree's own
  * bare imports: tsc emits one import per line, so a line-anchored scan is
@@ -17,6 +19,16 @@ import { builtinModules } from 'node:module'
 import path from 'node:path'
 
 const CORE_PACKAGE_NAME = 'vllm-copilot-core'
+
+/**
+ * The license file of the tree being staged, named the way the two layouts that
+ * call this name it: a checkout holds `LICENSE` (the repository's source
+ * license), an installed extension holds `LICENSE.txt`, which is what vsce
+ * renames the packaged root license into. Whatever is found is copied verbatim
+ * to the canonical `LICENSE`, so the staged tree carries the license text of its
+ * source and `SEE LICENSE IN LICENSE` points at a file that is really there.
+ */
+const LICENSE_NAMES = ['LICENSE', 'LICENSE.txt']
 
 function walkJs(dir, visit) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -96,13 +108,23 @@ export function buildCoreManifest({ bareImports, sourceManifest, coreVersion, de
  * @param opts.coreDir compiled `out/core` directory of the installed extension
  * @param opts.sourceManifest parsed package.json of that extension
  * @param opts.targetDir vendor directory for the core package
- * @param opts.docsDir directory holding LICENSE / THIRD-PARTY-NOTICES.txt
+ * @param opts.docsDir directory holding the source license (`LICENSE` in a
+ *   checkout, `LICENSE.txt` in an installed VSIX) and THIRD-PARTY-NOTICES.txt
  */
 export function stageCore({ coreDir, sourceManifest, targetDir, docsDir, coreVersion, description }) {
   if (!coreDir || !existsSync(path.join(coreDir, 'index.js'))) {
     throw new Error(`no compiled core at ${coreDir}: expected index.js (is vLLM-Copilot installed and activated?)`)
   }
   const source = docsDir ?? path.dirname(path.dirname(coreDir))
+  // Resolved while the previous stage still stands: a tree with no license to
+  // copy leaves the last good stage in place instead of an empty directory.
+  const licenseName = LICENSE_NAMES.find((name) => existsSync(path.join(source, name)))
+  if (!licenseName) {
+    throw new Error(
+      `no license file in ${source}: expected ${LICENSE_NAMES[0]} or ${LICENSE_NAMES[1]}. ` +
+        'Refusing to stage a core whose manifest points at a license the staged tree would not contain.',
+    )
+  }
   rmSync(targetDir, { recursive: true, force: true })
   mkdirSync(targetDir, { recursive: true })
   // Sourcemaps point at upstream src that never ships inside a profile.
@@ -114,9 +136,11 @@ export function stageCore({ coreDir, sourceManifest, targetDir, docsDir, coreVer
     const stripped = text.replace(/^\n?\/\/# sourceMappingURL=.*$/gm, '')
     if (stripped !== text) writeFileSync(file, stripped)
   })
-  for (const doc of ['LICENSE', 'THIRD-PARTY-NOTICES.txt']) {
-    if (existsSync(path.join(source, doc))) cpSync(path.join(source, doc), path.join(targetDir, doc))
-  }
+  cpSync(path.join(source, licenseName), path.join(targetDir, 'LICENSE'))
+  // Notices stay best-effort: a stripped tree without them still stages, a tree
+  // with no license at all does not.
+  const notices = path.join(source, 'THIRD-PARTY-NOTICES.txt')
+  if (existsSync(notices)) cpSync(notices, path.join(targetDir, 'THIRD-PARTY-NOTICES.txt'))
   const manifest = buildCoreManifest({
     bareImports: scanBareImports(path.join(targetDir, 'core')),
     sourceManifest,

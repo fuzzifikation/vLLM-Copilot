@@ -38,6 +38,8 @@ docs/
 !docs/images/logo.png
 # prompt-replacements/ is shipped for the Set Model Personality command
 !prompt-replacements/
+# harness-personalities/ ships the four bundled harness voice presets
+!harness-personalities/
 
 # Test files
 test/
